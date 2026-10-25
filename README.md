@@ -18,15 +18,28 @@ What 0.1.0 does:
 
 ## Install
 
-Requires Python 3.10 or later. Install the release wheel by URL and checksum (the GitHub release
-page shows the exact line):
+Requires Python 3.10 or later.
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate
-pip install "AgentWiz @ https://github.com/alexchwong/AgentWiz/releases/download/v0.1.0/agentwiz-0.1.0-py3-none-any.whl#sha256=<sha256>"
+curl -fsSL https://github.com/alexchwong/AgentWiz/releases/latest/download/install.sh | bash
 ```
 
-This also installs modelSpell 0.1.0, pinned by URL and checksum.
+The script creates `.venv` in the current directory, checks the newest release wheel against the
+sha256 GitHub publishes, installs it, and prints how to launch. Pin a release with
+`… | bash -s -- --version 0.1.0`; download the script first if you want to read it before running it.
+
+Prefer to do it by hand? Download the wheel from the release page (the wheel, not the source zip),
+then run:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install ./agentwiz-0.1.0-py3-none-any.whl
+```
+
+For checksum verification, use `python -m pip install` with the wheel URL and `#sha256=…` fragment
+from the release notes instead of the local filename. Both methods also install modelSpell 0.1.0,
+pinned by URL and checksum.
 
 ## Launch
 

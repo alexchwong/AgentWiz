@@ -52,6 +52,7 @@ python scripts/build_release.py --smoke     # build and smoke-test the release w
 | `scripts/build_release.py` | no | Builds the release wheel from `HEAD`; `--smoke`; `--changed-since`. |
 | `scripts/smoke_installed.py` | no | Smoke check (S1–S7) against an installed wheel. |
 | `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for the walkthrough. |
+| `scripts/install.sh` | no | Installer behind the README one-liner; re-attached to every release as `install.sh`. |
 | `DEVEL.md`, `NEWS.md`, `.clinerules` | no | Maintenance guide, changelog, agent rules. |
 | `.github/workflows/` | no | `tests.yml` (push, PR) and `release.yml` (push to `main`). |
 
@@ -126,6 +127,10 @@ The page and the terminal receive only text that cannot contain a credential:
 
 Never add a handler that formats an exception's message unless the exception is AgentWiz's own.
 All JSON output goes through `agentwiz/jsonio.py`.
+
+The installer suppresses Python, venv and pip diagnostics, which can include environment-specific
+values, and reports its own fixed failure descriptions instead. Successful installs print the
+installed versions and shell-quoted launch and activation commands.
 
 ## Tests
 
@@ -218,12 +223,18 @@ passed them (`github.sha`, never a re-read of `main`):
   venv with `--no-index` (the pinned modelSpell wheel is still fetched) and runs the smoke check,
   then creates release `vX.Y.Z` tagged at that commit, with the wheel, the NEWS section as notes
   and a pinned install line with the sha256.
-- **If `vX.Y.Z` already exists:** fails if any shipped file changed since the tag; otherwise does
-  nothing.
+- **If `vX.Y.Z` already exists:** fails if any shipped file changed since the tag; otherwise skips
+  building and publishing the wheel.
+- **Finally, once the release is there** (new, or unchanged with the guard passing): re-attaches
+  `scripts/install.sh` to `vX.Y.Z` with `--clobber`, so `releases/latest/download/install.sh`
+  always serves the current installer without a new release.
 
-**Shipped-file rule.** Any change to `agentwiz/**` (Python, HTML, CSS or JavaScript),
-`pyproject.toml`, `README.md` or `LICENSE` needs a version bump and a NEWS entry before it reaches
-`main`. Changes to tests, scripts, workflows, `DEVEL.md` and `.clinerules` merge without a release.
+**Shipped-file rule (authoritative).** Any change to `agentwiz/**` (Python, HTML, CSS or
+JavaScript), `pyproject.toml`, `README.md` or `LICENSE` needs a version bump and a NEWS entry before
+a merge into `main`. Changes to tests, scripts, workflows, `DEVEL.md` and `.clinerules` merge without
+a release. The rule is enforced by `release.yml` (`build_release.py --changed-since <tag>`), so
+`devel` may carry shipped-file edits without a bump; the run for that merge fails if the bump is
+missing, and no release is published.
 
 ### Release checklist
 
@@ -237,7 +248,8 @@ passed them (`github.sha`, never a re-read of `main`):
 6. After the release workflow, on the **published** wheel:
    - **M2:** tag `vX.Y.Z` targets the commit that passed CI; the notes match the NEWS section.
      Download the wheel and compute its sha256 locally; it equals the install line's. Record the
-     commit and sha256. In a fresh venv the install line gives a working `agentwiz --version`.
+     commit and sha256. In a fresh venv the install line gives a working `agentwiz --version`, and so
+     does the README one-liner (`curl … | bash`) in an empty directory.
    - **M3:** `python -m zipfile -l <wheel>` lists only `agentwiz/**` (including
      `agentwiz/ui/index.html`) plus `METADATA`, `WHEEL`, `RECORD`, `entry_points.txt` and
      `licenses/LICENSE` under `agentwiz-X.Y.Z.dist-info/`.
