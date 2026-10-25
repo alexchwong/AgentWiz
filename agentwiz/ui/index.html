@@ -1,0 +1,333 @@
+<!doctype html>
+<!-- Derived from modelSpell ui/index.html at commit 1759c6e3c28a637731434a73c46088048583e358 (MIT, Copyright (c) 2026 Alex Wong); adapted per the AgentWiz 0.1.0 techspec, Section 7.7. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentWiz</title>
+<style>
+  :root { --bg:#fafafa; --fg:#1d1d1f; --muted:#6e6e73; --line:#d2d2d7; --box:#fff; --accent:#2f5bd3; --err:#c0392b; --warn:#9a5b00; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161617; --fg:#ececf0; --muted:#9a9aa2; --line:#3a3a3e; --box:#1f1f22; --accent:#7ea2ff; --err:#ff7a6b; --warn:#f0b35a; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; }
+  header { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  header h1 { font-size:16px; margin:0; }
+  #summary { color:var(--muted); font-family:ui-monospace, monospace; font-size:12px; flex:1; }
+  textarea, input, select { width:100%; font:inherit; color:inherit; background:var(--box); border:1px solid var(--line); border-radius:6px; padding:8px; }
+  textarea { resize:vertical; font-family:ui-monospace, monospace; }
+  button { font:inherit; padding:6px 14px; border-radius:6px; border:1px solid var(--line); background:var(--box); color:inherit; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.5; cursor:default; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width: 800px) { .grid { grid-template-columns:1fr; } }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  pre { margin:0; min-height:180px; max-height:50vh; overflow:auto; white-space:pre-wrap; word-break:break-word;
+        background:var(--box); border:1px solid var(--line); border-radius:6px; padding:8px; font:13px/1.45 ui-monospace, monospace; }
+  #reasoning { color:var(--muted); }
+  .row { display:flex; gap:8px; align-items:center; margin:8px 0; }
+  #status { font-family:ui-monospace, monospace; font-size:12px; color:var(--muted); }
+  #status.error { color:var(--err); }
+  #status.warn { color:var(--warn); }
+  #status.normal { color:var(--fg); }
+  #version { color:var(--muted); font-weight:normal; font-size:12px; }
+  #result { overflow-wrap:anywhere; word-break:break-all; }
+  #settings-msg.warn { color:var(--warn); }
+  dialog { border:1px solid var(--line); border-radius:10px; background:var(--bg); color:var(--fg); width:min(560px, 92vw); }
+  dialog::backdrop { background:rgba(0,0,0,.4); }
+  .inline { display:flex; gap:8px; } .inline > :first-child { flex:1; }
+  .hidden { display:none; }
+  details pre { min-height:0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AgentWiz <span id="version"></span></h1>
+  <span id="summary"></span>
+  <button id="open-settings">Model settings</button>
+</header>
+
+<label for="system">System prompt (optional)</label>
+<textarea id="system" rows="2"></textarea>
+<label for="prompt">Input</label>
+<textarea id="prompt" rows="6" placeholder="Ctrl+Enter to send"></textarea>
+<div class="row">
+  <button id="send" class="primary">Send</button>
+  <button id="stop" disabled>Stop</button>
+  <span id="status"></span>
+</div>
+
+<div class="grid">
+  <div><label>Reasoning stream</label><pre id="reasoning"></pre></div>
+  <div><label>Output</label><pre id="output"></pre></div>
+</div>
+<details><summary>Result event (exact JSON as received)</summary><pre id="result"></pre></details>
+
+<dialog id="settings">
+  <form method="dialog" id="settings-form">
+    <label for="kind">Model source</label>
+    <select id="kind">
+      <option value="lmstudio">LM Studio</option>
+      <option value="openrouter">OpenRouter</option>
+      <option value="openai_compat">OpenAI-compatible</option>
+    </select>
+    <label for="base_url">Base URL (including /v1; blank = default)</label>
+    <input id="base_url" placeholder="">
+    <div id="key-row">
+      <label for="api_key">API key (write-only; blank keeps the current key) <span id="key-state"></span></label>
+      <div class="inline"><input id="api_key" type="password" autocomplete="off"><button type="button" id="clear-key">Clear</button></div>
+    </div>
+    <label for="model">Model ID</label>
+    <div class="inline"><input id="model" list="model-list"><button type="button" id="load-models">Load models</button></div>
+    <datalist id="model-list"></datalist>
+    <div id="provider-row">
+      <label for="provider">Provider (OpenRouter)</label>
+      <div class="inline"><select id="provider"><option value="">Any (OpenRouter routing)</option></select>
+        <button type="button" id="load-providers">Load providers</button></div>
+    </div>
+    <div id="reasoning-row">
+      <label for="reasoning_level">Reasoning</label>
+      <select id="reasoning_level">
+        <option value="">Backend default</option><option value="off">off</option>
+        <option value="low">low</option><option value="medium">medium</option><option value="high">high</option>
+      </select>
+    </div>
+    <label for="max_tokens">Max tokens (blank = backend default)</label>
+    <input id="max_tokens" type="number" min="1">
+    <p id="settings-msg" class="hidden"></p>
+    <div class="row" style="justify-content:flex-end">
+      <button value="cancel" formnovalidate>Cancel</button>
+      <button type="button" id="save" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get("t") || "";
+const $ = (id) => document.getElementById(id);
+const DEFAULT_URL = { lmstudio: "http://localhost:1234/v1", openrouter: "https://openrouter.ai/api/v1", openai_compat: "required" };
+const STALE_SEND = "Settings were changed in another tab. Check them and send again.";
+const STALE_SAVE = "Settings were changed in another tab. The header now shows the current settings; check them and save again.";
+const STOPPED = "Stopped. AgentWiz closes the model connection when more output arrives, which can take a while; whether the backend stops generating is up to the backend.";
+const INTERRUPTED = "Connection ended before a final result was received; completion status is unavailable.";
+const LABELS = { complete: "Complete", empty: "Empty answer", reasoning_only: "Reasoning only, no answer",
+                 truncated: "Truncated answer", truncated_no_answer: "Truncated before any answer" };
+let state = {}, clearKey = false, controller = null;
+
+class ApiError extends Error {
+  constructor(message, status, code) { super(message); this.status = status; this.code = code; }
+}
+
+async function api(path, body) {
+  const r = await fetch(path, { method: body === undefined ? "GET" : "POST",
+    headers: { "X-Session-Token": TOKEN, "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body) });
+  let j = {};
+  try { j = await r.json(); } catch (e) { if (r.ok) throw e; }
+  if (!r.ok) throw new ApiError(j.error || r.statusText, r.status, j.code);
+  return j;
+}
+
+// style: "normal" | "warn" | "error" | "" (muted)
+function setStatus(text, style = "") { $("status").textContent = text; $("status").className = style; }
+
+function keySource(s) {
+  if (s.key_source === "session") return { summary: "key: session", label: "(set for this endpoint)" };
+  if (typeof s.key_source === "string" && s.key_source.startsWith("env:")) {
+    const name = s.key_source.slice(4);
+    return { summary: "key: env " + name, label: `(from ${name})` };
+  }
+  return { summary: "key: none", label: "(not set)" };
+}
+
+function renderState() {
+  $("version").textContent = state.agentwiz_version
+    ? `v${state.agentwiz_version} · modelSpell v${state.modelspell_version}` : "";
+  const parts = [state.kind, state.base_url || "(default URL)", state.model || "(no model)"];
+  if (state.kind === "openrouter") parts.push("provider=" + (state.provider || "any"));
+  if (state.reasoning) parts.push("reasoning=" + state.reasoning);
+  if (state.max_tokens) parts.push("max_tokens=" + state.max_tokens);
+  parts.push(keySource(state).summary);
+  $("summary").textContent = parts.join(" · ");
+}
+
+async function refreshState() { state = await api("/api/state"); renderState(); }
+
+function syncDialogVisibility() {
+  const kind = $("kind").value;
+  $("base_url").placeholder = DEFAULT_URL[kind];
+  $("provider-row").classList.toggle("hidden", kind !== "openrouter");
+  $("reasoning-row").classList.toggle("hidden", kind === "openai_compat");
+}
+
+function dialogConfig() {
+  const kind = $("kind").value, max = parseInt($("max_tokens").value, 10);
+  const cfg = { kind, base_url: $("base_url").value.trim(), model: $("model").value.trim(),
+    provider: kind === "openrouter" ? $("provider").value : "",
+    reasoning: kind === "openai_compat" ? "" : $("reasoning_level").value,
+    max_tokens: Number.isFinite(max) && max > 0 ? max : null };
+  if ($("api_key").value) cfg.api_key = $("api_key").value; else if (clearKey) cfg.api_key = "";
+  return cfg;
+}
+
+function settingsMsg(text, warn = false) {
+  $("settings-msg").textContent = text; $("settings-msg").classList.toggle("hidden", !text);
+  $("settings-msg").classList.toggle("warn", warn);
+}
+
+$("open-settings").onclick = () => {
+  $("kind").value = state.kind; $("base_url").value = state.base_url || ""; $("model").value = state.model || "";
+  $("reasoning_level").value = state.reasoning || ""; $("max_tokens").value = state.max_tokens || "";
+  $("api_key").value = ""; clearKey = false; $("key-state").textContent = keySource(state).label;
+  const p = $("provider"); p.length = 1;
+  if (state.provider) p.add(new Option(state.provider, state.provider, true, true));
+  settingsMsg(""); syncDialogVisibility(); $("settings").showModal();
+};
+$("kind").onchange = syncDialogVisibility;
+$("clear-key").onclick = () => { clearKey = true; $("api_key").value = ""; $("key-state").textContent = "(will be cleared)"; };
+
+$("load-models").onclick = async () => {
+  const cfg = dialogConfig(); settingsMsg("Loading models…");
+  try {
+    const { models } = await api("/api/models", { kind: cfg.kind, base_url: cfg.base_url, api_key: cfg.api_key || null });
+    const list = $("model-list"); list.replaceChildren();
+    for (const m of models) {
+      const tags = [m.loaded ? "loaded" : null, m.reasoning_options ? "reasoning: " + m.reasoning_options.join("/") : null,
+                    m.context_length ? m.context_length + " ctx" : null].filter(Boolean).join(", ");
+      list.append(new Option(tags ? `${m.name || m.id} (${tags})` : (m.name || m.id), m.id));
+    }
+    settingsMsg(`${models.length} models loaded; type to filter.`);
+  } catch (e) { settingsMsg(e.message); }
+};
+
+$("load-providers").onclick = async () => {
+  const cfg = dialogConfig(); settingsMsg("Loading providers…");
+  try {
+    const { providers } = await api("/api/providers", { kind: cfg.kind, base_url: cfg.base_url, api_key: cfg.api_key || null, model: cfg.model });
+    const p = $("provider"); p.length = 1;
+    for (const x of providers) {
+      const label = `${x.name} — ${x.slug ?? "no tag"}${x.quantization ? " · " + x.quantization : ""}${x.context_length ? " · " + x.context_length + " ctx" : ""}`;
+      const opt = new Option(label, x.slug ?? ""); opt.disabled = !x.slug; p.add(opt);
+    }
+    settingsMsg(`${providers.length} endpoints for ${cfg.model}.`);
+  } catch (e) { settingsMsg(e.message); }
+};
+
+$("save").onclick = async () => {
+  try {
+    state = await api("/api/config", { ...dialogConfig(), revision: state.revision });
+    renderState(); $("settings").close();
+  } catch (e) {
+    if (e.status === 409) {
+      try { await refreshState(); settingsMsg(STALE_SAVE, true); }
+      catch (e2) { settingsMsg(e2.message); }
+    } else settingsMsg(e.message);
+  }
+};
+
+// Token counts: missing → "?"; not a safe integer → "see Result" (the parsed value may be rounded).
+function count(n) {
+  if (n === null || n === undefined) return "?";
+  return Number.isSafeInteger(n) ? String(n) : "see Result";
+}
+
+function resultStatus(ev, seconds) {
+  const res = ev.result, u = res.usage || {};
+  let label = LABELS[ev.outcome] || ev.outcome;
+  if (ev.outcome === "truncated_no_answer" && typeof res.reasoning === "string" && res.reasoning.trim() !== "")
+    label += " (token cap reached during reasoning)";
+  const parts = [label, `${seconds.toFixed(1)}s`, res.transport, `finish=${res.finish_reason ?? "?"}`,
+    `in=${count(u.input_tokens)} out=${count(u.output_tokens)} reasoning=${count(u.reasoning_tokens)}`,
+    typeof res.cost === "number" ? `cost=$${res.cost.toFixed(6)}` : "cost=?"];
+  if (res.provider) parts.push(res.provider);
+  if (Array.isArray(ev.nonfinite_replaced) && ev.nonfinite_replaced.length) parts.push("non-finite values replaced (see Result)");
+  return { text: parts.join(" · "), style: ev.outcome === "complete" ? "normal" : "warn" };
+}
+
+function isTerminal(ev) {
+  if (!ev || typeof ev !== "object") return false;
+  if (ev.type === "result") return ev.result !== null && typeof ev.result === "object" && typeof ev.outcome === "string";
+  return ev.type === "error" && typeof ev.error === "string";
+}
+
+async function send() {
+  if (controller) return;                       // keyboard guard: one request per page at a time
+  const ctl = new AbortController();
+  controller = ctl;
+  let terminal = false, stopped = false, streaming = false;
+  ctl.stopRequested = () => { stopped = true; };
+  const done = (text, style) => {               // final outcome for this request; never overwritten
+    if (terminal) return;
+    terminal = true;
+    setStatus(text, style);
+    if (controller === ctl) { controller = null; $("send").disabled = false; $("stop").disabled = true; }
+  };
+  $("reasoning").textContent = ""; $("output").textContent = ""; $("result").textContent = "";
+  $("send").disabled = true; $("stop").disabled = false; setStatus("waiting for first token…");
+  const started = performance.now();
+  let reader = null;
+  try {
+    const r = await fetch("/api/complete", { method: "POST", signal: ctl.signal,
+      headers: { "X-Session-Token": TOKEN, "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: $("prompt").value, system: $("system").value, revision: state.revision }) });
+    if (!r.ok) {
+      let j = {};
+      try { j = await r.json(); } catch (e) { /* keep the status text */ }
+      if (r.status === 409) {
+        done(STALE_SEND, "warn");
+        try { await refreshState(); } catch (e) { /* header keeps its last value */ }
+      } else if (r.status === 503) done(j.error || r.statusText, "warn");
+      else done(j.error || `${r.status} ${r.statusText}`, "error");
+      return;
+    }
+    streaming = true;
+    reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    read: for (;;) {
+      const { value, done: ended } = await reader.read();
+      if (ended) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, nl); buffer = buffer.slice(nl + 1);
+        let ev;
+        try { ev = JSON.parse(line); } catch (e) { break read; }
+        if (ev === null || typeof ev !== "object") break read;
+        if (ev.type === "reasoning" && typeof ev.text === "string") { $("reasoning").textContent += ev.text; setStatus("streaming…"); }
+        else if (ev.type === "text" && typeof ev.text === "string") { $("output").textContent += ev.text; setStatus("streaming…"); }
+        else if (isTerminal(ev)) {
+          if (ev.type === "result") {
+            $("result").textContent = line;     // exact line as received; never re-serialised
+            const s = resultStatus(ev, (performance.now() - started) / 1000);
+            done(s.text, s.style);
+          } else done(ev.error, "error");
+          break read;                            // 0.1.0 sends nothing after a terminal event
+        }
+        // unknown event types are ignored
+      }
+    }
+    if (terminal) { try { await reader.cancel(); } catch (e) { /* already closed */ } }
+    else if (stopped) done(STOPPED, "");
+    else done(INTERRUPTED, "error");
+  } catch (e) {
+    if (terminal) return;
+    if (stopped) done(STOPPED, "");
+    else if (streaming) done(INTERRUPTED, "error");
+    else done("Request failed: " + (e.message || e.name), "error");
+  } finally {
+    if (!terminal) done(stopped ? STOPPED : INTERRUPTED, stopped ? "" : "error");
+  }
+}
+
+$("send").onclick = send;
+$("stop").onclick = () => {
+  if (controller) { controller.stopRequested(); controller.abort(); setStatus("stopping…"); }
+};
+$("prompt").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { if (controller) return; send(); }
+});
+
+refreshState().catch((e) => setStatus(e.message, "error"));
+</script>
+</body>
+</html>

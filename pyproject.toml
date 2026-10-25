@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "AgentWiz"              # distribution/display name; import name is `agentwiz`
+dynamic = ["version"]          # single source: agentwiz/_version.py
+description = "Local browser UI for building and testing LLM steps, built on modelSpell"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = [
+  "modelSpell @ https://github.com/alexchwong/modelSpell/releases/download/v0.1.0/modelspell-0.1.0-py3-none-any.whl#sha256=ddc5b307fa31c29d115d5b8743e8d08321a6ae8a0bcea62b671edfa5e7d44dcf",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+agentwiz = "agentwiz.__main__:main"
+
+[project.urls]
+Source = "https://github.com/alexchwong/AgentWiz"
+
+[tool.hatch.metadata]
+allow-direct-references = true   # required for the pinned modelSpell wheel URL
+
+[tool.hatch.version]
+path = "agentwiz/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agentwiz"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["agentwiz", "pyproject.toml", "README.md", "LICENSE"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-rs"
+markers = ["live: opt-in tests against real backends (see tests/test_live.py)"]
