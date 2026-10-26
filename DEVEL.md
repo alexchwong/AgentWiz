@@ -162,6 +162,13 @@ AgentWiz emitted fails the test that saw it.
 | OpenRouter | `OPENROUTER_API_KEY`, `AGENTWIZ_LIVE_OPENROUTER_MODEL` (`author/slug`) |
 | llama-server | `AGENTWIZ_LIVE_LLAMASERVER_URL` (e.g. `http://127.0.0.1:8080/v1`), `AGENTWIZ_LIVE_LLAMASERVER_MODEL` |
 
+Optional: `AGENTWIZ_LIVE_TIMEOUT` (seconds the test waits for each read from AgentWiz; default 600,
+because AgentWiz sends nothing until the model's first visible token, and a model that is loading,
+queued or reasoning silently can take minutes) and `AGENTWIZ_LIVE_OPENROUTER_PROVIDER` (the provider
+slug to pin; default the first one listed, which your OpenRouter account settings may exclude, so
+OpenRouter refuses the pinned request with HTTP 404). The OpenRouter check prints the provider
+slugs it found and the one it pinned.
+
 Each prints an `EVIDENCE …` line. Copy it into `tests/live_evidence.md` under the configuration,
 with the five checks (install, launch and page, connection, discovery, streamed completion).
 Missing evidence is written as "missing" and never counts as a pass. Keep the README platforms

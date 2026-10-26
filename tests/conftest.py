@@ -232,14 +232,15 @@ class HTTPFailure(Exception):
         self.status, self.body = status, body
 
 
-def request(ui, path, body=None, token=True, raw=False):
+def request(ui, path, body=None, token=True, raw=False, timeout=10.0):
+    """One request to AgentWiz. `timeout` bounds each socket read, so a stream may take longer overall."""
     headers = {"Content-Type": "application/json"}
     if token:
         headers["X-Session-Token"] = ui.token
     req = urllib.request.Request(base(ui) + path, data=None if body is None else json.dumps(body).encode(),
                                  headers=headers, method="GET" if body is None else "POST")
     try:
-        resp = urllib.request.build_opener().open(req, timeout=10)
+        resp = urllib.request.build_opener().open(req, timeout=timeout)
     except urllib.error.HTTPError as e:
         data = e.read()
         getattr(ui, "transcript", []).append(data)
