@@ -5,8 +5,8 @@
 Binds to 127.0.0.1 only. Every request must carry the per-launch session token (the page URL's
 `t` parameter, or the X-Session-Token header), so other web pages in the browser cannot drive the
 server or spend API credit. Settings are shared by all tabs and checked per request by revision;
-API keys are write-only and held in memory. Profiles are saved in the workspace the server was
-given; the server never opens or closes a workspace itself. Error text reaching the page or terminal
+API keys are write-only and held in memory. Profiles are workspace-local copies of shared defaults;
+the server never opens or closes a workspace itself. Error text reaching the page or terminal
 is limited to text that cannot contain a credential (techspec 7.6, 7.7).
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ from modelspell import Cancelled, ModelSpellError
 
 from .. import __version__, jsonio, model_call
 from ..model_call import SettingsError, build_messages, classify_outcome, describe_error, result_to_dict
-from ..state import NoSuchProfile, ProcessState, ReadOnly, StaleRevision, WriteFailed
+from ..state import DefaultConflict, NoSuchProfile, ProcessState, ReadOnly, StaleRevision, WriteFailed
 from ..workspace import Workspace
 
 INDEX = Path(__file__).with_name("index.html")
@@ -60,11 +60,11 @@ def report_internal(route: str, exc: BaseException) -> None:
 class UIServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port: int = 0, *, workspace: Workspace, page_timeout: float = 30.0,
+    def __init__(self, port: int = 0, *, workspace: Workspace, profiles_dir: Path, page_timeout: float = 30.0,
                  request_limit: int = 8):
         self.token = secrets.token_urlsafe(24)
         self.workspace = workspace  # opened and closed by the caller
-        self.state = ProcessState(workspace, request_limit)
+        self.state = ProcessState(workspace, request_limit, profiles_dir=profiles_dir)
         self.page_timeout = page_timeout
         self.index = INDEX.read_bytes()
         super().__init__(("127.0.0.1", port), Handler)
@@ -160,6 +160,8 @@ class Handler(BaseHTTPRequestHandler):
             self._reply_safely(400, {"error": f"{type(exc).__name__}: {exc}"})
         except StaleRevision:
             self._reply_safely(409, {"error": "settings were changed elsewhere", "code": "stale_revision"})
+        except DefaultConflict:
+            self._reply_safely(409, {"error": "confirm replacing the default profile", "code": "default_conflict"})
         except ReadOnly as exc:  # names a file, a JSON location and a rule; never a value
             self._reply_safely(409, {"error": str(exc), "code": "read_only"})
         except NoSuchProfile:  # profile names are not echoed
@@ -202,7 +204,8 @@ class Handler(BaseHTTPRequestHandler):
         routes = {"/api/config": self._config, "/api/models": self._models,
                   "/api/providers": self._providers, "/api/complete": self._complete,
                   "/api/profiles/save": self._profile_save, "/api/profiles/select": self._profile_select,
-                  "/api/profiles/delete": self._profile_delete}
+                  "/api/profiles/delete": self._profile_delete,
+                  "/api/profiles/update": self._profile_update}
         handler = routes.get(path)
         if handler is None:
             return self._send(404, {"error": "not found"})
@@ -230,6 +233,9 @@ class Handler(BaseHTTPRequestHandler):
         name = _profile_name(body)
         revision = _revision(body)
         self._send(200, self._state_body(self.server.state.delete_profile(name, revision)))
+
+    def _profile_update(self, body: dict) -> None:
+        self._send(200, self._state_body(self.server.state.update_profiles(body, _revision(body))))
 
     def _discovery_endpoint(self, body: dict):
         if "kind" not in body:

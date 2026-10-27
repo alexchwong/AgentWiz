@@ -1,4 +1,5 @@
-"""Command line: agentwiz [--port N] [--no-browser] [--workspaces-dir PATH] [--workspace NAME] [--version]
+"""Command line: agentwiz [--port N] [--no-browser] [--workspaces-dir PATH] [--workspace NAME]
+[--profiles-dir PATH] [--version]
 (techspec 7.2).
 
 Exit statuses: 0 after Ctrl-C; 1 when the workspace cannot be opened or the port cannot be bound;
@@ -61,6 +62,8 @@ def main(argv: list[str] | None = None) -> None:
                         help="folder holding workspaces, created if missing (default: ./workspaces)")
     parser.add_argument("--workspace", type=_workspace_name, default="default", metavar="NAME",
                         help="workspace to use, created empty if missing (default: default)")
+    parser.add_argument("--profiles-dir", type=Path, default=Path("./model_profiles"), metavar="PATH",
+                        help="shared default profiles, created if missing (default: ./model_profiles)")
     parser.add_argument("--version", action="version",
                         version=f"AgentWiz {__version__} (modelSpell {modelspell.__version__})")
     args = parser.parse_args(argv)
@@ -78,7 +81,7 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         try:
-            server = UIServer(args.port, workspace=ws)
+            server = UIServer(args.port, workspace=ws, profiles_dir=args.profiles_dir)
         except (OSError, OverflowError) as exc:
             reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
             _say(f"cannot listen on 127.0.0.1:{args.port}: {reason}", err=True)

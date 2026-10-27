@@ -21,6 +21,8 @@
   .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
   @media (max-width: 800px) { .grid { grid-template-columns:1fr; } }
   label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  .checkbox-label { display:flex; align-items:center; gap:8px; }
+  .checkbox-label input[type="checkbox"] { width:auto; margin:0; padding:0; flex:none; }
   pre { margin:0; min-height:180px; max-height:50vh; overflow:auto; white-space:pre-wrap; word-break:break-word;
         background:var(--box); border:1px solid var(--line); border-radius:6px; padding:8px; font:13px/1.45 ui-monospace, monospace; }
   #reasoning { color:var(--muted); }
@@ -70,6 +72,8 @@
   <form method="dialog" id="settings-form">
     <label for="profile">Profile</label>
     <div class="inline"><select id="profile"></select><button type="button" id="delete-profile">Delete</button></div>
+    <button type="button" id="update-profiles">Update profiles from defaults…</button>
+    <label class="checkbox-label"><input type="checkbox" id="export-default"> Export as default when saving</label>
     <label for="kind">Model source</label>
     <select id="kind">
       <option value="lmstudio">LM Studio</option>
@@ -166,8 +170,14 @@ function renderState() {
   if (problems.length) { const line = document.createElement("p"); line.textContent = REPAIR; banner.append(line); }
   banner.classList.toggle("hidden", problems.length === 0);
   const pr = profilesInfo();
+  $("summary").title = `${pr.path || ""}\nDefaults: ${pr.defaults_path || ""}`;
+  if (pr.unresolved_active) {
+    const line = document.createElement("p");
+    line.textContent = `Profile ${pr.unresolved_active} is missing; default settings are in use.`;
+    banner.append(line); banner.classList.remove("hidden");
+  }
   const profile = pr.active === null || pr.active === undefined ? "no profile"
-    : `profile: ${pr.active}${pr.modified ? " (modified)" : ""}`;
+    : `profile: ${profileLabel(pr.active)}${pr.modified ? " (modified)" : ""}`;
   const parts = [profile, state.kind, state.base_url || "(default URL)", state.model || "(no model)"];
   if (state.kind === "openrouter") parts.push("provider=" + (state.provider || "any"));
   if (state.reasoning) parts.push("reasoning=" + state.reasoning);
@@ -200,18 +210,25 @@ function settingsMsg(text, warn = false) {
   $("settings-msg").classList.toggle("warn", warn);
 }
 
+function profileLabel(name) {
+  return (profilesInfo().conflicts || []).includes(name) ? `${name}-(${state.workspace.name})` : name;
+}
+
 function renderProfileControls() {
   const pr = profilesInfo(), sel = $("profile");
   sel.replaceChildren(new Option("(no profile)", ""));
-  for (const name of pr.names) sel.add(new Option(name, name));
+  for (const name of pr.names) sel.add(new Option(profileLabel(name), name));
   sel.value = pr.active || "";
   sel.disabled = pr.read_only;
   $("delete-profile").disabled = pr.read_only || !pr.active;
   $("save-profile").disabled = pr.read_only || !pr.active;
   $("save-as-profile").disabled = pr.read_only;
+  $("update-profiles").disabled = pr.read_only || pr.defaults_read_only;
+  $("export-default").disabled = pr.defaults_read_only;
 }
 
 function fillDialog() {
+  $("export-default").checked = false;
   $("kind").value = state.kind; $("base_url").value = state.base_url || ""; $("model").value = state.model || "";
   $("reasoning_level").value = state.reasoning || ""; $("max_tokens").value = state.max_tokens || "";
   $("api_key").value = ""; clearKey = false; $("key-state").textContent = keySource(state).label;
@@ -288,11 +305,30 @@ $("delete-profile").onclick = async () => {
 };
 
 async function saveProfile(name) {
+  const body = { ...dialogConfig(), name, revision: state.revision,
+    export_default: $("export-default").checked };
   try {
-    state = await api("/api/profiles/save", { ...dialogConfig(), name, revision: state.revision });
+    try { state = await api("/api/profiles/save", body); }
+    catch (e) {
+      if (e.code !== "default_conflict") throw e;
+      if (!confirm(`Replace default profile "${name}"?`)) return;
+      state = await api("/api/profiles/save", { ...body, overwrite_default: true });
+    }
     renderState(); $("settings").close();
   } catch (e) { await dialogFailure(e); }
 }
+
+$("update-profiles").onclick = async () => {
+  try {
+    await refreshState(); renderProfileControls();
+    const revision = state.revision, overwrite = [];
+    for (const name of profilesInfo().conflicts || []) {
+      if (confirm(`Overwrite workspace profile "${name}" with its default? Cancel keeps the workspace copy.`)) overwrite.push(name);
+    }
+    state = await api("/api/profiles/update", { revision, overwrite });
+    renderState(); fillDialog(); settingsMsg("Profiles updated from defaults.");
+  } catch (e) { await dialogFailure(e); }
+};
 
 $("save-profile").onclick = () => { const name = profilesInfo().active; if (name) saveProfile(name); };
 

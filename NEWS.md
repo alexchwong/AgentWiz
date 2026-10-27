@@ -2,7 +2,7 @@
 ## 0.1.1
 - Model settings can be saved as named profiles; the active profile is restored when AgentWiz starts.
 - API keys are still never saved; re-enter them after a restart, or use OPENROUTER_API_KEY.
-- Profiles live in a workspace folder; choose it with --workspace NAME and --workspaces-dir PATH.
+- Default profiles are saved in ./model_profiles; new workspaces import independent copies, with explicit updates and exports.
 - Only one AgentWiz process can use a workspace; a second one exits with status 3.
 - Damaged or newer workspace files are left untouched; profiles become read-only until you repair and restart.
 - Base URLs containing a user name, password, query or fragment are refused.

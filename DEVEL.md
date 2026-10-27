@@ -26,7 +26,7 @@ python scripts/build_release.py --smoke     # build, check (RC1-RC3) and smoke-t
 `scripts/dev_setup.sh [--python PATH]` is the one developer setup command. It refuses to run outside
 a checkout, creates `./.venv` if missing, and runs `python -m pip install -e '.[dev]'`; it also
 converts a `.venv` made by the user installer (wheel only, no pytest). The user installer
-(`scripts/install.sh`) refuses to run in a checkout unless `--dir` is given. `./workspaces/` is
+(`scripts/install.sh`) refuses to run in a checkout unless `--dir` is given. `./workspaces/` and `./model_profiles/` are
 ignored by git in this checkout.
 
 ## Contents
@@ -52,7 +52,8 @@ ignored by git in this checkout.
 | `agentwiz/__main__.py` | yes | Command line (`agentwiz`, `python -m agentwiz`); opens the workspace before binding; exit statuses 1, 2, 3. |
 | `agentwiz/model_call.py` | yes | Settings and key validation, message building, `complete()` arguments, the call, outcome classification, error descriptions. No HTTP. |
 | `agentwiz/state.py` | yes | Process state: settings, revision, keys, profiles, state lock, request budget, snapshots, key source. No HTTP. |
-| `agentwiz/workspace.py` | yes | Workspace names, opening and locking (`flock`), reading and validating workspace files, atomic writes. Called only from `state.py` under the state lock. No HTTP. Not imported by `import agentwiz`. |
+| `agentwiz/workspace.py` | yes | Workspace names, opening and locking (`flock`), reading and validating workspace.json, atomic writes. Called only from `state.py` under the state lock. No HTTP. Not imported by `import agentwiz`. |
+| `agentwiz/profiles.py` | yes | Workspace profile copies and shared defaults: validation, preservation, atomic writes, fingerprints and permanent short-lived library lock. No HTTP. |
 | `agentwiz/jsonio.py` | yes | The one JSON writer (`encode`, `encode_line`), and the file writer and strict reader for AgentWiz's own files (`encode_file`, `decode_file`). Standard library only. |
 | `agentwiz/ui/server.py` | yes | The HTTP server; the only module that knows HTTP. |
 | `agentwiz/ui/index.html` | yes | The page. |
@@ -113,6 +114,7 @@ modelSpell's copies are ported only by deliberate review, never synced automatic
 | What a page is showing | Every save, profile operation and completion states the revision its page was showing; a stale one gets 409. An operation that changes nothing writes nothing and keeps the revision. |
 | Workspace files within the process | Changed only by `state.py` through `workspace.py`, under the state lock; whole-file atomic replacement (temporary file in the same folder, `fsync`, `os.replace`); each change re-reads and validates the file first, so a file damaged by hand is never overwritten. A file with a problem is never written. |
 | The workspace across processes | `.agentwiz.lock`, opened once at launch and held with `flock(LOCK_EX \| LOCK_NB)` for the life of the process; never replaced, renamed or deleted (a new file would have a new inode that a second process could lock); released by the kernel when the process ends for any reason. The descriptor is non-inheritable, so child processes never keep it. A second process exits with status 3. |
+| Shared defaults across processes | `model_profiles/.profiles.lock`: a permanent file, opened separately per operation and held with blocking `flock(LOCK_EX)` only across read/change/replace. Lock order is state lock, then defaults lock. Never replaced or deleted. Workspace copies remain protected by their lifetime workspace lock. |
 | Lock-file details | pid, host and start time, written in place once at launch; informative only, never used for ownership. |
 | Model requests | At most 8 in progress (`RequestBudget`), counted from acceptance until the handler returns, including after the page stopped or closed; the ninth gets 503; nothing is queued. |
 | Writes to a page | A 30-second socket timeout on every page connection, set in `Handler.setup()`. One writer per stream, on the handler's thread. |
@@ -132,6 +134,55 @@ Discovery calls and connection threads are not budgeted.
 `/mnt/c` under WSL2 has not been tested. Network, shared and cloud-synced
 folders are unsupported and not detected.
 
+
+### Workspace copies and shared defaults (owner-approved revision)
+
+`--profiles-dir PATH` defaults to `./model_profiles`, relative to launch directory. Its
+`profiles.json` holds shared defaults; workspace copies live at
+`<workspaces-dir>/<workspace>/model-profiles/profiles.json`. Only state.py initiates mutations,
+under its state lock. `profiles.py` handles profile files and library locking; `workspace.py`
+handles workspace.json, its lifetime lock, and the reusable atomic writer. Both libraries use
+`{"format_version": 1, "profiles": {...}}`, preserve unknown fields and never receive session keys.
+The active selection is in workspace.json, never added to a profile library.
+
+New workspaces import all valid defaults once, with no active selection. No migration of old
+workspace-root profiles.json is attempted. If defaults are damaged, a new workspace starts with
+an empty local library and reports the defaults problem. Restarts never reimport automatically.
+
+`POST /api/profiles/update` takes `revision` and an optional `overwrite` array of names. It adds
+missing defaults; differing same-name profiles are replaced only when listed. Identical settings
+are left untouched. Replacing the active profile applies its imported settings. The page asks
+about each conflict. `POST /api/profiles/save` optionally takes boolean `export_default` and
+`overwrite_default`; replacing a different default without approval returns 409 `default_conflict`.
+Approval uses the same revision; changes while the prompt is open cause 409 `stale_revision`.
+There is no default deletion route. Normal local deletion leaves defaults alone.
+
+State exposes local `profiles.path`, `defaults_path`, `default_names`, `defaults_read_only`,
+`conflicts` and `unresolved_active`. Conflicts compare the six validated ModelSettings fields,
+not unknown metadata or keys. Only differing copies display `name-(workspace-name)`; stored names
+never change. Missing active references use default settings without making files read-only.
+
+State views stat defaults using inode, nanosecond mtime and size, under the library lock; changed
+files reload and increment the shared revision. Profile operations re-read defaults under that
+lock before checking revision. External edits never automatically change workspace settings.
+Invalid defaults recover when the file is repaired; damaged local libraries remain latched until
+restart, preserving the previous local-file policy. Defaults problems name the absolute path.
+All revision-sensitive settings saves and snapshots refresh defaults too.
+
+Multi-file writes are not a transaction. Local profiles are written first, then workspace selection,
+then optional export. A workspace-write failure leaves the successfully written local definitions
+visible but does not commit typed settings/keys or selection. An export failure leaves the local
+save and active selection in place. Errors identify the failing file; rollback is not promised.
+A crash may leave a missing active reference, handled by the unresolved rule. Locks release on
+all errors; neither permanent lock file is replaced or removed. Local filesystems only.
+
+Functional coverage uses HTTP for copy-on-creation, explicit conflict choices, export confirmation,
+independent restart selections, stale revisions, concurrent export retry, invalid defaults, and
+key exclusion. Installed smoke verifies both default directories from a fresh launch. No new
+runtime dependencies or release-tool changes are needed. For uncommitted work, transfer changes
+into a throwaway clone and commit only there before running build_release.py --smoke, which uses
+committed HEAD. Never commit the implementation checkout just to run this check.
+
 ## Error reporting
 
 The page and the terminal receive only text that cannot contain a credential:
@@ -142,7 +193,7 @@ The page and the terminal receive only text that cannot contain a credential:
 | `ModelSpellError` | `describe_error(exc, base_url)`: 400 on non-streaming routes, an `error` event while streaming | nothing |
 | `ReadOnly` | 409 `{"error": "profiles are read-only: <file>: <problem>", "code": "read_only"}` (or "the workspace is read-only: …") | nothing |
 | `NoSuchProfile` | 404 `{"error": "no such profile", "code": "no_such_profile"}`; profile names are not echoed | nothing |
-| `WriteFailed` | 500 `{"error": "could not write profiles.json: <strerror>", "code": "write_failed"}` | nothing |
+| `WriteFailed` | 500 `{"error": "could not write <path>: <strerror>", "code": "write_failed"}` | nothing |
 | Anything else | 500 `{"error": "InternalError: <Class>", "code": "internal"}`, or an `error` event `InternalError: <Class>` | `[AgentWiz] internal error in <route>: <Class>` and stack locations, never messages or values |
 
 Never add a handler that formats an exception's message unless the exception is AgentWiz's own.
@@ -178,11 +229,11 @@ python -m pytest -m live -s         # optional live checks (variables below)
   release tooling:* `scripts/build_release.py` checks the NEWS section, the wheel's members and its
   metadata before publishing (RC1–RC3); these are release checks, not tests.
 - **T3.** Test functionality only: drive AgentWiz through HTTP, the command line, the public
-  functions of `model_call`, `state`, `workspace` and `jsonio`, traffic at a fake backend, or
+  functions of `model_call`, `state`, `workspace`, `profiles` and `jsonio`, traffic at a fake backend, or
   captured output.
 
 Tests never write outside `tmp_path`: `make_ui` opens a workspace under `tmp_path` for every server
-(including the live tests'), and the command-line tests pass `--workspaces-dir`. "File left
+(including the live tests'), and a defaults library under `tmp_path`; command-line tests launch with their working directory there. "File left
 untouched" is checked with `os.stat` (inode, size, modification time). Restarts are simulated
 in-process with the `restart` fixture (shut the server down, close its workspace, reopen it, start a
 new server).
@@ -304,10 +355,11 @@ Choices recorded for 0.1.1:
 - The dialog's Save is now Apply; profile names are entered with `prompt()`; overwrite and delete
   are confirmed with `confirm()`.
 - Operations that change nothing write nothing and keep the revision.
-- `workspace.json` requires `created_by` and `save_runs`; `profiles.json` requires `active` and
-  `profiles`. A missing field is `invalid_field`.
-- Profiles are read even when the whole workspace is read-only (reading never writes); every
-  profile operation is then refused.
+- `workspace.json` requires `created_by` and `save_runs`; `active_profile` is null or a valid name.
+  Missing selection is treated as null. Profile libraries require `profiles`, not `active`; legacy
+  `active` is uninterpreted metadata and preserved. Both files retain format_version 1.
+- Workspace profiles are read even when the workspace is read-only; local profile operations are
+  refused. Invalid defaults disable only imports/exports, not local profiles or model requests.
 - Invalid workspace names are also rejected by `open_workspace` itself (before creating anything).
 - The manual evidence regime of the 0.1.1 specification (runbook, evidence file, walkthrough, lock
   checks, release review) was withdrawn by the owner on 27 October 2026; see "Checking a release".

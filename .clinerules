@@ -10,6 +10,8 @@
 4. Change shared state only in `agentwiz/state.py`, under the state lock, with a revision check.
    Workspace files change only through `agentwiz/workspace.py`, called from `state.py` under the
    state lock with a revision check. `.agentwiz.lock` is never replaced, renamed or deleted.
+   Profile files use `agentwiz/profiles.py`; default-library operations also hold the blocking
+   `.profiles.lock` after the state lock. That permanent lock file is never replaced or deleted.
 5. All JSON output goes through `agentwiz/jsonio.py` (`encode`/`encode_line` for HTTP,
    `encode_file`/`decode_file` for AgentWiz's own files).
 6. Error text reaches the page or terminal only as `DEVEL.md` "Error reporting" allows: never

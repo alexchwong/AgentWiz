@@ -53,6 +53,7 @@ agentwiz --no-browser               # just print the address
 agentwiz --port 8765                # fixed port (default: any free port)
 agentwiz --workspace work           # use the workspace "work" (default: default)
 agentwiz --workspaces-dir ~/aw      # folder holding workspaces (default: ./workspaces)
+agentwiz --profiles-dir ~/models    # shared default profiles (default: ./model_profiles)
 agentwiz --version                  # AgentWiz and modelSpell versions
 python -m agentwiz                  # same as agentwiz
 ```
@@ -67,14 +68,14 @@ use it while it runs. Press Ctrl-C to stop.
 Profiles are saved in a **workspace**: the folder `<workspaces-dir>/<name>/`, by default
 `./workspaces/default`. The default is relative to the directory you launch AgentWiz from, so
 launching from a different directory uses a different workspace. A workspace that does not exist is
-created empty, and the terminal line naming the workspace then ends in `(created)`; if you did not
+created with copies of the default profiles, and its terminal line ends in `(created)`; if you did not
 expect that, check the name you typed. Names are 1 to 64 letters, digits, `.`, `_` or `-`, starting
 with a letter or digit.
 
 - **One AgentWiz process per workspace.** A second AgentWiz on the same workspace prints which
   process holds it and exits with status 3. To switch workspace, stop AgentWiz and start it again
   with another `--workspace`.
-- The folder holds `workspace.json`, `profiles.json` and `.agentwiz.lock`. If you keep workspaces
+- The folder holds `workspace.json`, `model-profiles/profiles.json` and `.agentwiz.lock`. If you keep workspaces
   inside a git repository, add `.agentwiz.lock` to that repository's `.gitignore`.
 - **Supported locations:** local disks on Linux and macOS, and WSL2's own filesystem. Shared,
   network and cloud-synced folders are not supported and not detected: the workspace lock may not
@@ -104,6 +105,22 @@ where the key comes from: `key: session` (entered here), `key: env OPENROUTER_AP
 ### Profiles
 
 A profile stores the settings above, except the API key, under a name. It never stores a key.
+
+Shared **defaults** live in `./model_profiles/profiles.json`, relative to the launch directory.
+Use `--profiles-dir /path/to/another/project/model_profiles` to use defaults kept in another project.
+Each new workspace copies all defaults into its own `model-profiles/profiles.json`; none is selected
+initially. Existing workspaces are never automatically updated, including on restart.
+
+- **Update profiles from defaults…** adds missing profiles and asks whether to overwrite each
+  conflicting workspace profile. Cancel on a conflict keeps that copy; identical copies are unchanged.
+- A profile whose settings differ from a same-named default is displayed as `name-(workspace-name)`.
+  This is only a label, not a renamed profile. Hover over the header for local and default file paths.
+- Check **Export as default when saving** to also publish the saved profile to the shared library.
+  Replacing a different default requires confirmation. The option is unchecked whenever the dialog opens.
+- Overwriting the active profile during an update applies the imported settings. Default-library
+  changes alone never change workspace settings. Deleting a workspace profile never deletes a default.
+- Local save and export are separate writes. If exporting fails, the workspace save remains successful;
+  the error identifies the file that failed. No API key is included in either library.
 
 - **Save as profile…** asks for a name and saves the dialog's settings as that profile (asking
   before overwriting one), and makes it the active profile.
@@ -210,7 +227,7 @@ a clone of this repository has a scripted stand-in: run `python scripts/stub_bac
    updates. The same happens for a profile action taken in a tab showing outdated settings.
 6. **One process per workspace.** While AgentWiz runs, start a second `agentwiz` in the same folder
    in another terminal: it says the workspace is in use (with the first one's process ID) and exits.
-7. **Damaged file.** Stop AgentWiz. In `workspaces/default/profiles.json`, change a `max_tokens`
+7. **Damaged file.** Stop AgentWiz. In `workspaces/default/model-profiles/profiles.json`, change a `max_tokens`
    value to `"64"` (with the quotes), and start again. The terminal and a banner on the page name
    the file and the problem; the profile controls are disabled, but **Apply** and **Send** still
    work, and the file is left as it is. Undo the edit and restart: everything works again.
@@ -233,9 +250,9 @@ a clone of this repository has a scripted stand-in: run `python scripts/stub_bac
 - **Workspaces.** One AgentWiz process per workspace; restart to switch. The default workspace
   folder is relative to where AgentWiz is launched. Shared, network and cloud-synced folders are
   unsupported and not detected.
-- **Damaged or newer files** make the workspace or its profiles read-only until AgentWiz restarts,
-  even after the file is repaired. Numbers with more precision than AgentWiz can keep exactly count
-  as damage.
+- **Damaged or newer local files** make the workspace or its profiles read-only until AgentWiz restarts.
+  Damaged defaults disable import/export only; repairing defaults is detected without restarting.
+  Numbers with more precision than AgentWiz can keep exactly count as damage.
 - **Workspace files.** Files AgentWiz rewrites become readable by their owner only (mode 0600). A
   crash during a write can leave a `.<file>.<random>.tmp` file beside an intact original; after a
   power cut, the most recent profile change may be lost.

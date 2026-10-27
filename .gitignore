@@ -13,3 +13,4 @@ htmlcov/
 *.log
 /dist/
 /workspaces/
+/model_profiles/

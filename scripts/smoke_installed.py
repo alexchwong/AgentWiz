@@ -93,10 +93,18 @@ try:
         return urllib.request.urlopen(req, timeout=30)
 
     # S4 (0.1.1): the default workspace was created here, and AgentWiz found its files valid
-    workspace = json.loads(api("/api/state").read())["workspace"]
+    initial = json.loads(api("/api/state").read())
+    workspace = initial["workspace"]
     expected_path = str((Path.cwd() / "workspaces" / "default").resolve())
     check(workspace["path"] == expected_path, f"workspace at {workspace['path']}, expected {expected_path}")
     check(workspace["read_only"] is False and workspace["problems"] == [], f"workspace not usable: {workspace}")
+    check(Path(expected_path).is_dir(), "default workspace folder missing")
+    defaults = Path.cwd() / "model_profiles"
+    check(defaults.is_dir(), "default profile folder missing")
+    check(initial["profiles"]["defaults_path"] == str(defaults.resolve() / "profiles.json"),
+          "unexpected defaults path")
+    check(initial["profiles"]["names"] == [] and initial["profiles"]["active"] is None,
+          "fresh workspace has unexpected profiles")
 
     # S5: configure the stub with the current revision
     rev = json.loads(api("/api/state").read())["revision"]

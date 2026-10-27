@@ -208,6 +208,7 @@ def make_ui(tmp_path):
         if workspace is None:
             workspace = open_workspace(tmp_path / "ws", f"w{next(names)}")
             opened.append(workspace)
+        kwargs.setdefault("profiles_dir", tmp_path / "model_profiles")
         srv = UIServer(0, workspace=workspace, **kwargs)
         srv.transcript = []  # every response body the helpers received, for "never echoed" checks
         threading.Thread(target=srv.serve_forever, args=(0.02,), daemon=True).start()
@@ -239,7 +240,7 @@ def restart(make_ui):
         ws.close()
         reopened = open_workspace(ws.path.parent, ws.name)
         make_ui.opened.append(reopened)
-        return make_ui(workspace=reopened)
+        return make_ui(workspace=reopened, profiles_dir=old.state.library.path)
 
     return again
 

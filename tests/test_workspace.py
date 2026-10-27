@@ -95,13 +95,17 @@ def test_cli_workspace(tmp_path):
         first = launch()
         first_address = first.address()
         assert first.state(first_address)["workspace"]["name"] == "default"
+        assert (tmp_path / "model_profiles").is_dir()
+        assert (tmp_path / "workspaces" / "default" / "model-profiles" / "profiles.json").is_file()
 
         second = launch()
         assert second.exit_status() == 3
         assert first.state(first_address)["workspace"]["name"] == "default"
 
-        demo = launch("--workspace", "demo")
-        assert demo.state(demo.address())["workspace"]["name"] == "demo"
+        demo = launch("--workspace", "demo", "--profiles-dir", str(tmp_path / "custom-defaults"))
+        state = demo.state(demo.address())
+        assert state["workspace"]["name"] == "demo"
+        assert state["profiles"]["defaults_path"] == str(tmp_path / "custom-defaults" / "profiles.json")
 
         bad = launch("--workspace", "../x")
         assert bad.exit_status() == 2

@@ -1,6 +1,6 @@
 """Workspace folders, the workspace lock and AgentWiz's own files (techspec 7.5; R1-1, R1-2, R1-3, R1-6).
 
-A workspace is a folder `<workspaces_dir>/<name>/` holding `workspace.json`, `profiles.json` and
+A workspace is a folder `<workspaces_dir>/<name>/` holding `workspace.json`, `model-profiles/` and
 `.agentwiz.lock`. One process holds a workspace at a time: `.agentwiz.lock` is opened once and held
 with `flock` for the life of the process, so the kernel releases it however the process ends. The
 lock file is never replaced, renamed or deleted, because a new file at that path would have a new
@@ -22,24 +22,19 @@ import re
 import socket
 import tempfile
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from modelspell import ModelSpellError
-
 from . import __version__
 from .jsonio import decode_file, encode_file
-from .model_call import _FIELDS, KINDS, REASONING_LEVELS, ModelSettings, SettingsError, settings_from_body
 
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 FORMAT_VERSION = 1
 NAME_RULE = "1 to 64 letters, digits, '.', '_' or '-', starting with a letter or digit"
 
 WORKSPACE_FILE = "workspace.json"
-PROFILES_FILE = "profiles.json"
 LOCK_FILE = ".agentwiz.lock"
-PROFILE_FIELDS = _FIELDS  # the six ModelSettings fields, in their usual order
 
 
 def valid_name(value: object) -> bool:
@@ -59,12 +54,12 @@ class WorkspaceInUse(WorkspaceError):
 
 @dataclass(frozen=True)
 class Problem:
-    file: str      # "workspace.json" or "profiles.json"
+    file: str      # workspace.json or an absolute profile-library path
     code: str      # "unreadable" | "invalid_json" | "invalid_field" | "newer_format"
     message: str   # AgentWiz's own text: JSON location and rule; never a value or exception text
 
 
-class _Invalid(Exception):
+class InvalidDocument(Exception):
     """A field rule was broken; the message is the location and the rule."""
 
 
@@ -73,7 +68,7 @@ def _strerror(exc: OSError) -> str:
 
 
 # --- reading and validating -------------------------------------------------------------------
-def _read(path: Path, file: str) -> tuple[dict | None, Problem | None]:
+def read_document(path: Path, file: str) -> tuple[dict | None, Problem | None]:
     """(top-level object, None), (None, None) if missing, or (None, problem)."""
     try:
         data = path.read_bytes()
@@ -87,13 +82,13 @@ def _read(path: Path, file: str) -> tuple[dict | None, Problem | None]:
         return None, Problem(file, "invalid_json", str(exc))
 
 
-def _format_version(obj: dict) -> int:
-    """Returns the format version; raises _Invalid if it is missing or not an integer of at least 1."""
+def check_format_version(obj: dict) -> int:
+    """Return the version; raise InvalidDocument if missing or not an integer of at least 1."""
     if "format_version" not in obj:
-        raise _Invalid("format_version is missing")
+        raise InvalidDocument("format_version is missing")
     value = obj["format_version"]
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-        raise _Invalid("format_version must be an integer of at least 1")
+        raise InvalidDocument("format_version must be an integer of at least 1")
     return value
 
 
@@ -102,93 +97,18 @@ _NEWER = f"written by a newer AgentWiz (format_version greater than {FORMAT_VERS
 
 def _check_workspace(obj: dict) -> Problem | None:
     try:
-        if _format_version(obj) > FORMAT_VERSION:
+        if check_format_version(obj) > FORMAT_VERSION:
             return Problem(WORKSPACE_FILE, "newer_format", _NEWER)
         if not isinstance(obj.get("created_by"), str):
-            raise _Invalid("created_by must be a string")
+            raise InvalidDocument("created_by must be a string")
+        active = obj.get("active_profile")
+        if active is not None and not valid_name(active):
+            raise InvalidDocument("active_profile must be null or a valid profile name")
         if not isinstance(obj.get("save_runs"), bool):
-            raise _Invalid("save_runs must be true or false")
-    except _Invalid as exc:
+            raise InvalidDocument("save_runs must be true or false")
+    except InvalidDocument as exc:
         return Problem(WORKSPACE_FILE, "invalid_field", str(exc))
     return None
-
-
-def _check_profile(name: str, obj: Any) -> ModelSettings:
-    where = f"profiles.{name}"
-    if not isinstance(obj, dict):
-        raise _Invalid(f"{where} must be an object")
-    for f in PROFILE_FIELDS:
-        if f not in obj:
-            raise _Invalid(f"{where}.{f} is missing")
-    if obj["kind"] not in KINDS:
-        raise _Invalid(f"{where}.kind must be one of {', '.join(KINDS)}")
-    for f in ("base_url", "model", "provider"):
-        if not isinstance(obj[f], str):
-            raise _Invalid(f"{where}.{f} must be a string")
-    if obj["reasoning"] not in REASONING_LEVELS:
-        raise _Invalid(f"{where}.reasoning must be one of: \"\", off, low, medium, high")
-    mt = obj["max_tokens"]
-    if mt is not None and not (isinstance(mt, int) and not isinstance(mt, bool) and mt >= 1):
-        raise _Invalid(f"{where}.max_tokens must be null or an integer of at least 1")
-    try:
-        return settings_from_body(ModelSettings(), {f: obj[f] for f in PROFILE_FIELDS})
-    except SettingsError as exc:  # AgentWiz's own messages; they name fields, never values
-        raise _Invalid(f"{where}: {exc}") from None
-    except ModelSpellError:
-        raise _Invalid(f"{where}.base_url must start with http:// or https:// "
-                       "(and is required for openai_compat)") from None
-
-
-@dataclass(frozen=True)
-class ProfilesFile:
-    """The result of reading profiles.json."""
-    problem: Problem | None
-    exists: bool = False
-    profiles: dict[str, ModelSettings] = field(default_factory=dict)
-    active: str | None = None
-    raw: dict = field(default_factory=dict)   # the file's object, for carrying unknown fields over
-
-
-def empty_profiles_raw() -> dict:
-    return {"format_version": FORMAT_VERSION, "active": None, "profiles": {}}
-
-
-def read_profiles(ws: "Workspace") -> ProfilesFile:
-    """Read and validate the whole of profiles.json (techspec 7.5.3)."""
-    raw, problem = _read(ws.path / PROFILES_FILE, PROFILES_FILE)
-    if problem is not None:
-        return ProfilesFile(problem)
-    if raw is None:
-        return ProfilesFile(None, exists=False, raw=empty_profiles_raw())
-    try:
-        if _format_version(raw) > FORMAT_VERSION:
-            return ProfilesFile(Problem(PROFILES_FILE, "newer_format", _NEWER))
-        if "profiles" not in raw or not isinstance(raw["profiles"], dict):
-            raise _Invalid("profiles must be an object")
-        profiles: dict[str, ModelSettings] = {}
-        for name, obj in raw["profiles"].items():
-            if not valid_name(name):
-                raise _Invalid(f"profiles has a profile name that breaks the name rule ({NAME_RULE})")
-            profiles[name] = _check_profile(name, obj)
-        if "active" not in raw:
-            raise _Invalid("active is missing")
-        active = raw["active"]
-        if active is not None and not (isinstance(active, str) and active in profiles):
-            raise _Invalid("active must be null or the name of a profile in profiles")
-    except _Invalid as exc:
-        return ProfilesFile(Problem(PROFILES_FILE, "invalid_field", str(exc)))
-    return ProfilesFile(None, exists=True, profiles=profiles, active=active, raw=raw)
-
-
-def profile_object(settings: ModelSettings, previous: Mapping | None = None) -> dict:
-    """A profile's object: the previous object's unknown fields kept, the six fields replaced.
-
-    Only the six ModelSettings fields are written; ModelSettings holds no key (P6).
-    """
-    out = dict(previous) if isinstance(previous, Mapping) else {}
-    for f in PROFILE_FIELDS:
-        out[f] = getattr(settings, f)
-    return out
 
 
 # --- writing ----------------------------------------------------------------------------------
@@ -215,10 +135,6 @@ def write_atomic(folder: Path, file: str, payload: Mapping[str, Any]) -> None:
         except OSError:
             pass
         raise
-
-
-def write_profiles(ws: "Workspace", raw: Mapping[str, Any]) -> None:
-    write_atomic(ws.path, PROFILES_FILE, raw)
 
 
 # --- the workspace ----------------------------------------------------------------------------
@@ -292,12 +208,12 @@ def open_workspace(workspaces_dir: Path, name: str) -> Workspace:
     created = False
     problems: list[Problem] = []
     try:
-        obj, problem = _read(path / WORKSPACE_FILE, WORKSPACE_FILE)
+        obj, problem = read_document(path / WORKSPACE_FILE, WORKSPACE_FILE)
         if problem is None and obj is None:
             try:
                 write_atomic(path, WORKSPACE_FILE, {"format_version": FORMAT_VERSION,
                                                     "created_by": "AgentWiz " + __version__,
-                                                    "save_runs": False})
+                                                    "save_runs": False, "active_profile": None})
             except OSError as exc:
                 raise WorkspaceError(f"cannot create {WORKSPACE_FILE} ({_strerror(exc)})") from None
             created = True
@@ -311,5 +227,14 @@ def open_workspace(workspaces_dir: Path, name: str) -> Workspace:
     return Workspace(name, path, fd, created, problems)
 
 
-__all__ = ["FORMAT_VERSION", "NAME_RE", "Problem", "ProfilesFile", "Workspace", "WorkspaceError",
-           "WorkspaceInUse", "open_workspace", "read_profiles", "valid_name", "write_profiles"]
+def read_workspace(ws: Workspace) -> tuple[dict | None, Problem | None]:
+    raw, problem = read_document(ws.path / WORKSPACE_FILE, WORKSPACE_FILE)
+    if raw is not None and problem is None:
+        problem = _check_workspace(raw)
+    if raw is None and problem is None:
+        problem = Problem(WORKSPACE_FILE, "unreadable", "workspace.json is missing")
+    return raw, problem
+
+
+def write_workspace(ws: Workspace, raw: Mapping[str, Any]) -> None:
+    write_atomic(ws.path, WORKSPACE_FILE, raw)

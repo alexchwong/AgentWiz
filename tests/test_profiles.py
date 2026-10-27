@@ -73,7 +73,7 @@ DAMAGED = [
      "invalid_json"),
     ("profiles.json", profiles_text()[:-1] + ', "extra": 0.10000000000000000001}', False, "invalid_json"),
     ("profiles.json", profiles_text(format_version=2), False, "newer_format"),
-    ("profiles.json", profiles_text(active="missing"), False, "invalid_field"),
+    ("workspace.json", '{"format_version": 1, "created_by": "AgentWiz", "save_runs": false, "active_profile": 4}', True, "invalid_field"),
     ("profiles.json", bad_profile(max_tokens="64"), False, "invalid_field"),
     ("profiles.json", bad_profile(base_url="http://u:p@127.0.0.1:1/v1"), False, "invalid_field"),
 ]
@@ -82,14 +82,15 @@ DAMAGED = [
 @pytest.mark.parametrize("file, text, whole, code", DAMAGED)
 def test_damaged_files_read_only(make_ui, tmp_path, server, file, text, whole, code):
     folder = tmp_path / "ws" / "w"
-    write_ws_file(folder / file, text)
-    damaged = file_stat(folder / file)
+    target = folder / file if file == "workspace.json" else folder / "model-profiles" / file
+    write_ws_file(target, text)
+    damaged = file_stat(target)
     ui = open_ui(make_ui, tmp_path)
 
     state = get_state(ui)
     assert state["workspace"]["read_only"] is whole
     assert state["profiles"]["read_only"] is True
-    assert [(p["file"], p["code"]) for p in state["workspace"]["problems"]] == [(file, code)]
+    assert [(p["file"], p["code"]) for p in state["workspace"]["problems"]] == [(file if whole else str(target), code)]
     assert "u:p" not in state["workspace"]["problems"][0]["message"]
     if file == "profiles.json":
         assert state["profiles"]["names"] == [] and state["profiles"]["active"] is None
@@ -98,9 +99,9 @@ def test_damaged_files_read_only(make_ui, tmp_path, server, file, text, whole, c
                     lambda: select(ui, None), lambda: delete(ui, "p")):
         fail = failure_of(attempt)
         assert fail.status == 409 and fail.body["code"] == "read_only"
-    assert file_stat(folder / file) == damaged
+    assert file_stat(target) == damaged
     if whole:
-        assert not (folder / "profiles.json").exists()
+        assert not (folder / "model-profiles" / "profiles.json").exists()
 
     server.reply(answer("still works"))
     configure(ui, server)
@@ -110,20 +111,20 @@ def test_damaged_files_read_only(make_ui, tmp_path, server, file, text, whole, c
 def test_damage_during_session_needs_restart(make_ui, tmp_path, server, restart):
     folder = tmp_path / "ws" / "w"
     good = profiles_text()
-    write_ws_file(folder / "profiles.json", good)
+    write_ws_file(folder / "model-profiles" / "profiles.json", good)
     ui = open_ui(make_ui, tmp_path)
     assert get_state(ui)["profiles"]["read_only"] is False
 
-    (folder / "profiles.json").write_text(bad_profile(max_tokens="64"))
-    damaged = file_stat(folder / "profiles.json")
+    (folder / "model-profiles" / "profiles.json").write_text(bad_profile(max_tokens="64"))
+    damaged = file_stat(folder / "model-profiles" / "profiles.json")
     rev = get_state(ui)["revision"]
     fail = failure_of(lambda: save(ui, "p", revision=rev, model="m2"))
     assert fail.status == 409 and fail.body["code"] == "read_only"
     state = get_state(ui)
     assert state["revision"] == rev + 1 and state["profiles"]["read_only"] is True
-    assert file_stat(folder / "profiles.json") == damaged
+    assert file_stat(folder / "model-profiles" / "profiles.json") == damaged
 
-    (folder / "profiles.json").write_text(good)  # repaired, but recovery is by restart
+    (folder / "model-profiles" / "profiles.json").write_text(good)  # repaired, but recovery is by restart
     assert failure_of(lambda: save(ui, "p", model="m2")).body["code"] == "read_only"
 
     ui = restart(ui)
@@ -174,6 +175,8 @@ def test_profile_lifecycle_and_restart(make_ui, tmp_path, make_server, restart):
     assert "authorization" not in a.requests[-1]["headers"]
 
     for path in folder.rglob("*"):
+        if not path.is_file():
+            continue
         data = path.read_bytes()
         assert KEY_A.encode() not in data and KEY_B.encode() not in data, path.name
 
@@ -192,13 +195,102 @@ def test_unknown_fields_kept(make_ui, tmp_path, server):
     folder = tmp_path / "ws" / "w"
     doc = {"format_version": 1, "active": "a", "future_top": {"x": [1, 2]},
            "profiles": {"a": {**profile_fields(server, "m-a"), "future_field": "kept"}}}
-    write_ws_file(folder / "profiles.json", json.dumps(doc))
+    write_ws_file(folder / "model-profiles" / "profiles.json", json.dumps(doc))
     ui = open_ui(make_ui, tmp_path)
     assert save(ui, "a", model="m-new")["model"] == "m-new"
-    saved = json.loads((folder / "profiles.json").read_bytes())
+    saved = json.loads((folder / "model-profiles" / "profiles.json").read_bytes())
     assert saved["future_top"] == {"x": [1, 2]}
     assert saved["profiles"]["a"]["future_field"] == "kept"
     assert saved["profiles"]["a"]["model"] == "m-new"
+    assert saved["active"] == "a"  # uninterpreted legacy metadata
+
+
+def update_defaults(ui, overwrite=(), revision=None):
+    return request(ui, "/api/profiles/update", {
+        "revision": get_state(ui)["revision"] if revision is None else revision,
+        "overwrite": list(overwrite)})
+
+
+def test_defaults_copy_update_export(make_ui, tmp_path, server, restart):
+    first = open_ui(make_ui, tmp_path, "one")
+    save(first, "a", **profile_fields(server, "default-a"), api_key=KEY_A, export_default=True)
+    second = open_ui(make_ui, tmp_path, "two")
+    state = get_state(second)
+    assert state["profiles"]["names"] == ["a"] and state["profiles"]["active"] is None
+    assert state["profiles"]["conflicts"] == []
+    # Approval from an earlier defaults snapshot cannot overwrite a newer default.
+    approval_revision = state["revision"]
+    save(first, "a", model="changed-default", export_default=True, overwrite_default=True)
+    assert failure_of(lambda: update_defaults(second, ["a"], approval_revision)).body["code"] == "stale_revision"
+    update_defaults(second, ["a"])
+    select(second, "a")
+    save(second, "a", model="local-a")
+    assert get_state(second)["profiles"]["conflicts"] == ["a"]
+
+    stale = get_state(second)["revision"]
+    save(first, "b", model="default-b", export_default=True)
+    state = get_state(second)
+    assert state["revision"] > stale and state["profiles"]["names"] == ["a"]
+    assert failure_of(lambda: update_defaults(second, revision=stale)).body["code"] == "stale_revision"
+    state = update_defaults(second)  # keep conflicting a, add b
+    assert state["profiles"]["names"] == ["a", "b"] and state["model"] == "local-a"
+    state = update_defaults(second, ["a"])
+    assert state["model"] == "changed-default" and state["profiles"]["conflicts"] == []
+
+    save(second, "a", model="exported-a")
+    before = get_state(second)
+    assert failure_of(lambda: save(second, "a", export_default=True)).body["code"] == "default_conflict"
+    assert get_state(second) == before
+    save(second, "a", export_default=True, overwrite_default=True)
+    state = get_state(first)
+    assert state["profiles"]["conflicts"] == ["a"]
+    assert state["model"] == "default-b"  # defaults never silently apply
+    delete(second, "b")
+    second = restart(second)
+    assert get_state(second)["profiles"]["names"] == ["a"]  # no recopy on restart
+    assert get_state(second)["profiles"]["active"] == "a"
+    first = restart(first)
+    assert get_state(first)["profiles"]["active"] == "b"
+
+    for path in (tmp_path / "model_profiles" / "profiles.json",
+                 first.workspace.path / "workspace.json", second.workspace.path / "workspace.json",
+                 first.workspace.path / "model-profiles" / "profiles.json"):
+        assert KEY_A.encode() not in path.read_bytes()
+    library = json.loads((tmp_path / "model_profiles" / "profiles.json").read_bytes())
+    assert "active" not in library
+
+
+def test_concurrent_default_exports(make_ui, tmp_path):
+    first = open_ui(make_ui, tmp_path, "one")
+    second = open_ui(make_ui, tmp_path, "two")
+    revisions = [get_state(ui)["revision"] for ui in (first, second)]
+    statuses = race(lambda: save(first, "a", revision=revisions[0], export_default=True),
+                    lambda: save(second, "b", revision=revisions[1], export_default=True))
+    assert sorted(statuses) == [200, 409]
+    for ui, name, status in zip((first, second), ("a", "b"), statuses):
+        if status == 409:
+            save(ui, name, export_default=True)
+    library = json.loads((tmp_path / "model_profiles" / "profiles.json").read_bytes())
+    assert sorted(library["profiles"]) == ["a", "b"]
+    assert (tmp_path / "model_profiles" / ".profiles.lock").is_file()
+
+
+def test_invalid_defaults_leave_workspace_usable(make_ui, tmp_path, server):
+    ui = open_ui(make_ui, tmp_path)
+    save(ui, "local", **profile_fields(server, "m"))
+    library_path = tmp_path / "model_profiles" / "profiles.json"
+    write_ws_file(library_path, "{bad json")
+    state = get_state(ui)
+    assert state["profiles"]["defaults_read_only"] is True
+    assert state["profiles"]["read_only"] is False
+    assert state["workspace"]["read_only"] is False
+    assert state["workspace"]["problems"][0]["file"] == str(library_path)
+    assert failure_of(lambda: update_defaults(ui)).body["code"] == "read_only"
+    assert failure_of(lambda: save(ui, "local", export_default=True)).body["code"] == "read_only"
+    save(ui, "local", model="m-local")
+    select(ui, "local")
+    server.reply(answer("working"))
+    assert complete(ui, "hi")[-1]["result"]["text"] == "working"
 
 
 # 23 --------------------------------------------------------------------------------------------
@@ -227,12 +319,12 @@ def test_profile_conflicts(make_ui, tmp_path, server, restart, monkeypatch):
     # (a) stale revisions change nothing
     stale = get_state(ui)["revision"]
     request(ui, "/api/config", {"revision": stale, "model": "m-other"})
-    current, on_disk = get_state(ui), file_stat(folder / "profiles.json")
+    current, on_disk = get_state(ui), file_stat(folder / "model-profiles" / "profiles.json")
     for attempt in (lambda: save(ui, "q", revision=stale), lambda: select(ui, "p", revision=stale),
                     lambda: delete(ui, "p", revision=stale)):
         fail = failure_of(attempt)
         assert fail.status == 409 and fail.body["code"] == "stale_revision"
-    assert get_state(ui) == current and file_stat(folder / "profiles.json") == on_disk
+    assert get_state(ui) == current and file_stat(folder / "model-profiles" / "profiles.json") == on_disk
 
     # (b) two saves of different new profiles with one revision: one wins, nothing is lost
     rev = get_state(ui)["revision"]
@@ -272,3 +364,37 @@ def test_profile_conflicts(make_ui, tmp_path, server, restart, monkeypatch):
     state = get_state(ui)
     assert state["profiles"]["names"] == before["profiles"]["names"]
     assert state["profiles"]["active"] == before["profiles"]["active"]
+
+    # A failed export leaves the successful local save available, including after restart.
+    original_replace = os.replace
+
+    def refuse_export(src, dst):
+        if str(dst) == str(tmp_path / "model_profiles" / "profiles.json"):
+            raise OSError(28, "No space left on device")
+        return original_replace(src, dst)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(os, "replace", refuse_export)
+        fail = failure_of(lambda: save(ui, "local-only", model="local-only", export_default=True))
+    assert fail.body["code"] == "write_failed"
+    assert get_state(ui)["profiles"]["active"] == "local-only"
+    assert "local-only" not in get_state(ui)["profiles"]["default_names"]
+    ui = restart(ui)
+    assert get_state(ui)["model"] == "local-only"
+
+    # If remembering selection fails, local definitions survive but settings/keys do not apply.
+    before = get_state(ui)
+
+    def refuse_workspace(src, dst):
+        if str(dst) == str(ui.workspace.path / "workspace.json"):
+            raise OSError(28, "No space left on device")
+        return original_replace(src, dst)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(os, "replace", refuse_workspace)
+        fail = failure_of(lambda: save(ui, "unselected", model="unselected", api_key=KEY_A))
+    assert fail.body["code"] == "write_failed"
+    state = get_state(ui)
+    assert "unselected" in state["profiles"]["names"]
+    assert state["profiles"]["active"] == before["profiles"]["active"]
+    assert settings_of(state) == settings_of(before) and state["key_source"] == before["key_source"]
