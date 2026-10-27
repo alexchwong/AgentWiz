@@ -1,15 +1,21 @@
-"""The one JSON writer (techspec 7.3, R0-12).
+"""The one JSON writer, and the file writer and strict reader for AgentWiz's own files
+(techspec 7.3, R0-12).
 
 Every HTTP response body and every stream event AgentWiz produces goes through `encode` or
 `encode_line`. Non-finite floats (NaN, +inf, -inf), which browsers' JSON.parse rejects, are written
 as null, and their locations are listed under the reserved top-level key `nonfinite_replaced`.
-Standard library only; knows nothing about HTTP.
+
+AgentWiz's own files (workspace files and the lock file) go through `encode_file` and
+`decode_file`. The reader refuses anything AgentWiz could not write back unchanged, because files
+are rewritten whole. Standard library only; knows nothing about HTTP.
 """
 from __future__ import annotations
 
+import codecs
 import json
 import math
 import re
+from decimal import Decimal, InvalidOperation
 from collections.abc import Mapping
 from typing import Any
 
@@ -62,3 +68,64 @@ def encode(payload: Mapping[str, Any]) -> bytes:
 def encode_line(payload: Mapping[str, Any]) -> bytes:
     """encode(payload) followed by a newline: one NDJSON event."""
     return encode(payload) + b"\n"
+
+
+# --- AgentWiz's own files ----------------------------------------------------------------------
+def encode_file(payload: Mapping[str, Any]) -> bytes:
+    """Indented, ASCII-only JSON with a trailing newline. Raises ValueError on a non-finite float."""
+    if not isinstance(payload, Mapping):
+        raise TypeError("payload must be a mapping")
+    return (json.dumps(payload, allow_nan=False, ensure_ascii=True, indent=2) + "\n").encode("ascii")
+
+
+class _Refused(ValueError):
+    """A rule of decode_file was broken; the message is AgentWiz's own text."""
+
+
+def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict:
+    out: dict = {}
+    for key, value in pairs:
+        if key in out:
+            raise _Refused("an object repeats a key")
+        out[key] = value
+    return out
+
+
+def _no_constants(name: str) -> Any:
+    raise _Refused("NaN and Infinity are not allowed")
+
+
+def _exact_float(text: str) -> float:
+    value = float(text)
+    try:
+        exact = math.isfinite(value) and Decimal(repr(value)) == Decimal(text)
+    except InvalidOperation:
+        exact = False
+    if not exact:
+        raise _Refused("a number cannot be kept exactly when the file is rewritten")
+    return value
+
+
+def decode_file(data: bytes) -> dict:
+    """Parse one of AgentWiz's own files strictly; returns the top-level object.
+
+    Raises ValueError naming the rule broken, never the offending text.
+    """
+    if data.startswith(codecs.BOM_UTF8):
+        data = data[len(codecs.BOM_UTF8):]
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError("the file is not UTF-8 text") from None
+    try:
+        value = json.loads(text, object_pairs_hook=_no_duplicates, parse_constant=_no_constants,
+                           parse_float=_exact_float)
+    except _Refused as exc:
+        raise ValueError(str(exc)) from None
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"not valid JSON (line {exc.lineno}, column {exc.colno})") from None
+    except ValueError:  # e.g. an integer with too many digits to convert
+        raise ValueError("a number cannot be read") from None
+    if not isinstance(value, dict):
+        raise ValueError("the top level must be a JSON object")
+    return value

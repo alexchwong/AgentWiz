@@ -55,6 +55,9 @@ def settings_from_body(current: ModelSettings, body: Mapping) -> ModelSettings:
     if not values["base_url"].isascii():
         # Python's HTTP client cannot send a non-ASCII request line; refuse it here as a setting.
         raise SettingsError("base_url must contain only ASCII characters")
+    if any(c in values["base_url"] for c in "@?#"):
+        # R1-7: credentials belong in the key field, never in a URL that may be saved or shown.
+        raise SettingsError("base_url must not contain a user name, password, query or fragment")
     if values["reasoning"] not in REASONING_LEVELS:
         raise SettingsError("reasoning must be one of: (blank), off, low, medium, high")
     mt = values["max_tokens"]

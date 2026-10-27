@@ -5,8 +5,9 @@
 Binds to 127.0.0.1 only. Every request must carry the per-launch session token (the page URL's
 `t` parameter, or the X-Session-Token header), so other web pages in the browser cannot drive the
 server or spend API credit. Settings are shared by all tabs and checked per request by revision;
-API keys are write-only and held in memory. Error text reaching the page or terminal is limited
-to text that cannot contain a credential (techspec 7.6).
+API keys are write-only and held in memory. Profiles are workspace-local copies of shared defaults;
+the server never opens or closes a workspace itself. Error text reaching the page or terminal
+is limited to text that cannot contain a credential (techspec 7.6, 7.7).
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ import sys
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from socketserver import TCPServer
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
@@ -26,7 +28,8 @@ from modelspell import Cancelled, ModelSpellError
 
 from .. import __version__, jsonio, model_call
 from ..model_call import SettingsError, build_messages, classify_outcome, describe_error, result_to_dict
-from ..state import ProcessState, StaleRevision
+from ..state import DefaultConflict, NoSuchProfile, ProcessState, ReadOnly, StaleRevision, WriteFailed
+from ..workspace import Workspace
 
 INDEX = Path(__file__).with_name("index.html")
 JSON = "application/json"
@@ -58,12 +61,19 @@ def report_internal(route: str, exc: BaseException) -> None:
 class UIServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port: int = 0, *, page_timeout: float = 30.0, request_limit: int = 8):
+    def __init__(self, port: int = 0, *, workspace: Workspace, profiles_dir: Path, page_timeout: float = 30.0,
+                 request_limit: int = 8):
         self.token = secrets.token_urlsafe(24)
-        self.state = ProcessState(request_limit)
+        self.workspace = workspace  # opened and closed by the caller
+        self.state = ProcessState(workspace, request_limit, profiles_dir=profiles_dir)
         self.page_timeout = page_timeout
         self.index = INDEX.read_bytes()
         super().__init__(("127.0.0.1", port), Handler)
+
+    def server_bind(self) -> None:
+        # HTTPServer.server_bind resolves the hostname, which can stall even for loopback.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
     @property
     def url(self) -> str:
@@ -82,6 +92,13 @@ def _optional_str(body: dict, name: str) -> str:
     if not isinstance(value, str):
         raise BodyError(f"{name} must be a string")
     return value
+
+
+def _profile_name(body: dict, allow_null: bool = False) -> str | None:
+    value = body.get("name")
+    if isinstance(value, str) or (value is None and allow_null and "name" in body):
+        return value
+    raise BodyError("name must be a string" + (" or null" if allow_null else ""))
 
 
 def _revision(body: dict) -> int:
@@ -149,6 +166,14 @@ class Handler(BaseHTTPRequestHandler):
             self._reply_safely(400, {"error": f"{type(exc).__name__}: {exc}"})
         except StaleRevision:
             self._reply_safely(409, {"error": "settings were changed elsewhere", "code": "stale_revision"})
+        except DefaultConflict:
+            self._reply_safely(409, {"error": "confirm replacing the default profile", "code": "default_conflict"})
+        except ReadOnly as exc:  # names a file, a JSON location and a rule; never a value
+            self._reply_safely(409, {"error": str(exc), "code": "read_only"})
+        except NoSuchProfile:  # profile names are not echoed
+            self._reply_safely(404, {"error": "no such profile", "code": "no_such_profile"})
+        except WriteFailed as exc:  # AgentWiz's text plus an OS strerror
+            self._reply_safely(500, {"error": str(exc), "code": "write_failed"})
         except ModelSpellError as exc:
             self._reply_safely(400, {"error": describe_error(exc, self._base_url)})
         except Exception as exc:  # noqa: BLE001 - deliberately broad: messages may carry keys
@@ -183,7 +208,10 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorised():
             return self._send(403, {"error": "missing or invalid session token"})
         routes = {"/api/config": self._config, "/api/models": self._models,
-                  "/api/providers": self._providers, "/api/complete": self._complete}
+                  "/api/providers": self._providers, "/api/complete": self._complete,
+                  "/api/profiles/save": self._profile_save, "/api/profiles/select": self._profile_select,
+                  "/api/profiles/delete": self._profile_delete,
+                  "/api/profiles/update": self._profile_update}
         handler = routes.get(path)
         if handler is None:
             return self._send(404, {"error": "not found"})
@@ -196,6 +224,24 @@ class Handler(BaseHTTPRequestHandler):
     def _config(self, body: dict) -> None:
         revision = _revision(body)
         self._send(200, self._state_body(self.server.state.apply_config(body, revision)))
+
+    def _profile_save(self, body: dict) -> None:
+        _profile_name(body)
+        revision = _revision(body)
+        self._send(200, self._state_body(self.server.state.save_profile(body, revision)))
+
+    def _profile_select(self, body: dict) -> None:
+        name = _profile_name(body, allow_null=True)
+        revision = _revision(body)
+        self._send(200, self._state_body(self.server.state.select_profile(name, revision)))
+
+    def _profile_delete(self, body: dict) -> None:
+        name = _profile_name(body)
+        revision = _revision(body)
+        self._send(200, self._state_body(self.server.state.delete_profile(name, revision)))
+
+    def _profile_update(self, body: dict) -> None:
+        self._send(200, self._state_body(self.server.state.update_profiles(body, _revision(body))))
 
     def _discovery_endpoint(self, body: dict):
         if "kind" not in body:

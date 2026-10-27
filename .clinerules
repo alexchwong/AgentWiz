@@ -1,20 +1,24 @@
 # AgentWiz — operating rules
 
-1. Work only in `.venv`: `python3 -m venv .venv`, activate it,
-   `python -m pip install -e '.[dev]'`. Run `python -m pytest`, never bare `pytest`.
-   Never commit `.venv/` or a real API key.
+1. Work only in `.venv`, set up with `scripts/dev_setup.sh` from the checkout root (it creates
+   `.venv` if needed and installs AgentWiz editable with pytest), then activate it. Run
+   `python -m pytest`, never bare `pytest`. Never commit `.venv/` or a real API key.
 2. Keep audiences separate: `README.md` for users, `DEVEL.md` for maintenance, `NEWS.md` for
    the changelog. Update `DEVEL.md` in the same change when layout, commands, tests or release
    steps change.
-3. `agentwiz/_version.py` is the only version source. Any change to shipped files
-   (`agentwiz/**` including the UI, `pyproject.toml`, `README.md`, `LICENSE`) needs a version bump
-   and a NEWS bullet (at most 20 words) before it reaches `main`.
-4. Use modelSpell's public API only; no `modelspell._…` imports or underscore attributes.
-5. Change shared state only in `agentwiz/state.py`, under the state lock, with a revision check.
-6. All JSON output goes through `agentwiz/jsonio.py`.
-7. Error text reaches the page or terminal only as `DEVEL.md` "Error reporting" allows: never
+3. Use modelSpell's public API only; no `modelspell._…` imports or underscore attributes.
+4. Change shared state only in `agentwiz/state.py`, under the state lock, with a revision check.
+   Workspace files change only through `agentwiz/workspace.py`, called from `state.py` under the
+   state lock with a revision check. `.agentwiz.lock` is never replaced, renamed or deleted.
+   Profile files use `agentwiz/profiles.py`; default-library operations also hold the blocking
+   `.profiles.lock` after the state lock. That permanent lock file is never replaced or deleted.
+5. All JSON output goes through `agentwiz/jsonio.py` (`encode`/`encode_line` for HTTP,
+   `encode_file`/`decode_file` for AgentWiz's own files).
+6. Error text reaches the page or terminal only as `DEVEL.md` "Error reporting" allows: never
    format the message of an exception that is not AgentWiz's own.
-8. Tests follow T1–T3: sparingly, functionality only, never the contents of files.
+7. Tests follow T1–T3: sparingly, functionality only. Tests never assert the contents of files in
+   the repository; they may check files AgentWiz creates when it runs, in their temporary folders.
+8. Tests never write outside `tmp_path`.
 9. Scope changes, new dependencies and behavioural departures from the specification are reported
    to the owner before merging; routine choices are recorded in `DEVEL.md` or the pull request.
 

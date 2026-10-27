@@ -1,5 +1,5 @@
-"""AgentWiz server through HTTP: techspec 13.3 tests #1-#12. The page's JavaScript is covered by the
-manual walkthrough (13.6), not here."""
+"""AgentWiz server through HTTP: techspec 13.3 tests #1-#12 (0.1.1: #1 and #5 extended). The page's
+JavaScript is exercised through the UI (README, "Trying it out"), not here."""
 import json
 import socket
 import threading
@@ -39,6 +39,19 @@ def test_access_state_and_page(ui):
     assert state["modelspell_version"] == modelspell.__version__
     assert state["revision"] == 1
     assert state["key_source"] == "none"
+    assert state["workspace"]["read_only"] is False and state["workspace"]["created"] is True
+    assert state["profiles"]["names"] == [] and state["profiles"]["active"] is None
+
+
+def test_startup_without_hostname_resolution(make_ui, monkeypatch):
+    def no_dns(*args, **kwargs):
+        raise AssertionError("loopback startup must not resolve hostnames")
+
+    monkeypatch.setattr(socket, "getfqdn", no_dns)
+    ui = make_ui()
+    assert ui.server_address[0] == "127.0.0.1"
+    assert ui.server_address[1] > 0
+    assert get_state(ui)["revision"] == 1
 
 
 # 2 ---------------------------------------------------------------------------------------------
@@ -133,6 +146,14 @@ def test_errors(ui, server):
     assert status_of(lambda: request(ui, "/api/complete", {"prompt": "hi"})) == 400
     assert status_of(lambda: request(ui, "/api/models", {"kind": "openai_compat", "base_url": server.url + "/v1",
                                                          "api_key": 123})) == 400
+    # R1-7: no user name, password, query or fragment in a base URL, in settings or discovery
+    host, sent = server.url.split("//", 1)[1], len(server.requests)
+    for url in (f"http://user:pass@{host}/v1", server.url + "/v1?q=1", server.url + "/v1#f"):
+        assert status_of(lambda: request(ui, "/api/config", {"revision": rev, "kind": "openai_compat",
+                                                             "base_url": url})) == 400
+        assert status_of(lambda: request(ui, "/api/models", {"kind": "openai_compat", "base_url": url})) == 400
+    assert get_state(ui)["revision"] == rev
+    assert len(server.requests) == sent  # refused before anything was sent
 
 
 # 6 ---------------------------------------------------------------------------------------------

@@ -2,10 +2,14 @@
 # tests/conftest.py at commit 1759c6e3c28a637731434a73c46088048583e358 (MIT, Copyright (c) 2026
 # Alex Wong), with the additions of AgentWiz techspec 13.2: Reply.after_release,
 # TestServer.wait_holding, and close() ending post-release waits. The rest is AgentWiz's.
-"""Fake model backend, AgentWiz server fixtures and HTTP helpers. All fixtures are inline."""
+"""Fake model backend, AgentWiz server fixtures and HTTP helpers. All fixtures are inline.
+
+Every AgentWiz server gets a workspace under the test's tmp_path; tests never write outside it."""
 from __future__ import annotations
 
+import itertools
 import json
+import os
 import select
 import socket
 import threading
@@ -14,10 +18,12 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
 from agentwiz.ui.server import UIServer
+from agentwiz.workspace import open_workspace
 
 PROXY_VARS = [v for n in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY") for v in (n, n.lower())]
 KEY = "sk-SENTINEL-1234567890"
@@ -192,25 +198,63 @@ def answer(text: str = "ok", **kw) -> Reply:
 
 # --- AgentWiz server fixtures ---------------------------------------------------------------
 @pytest.fixture
-def make_ui():
-    servers = []
+def make_ui(tmp_path):
+    """make_ui(workspace=None, **kwargs): a running UIServer. Without a workspace, one is opened
+    under tmp_path with a unique name; teardown shuts every server down, then closes the workspaces
+    this fixture opened."""
+    servers, opened, names = [], [], itertools.count(1)
 
-    def make(**kwargs) -> UIServer:
-        srv = UIServer(0, **kwargs)
+    def make(workspace=None, **kwargs) -> UIServer:
+        if workspace is None:
+            workspace = open_workspace(tmp_path / "ws", f"w{next(names)}")
+            opened.append(workspace)
+        kwargs.setdefault("profiles_dir", tmp_path / "model_profiles")
+        srv = UIServer(0, workspace=workspace, **kwargs)
         srv.transcript = []  # every response body the helpers received, for "never echoed" checks
         threading.Thread(target=srv.serve_forever, args=(0.02,), daemon=True).start()
         servers.append(srv)
         return srv
 
+    make.opened = opened
     yield make
     for srv in servers:
         srv.shutdown()
         srv.server_close()
+    for ws in opened:
+        ws.close()
 
 
 @pytest.fixture
 def ui(make_ui) -> UIServer:
     return make_ui()
+
+
+@pytest.fixture
+def restart(make_ui):
+    """restart(ui) -> UIServer: shut `ui` down, close its workspace, reopen the same folder and name,
+    and return a new server on it (closed at teardown)."""
+    def again(old: UIServer) -> UIServer:
+        old.shutdown()
+        old.server_close()
+        ws = old.workspace
+        ws.close()
+        reopened = open_workspace(ws.path.parent, ws.name)
+        make_ui.opened.append(reopened)
+        return make_ui(workspace=reopened, profiles_dir=old.state.library.path)
+
+    return again
+
+
+def write_ws_file(path: Path, text: str) -> None:
+    """Write fixture text into a workspace before it is opened (test input, not an assertion)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(text.encode("utf-8"))
+
+
+def file_stat(path: Path) -> tuple:
+    """What "left untouched" compares: inode, size and modification time."""
+    st = os.stat(path)
+    return st.st_ino, st.st_size, st.st_mtime_ns
 
 
 # --- HTTP helpers -------------------------------------------------------------------------------
@@ -232,14 +276,15 @@ class HTTPFailure(Exception):
         self.status, self.body = status, body
 
 
-def request(ui, path, body=None, token=True, raw=False):
+def request(ui, path, body=None, token=True, raw=False, timeout=10.0):
+    """One request to AgentWiz. `timeout` bounds each socket read, so a stream may take longer overall."""
     headers = {"Content-Type": "application/json"}
     if token:
         headers["X-Session-Token"] = ui.token
     req = urllib.request.Request(base(ui) + path, data=None if body is None else json.dumps(body).encode(),
                                  headers=headers, method="GET" if body is None else "POST")
     try:
-        resp = urllib.request.build_opener().open(req, timeout=10)
+        resp = urllib.request.build_opener().open(req, timeout=timeout)
     except urllib.error.HTTPError as e:
         data = e.read()
         getattr(ui, "transcript", []).append(data)

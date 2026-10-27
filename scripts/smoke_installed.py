@@ -1,7 +1,9 @@
 # Adapted from modelSpell scripts/smoke_installed.py at commit 1759c6e3c28a637731434a73c46088048583e358
-# (MIT, Copyright (c) 2026 Alex Wong), per AgentWiz techspec 11.2.
-"""Smoke check against the installed AgentWiz wheel (steps S1-S7). Run with the environment's
-`python -I` from a scratch directory. Every step checks behaviour; none reads a file's contents."""
+# (MIT, Copyright (c) 2026 Alex Wong), per AgentWiz techspec 11.2 (0.1.0) and 11.1 (0.1.1).
+"""Smoke check against the installed AgentWiz wheel (steps S1-S8). Run with the environment's
+`python -I` from a scratch directory. Every step checks behaviour; none reads a file's contents.
+The launch's default workspace (./workspaces/default) is validated by AgentWiz itself and checked
+through /api/state."""
 import json
 import os
 import signal
@@ -90,6 +92,20 @@ try:
                                      headers={"X-Session-Token": token, "Content-Type": "application/json"})
         return urllib.request.urlopen(req, timeout=30)
 
+    # S4 (0.1.1): the default workspace was created here, and AgentWiz found its files valid
+    initial = json.loads(api("/api/state").read())
+    workspace = initial["workspace"]
+    expected_path = str((Path.cwd() / "workspaces" / "default").resolve())
+    check(workspace["path"] == expected_path, f"workspace at {workspace['path']}, expected {expected_path}")
+    check(workspace["read_only"] is False and workspace["problems"] == [], f"workspace not usable: {workspace}")
+    check(Path(expected_path).is_dir(), "default workspace folder missing")
+    defaults = Path.cwd() / "model_profiles"
+    check(defaults.is_dir(), "default profile folder missing")
+    check(initial["profiles"]["defaults_path"] == str(defaults.resolve() / "profiles.json"),
+          "unexpected defaults path")
+    check(initial["profiles"]["names"] == [] and initial["profiles"]["active"] is None,
+          "fresh workspace has unexpected profiles")
+
     # S5: configure the stub with the current revision
     rev = json.loads(api("/api/state").read())["revision"]
     state = json.loads(api("/api/config", {"revision": rev, "kind": "openai_compat", "base_url": stub_url,
@@ -103,6 +119,10 @@ try:
     end = events[-1]
     check(text == "pong" and end["type"] == "result" and end["result"]["text"] == "pong"
           and end["outcome"] == "complete", f"unexpected events: {events}")
+
+    # S8: a second AgentWiz on the same workspace is refused with exit status 3
+    second = subprocess.run([str(exe), "--no-browser"], capture_output=True, text=True, timeout=15)
+    check(second.returncode == 3, f"second launch on the same workspace exited {second.returncode}")
 
     # S7: Ctrl-C exits cleanly
     proc.send_signal(signal.SIGINT)
