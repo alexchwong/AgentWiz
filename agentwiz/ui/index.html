@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- Derived from modelSpell ui/index.html at commit 1759c6e3c28a637731434a73c46088048583e358 (MIT, Copyright (c) 2026 Alex Wong); adapted per the AgentWiz 0.1.0 techspec, Section 7.7. -->
+<!-- Derived from modelSpell ui/index.html at commit 1759c6e3c28a637731434a73c46088048583e358 (MIT, Copyright (c) 2026 Alex Wong); adapted per the AgentWiz 0.1.0 techspec, Section 7.7, and the 0.1.1 techspec, Section 7.8. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -29,7 +29,9 @@
   #status.error { color:var(--err); }
   #status.warn { color:var(--warn); }
   #status.normal { color:var(--fg); }
-  #version { color:var(--muted); font-weight:normal; font-size:12px; }
+  #version, #workspace { color:var(--muted); font-weight:normal; font-size:12px; }
+  #banner { color:var(--warn); border:1px solid var(--warn); border-radius:6px; padding:8px; margin-bottom:12px; }
+  #banner p { margin:0; }
   #result { overflow-wrap:anywhere; word-break:break-all; }
   #settings-msg.warn { color:var(--warn); }
   dialog { border:1px solid var(--line); border-radius:10px; background:var(--bg); color:var(--fg); width:min(560px, 92vw); }
@@ -42,9 +44,11 @@
 <body>
 <header>
   <h1>AgentWiz <span id="version"></span></h1>
+  <span id="workspace"></span>
   <span id="summary"></span>
   <button id="open-settings">Model settings</button>
 </header>
+<div id="banner" class="hidden"></div>
 
 <label for="system">System prompt (optional)</label>
 <textarea id="system" rows="2"></textarea>
@@ -64,6 +68,8 @@
 
 <dialog id="settings">
   <form method="dialog" id="settings-form">
+    <label for="profile">Profile</label>
+    <div class="inline"><select id="profile"></select><button type="button" id="delete-profile">Delete</button></div>
     <label for="kind">Model source</label>
     <select id="kind">
       <option value="lmstudio">LM Studio</option>
@@ -96,7 +102,9 @@
     <p id="settings-msg" class="hidden"></p>
     <div class="row" style="justify-content:flex-end">
       <button value="cancel" formnovalidate>Cancel</button>
-      <button type="button" id="save" class="primary">Save</button>
+      <button type="button" id="save-as-profile">Save as profile…</button>
+      <button type="button" id="save-profile">Save profile</button>
+      <button type="button" id="apply" class="primary">Apply</button>
     </div>
   </form>
 </dialog>
@@ -107,6 +115,8 @@ const $ = (id) => document.getElementById(id);
 const DEFAULT_URL = { lmstudio: "http://localhost:1234/v1", openrouter: "https://openrouter.ai/api/v1", openai_compat: "required" };
 const STALE_SEND = "Settings were changed in another tab. Check them and send again.";
 const STALE_SAVE = "Settings were changed in another tab. The header now shows the current settings; check them and save again.";
+const REPAIR = "Repair or restore the file, then restart AgentWiz.";
+const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const STOPPED = "Stopped. AgentWiz closes the model connection when more output arrives, which can take a while; whether the backend stops generating is up to the backend.";
 const INTERRUPTED = "Connection ended before a final result was received; completion status is unavailable.";
 const LABELS = { complete: "Complete", empty: "Empty answer", reasoning_only: "Reasoning only, no answer",
@@ -139,10 +149,26 @@ function keySource(s) {
   return { summary: "key: none", label: "(not set)" };
 }
 
+function profilesInfo() { return state.profiles || { names: [], active: null, modified: false, read_only: true }; }
+
 function renderState() {
   $("version").textContent = state.agentwiz_version
     ? `v${state.agentwiz_version} · modelSpell v${state.modelspell_version}` : "";
-  const parts = [state.kind, state.base_url || "(default URL)", state.model || "(no model)"];
+  const ws = state.workspace || {};
+  $("workspace").textContent = ws.name ? `workspace: ${ws.name}${ws.read_only ? " (read-only)" : ""}` : "";
+  $("workspace").title = ws.path || "";
+  const problems = Array.isArray(ws.problems) ? ws.problems : [];
+  const banner = $("banner");
+  banner.replaceChildren();
+  for (const p of problems) {
+    const line = document.createElement("p"); line.textContent = `${p.file}: ${p.message}`; banner.append(line);
+  }
+  if (problems.length) { const line = document.createElement("p"); line.textContent = REPAIR; banner.append(line); }
+  banner.classList.toggle("hidden", problems.length === 0);
+  const pr = profilesInfo();
+  const profile = pr.active === null || pr.active === undefined ? "no profile"
+    : `profile: ${pr.active}${pr.modified ? " (modified)" : ""}`;
+  const parts = [profile, state.kind, state.base_url || "(default URL)", state.model || "(no model)"];
   if (state.kind === "openrouter") parts.push("provider=" + (state.provider || "any"));
   if (state.reasoning) parts.push("reasoning=" + state.reasoning);
   if (state.max_tokens) parts.push("max_tokens=" + state.max_tokens);
@@ -174,14 +200,27 @@ function settingsMsg(text, warn = false) {
   $("settings-msg").classList.toggle("warn", warn);
 }
 
-$("open-settings").onclick = () => {
+function renderProfileControls() {
+  const pr = profilesInfo(), sel = $("profile");
+  sel.replaceChildren(new Option("(no profile)", ""));
+  for (const name of pr.names) sel.add(new Option(name, name));
+  sel.value = pr.active || "";
+  sel.disabled = pr.read_only;
+  $("delete-profile").disabled = pr.read_only || !pr.active;
+  $("save-profile").disabled = pr.read_only || !pr.active;
+  $("save-as-profile").disabled = pr.read_only;
+}
+
+function fillDialog() {
   $("kind").value = state.kind; $("base_url").value = state.base_url || ""; $("model").value = state.model || "";
   $("reasoning_level").value = state.reasoning || ""; $("max_tokens").value = state.max_tokens || "";
   $("api_key").value = ""; clearKey = false; $("key-state").textContent = keySource(state).label;
   const p = $("provider"); p.length = 1;
   if (state.provider) p.add(new Option(state.provider, state.provider, true, true));
-  settingsMsg(""); syncDialogVisibility(); $("settings").showModal();
-};
+  renderProfileControls(); syncDialogVisibility();
+}
+
+$("open-settings").onclick = () => { fillDialog(); settingsMsg(""); $("settings").showModal(); };
 $("kind").onchange = syncDialogVisibility;
 $("clear-key").onclick = () => { clearKey = true; $("api_key").value = ""; $("key-state").textContent = "(will be cleared)"; };
 
@@ -212,16 +251,60 @@ $("load-providers").onclick = async () => {
   } catch (e) { settingsMsg(e.message); }
 };
 
-$("save").onclick = async () => {
+// Shared handling of a failed settings or profile request made from the dialog.
+async function dialogFailure(e) {
+  if (e.status === 409 && e.code === "stale_revision") {
+    try { await refreshState(); renderProfileControls(); settingsMsg(STALE_SAVE, true); }
+    catch (e2) { settingsMsg(e2.message); }
+  } else if (e.status === 409 || e.status === 404) {   // read_only, no_such_profile
+    try { await refreshState(); renderProfileControls(); } catch (e2) { /* keep the last state */ }
+    settingsMsg(e.message, true);
+  } else settingsMsg(e.message);
+}
+
+$("apply").onclick = async () => {
   try {
     state = await api("/api/config", { ...dialogConfig(), revision: state.revision });
     renderState(); $("settings").close();
-  } catch (e) {
-    if (e.status === 409) {
-      try { await refreshState(); settingsMsg(STALE_SAVE, true); }
-      catch (e2) { settingsMsg(e2.message); }
-    } else settingsMsg(e.message);
+  } catch (e) { await dialogFailure(e); }
+};
+
+// Selecting a profile applies it at once; the dialog is refilled, discarding unapplied edits.
+$("profile").onchange = async () => {
+  const name = $("profile").value || null;
+  try {
+    state = await api("/api/profiles/select", { name, revision: state.revision });
+    renderState(); fillDialog(); settingsMsg(name ? `Profile ${name} selected.` : "No profile selected.");
+  } catch (e) { await dialogFailure(e); }
+};
+
+$("delete-profile").onclick = async () => {
+  const name = profilesInfo().active;
+  if (!name || !confirm(`Delete profile "${name}"? The current settings stay as they are.`)) return;
+  try {
+    state = await api("/api/profiles/delete", { name, revision: state.revision });
+    renderState(); renderProfileControls(); settingsMsg(`Profile ${name} deleted.`);
+  } catch (e) { await dialogFailure(e); }
+};
+
+async function saveProfile(name) {
+  try {
+    state = await api("/api/profiles/save", { ...dialogConfig(), name, revision: state.revision });
+    renderState(); $("settings").close();
+  } catch (e) { await dialogFailure(e); }
+}
+
+$("save-profile").onclick = () => { const name = profilesInfo().active; if (name) saveProfile(name); };
+
+$("save-as-profile").onclick = () => {
+  const name = prompt("Profile name (letters, digits, '.', '_' or '-'; up to 64 characters):");
+  if (name === null) return;
+  if (!NAME_RE.test(name)) {
+    settingsMsg("A profile name is 1 to 64 letters, digits, '.', '_' or '-', starting with a letter or digit.");
+    return;
   }
+  if (profilesInfo().names.includes(name) && !confirm(`Profile "${name}" exists. Overwrite it?`)) return;
+  saveProfile(name);
 };
 
 // Token counts: missing → "?"; not a safe integer → "see Result" (the parsed value may be rounded).

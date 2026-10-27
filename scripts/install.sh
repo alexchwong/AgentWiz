@@ -5,8 +5,9 @@
 #   install.sh [--version X.Y.Z] [--wheel PATH] [--sha256 HEX] [--dir PATH] [--python PATH]
 #
 # The wheel comes from a GitHub release and is checked against the sha256 that release publishes:
-# the asset digest, or the "sha256:" line in the release notes when the digest is absent. This file
-# is installer logic only; it is not shipped in the wheel.
+# the asset digest, or the "sha256:" line in the release notes when the digest is absent. Inside an
+# AgentWiz checkout it stops unless --dir is given: developers use scripts/dev_setup.sh instead. This
+# file is installer logic only; it is not shipped in the wheel.
 set -euo pipefail
 
 REPO="alexchwong/AgentWiz"
@@ -17,6 +18,7 @@ version=""
 wheel=""
 sha256=""
 venv_dir="./.venv"
+dir_given=0
 python_bin="python3"
 
 usage() {
@@ -49,12 +51,17 @@ while [ "$#" -gt 0 ]; do
         --version) [ "$#" -ge 2 ] || die "--version needs a value"; version="${2#v}"; shift 2 ;;
         --wheel)   [ "$#" -ge 2 ] || die "--wheel needs a path";   wheel="$2"; shift 2 ;;
         --sha256)  [ "$#" -ge 2 ] || die "--sha256 needs a value"; sha256="$2"; shift 2 ;;
-        --dir)     [ "$#" -ge 2 ] || die "--dir needs a path";     venv_dir="$2"; shift 2 ;;
+        --dir)     [ "$#" -ge 2 ] || die "--dir needs a path";     venv_dir="$2"; dir_given=1; shift 2 ;;
         --python)  [ "$#" -ge 2 ] || die "--python needs a path";  python_bin="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; die "unknown option: $1" ;;
     esac
 done
+
+# A user install into a checkout's ./.venv would leave it without pytest (to-do item 2).
+if [ "$dir_given" = 0 ] && [ -f ./pyproject.toml ] && grep -Eq '^name *= *"AgentWiz"' ./pyproject.toml; then
+    die "this is an AgentWiz checkout: for a developer setup run scripts/dev_setup.sh; to install the release wheel here anyway, pass --dir"
+fi
 
 command -v "$python_bin" >/dev/null 2>&1 || die "$python_bin not found; AgentWiz needs Python $MIN_PYTHON or later"
 "$python_bin" -c "import sys; raise SystemExit(0 if sys.version_info >= tuple(int(p) for p in '$MIN_PYTHON'.split('.')) else 1)" >/dev/null 2>&1 \

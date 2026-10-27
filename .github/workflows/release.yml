@@ -67,7 +67,7 @@ jobs:
           fi
           echo "No shipped-file changes since $TAG; nothing to release."
 
-      - name: Build and smoke-test the wheel
+      - name: Build, check and smoke-test the wheel
         if: steps.existing.outputs.exists != 'true'
         id: build
         shell: bash
