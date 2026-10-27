@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scripted OpenAI-compatible backend for the manual walkthrough (techspec 11.3). Not shipped.
+"""Scripted OpenAI-compatible backend for trying the UI without a model (techspec 11.3). Not shipped.
 
     python scripts/stub_backend.py [--port 8099]
 
@@ -138,7 +138,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Scripted OpenAI-compatible backend for the AgentWiz walkthrough")
+    parser = argparse.ArgumentParser(description="Scripted OpenAI-compatible backend for trying the AgentWiz UI")
     parser.add_argument("--port", type=int, default=8099)
     args = parser.parse_args()
     httpd = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)

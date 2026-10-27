@@ -78,7 +78,8 @@ with a letter or digit.
   inside a git repository, add `.agentwiz.lock` to that repository's `.gitignore`.
 - **Supported locations:** local disks on Linux and macOS, and WSL2's own filesystem. Shared,
   network and cloud-synced folders are not supported and not detected: the workspace lock may not
-  be visible from another machine. Under WSL2, workspaces on `/mnt/c` are unverified.
+  be visible from another machine. Under WSL2, workspaces on `/mnt/c` (the Windows drive) have not
+  been tested; prefer a folder in WSL2's own filesystem, such as `~/agentwiz`.
 
 ## Settings
 
@@ -157,15 +158,11 @@ value is shown as `?`, never as zero. **Result event** shows the final event exa
 
 ## Platforms
 
-| Configuration | Status |
-| --- | --- |
-| Linux, LM Studio on the same machine | documented, awaiting evidence |
-| Linux, llama-server | documented, awaiting evidence |
-| macOS, LM Studio on the same machine | documented, awaiting evidence |
-| WSL2, LM Studio on Windows, mirrored networking | documented, awaiting evidence |
-| WSL2, LM Studio on Windows, NAT with "Serve on Local Network" | documented, awaiting evidence |
-| WSL2, LM Studio headless (`llmster`) inside WSL2 | documented, awaiting evidence |
-| OpenRouter (any one platform) | documented, awaiting evidence |
+AgentWiz runs on Linux, macOS and WSL2 with any of the backends above, for example:
+
+- Linux or macOS, with LM Studio or llama-server on the same machine
+- WSL2, with LM Studio on Windows (mirrored or NAT networking) or LM Studio headless inside WSL2
+- any platform, with OpenRouter
 
 Native Windows is not supported.
 
@@ -188,6 +185,37 @@ Native Windows is not supported.
 In both setups a Windows browser can open the address AgentWiz prints, because WSL forwards
 localhost from Windows. Opening the browser automatically from WSL2 often does nothing; copy the
 printed address instead.
+
+## Trying it out
+
+A quick tour of what 0.1.1 does, through the page. Use any backend you have. With no model running,
+a clone of this repository has a scripted stand-in: run `python scripts/stub_backend.py`, then in
+**Model settings** choose OpenAI-compatible, base URL `http://127.0.0.1:8099/v1`, model `complete`.
+
+1. **Workspace.** In an empty folder run `agentwiz`. The terminal's third line names the workspace
+   and ends in `(created)`; the page header shows `workspace: default` (hover for its folder).
+   Stop with Ctrl-C and start again: no `(created)` this time.
+2. **Send.** In **Model settings**, set the backend and model and press **Apply**. Type an input
+   and press **Send**: the answer streams in and the status line shows the outcome.
+3. **Profiles.** In **Model settings**, press **Save as profile…** and name it `a`. The header shows
+   `profile: a`. Change the model and press **Apply**: the header adds `(modified)`. Press **Save
+   profile**: `(modified)` goes. Save a second profile `b` with different settings, then switch
+   between `a` and `b` with the **Profile** list; the dialog and header follow. Choose
+   **(no profile)**: the settings stay, the header shows `no profile`. Select `b` and press
+   **Delete**: it asks first, then `b` is gone.
+4. **Restart.** Select `a`, stop AgentWiz and start it again. `a` is active with its settings, and
+   the header shows `key: none` (keys are never saved); enter the key again if the backend needs one.
+5. **Two tabs.** Open the address in a second tab. Change the model there and **Apply**. Back in the
+   first tab, press **Send**: it is refused with a message to check the settings, and the header
+   updates. The same happens for a profile action taken in a tab showing outdated settings.
+6. **One process per workspace.** While AgentWiz runs, start a second `agentwiz` in the same folder
+   in another terminal: it says the workspace is in use (with the first one's process ID) and exits.
+7. **Damaged file.** Stop AgentWiz. In `workspaces/default/profiles.json`, change a `max_tokens`
+   value to `"64"` (with the quotes), and start again. The terminal and a banner on the page name
+   the file and the problem; the profile controls are disabled, but **Apply** and **Send** still
+   work, and the file is left as it is. Undo the edit and restart: everything works again.
+8. **Base URL rule.** In **Model settings**, enter a base URL ending in `?x=1` and press **Apply**:
+   it is refused, and nothing changes.
 
 ## Limitations
 

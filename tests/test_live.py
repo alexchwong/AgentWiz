@@ -1,11 +1,10 @@
 """Opt-in live checks against real backends (techspec 13.4, tests #16-#18).
 
-Step-by-step instructions for every backend, and how to record the results: tests/LIVE_CHECKS.md.
+Optional: a quick end-to-end check against a backend you have running. Variables: DEVEL.md, Tests.
 
-Run:  python -m pytest -m live -s     (from tests/ when checking an installed wheel; see the runbook)
-Each test skips unless its variables are set; CI sets none. Each prints one EVIDENCE line to copy
-into tests/live_evidence.md. The line names the commit of these tests and whether agentwiz was
-imported from an installed wheel or from the checkout. Each test runs against a temporary workspace.
+Run:  python -m pytest -m live -s -k <lmstudio|openrouter|llamaserver>
+Each test skips unless its variables are set; CI sets none. Each runs against a temporary workspace
+and prints one summary line.
 
 Optional variables:
   AGENTWIZ_LIVE_TIMEOUT               seconds to wait for each read from AgentWiz (default 600). AgentWiz
@@ -16,11 +15,7 @@ Optional variables:
   AGENTWIZ_LIVE_LMSTUDIO_KEY          LM Studio authentication token, when its authentication is on
                                       (required for "Serve on Local Network"). Never printed.
 """
-import datetime
 import os
-import subprocess
-import sys
-from pathlib import Path
 
 import modelspell
 import pytest
@@ -34,34 +29,12 @@ TIMEOUT = float(os.environ.get("AGENTWIZ_LIVE_TIMEOUT", "").strip() or 600)
 pytestmark = pytest.mark.live
 
 
-RUNBOOK = "tests/LIVE_CHECKS.md"
-
-
 def _env(*names, optional=()):
     values = [os.environ.get(n, "").strip() for n in names]
     if not all(values):
         extra = f"; optional: {', '.join(optional)}" if optional else ""
-        pytest.skip(f"set {', '.join(names)} to run this live check{extra} (see {RUNBOOK})")
+        pytest.skip(f"set {', '.join(names)} to run this live check{extra} (see DEVEL.md, Tests)")
     return values
-
-
-def _imported_from() -> str:
-    """'installed' when agentwiz comes from the environment's site-packages, otherwise 'checkout'."""
-    here = Path(agentwiz.__file__).resolve()
-    return "installed" if Path(sys.prefix).resolve() in here.parents else "checkout"
-
-
-def _commit() -> str:
-    """The commit of these tests, with +dirty for uncommitted changes, or 'unknown' without git."""
-    folder = str(Path(__file__).resolve().parent)
-    try:
-        sha = subprocess.run(["git", "-C", folder, "rev-parse", "--short", "HEAD"], capture_output=True,
-                             text=True, timeout=30, check=True).stdout.strip()
-        dirty = subprocess.run(["git", "-C", folder, "status", "--porcelain"], capture_output=True,
-                               text=True, timeout=30, check=True).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    return (sha + ("+dirty" if dirty else "")) or "unknown"
 
 
 def _call(ui, path, body=None, **kw):
@@ -85,11 +58,9 @@ def _stream(ui, prompt="Reply with the single word: pong", hint=""):
     return evs, end
 
 
-def _evidence(backend, model, end):
-    print(f"\nEVIDENCE {datetime.date.today().isoformat()} | AgentWiz {agentwiz.__version__} | "
-          f"modelSpell {modelspell.__version__} | backend {backend} | model {model} | "
-          f"transport {end['result']['transport']} | outcome {end['outcome']} | "
-          f"agentwiz from {_imported_from()} | commit {_commit()}")
+def _report(backend, model, end):
+    print(f"\nAgentWiz {agentwiz.__version__} | modelSpell {modelspell.__version__} | backend {backend} | "
+          f"model {model} | transport {end['result']['transport']} | outcome {end['outcome']}")
 
 
 def test_live_lmstudio(ui):
@@ -101,7 +72,7 @@ def test_live_lmstudio(ui):
     ids = [m["id"] for m in _call(ui, "/api/models", {"kind": "lmstudio", "base_url": url, **auth})["models"]]
     assert model in ids, f"{model} is not among LM Studio's models: {ids}"
     evs, end = _stream(ui)
-    _evidence("LM Studio", model, end)
+    _report("LM Studio", model, end)
 
 
 def test_live_openrouter(ui):
@@ -125,7 +96,7 @@ def test_live_openrouter(ui):
         "to another slug from the list above."))
     assert end["result"]["provider"] == pinned["name"], (
         f"answered by {end['result']['provider']!r}, but {pinned['slug']} is listed as {pinned['name']!r}")
-    _evidence(f"OpenRouter (provider {pinned['slug']})", model, end)
+    _report(f"OpenRouter (provider {pinned['slug']})", model, end)
 
 
 def test_live_llamaserver(ui):
@@ -136,4 +107,4 @@ def test_live_llamaserver(ui):
     evs, end = _stream(ui)
     reasoning = "".join(e["text"] for e in evs if e["type"] == "reasoning")
     assert reasoning == (end["result"]["reasoning"] or "")
-    _evidence("llama-server", model, end)
+    _report("llama-server", model, end)

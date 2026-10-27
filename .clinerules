@@ -17,10 +17,8 @@
 7. Tests follow T1–T3: sparingly, functionality only. Tests never assert the contents of files in
    the repository; they may check files AgentWiz creates when it runs, in their temporary folders.
 8. Tests never write outside `tmp_path`.
-9. Any change to `tests/test_live.py`, the supported backends or `scripts/stub_backend.py` updates
-   `tests/LIVE_CHECKS.md` in the same change.
-10. Scope changes, new dependencies and behavioural departures from the specification are reported
-    to the owner before merging; routine choices are recorded in `DEVEL.md` or the pull request.
+9. Scope changes, new dependencies and behavioural departures from the specification are reported
+   to the owner before merging; routine choices are recorded in `DEVEL.md` or the pull request.
 
 Details: `DEVEL.md`. Where this file and `DEVEL.md` disagree, `DEVEL.md` wins; correct this file
 in the same change.

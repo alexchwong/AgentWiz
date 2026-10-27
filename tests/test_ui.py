@@ -1,5 +1,5 @@
 """AgentWiz server through HTTP: techspec 13.3 tests #1-#12 (0.1.1: #1 and #5 extended). The page's
-JavaScript is covered by the manual walkthrough (tests/LIVE_CHECKS.md), not here."""
+JavaScript is exercised through the UI (README, "Trying it out"), not here."""
 import json
 import socket
 import threading

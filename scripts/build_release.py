@@ -72,7 +72,7 @@ def normalise(name: str) -> str:
 
 
 def check_news(src: Path, version: str) -> list[str]:
-    """RC1. The user-visible judgement stays with the maintainer (M1)."""
+    """RC1. Whether each bullet is user-visible stays a human judgement."""
     lines = (src / "NEWS.md").read_text(encoding="utf-8").splitlines()
     heading = f"## {version}"
     found = [i for i, line in enumerate(lines) if line == heading]

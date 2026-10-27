@@ -58,6 +58,6 @@ Developer setup ready. Next:
 
     . .venv/bin/activate
     python -m pytest                    # offline suite (live checks skip)
-    python -m pytest -m live -s         # live checks; see tests/LIVE_CHECKS.md for variables
+    python -m pytest -m live -s         # optional live checks; variables in DEVEL.md, Tests
     agentwiz --no-browser               # run the UI from this checkout
 NEXT

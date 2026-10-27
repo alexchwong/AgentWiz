@@ -4,8 +4,9 @@ This file is for repository maintenance. Usage is documented in `README.md`; the
 for 0.1.1 is *AgentWiz 0.1.1 — Technical Specification* (version 3), which takes precedence over
 Section 7 of the release plan (*AgentWiz 0.1.x — Release Plan*, version 8) and the 0.1.1 parts of
 its other sections. The 0.1.0 specification is retired; what still binds from it is carried in the
-0.1.1 specification's Appendix C. Agent operating rules are in `.clinerules`. Manual and live checks
-are in `tests/LIVE_CHECKS.md`. Nothing in this guide, `.clinerules`, `tests/`, `scripts/` or
+0.1.1 specification's Appendix C, except that the owner has replaced the specification's manual
+evidence regime (see "Checking a release"). Agent operating rules are in `.clinerules`. Nothing in
+this guide, `.clinerules`, `tests/`, `scripts/` or
 `.github/` ships in the release wheel.
 
 ## Quick start
@@ -18,7 +19,7 @@ scripts/dev_setup.sh                        # ./.venv + editable install + pytes
 
 python -m pytest                            # offline suite (live checks skip)
 agentwiz --no-browser                       # run the UI from your checkout (workspace: ./workspaces/default)
-python scripts/stub_backend.py              # scripted backend for the walkthrough
+python scripts/stub_backend.py              # scripted backend for trying the UI without a model
 python scripts/build_release.py --smoke     # build, check (RC1-RC3) and smoke-test the release wheel
 ```
 
@@ -36,7 +37,7 @@ ignored by git in this checkout.
 - [Concurrency and resource limits](#concurrency-and-resource-limits)
 - [Error reporting](#error-reporting)
 - [Tests](#tests)
-- [Manual walkthrough](#manual-walkthrough)
+- [Checking a release](#checking-a-release)
 - [Co-developing with modelSpell](#co-developing-with-modelspell)
 - [Branches and releases](#branches-and-releases)
 - [NEWS entries](#news-entries)
@@ -56,11 +57,11 @@ ignored by git in this checkout.
 | `agentwiz/ui/server.py` | yes | The HTTP server; the only module that knows HTTP. |
 | `agentwiz/ui/index.html` | yes | The page. |
 | `pyproject.toml`, `README.md`, `LICENSE` | metadata | Packaging, wheel description, MIT license. |
-| `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`), opt-in live checks (`test_live.py`), the runbook `LIVE_CHECKS.md`, and `live_evidence.md`. |
+| `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`), and opt-in live checks (`test_live.py`). |
 | `scripts/build_release.py` | no | Builds the release wheel from `HEAD`, runs release checks RC1–RC3; `--smoke`; `--changed-since`. |
 | `scripts/smoke_installed.py` | no | Smoke check (S1–S8) against an installed wheel. |
 | `scripts/dev_setup.sh` | no | Developer setup: `./.venv` with an editable install and pytest. |
-| `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for the walkthrough. |
+| `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for trying the UI without a model. |
 | `scripts/install.sh` | no | Installer behind the README one-liner; refuses to run in a checkout without `--dir`; re-attached to every release as `install.sh`. |
 | `DEVEL.md`, `NEWS.md`, `.clinerules` | no | Maintenance guide, changelog, agent rules. |
 | `.github/workflows/` | no | `tests.yml` (push, PR) and `release.yml` (push to `main`). |
@@ -128,7 +129,7 @@ effect only when output arrives. If all 8 slots stay occupied, restarting is the
 Discovery calls and connection threads are not budgeted.
 
 **Supported workspace locations.** Local disks on Linux and macOS, and WSL2's own filesystem.
-`/mnt/c` under WSL2 is unverified until runbook check L2 passes. Network, shared and cloud-synced
+`/mnt/c` under WSL2 has not been tested. Network, shared and cloud-synced
 folders are unsupported and not detected.
 
 ## Error reporting
@@ -163,7 +164,7 @@ installed versions and shell-quoted launch and activation commands.
 ```bash
 python -m pytest                    # offline suite (planned: 20 tests; table-driven cases)
 python -m pytest tests/test_ui.py   # one area
-python -m pytest -m live -s         # live checks; see tests/LIVE_CHECKS.md
+python -m pytest -m live -s         # optional live checks (variables below)
 ```
 
 **Testing directive (owner, 25 October 2026; T2 clarified 27 October 2026).**
@@ -191,19 +192,28 @@ with `threading.Barrier`, and by wrapping `model_call.call_model`; waits are dea
 thing tested. The helpers parse every response and event strictly, so any `NaN` or `Infinity`
 AgentWiz emitted fails the test that saw it.
 
-**Live checks** (`tests/test_live.py`) skip unless their variables are set; CI sets none. Their
-variables, how to start each backend, which build a run checks, and how to record the results are in
-the runbook, **`tests/LIVE_CHECKS.md`**. Each live test's skip message names the runbook and its
-variables. Each prints an `EVIDENCE …` line naming the commit of the tests and whether `agentwiz`
-was imported from an installed wheel or the checkout; it goes into `tests/live_evidence.md`.
-Missing evidence is written as "missing" and never counts as a pass.
+**Live checks** (`tests/test_live.py`) are optional: a quick end-to-end run against a backend you
+have running. They skip unless their variables are set (CI sets none), run against a temporary
+workspace, and print one summary line.
 
-## Manual walkthrough
+| Backend | Variables |
+| --- | --- |
+| LM Studio | `AGENTWIZ_LIVE_LMSTUDIO_URL` (e.g. `http://localhost:1234/v1`), `AGENTWIZ_LIVE_LMSTUDIO_MODEL`; optional `AGENTWIZ_LIVE_LMSTUDIO_KEY` when LM Studio's authentication is on |
+| OpenRouter | `OPENROUTER_API_KEY`, `AGENTWIZ_LIVE_OPENROUTER_MODEL` (`author/slug`); optional `AGENTWIZ_LIVE_OPENROUTER_PROVIDER` (slug to pin; default the first listed) |
+| llama-server | `AGENTWIZ_LIVE_LLAMASERVER_URL` (e.g. `http://127.0.0.1:8080/v1`), `AGENTWIZ_LIVE_LLAMASERVER_MODEL` |
 
-The page's JavaScript is checked by hand: the stub walkthrough (W1–W20, with the W9 `curl` loop),
-the workspace lock checks (L1, L2) and the release review (M1–M4) are in `tests/LIVE_CHECKS.md`.
-Each release's specification names the steps it requires; the runbook is the operational source.
-Record the results in `tests/live_evidence.md` for each release candidate.
+All accept `AGENTWIZ_LIVE_TIMEOUT` (seconds per read from AgentWiz, default 600: AgentWiz sends
+nothing until the model's first visible token, so a loading or silently reasoning model can take
+minutes).
+
+## Checking a release
+
+**Owner direction, 27 October 2026.** Releases are not gated on manually collected evidence. The
+0.1.1 specification's runbook, evidence records, walkthrough steps (W1–W20), lock checks (L1, L2),
+release review (M1–M4) and their definition-of-done items (C1–C5, D1–D5, F3) are withdrawn.
+Bug-checking is automatic: the offline suite in CI, and `build_release.py`'s release checks and
+smoke test, which run before anything is published. The maintainer tries the UI using README's
+"Trying it out" section. Live checks against real backends are optional.
 
 ## Co-developing with modelSpell
 
@@ -255,34 +265,16 @@ They are release tooling under the owner's exception to T2, not tests:
 
 Each prints `RCn ok` or `RCn FAILED: <reason>`; all three run; on any failure nothing is copied to
 `--output-dir` and the script exits non-zero. Whether NEWS bullets are user-visible stays a human
-judgement (M1).
+judgement.
 
 ### Release checklist
 
-1. On `devel`, bump `agentwiz/_version.py`, add `## X.Y.Z` to `NEWS.md`, and update README (except
-   the platforms table). Commit: that commit is the **candidate**.
+1. On `devel`, bump `agentwiz/_version.py`, add `## X.Y.Z` to `NEWS.md` (user-visible bullets), and
+   update `README.md`. Commit and push; CI runs the offline suite.
 2. Run `python scripts/build_release.py --smoke` (builds from the committed `HEAD`, runs RC1–RC3,
-   then S1–S8).
-3. Run `tests/LIVE_CHECKS.md` for every backend and platform available, on the release-candidate
-   route; record the results in `tests/live_evidence.md`. Include the walkthrough steps the
-   release's specification requires.
-4. Commit the records and the README platforms table to match them. This follow-up changes only
-   `README.md` and `tests/live_evidence.md`, so the candidate's records stay valid for it; run
-   `build_release.py --smoke` on it.
-5. **M1** (before merging): the NEWS bullets are user-visible (RC1 already checked the section and
-   word counts).
-6. Merge `devel` into `main`; the workflow runs RC1–RC3 again before publishing.
-7. After the release workflow, on the **published** wheel:
-   - **M2:** tag `vX.Y.Z` targets the commit that passed CI; the notes match the NEWS section.
-     Download the wheel and compute its sha256 locally; it equals the install line's. Record the
-     commit and sha256. In a fresh venv the install line gives a working `agentwiz --version`, and so
-     does the README one-liner (`curl … | bash`) in an empty directory.
-   - **M3:** `python -m zipfile -l <wheel>` lists only `agentwiz/**` (including
-     `agentwiz/ui/index.html`) plus `METADATA`, `WHEEL`, `RECORD`, `entry_points.txt` and
-     `licenses/LICENSE` under `agentwiz-X.Y.Z.dist-info/`.
-   - **M4:** its `METADATA` has `Name: AgentWiz`, `Version: X.Y.Z`, `License-Expression: MIT` and
-     the `Requires-Dist` line with the pinned modelSpell URL and sha256.
-8. Record M1–M4 in `tests/live_evidence.md`.
+   then the smoke test S1–S8).
+3. Try the UI with README's "Trying it out".
+4. Merge `devel` into `main`. The release workflow reruns the tests and RC1–RC3, then publishes.
 
 ## NEWS entries
 
@@ -317,6 +309,9 @@ Choices recorded for 0.1.1:
 - Profiles are read even when the whole workspace is read-only (reading never writes); every
   profile operation is then refused.
 - Invalid workspace names are also rejected by `open_workspace` itself (before creating anything).
+- The manual evidence regime of the 0.1.1 specification (runbook, evidence file, walkthrough, lock
+  checks, release review) was withdrawn by the owner on 27 October 2026; see "Checking a release".
+  The live tests no longer print an evidence line.
 - Test #19's invalid-name cases are a separate parametrised test, `test_workspace_invalid_names`,
   so the lock steps run once; test #21's session-damage case and #22's delete-active and
   unknown-field cases are separate tests too.
