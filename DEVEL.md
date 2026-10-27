@@ -243,6 +243,12 @@ with `threading.Barrier`, and by wrapping `model_call.call_model`; waits are dea
 thing tested. The helpers parse every response and event strictly, so any `NaN` or `Infinity`
 AgentWiz emitted fails the test that saw it.
 
+Loopback startup is tested with `socket.getfqdn` forced to fail: constructing a server and serving
+authenticated state must not require hostname resolution. This guards against macOS resolver delays
+without timing assertions. CLI startup failures distinguish timeout, early exit and unexpected output;
+the helper kills and reaps the child and joins its reader before closing streams. Diagnostics report
+exit status and captured stderr size, not raw child output that might contain credentials.
+
 **Live checks** (`tests/test_live.py`) are optional: a quick end-to-end run against a backend you
 have running. They skip unless their variables are set (CI sets none), run against a temporary
 workspace, and print one summary line.
@@ -352,6 +358,9 @@ Choices recorded for 0.1.1:
 - The URL rule refuses `@`, `?` and `#` anywhere in a base URL rather than parsing it.
 - Temporary files are named `.<file>.<random>.tmp` and left in place if a crash interrupts a write.
 - `UIServer` requires an opened workspace; whoever opens it closes it.
+- `UIServer.server_bind` delegates to `TCPServer.server_bind`, preserving socket binding and the
+  assigned port but using the numeric loopback address for `server_name`. It bypasses HTTPServer's
+  reverse-DNS lookup, which can delay address output on macOS; no hostname is needed for this UI.
 - The dialog's Save is now Apply; profile names are entered with `prompt()`; overwrite and delete
   are confirmed with `confirm()`.
 - Operations that change nothing write nothing and keep the revision.

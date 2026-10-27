@@ -58,13 +58,26 @@ class Launch:
     def __init__(self, cwd, *args):
         self.proc = subprocess.Popen([sys.executable, "-m", "agentwiz", "--no-browser", *args], cwd=cwd,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.reader = None
 
     def address(self, timeout=15):
         lines = []
-        reader = threading.Thread(target=lambda: lines.append(self.proc.stdout.readline()), daemon=True)
-        reader.start()
-        reader.join(timeout)
-        assert lines and lines[0].startswith("[AgentWiz] http://127.0.0.1:"), f"no address: {lines}"
+        self.reader = threading.Thread(target=lambda: lines.append(self.proc.stdout.readline()), daemon=True)
+        self.reader.start()
+        self.reader.join(timeout)
+        if not lines or not lines[0].startswith("[AgentWiz] http://127.0.0.1:"):
+            status = self.proc.poll()
+            reason = ("early exit" if status is not None else
+                      "startup timeout" if self.reader.is_alive() else "unexpected first stdout line")
+            if status is None:
+                self.proc.kill()
+            self.proc.wait(10)
+            self.reader.join(10)
+            assert not self.reader.is_alive(), "stdout reader did not stop after child termination"
+            # Do not echo raw child output: unexpected exception messages may contain credentials.
+            stderr = self.proc.stderr.read(4096)
+            pytest.fail(f"no address: {reason}; exit status={self.proc.returncode}; "
+                        f"captured stderr characters (up to 4096)={len(stderr)}")
         return lines[0].split(" ", 1)[1].strip()
 
     def state(self, address):
@@ -78,7 +91,10 @@ class Launch:
     def stop(self):
         if self.proc.poll() is None:
             self.proc.kill()
-        self.proc.wait()
+        self.proc.wait(10)
+        if self.reader is not None:
+            self.reader.join(10)
+            assert not self.reader.is_alive(), "stdout reader did not stop after child termination"
         for stream in (self.proc.stdout, self.proc.stderr):
             stream.close()
 

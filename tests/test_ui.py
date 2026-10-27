@@ -43,6 +43,17 @@ def test_access_state_and_page(ui):
     assert state["profiles"]["names"] == [] and state["profiles"]["active"] is None
 
 
+def test_startup_without_hostname_resolution(make_ui, monkeypatch):
+    def no_dns(*args, **kwargs):
+        raise AssertionError("loopback startup must not resolve hostnames")
+
+    monkeypatch.setattr(socket, "getfqdn", no_dns)
+    ui = make_ui()
+    assert ui.server_address[0] == "127.0.0.1"
+    assert ui.server_address[1] > 0
+    assert get_state(ui)["revision"] == 1
+
+
 # 2 ---------------------------------------------------------------------------------------------
 def test_keys_write_only_bound_and_source(ui, make_server, monkeypatch):
     a, b = make_server().reply(answer()), make_server().reply(answer())

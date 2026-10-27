@@ -1,4 +1,7 @@
 # NEWS
+## Unreleased
+- Local server startup no longer waits for reverse-DNS resolution, avoiding delays on macOS.
+
 ## 0.1.1
 - Model settings can be saved as named profiles; the active profile is restored when AgentWiz starts.
 - API keys are still never saved; re-enter them after a restart, or use OPENROUTER_API_KEY.

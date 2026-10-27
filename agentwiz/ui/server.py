@@ -19,6 +19,7 @@ import sys
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from socketserver import TCPServer
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
@@ -68,6 +69,11 @@ class UIServer(ThreadingHTTPServer):
         self.page_timeout = page_timeout
         self.index = INDEX.read_bytes()
         super().__init__(("127.0.0.1", port), Handler)
+
+    def server_bind(self) -> None:
+        # HTTPServer.server_bind resolves the hostname, which can stall even for loopback.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
     @property
     def url(self) -> str:
