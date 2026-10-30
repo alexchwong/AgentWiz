@@ -1,15 +1,26 @@
 # Developer guide
 
 This file is for repository maintenance. Usage is documented in `README.md`; the build reference
-for 0.1.1 is *AgentWiz 0.1.1 — Technical Specification* (version 3), which takes precedence over
-Section 7 of the release plan (*AgentWiz 0.1.x — Release Plan*, version 8) and the 0.1.1 parts of
-its other sections. The 0.1.0 specification is retired; what still binds from it is carried in the
-0.1.1 specification's Appendix C, except that the owner has replaced the specification's manual
-evidence regime (see "Checking a release"). Agent operating rules are in `.clinerules`. Nothing in
+for 0.1.2 is *AgentWiz 0.1.2 — Technical Specification* (version 5.1), which takes precedence over
+Sections 8–10 of the release plan (*AgentWiz 0.1.x — Release Plan*, version 10.1) and the 0.1.2
+parts of its other sections; its Section 19 lists every departure. Its companion, *AgentWiz
+attachment interface* (version 3, draft; `interface_version` 1), is kept as
+`docs/attachment_interface.md`. The plan carries everything that still binds from the 0.1.0 and
+0.1.1 specifications (plan 2.9, 6.13), except that the owner has replaced the 0.1.1 specification's
+manual evidence regime (see "Checking a release"). This guide owns project maintenance rules;
+`.clinerules` defines Cline's workflow for reviewing and refining Claude's handover. Nothing in
 this guide, `.clinerules`, `tests/`, `scripts/` or
 `.github/` ships in the release wheel.
 
+Coding agents must not modify `.clinerules` unless the owner explicitly instructs them to do so.
+General permission to implement, review, refactor or update documentation does not grant that permission.
+
 ## Quick start
+
+Work only in the checkout's `.venv`, set up with `scripts/dev_setup.sh`, then activate it.
+Use `python -m pytest`, never bare `pytest`. Never commit `.venv/` or a real API key.
+Keep `README.md` for users, this guide for maintenance and `NEWS.md` for the changelog.
+Update this guide in the same change when layout, commands, tests or release steps change.
 
 From the repository root:
 
@@ -17,22 +28,25 @@ From the repository root:
 scripts/dev_setup.sh                        # ./.venv + editable install + pytest (downloads the pinned modelSpell wheel)
 . .venv/bin/activate
 
-python -m pytest                            # offline suite (live checks skip)
+python -m pytest -q -m "not live"          # the offline suite (the gate; live checks deselected)
 agentwiz --no-browser                       # run the UI from your checkout (workspace: ./workspaces/default)
 python scripts/stub_backend.py              # scripted backend for trying the UI without a model
+python scripts/stub_mcp_server.py           # scripted MCP server (both protocol eras) for the Tools panel
 python scripts/build_release.py --smoke     # build, check (RC1-RC3) and smoke-test the release wheel
 ```
 
 `scripts/dev_setup.sh [--python PATH]` is the one developer setup command. It refuses to run outside
 a checkout, creates `./.venv` if missing, and runs `python -m pip install -e '.[dev]'`; it also
 converts a `.venv` made by the user installer (wheel only, no pytest). The user installer
-(`scripts/install.sh`) refuses to run in a checkout unless `--dir` is given. `./workspaces/` and `./model_profiles/` are
-ignored by git in this checkout.
+(`scripts/install.sh`) refuses to run in a checkout unless `--dir` is given. `./workspaces/`, `./model_profiles/` and
+`./mcp_servers/` are ignored by git in this checkout.
 
 ## Contents
 
 - [Repository layout](#repository-layout)
 - [The modelSpell dependency](#the-modelspell-dependency)
+- [MCP protocol versions](#mcp-protocol-versions)
+- [The attachment interface](#the-attachment-interface)
 - [UI provenance](#ui-provenance)
 - [Concurrency and resource limits](#concurrency-and-resource-limits)
 - [Error reporting](#error-reporting)
@@ -50,19 +64,28 @@ ignored by git in this checkout.
 | `agentwiz/__init__.py` | yes | Re-exports `__version__`; no other imports, no side effects. |
 | `agentwiz/_version.py` | yes | Only version source: exactly `__version__ = "X.Y.Z"`. |
 | `agentwiz/__main__.py` | yes | Command line (`agentwiz`, `python -m agentwiz`); opens the workspace before binding; exit statuses 1, 2, 3. |
-| `agentwiz/model_call.py` | yes | Settings and key validation, message building, `complete()` arguments, the call, outcome classification, error descriptions. No HTTP. |
-| `agentwiz/state.py` | yes | Process state: settings, revision, keys, profiles, state lock, request budget, snapshots, key source. No HTTP. |
+| `agentwiz/model_call.py` | yes | Settings and key validation, message building, task arguments (`task_arguments`: route support, `require_parameters`, `check_settings`), the LM Studio model lookup, the call, outcome classification, error descriptions. No HTTP. |
+| `agentwiz/task_settings.py` | yes | `TaskSettings`, its rules, and `task_settings.json`. No HTTP. |
+| `agentwiz/state.py` | yes | Process state: settings, keys, profiles, saved task settings, the MCP library and tokens, the three revisions, state lock, request budget, snapshots, key and token sources. No HTTP. |
 | `agentwiz/workspace.py` | yes | Workspace names, opening and locking (`flock`), reading and validating workspace.json, atomic writes. Called only from `state.py` under the state lock. No HTTP. Not imported by `import agentwiz`. |
-| `agentwiz/profiles.py` | yes | Workspace profile copies and shared defaults: validation, preservation, atomic writes, fingerprints and permanent short-lived library lock. No HTTP. |
-| `agentwiz/jsonio.py` | yes | The one JSON writer (`encode`, `encode_line`), and the file writer and strict reader for AgentWiz's own files (`encode_file`, `decode_file`). Standard library only. |
+| `agentwiz/profiles.py` | yes | Workspace profile copies and shared defaults (format version 2; reads 1): validation, preservation, atomic writes, fingerprints and permanent short-lived library lock. No HTTP. |
+| `agentwiz/jsonio.py` | yes | The one JSON writer (`encode`, `encode_line`); the file writer and strict reader for AgentWiz's own files (`encode_file`, `decode_file`); the exact-number reader and writer for MCP traffic (`decode_exact`, `encode_exact`). Standard library only. |
+| `agentwiz/attachments.py` | yes | The basic attachment reader (`.txt`, `.md`, `.csv`, `.json`) and `check_document`, implementing `docs/attachment_interface.md`. No HTTP. |
+| `agentwiz/insertion.py` | yes | Provenance lines and preview sizes for files and tool results; `REQUEST_LIMIT`. No HTTP. |
+| `agentwiz/mcp_library.py` | yes | The shared MCP server library (`servers.json`, `.servers.lock`): validation, fingerprints, atomic writes. No HTTP server code. |
+| `agentwiz/mcp_client.py` | yes | Streamable HTTP MCP client, both eras, standard library only: probe and era cache, discovery entries, legacy sessions and the session lock, gates, reply reading with limits, `classify`. An HTTP *client*; knows nothing of AgentWiz's server. |
+| `agentwiz/mcp_ops.py` | yes | Operations: worker threads, one commit per operation, abandonment and socket shutdown, capacity, maintenance (notices, `DELETE`s), retention. No HTTP server code. |
+| `agentwiz/tool_forms.py` | yes | Form specifications from tool input schemas. No HTTP. |
 | `agentwiz/ui/server.py` | yes | The HTTP server; the only module that knows HTTP. |
 | `agentwiz/ui/index.html` | yes | The page. |
 | `pyproject.toml`, `README.md`, `LICENSE` | metadata | Packaging, wheel description, MIT license. |
-| `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`), and opt-in live checks (`test_live.py`). |
-| `scripts/build_release.py` | no | Builds the release wheel from `HEAD`, runs release checks RC1–RC3; `--smoke`; `--changed-since`. |
-| `scripts/smoke_installed.py` | no | Smoke check (S1–S8) against an installed wheel. |
+| `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`), opt-in live checks (`test_live.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
+| `docs/attachment_interface.md` | no | The attachment interface (companion document, version 3, draft). |
+| `scripts/build_release.py` | no | Builds the release wheel from `HEAD`, runs release checks RC1–RC3; `--smoke`; `--no-isolation`; `--modelspell-wheel` (offline smoke); `--changed-since`. |
+| `scripts/smoke_installed.py` | no | Smoke check (S1–S10) against an installed wheel. |
 | `scripts/dev_setup.sh` | no | Developer setup: `./.venv` with an editable install and pytest. |
-| `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for trying the UI without a model. |
+| `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for trying the UI without a model; logs the sampling fields each request carries. |
+| `scripts/stub_mcp_server.py` | no | Scripted MCP server (`--era dual|modern|legacy`, `--token`) for trying the Tools panel; logs every request, disconnect, notice and `DELETE`. |
 | `scripts/install.sh` | no | Installer behind the README one-liner; refuses to run in a checkout without `--dir`; re-attached to every release as `install.sh`. |
 | `DEVEL.md`, `NEWS.md`, `.clinerules` | no | Maintenance guide, changelog, agent rules. |
 | `.github/workflows/` | no | `tests.yml` (push, PR) and `release.yml` (push to `main`). |
@@ -72,8 +95,13 @@ and no 3.11-only modules or APIs (`tomllib`, `datetime.UTC`, exception groups).
 
 ## The modelSpell dependency
 
-AgentWiz depends on the modelSpell **v0.1.0 release wheel**, pinned by URL and sha256 in
-`pyproject.toml`. Adding any dependency, required or optional, needs the owner's approval.
+AgentWiz depends on the modelSpell **v0.2.1 release wheel**, pinned by URL and sha256 in
+`pyproject.toml`. The error-text re-check below was done for the move from 0.1.0 to 0.2.1
+(specification 0.1.2, Section 3.2): `_http.py`, `errors.py`, `_sse.py` and `_discovery.py` are
+unchanged, and every new error is a pre-send `ConfigError` or `UnsupportedSetting` naming arguments,
+routes and rules, never a value. Nothing moved groups. Task settings use `supported_settings()` and
+`check_settings()`; AgentWiz keeps no support table of its own, and words its own refusal for a
+setting a route does not send (modelSpell's suggests `extra`, which AgentWiz does not offer). Adding any dependency, required or optional, needs the owner's approval.
 
 Boundary rules:
 
@@ -99,6 +127,58 @@ the key; a key outside Latin-1, or a non-ASCII character in a base URL's path, r
 `UnicodeEncodeError`. Typed keys and base URLs are validated so these cannot arise from the UI;
 an environment key still can, and the server's catch-all reports it as `InternalError: <Class>`.
 
+## MCP protocol versions
+
+`mcp_client.py`, `mcp_ops.py` and `tool_forms.py` use the standard library only. Read MCP
+messages with `jsonio.decode_exact` and write them with `jsonio.encode_exact` to preserve numbers.
+A tool call whose outcome is `unknown` is never resent; only a legacy session-expiry rejection
+is resent, once. Tool results and attachments are never inserted or sent without the user's action.
+
+Recorded here as plan R2-7 requires (specification 0.1.2, Sections 3.3 and 9.3).
+
+| Era | Versions | Shape |
+| --- | --- | --- |
+| Modern | `2026-07-28` | No handshake or session; every request carries `MCP-Protocol-Version`, `Mcp-Method` (and `Mcp-Name` for `tools/call`) and `params._meta` with the version, `clientCapabilities` (`{}`) and `clientInfo`. Closing the response stream is the cancellation. |
+| Legacy | offers `2025-11-25`; accepts `2025-11-25`, `2025-06-18`, `2025-03-26` | `initialize` handshake, optional `Mcp-Session-Id`, `ping`, `notifications/cancelled`, `DELETE`. |
+
+Not supported: `2024-11-05` (HTTP+SSE), and any version newer than `2026-07-28` offered without one
+of the above.
+
+**Detection.** `server/discover` with modern headers is the probe. A 200 result whose
+`supportedVersions` includes `2026-07-28` is modern; one listing only legacy versions, or a 400
+`-32022` whose `data.supported` lists one, is legacy; 401/403, redirects, transport failures,
+`-32020`/`-32021` and version lists AgentWiz cannot speak are errors with no fallback; anything else
+(another 4xx, `-32600` "Unsupported protocol version" or "Missing session ID", `-32601`, a body that
+is not JSON-RPC) means legacy, and the client falls back to `initialize`. The era is cached per URL.
+**Load tools** always re-probes. A call on a modern-cached server that gets a 400 with `-32600`, no
+JSON-RPC error, or `-32022` clears the cache and ends `rejected` (`era_changed`), unsent again.
+
+**SDKs probed on 30 October 2026:** FastMCP 4.1.4 / `mcp` 2.3.0 serve both eras on one endpoint
+(routing by `MCP-Protocol-Version`); FastMCP 3.4.11 / `mcp` 1.30.0 serve only the handshake
+revisions and answer the probe with 400 `-32600`, which falls back correctly.
+
+**Probing a server by hand:**
+
+```bash
+# modern: expect supportedVersions including 2026-07-28
+curl -s http://127.0.0.1:8765/mcp -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2026-07-28' \
+  -H 'Mcp-Method: server/discover' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"curl","version":"0"}}}}'
+# legacy: expect protocolVersion in the result (and maybe an Mcp-Session-Id header)
+curl -si http://127.0.0.1:8765/mcp -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+```
+
+## The attachment interface
+
+`docs/attachment_interface.md` is a copy of the project's *AgentWiz attachment interface*
+(version 3, draft, `interface_version` 1); the two are kept the same. Until docSpell's build starts
+and freezes it (D35), the document and `agentwiz/attachments.py` change together, and
+`interface_version` stays 1. `attachments.check_document` runs on every reader result before use,
+so docSpell's results meet the same check from 0.1.4.
+
 ## UI provenance
 
 `agentwiz/ui/server.py`, `agentwiz/ui/index.html`, the test helpers in `tests/conftest.py` and
@@ -110,7 +190,19 @@ modelSpell's copies are ported only by deliberate review, never synced automatic
 
 | Shared thing | Rule |
 | --- | --- |
-| Settings, keys, profiles, revision | The state lock (a non-reentrant `threading.Lock`), held to compare revisions, take snapshots, build views, apply changes, and read-validate-change-replace `profiles.json`; never during a network call. A method holding it never calls another public method (views are built by `_view_locked()`). One revision covers settings, keys and profiles. |
+| Settings, keys, profiles, revisions | The state lock (a non-reentrant `threading.Lock`), held to compare revisions, take snapshots, build views, apply changes, and read-validate-change-replace `profiles.json`, `task_settings.json` and `servers.json`; never during a network call (MCP work and the LM Studio model lookup included). A method holding it never calls another public method (views are built by `_view_locked()`). Three revisions: configuration (settings, keys, profiles), task settings, MCP (library and tokens); a change to one never makes another stale. |
+| Saved task settings | Changed only by `state.py` through `task_settings.py`, under the state lock, with the task-settings revision; re-read before each change; written atomically. |
+| The MCP library, across processes | `mcp_servers/.servers.lock`, a permanent file held with blocking `flock` only around each read-change-replace (lock order: state lock, then library lock); the file re-read under it; changes by other processes noticed by inode, modification time and size, and reloaded with an MCP revision increment before any revision comparison. |
+| MCP tokens | In process memory, under the state lock, bound to a URL. A change increments the MCP revision. |
+| Era cache and discovery entries | Per URL and per identity (URL plus token) in `mcp_client`, under its own lock, never held during network work. Entries hold header paths and not-offered reasons only; replaced by a complete discovery, removed with the era, on `-32020`, and when the identity stops being current. |
+| Legacy sessions | One per identity, with a per-identity lock across (re)initialisation only. Borrowers (workers until they exit; notices, reserved at abandonment before the sockets are shut down) are counted per session. An obsolete or superseded session gets at most one `DELETE`, scheduled when its last borrower releases it or the library changes; at its gate one step checks eligibility and borrowers and marks it ending, so it is never borrowed again. |
+| The session lock | One lock in `mcp_client` for current identities, session states, borrowers and each identity's session; never held during network work or while waiting for another lock. Order: state lock, then operation lock, then session lock; the initialisation lock may be held while taking it, never the reverse. |
+| MCP workers | At most 8 (`mcp_ops.WORKER_LIMIT`), counting abandoned workers until they exit; a gate before every outbound message (before connecting and after connecting), legacy answers included; each operation's sockets (at most two) registered and withdrawn under the operation's lock, and all shut down on abandonment; `started`/`progress` writes bounded by the page timeout or the time left before the call deadline, never begun with no time left; the final event written once, after the commit, with the page timeout; a failed running write abandons the operation (`deadline` if past it, else `page_closed`); one commit per operation; Stop decides by the abandoned flag; the progress queue holds one event. |
+| MCP maintenance | At most 4 threads (`MAINTENANCE_LIMIT`) for legacy cancellation notices and session `DELETE`s, counted until they exit; a 4.5-second network limit with a gate after connecting; at most one notice per operation. |
+| Ended operations | The latest 200, each for at most 10 minutes. |
+| Request bodies | At most 32 MiB for JSON routes (`insertion.REQUEST_LIMIT`) and 50 MiB for uploads (`ui.server.UPLOAD_LIMIT`), checked from `Content-Length` before reading. |
+| MCP messages | At most 32 MiB each (`mcp_client.MESSAGE_LIMIT`), enforced while reading; at most 32 MiB in total per discovery (`DISCOVERY_LIMIT`) and 1,000 tools (`TOOL_LIMIT`), with no partial result kept. |
+| LM Studio model lookup | One `list_models()` per LM Studio reasoning "off" request, inside that request's budget slot, 10-second timeout. |
 | What a page is showing | Every save, profile operation and completion states the revision its page was showing; a stale one gets 409. An operation that changes nothing writes nothing and keeps the revision. |
 | Workspace files within the process | Changed only by `state.py` through `workspace.py`, under the state lock; whole-file atomic replacement (temporary file in the same folder, `fsync`, `os.replace`); each change re-reads and validates the file first, so a file damaged by hand is never overwritten. A file with a problem is never written. |
 | The workspace across processes | `.agentwiz.lock`, opened once at launch and held with `flock(LOCK_EX \| LOCK_NB)` for the life of the process; never replaced, renamed or deleted (a new file would have a new inode that a second process could lock); released by the kernel when the process ends for any reason. The descriptor is non-inheritable, so child processes never keep it. A second process exits with status 3. |
@@ -141,8 +233,11 @@ folders are unsupported and not detected.
 `profiles.json` holds shared defaults; workspace copies live at
 `<workspaces-dir>/<workspace>/model-profiles/profiles.json`. Only state.py initiates mutations,
 under its state lock. `profiles.py` handles profile files and library locking; `workspace.py`
-handles workspace.json, its lifetime lock, and the reusable atomic writer. Both libraries use
-`{"format_version": 1, "profiles": {...}}`, preserve unknown fields and never receive session keys.
+handles workspace.json, its lifetime lock, and the reusable atomic writer. From 0.1.2 both libraries
+use `{"format_version": 2, "profiles": {...}}` (`profiles.PROFILES_FORMAT_VERSION`; `workspace.json`
+stays at 1), read version 1 too, preserve unknown fields and never receive session keys. Every write
+path (local writes, seeding a new workspace, update from defaults, export) writes version 2 with the
+retired `reasoning` and `max_tokens` dropped from every profile, through `profiles.write_profiles`.
 The active selection is in workspace.json, never added to a profile library.
 
 New workspaces import all valid defaults once, with no active selection. No migration of old
@@ -158,7 +253,7 @@ Approval uses the same revision; changes while the prompt is open cause 409 `sta
 There is no default deletion route. Normal local deletion leaves defaults alone.
 
 State exposes local `profiles.path`, `defaults_path`, `default_names`, `defaults_read_only`,
-`conflicts` and `unresolved_active`. Conflicts compare the six validated ModelSettings fields,
+`conflicts` and `unresolved_active`. Conflicts compare the four validated ModelSettings fields,
 not unknown metadata or keys. Only differing copies display `name-(workspace-name)`; stored names
 never change. Missing active references use default settings without making files read-only.
 
@@ -190,6 +285,11 @@ The page and the terminal receive only text that cannot contain a credential:
 | Exception | Page receives | Terminal |
 | --- | --- | --- |
 | AgentWiz's own request and settings errors (`SettingsError`, `BodyError`) | 400 `{"error": "<Class>: <message>"}`; messages name fields only | nothing |
+| `TaskSettingError` | 400 `{"error": "TaskSettingError: <message>", "code": "task_setting"}`: AgentWiz's own text (naming fields, rules and routes) or a modelSpell pre-send message | nothing |
+| `AttachmentError` | 400 `{"error": <reader's message>, "code": <code>}`; the message never contains file content | nothing |
+| Upload refusals | 400 `bad_filename` (names the rule, never the name), 411 `length_required`, 413 `too_large` (`size`, `limit`) | nothing |
+| MCP failures (`MCPError`) | AgentWiz's description (failure class, HTTP status or JSON-RPC code, server name, era) with `reason`, `http_status`, `jsonrpc_code`; `server_text` (the server's own message, cut at 2,000 characters, labelled "the server says:" in the page) only when no token is held for the operation's identity. A `tool_error` result is tool output and is shown as content. | nothing |
+| `BadArguments` | 400 `{"code": "bad_arguments"}`, naming the rule broken, never the text | nothing |
 | `ModelSpellError` | `describe_error(exc, base_url)`: 400 on non-streaming routes, an `error` event while streaming | nothing |
 | `ReadOnly` | 409 `{"error": "profiles are read-only: <file>: <problem>", "code": "read_only"}` (or "the workspace is read-only: …") | nothing |
 | `NoSuchProfile` | 404 `{"error": "no such profile", "code": "no_such_profile"}`; profile names are not echoed | nothing |
@@ -212,8 +312,13 @@ installed versions and shell-quoted launch and activation commands.
 
 ## Tests
 
+At each build checkpoint, run the offline gate below. Never pass it by skipping, weakening or
+deleting a test. Report a check that could not run as blocked, never as passed. Never substitute
+a stand-in for modelSpell or present a source-only check as the installed-wheel smoke. Offline
+tests must run unattended; live checks and the README tour are the owner's after handover.
+
 ```bash
-python -m pytest                    # offline suite (planned: 20 tests; table-driven cases)
+python -m pytest -q -m "not live"   # offline suite (the gate)
 python -m pytest tests/test_ui.py   # one area
 python -m pytest -m live -s         # optional live checks (variables below)
 ```
@@ -229,11 +334,41 @@ python -m pytest -m live -s         # optional live checks (variables below)
   release tooling:* `scripts/build_release.py` checks the NEWS section, the wheel's members and its
   metadata before publishing (RC1–RC3); these are release checks, not tests.
 - **T3.** Test functionality only: drive AgentWiz through HTTP, the command line, the public
-  functions of `model_call`, `state`, `workspace`, `profiles` and `jsonio`, traffic at a fake backend, or
-  captured output.
+  functions of `model_call`, `state`, `workspace`, `profiles`, `jsonio`, `attachments`, `insertion`,
+  `mcp_client` and `tool_forms`, traffic at a fake backend or fake MCP server, or captured output.
+
+**Deterministic and minimal (D49).** The offline suite never calls a language model, a hosted API or
+a real MCP server. Every backend and MCP server is a scripted fake in the test process (`TestServer`,
+`FakeMCP` in `conftest.py`) or the repository's own stub (`scripts/stub_mcp_server.py`, test #54), on
+loopback. Orderings are forced with hooks, never with `sleep`: the fakes' hold and release, the
+connection hook `mcp_client.connect_socket`, `mcp_ops.before_final_write`, `threading.Barrier` and
+`threading.Event`. Each behaviour is asserted in one test.
+
+**Constants tests lower.** Per-server MCP limits (1 second); `mcp_ops.MAINTENANCE_NETWORK_S` and
+`CANCEL_ANSWER_S`; the size limits `insertion.REQUEST_LIMIT`, `ui.server.UPLOAD_LIMIT`,
+`mcp_client.MESSAGE_LIMIT`, `DISCOVERY_LIMIT` and `TOOL_LIMIT`, so no test builds a large payload. The
+shipped values are the modules'; the header-only 413 cases check the shipped request and upload limits.
+
+**The test certificate.** `tests/fixtures/tls/test_cert.pem` and `test_key.pem` are a self-signed
+pair (RSA 2048, `CN=AgentWiz test only`, `subjectAltName` `IP:127.0.0.1, DNS:localhost`, `CA:FALSE`,
+`serverAuth`, valid for 100 years) used only by the HTTPS cases: the fake server loads it, and the
+`test_tls` fixture replaces `mcp_client.make_ssl_context()` with a context trusting only it, so
+verification stays on. Nothing runs `openssl` at test time, and no HTTPS case skips. The key is a
+public test fixture; a secret scanner may flag it. To regenerate, in `tests/fixtures/tls/`:
+
+```bash
+openssl req -x509 -newkey rsa:2048 -nodes -days 36500 -subj "/CN=AgentWiz test only" \
+  -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" -addext "basicConstraints=critical,CA:FALSE" \
+  -addext "keyUsage=critical,digitalSignature,keyEncipherment" -addext "extendedKeyUsage=serverAuth" \
+  -keyout test_key.pem -out test_cert.pem
+```
+
+**The page's JavaScript is not tested** (O1). Its check is README's "Trying it out" tour, which the
+owner follows after a build and before any pull request (D50).
 
 Tests never write outside `tmp_path`: `make_ui` opens a workspace under `tmp_path` for every server
-(including the live tests'), and a defaults library under `tmp_path`; command-line tests launch with their working directory there. "File left
+(including the live tests'), and a defaults library and an MCP library under `tmp_path` (`mcp_dir=`
+shares one library between two servers); command-line tests launch with their working directory there. "File left
 untouched" is checked with `os.stat` (inode, size, modification time). Restarts are simulated
 in-process with the `restart` fixture (shut the server down, close its workspace, reopen it, start a
 new server).
@@ -259,9 +394,35 @@ workspace, and print one summary line.
 | OpenRouter | `OPENROUTER_API_KEY`, `AGENTWIZ_LIVE_OPENROUTER_MODEL` (`author/slug`); optional `AGENTWIZ_LIVE_OPENROUTER_PROVIDER` (slug to pin; default the first listed) |
 | llama-server | `AGENTWIZ_LIVE_LLAMASERVER_URL` (e.g. `http://127.0.0.1:8080/v1`), `AGENTWIZ_LIVE_LLAMASERVER_MODEL` |
 
-All accept `AGENTWIZ_LIVE_TIMEOUT` (seconds per read from AgentWiz, default 600: AgentWiz sends
-nothing until the model's first visible token, so a loading or silently reasoning model can take
-minutes).
+| Any MCP server (`test_live_mcp`) | `AGENTWIZ_LIVE_MCP_URL`, `AGENTWIZ_LIVE_MCP_TOOL`, `AGENTWIZ_LIVE_MCP_ARGUMENTS` (the arguments as JSON text); optional `AGENTWIZ_LIVE_MCP_TOKEN`. Example, with web-retrieval-mcp running: `http://127.0.0.1:8765/mcp`, `search_web`, `{"query":"model context protocol"}` |
+
+The model checks send task settings (`temperature`, `max_tokens`). All accept
+`AGENTWIZ_LIVE_TIMEOUT` (seconds per read from AgentWiz, default 600: AgentWiz sends nothing until
+the model's first visible token, so a loading or silently reasoning model can take minutes). The
+live checks are human checks: they never run in a checkpoint gate, which deselects them with
+`-m "not live"` (unsetting `AGENTWIZ_LIVE_*` alone would not be enough: the OpenRouter check reads
+`OPENROUTER_API_KEY`).
+
+**Building 0.1.2 (D48–D51).** The build runs as phases (P, 0, A, B, C1, C2, D), each ending at a
+checkpoint gate: `python -m pytest -q -m "not live"`, passing with no failures, errors or skips.
+When a gate passes, the build continues without waiting; a gate is never passed by skipping,
+weakening or deleting a test. Phase P prepares the environment (interpreters, the dev install,
+`hatchling`, the hash-checked modelSpell wheel, the test certificate) and is the only phase that may
+use the network beyond loopback. A check whose dependency the environment cannot provide is
+**blocked**, never counted as passed. Checks that need a person (the README tour, the live checks)
+come last, as Phase H, before anything is committed or a pull request is opened.
+
+**Offline Phase D.** With `hatchling` installed in the interpreter and a local copy of the pinned
+modelSpell wheel:
+
+```bash
+python scripts/build_release.py --smoke --no-isolation --modelspell-wheel ../agentwiz-prep/wheels/modelspell-0.2.1-py3-none-any.whl
+```
+
+`--modelspell-wheel` refuses a file whose name is not the pinned URL's file name or whose sha256 is
+not the pin; the smoke then installs both wheels with `pip install --no-index --no-deps` and runs
+`pip check`. Without it the script behaves as in 0.1.1 (pip fetches the pinned URL). A warm pip cache
+can hide a missing prerequisite, so it is not preparation.
 
 ## Checking a release
 
@@ -328,15 +489,21 @@ judgement.
 
 1. On `devel`, bump `agentwiz/_version.py`, add `## X.Y.Z` to `NEWS.md` (user-visible bullets), and
    update `README.md`. Commit and push; CI runs the offline suite.
-2. Run `python scripts/build_release.py --smoke` (builds from the committed `HEAD`, runs RC1–RC3,
-   then the smoke test S1–S8).
-3. Try the UI with README's "Trying it out".
-4. Merge `devel` into `main`. The release workflow reruns the tests and RC1–RC3, then publishes.
+2. **Phase H, before anything is committed to GitHub or a pull request opened** (D50): on a local
+   working copy with the build applied, follow README's "Trying it out" against `stub_backend.py`
+   and `stub_mcp_server.py`; optionally run the live checks and the web-retrieval-mcp example. A
+   failure goes back to the implementer as a defect report.
+3. Commit to `devel` and push; CI runs the offline suite (Ubuntu and macOS, Python 3.10 and 3.13).
+   This matrix is a release criterion: the build environment cannot run macOS.
+4. Run `python scripts/build_release.py --smoke` (builds from the committed `HEAD`, runs RC1–RC3,
+   then the smoke test S1–S10).
+5. Merge `devel` into `main`. The release workflow reruns the tests and RC1–RC3, then publishes.
 
 ## NEWS entries
 
 User-visible changes only, under the version heading, newest first; one change per bullet, at most
-20 words. Released sections are never edited.
+20 words. Released sections are never edited. (One owner-approved exception, D43: 0.1.2 moved the
+"Unreleased" macOS startup bullet under `## 0.1.1`, because it shipped in the 0.1.1 wheel.)
 
 ## Implementation discretion
 
@@ -347,6 +514,33 @@ does not already record is reported to the owner before merging.
 Departures from the plan, including the two approved for 0.1.0 (errors inside an accepted stream
 described without "HTTP 200"; non-ASCII base URLs refused), are recorded in the 0.1.1
 specification's Section 16.2.
+
+Choices recorded for 0.1.2 (specification 0.1.2, Section 19.2, plus the builder's):
+
+- Task-setting names are modelSpell's argument names everywhere: page, file, request and state.
+- Three separate revisions: configuration, task settings and MCP.
+- The LM Studio model lookup uses a 10-second discovery timeout; failures fall back to the string ID,
+  reported in `model_lookup`.
+- Upload errors and the MCP routes use machine `code` fields for every refusal.
+- Operation IDs are random strings; JSON-RPC IDs and progress tokens are process-wide integers.
+- Ended operations are kept for 10 minutes, at most 200.
+- MCP server limit bounds: idle 1–600 s, call 1–3,600 s, discovery 1–600 s.
+- The stub MCP server's tools and flags.
+- Tool provenance lines quote a tool name only when it has characters outside `[A-Za-z0-9_.-]`.
+- The 32 MiB JSON cap is checked from `Content-Length` before the route is looked up, so every POST
+  except the upload route is capped.
+- A "non-modern 400" that clears a modern-cached era is a 400 with no JSON-RPC error or with
+  `-32600` (the handshake era's "Unsupported protocol version" / "Missing session ID"), or `-32022`.
+  A 400 with another code (for example `-32602`) on a modern server is an ordinary `rejected`
+  (`http_status`), not an era change.
+- `mcp_client.classify` reports a discovery abandoned by Stop or its deadline with reason `stopped`
+  or `deadline` (the `not_sent_*` reasons belong to the `tools/call` gate).
+- A deadline a worker notices at a gate goes through the same abandonment as the handler's
+  (commit, notice reservation, socket shutdown), so an operation is still committed once.
+- MCP tokens typed in the dialog are validated like API keys (visible ASCII, no spaces) and keyed by
+  the server's URL.
+- The page's preview for a tool result with both text and structured content toggles between them
+  with one button; insertion records hold the provenance line, target, time, size, hash and source.
 
 Choices recorded for 0.1.1:
 
@@ -366,7 +560,8 @@ Choices recorded for 0.1.1:
 - Operations that change nothing write nothing and keep the revision.
 - `workspace.json` requires `created_by` and `save_runs`; `active_profile` is null or a valid name.
   Missing selection is treated as null. Profile libraries require `profiles`, not `active`; legacy
-  `active` is uninterpreted metadata and preserved. Both files retain format_version 1.
+  `active` is uninterpreted metadata and preserved. Both files retained format_version 1 in 0.1.1
+  (profile files moved to 2 in 0.1.2).
 - Workspace profiles are read even when the workspace is read-only; local profile operations are
   refused. Invalid defaults disable only imports/exports, not local profiles or model requests.
 - Invalid workspace names are also rejected by `open_workspace` itself (before creating anything).

@@ -11,7 +11,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
-  "modelSpell @ https://github.com/alexchwong/modelSpell/releases/download/v0.1.0/modelspell-0.1.0-py3-none-any.whl#sha256=ddc5b307fa31c29d115d5b8743e8d08321a6ae8a0bcea62b671edfa5e7d44dcf",
+  "modelSpell @ https://github.com/alexchwong/modelSpell/releases/download/v0.2.1/modelspell-0.2.1-py3-none-any.whl#sha256=607fdcac4b38d198cf55c02d7e8132d79604fb1fc30332c0e0e46b0b58acbd1e",
 ]
 
 [project.optional-dependencies]

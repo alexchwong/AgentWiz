@@ -1,7 +1,8 @@
-"""Settings, keys, the model call, outcome classification and error descriptions (techspec 7.4).
+"""Settings, keys, task arguments, the model call, outcome classification and error descriptions
+(techspec 0.1.1, 7.4; 0.1.2, 7.2-7.4).
 
 Uses only modelSpell's public API and knows nothing about HTTP, so later releases can reuse
-`call_model`, `classify_outcome` and `describe_error` as the model-step executor.
+`task_arguments`, `call_model`, `classify_outcome` and `describe_error` as the model-step executor.
 """
 from __future__ import annotations
 
@@ -11,16 +12,23 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import modelspell
-from modelspell import (AuthError, BackendError, ConfigError, ConnectError, Endpoint, ModelSpellError,
-                        RequestTimeout, ResponseFormatError, Result, UnsupportedOperation,
+from modelspell import (AuthError, BackendError, ConfigError, ConnectError, Endpoint, ModelInfo,
+                        ModelSpellError, RequestTimeout, ResponseFormatError, Result, UnsupportedOperation,
                         UnsupportedSetting)
 
+from .task_settings import LABELS, TaskSettingError, TaskSettings
+
 KINDS = ("lmstudio", "openrouter", "openai_compat")
-REASONING_LEVELS = ("", "off", "low", "medium", "high")
+KIND_NAMES = {"lmstudio": "LM Studio", "openrouter": "OpenRouter", "openai_compat": "OpenAI-compatible servers"}
+RETIRED = ("reasoning", "max_tokens")
+RETIRED_MESSAGE = ("reasoning and max_tokens are task settings from AgentWiz 0.1.2; "
+                   "set them in the request panel")
+OPENROUTER_HINT = ("OpenRouter found no provider for this request. Check the provider pinned in the profile "
+                   "and your OpenRouter privacy settings")
 OUTCOMES = ("complete", "empty", "reasoning_only", "truncated",
             "truncated_no_answer", "error", "stopped")
 
-_FIELDS = ("kind", "base_url", "model", "provider", "reasoning", "max_tokens")
+_FIELDS = ("kind", "base_url", "model", "provider")
 
 
 class SettingsError(ValueError):
@@ -33,19 +41,22 @@ class ModelSettings:
     base_url: str = ""          # "" means the kind's default URL
     model: str = ""
     provider: str = ""          # OpenRouter provider slug; "" means any
-    reasoning: str = ""         # "" means backend default
-    max_tokens: int | None = None
 
 
 @dataclass(frozen=True)
 class RequestSnapshot:
-    endpoint: Endpoint
+    endpoint: Endpoint          # with its key
     model: str
-    kwargs: Mapping[str, Any]   # exactly what complete_kwargs() returned
+    kind: str
+    provider: str               # the profile's OpenRouter provider pin; "" means none
 
 
 def settings_from_body(current: ModelSettings, body: Mapping) -> ModelSettings:
-    """Partial update: each field takes the body's value if present, else the current value."""
+    """Partial update: each field takes the body's value if present, else the current value.
+
+    A body with the retired `reasoning` or `max_tokens` is refused (Section 7.6)."""
+    if any(f in body for f in RETIRED):
+        raise SettingsError(RETIRED_MESSAGE)
     values = {f: body[f] if f in body else getattr(current, f) for f in _FIELDS}
     if values["kind"] not in KINDS:
         raise SettingsError(f"kind must be one of {', '.join(KINDS)}")
@@ -58,14 +69,7 @@ def settings_from_body(current: ModelSettings, body: Mapping) -> ModelSettings:
     if any(c in values["base_url"] for c in "@?#"):
         # R1-7: credentials belong in the key field, never in a URL that may be saved or shown.
         raise SettingsError("base_url must not contain a user name, password, query or fragment")
-    if values["reasoning"] not in REASONING_LEVELS:
-        raise SettingsError("reasoning must be one of: (blank), off, low, medium, high")
-    mt = values["max_tokens"]
-    if mt is not None and not (isinstance(mt, int) and not isinstance(mt, bool) and mt >= 1):
-        raise SettingsError("max_tokens must be null or an integer of at least 1")
     Endpoint(values["kind"], values["base_url"] or None)  # validates scheme and openai_compat URL
-    if values["kind"] == "openai_compat":
-        values["reasoning"] = ""
     if values["kind"] != "openrouter":
         values["provider"] = ""
     return ModelSettings(**values)
@@ -89,23 +93,71 @@ def build_messages(system: str, prompt: str) -> list[dict]:
     return messages
 
 
-def complete_kwargs(settings: ModelSettings, kind: str) -> dict:
-    """Only the complete() arguments that are set."""
-    kwargs: dict[str, Any] = {}
-    if settings.reasoning != "" and kind != "openai_compat":
-        kwargs["reasoning"] = settings.reasoning
-    if settings.max_tokens is not None:
-        kwargs["max_tokens"] = settings.max_tokens
-    if kind == "openrouter" and settings.provider != "":
-        kwargs["provider"] = {"order": [settings.provider], "allow_fallbacks": False}
-    return kwargs
+def _route_refusal(name: str, kind: str, reasoning: str) -> str:
+    label = LABELS.get(name, name)
+    if kind == "lmstudio" and name in modelspell.supported_settings("lmstudio", "off"):
+        level = f"reasoning level {reasoning}" if reasoning else "the backend-default reasoning level"
+        return f"{label} is not sent to LM Studio at {level}; it is sent with reasoning off"
+    return f"{label} is not sent to {KIND_NAMES.get(kind, kind)}"
 
 
-def call_model(snapshot: RequestSnapshot, messages: list[dict], *,
+def provider_mapping(task: TaskSettings, kind: str, provider_pin: str) -> dict | None:
+    """OpenRouter's provider object (Section 7.4); None for other kinds or when nothing is needed."""
+    if kind != "openrouter":
+        return None
+    mapping: dict[str, Any] = {}
+    if provider_pin:
+        mapping.update({"order": [provider_pin], "allow_fallbacks": False})
+    if task.set_names() - {"max_tokens"}:
+        mapping["require_parameters"] = True
+    return mapping or None
+
+
+def task_arguments(task: TaskSettings, kind: str, provider_pin: str) -> dict:
+    """The complete() keyword arguments for the set task settings, or TaskSettingError (Section 7.2).
+
+    Checks, in order: reasoning on OpenAI-compatible servers; route support (AgentWiz's wording);
+    the provider mapping; values through modelspell.check_settings. Sends nothing.
+    """
+    if kind == "openai_compat" and task.reasoning:
+        raise TaskSettingError("reasoning is not available for OpenAI-compatible servers")
+    supported = modelspell.supported_settings(kind, task.reasoning or None)
+    for name in sorted(task.set_names() - {"reasoning"}, key=lambda n: list(LABELS).index(n)):
+        if name not in supported:
+            raise TaskSettingError(_route_refusal(name, kind, task.reasoning))
+    arguments = task.values()
+    provider = provider_mapping(task, kind, provider_pin)
+    if provider is not None:
+        arguments["provider"] = provider
+    try:
+        modelspell.check_settings(kind, **arguments)
+    except (ConfigError, UnsupportedSetting) as exc:  # pre-send validation messages (plan 6.13, #3)
+        raise TaskSettingError(str(exc)) from None
+    return arguments
+
+
+def lmstudio_model_info(endpoint: Endpoint, model_id: str) -> tuple[ModelInfo | None, str]:
+    """The model's discovery entry for LM Studio with reasoning "off" (Section 7.3).
+
+    Returns (entry, "used"), (None, "not_listed") or (None, "failed"). Never raises a ModelSpellError.
+    """
+    try:
+        models = modelspell.list_models(endpoint, timeout=10.0)
+    except ModelSpellError:
+        return None, "failed"
+    for info in models:
+        if info.id == model_id:
+            return info, "used"
+    return None, "not_listed"
+
+
+def call_model(snapshot: RequestSnapshot, messages: list[dict], arguments: Mapping[str, Any], *,
+               model_info: ModelInfo | None = None,
                on_text: Callable[[str], None], on_reasoning: Callable[[str], None]) -> Result:
     """One modelSpell call. No retries; exceptions propagate unchanged."""
-    return modelspell.complete(snapshot.endpoint, snapshot.model, messages,
-                               on_text=on_text, on_reasoning=on_reasoning, **snapshot.kwargs)
+    model = model_info if model_info is not None else snapshot.model
+    return modelspell.complete(snapshot.endpoint, model, messages,
+                               on_text=on_text, on_reasoning=on_reasoning, **arguments)
 
 
 def classify_outcome(result: Result) -> str:

@@ -1,10 +1,11 @@
-"""Process state: settings, revision, keys, profiles, request budget (techspec 7.6; R0-2, R0-10,
-R0-11, R1-3, R1-4, P11).
+"""Process state: settings, revision, keys, profiles, task settings, request budget (techspec 0.1.1,
+7.6; 0.1.2, 7.5, 10.1; R0-2, R0-10, R0-11, R1-3, R1-4, P11).
 
 Settings belong to the process and every tab shares them. Each change increments a revision, and
 every completion, save and profile operation states the revision its page was showing, so a tab can
-never act on settings or profiles it is not showing. One revision covers settings, keys and
-profiles.
+never act on settings or profiles it is not showing. Three revisions exist, and a change to one never
+makes another stale: the configuration revision (settings, keys, profiles), the task-settings
+revision (the workspace's saved task settings) and the MCP revision (the MCP library and tokens).
 
 The state lock is held to compare, snapshot, view and apply, and across the read-validate-change-
 replace of workspace profiles (through profiles.py), so one profile change can never overwrite another.
@@ -20,12 +21,15 @@ import threading
 from collections.abc import Mapping
 from pathlib import Path
 
+import modelspell
 from modelspell import Endpoint
 
+from . import mcp_client, mcp_ops
+from . import mcp_library as ml
 from . import profiles as pf
+from . import task_settings as ts
 from . import workspace as wsmod
-from .model_call import (ModelSettings, RequestSnapshot, SettingsError, complete_kwargs,
-                         settings_from_body, validate_key)
+from .model_call import ModelSettings, RequestSnapshot, SettingsError, settings_from_body, validate_key
 from .workspace import Problem, Workspace
 
 
@@ -36,11 +40,12 @@ class StaleRevision(Exception):
 
 
 class ReadOnly(Exception):
-    """Profiles cannot be changed until AgentWiz restarts. The message names the file and the rule."""
+    """Something cannot be changed until it is repaired (and, for workspace files, AgentWiz restarts).
+    The message names the file and the rule."""
 
-    def __init__(self, problems: list[Problem], whole_workspace: bool):
+    def __init__(self, problems: list[Problem], whole_workspace: bool, what: str = "profiles"):
         first = problems[0] if problems else None
-        what = "the workspace is read-only" if whole_workspace else "profiles are read-only"
+        what = "the workspace is read-only" if whole_workspace else f"{what} are read-only"
         super().__init__(f"{what}: {first.file}: {first.message}" if first else what)
         self.problems = problems
         self.whole_workspace = whole_workspace
@@ -48,6 +53,11 @@ class ReadOnly(Exception):
 
 class DefaultConflict(Exception):
     """Export requires explicit overwrite approval."""
+
+
+class NoSuchServer(Exception):
+    def __init__(self):
+        super().__init__("no such MCP server")
 
 
 class NoSuchProfile(Exception):
@@ -100,8 +110,16 @@ def _name(value: object, allow_none: bool = False) -> str | None:
     return value  # type: ignore[return-value]
 
 
+def supported_view(kind: str) -> dict:
+    """For each reasoning level the kind takes, the setting names modelSpell sends (Section 10.2)."""
+    levels = ("",) if kind == "openai_compat" else ts.REASONING_LEVELS
+    return {level: sorted(modelspell.supported_settings(kind, level or None) - {"reasoning", "provider"})
+            for level in levels}
+
+
 class ProcessState:
-    def __init__(self, workspace: Workspace, request_limit: int = 8, *, profiles_dir: Path):
+    def __init__(self, workspace: Workspace, request_limit: int = 8, *, profiles_dir: Path,
+                 mcp_servers_dir: Path | None = None):
         self.budget = RequestBudget(request_limit)
         self.workspace = workspace
         self._lock = threading.Lock()
@@ -131,6 +149,21 @@ class ProcessState:
                 self._active = None
             if self._active is not None:
                 self._settings = self._profiles[self._active]
+            loaded_task = ts.read(workspace.path)
+            self._task_problem: Problem | None = loaded_task.problem
+            self._task_saved = loaded_task.settings
+            self._task_revision = 1
+            # The MCP library (Section 9.1), its revision and typed tokens (bound to a URL).
+            self.mcp_library = ml.Library(mcp_servers_dir if mcp_servers_dir is not None else Path("./mcp_servers"))
+            self.mcp_library.ensure()
+            self.mcp_client = mcp_client.MCPClient()
+            self.mcp_ops = mcp_ops.Ops(self.mcp_client)
+            self._mcp_revision = 1
+            self._mcp_tokens: dict[str, str] = {}
+            self._mcp_signature = None
+            self._mcp = ml.LibraryFile(None)
+            with self.mcp_library.locked():
+                self._refresh_mcp_locked(initial=True)
 
     def _refresh_defaults_locked(self, initial=False):
         signature = pf.fingerprint(self.library.path)
@@ -156,7 +189,8 @@ class ProcessState:
             return self._problems_locked()
 
     def _problems_locked(self) -> list[Problem]:
-        extra = [p for p in (self._profile_problem, self._defaults.problem) if p is not None]
+        extra = [p for p in (self._profile_problem, self._defaults.problem, self._task_problem, self._mcp.problem)
+                 if p is not None]
         return list(self.workspace.problems) + extra
 
     def _profiles_read_only_locked(self) -> bool:
@@ -174,8 +208,13 @@ class ProcessState:
         ws = self.workspace
         active = self._active
         return {"kind": s.kind, "base_url": s.base_url, "model": s.model, "provider": s.provider,
-                "reasoning": s.reasoning, "max_tokens": s.max_tokens, "key_source": key_source,
+                "key_source": key_source,
                 "revision": self._revision,
+                "task": {"saved": self._task_saved.saved_shape(), "revision": self._task_revision,
+                         "read_only": self._task_read_only_locked(),
+                         "path": str(self.workspace.path / ts.FILE)},
+                "supported": supported_view(s.kind),
+                "mcp": self._mcp_view_locked(),
                 "workspace": {"name": ws.name, "path": str(ws.path), "created": ws.created,
                               "read_only": ws.read_only,
                               "problems": [dataclasses.asdict(p) for p in self._problems_locked()]},
@@ -189,9 +228,13 @@ class ProcessState:
                               "modified": active is not None and self._profiles.get(active) != s,
                              "read_only": self._profiles_read_only_locked()}}
 
+    def _task_read_only_locked(self) -> bool:
+        return self.workspace.read_only or self._task_problem is not None
+
     def view(self) -> dict:
         with self._lock:
             self._refresh_locked()
+            self._refresh_mcp_locked()
             return self._view_locked()
 
     # --- settings ----------------------------------------------------------------------------
@@ -355,6 +398,133 @@ class ProcessState:
 
         return self._profile_operation(revision, validate, plan)
 
+    # --- task settings (Section 7.5) ----------------------------------------------------------
+    def save_task_settings(self, task_body: object, revision: int) -> dict:
+        """Save the panel's values as the workspace's task settings, under the state lock."""
+        with self._lock:
+            if revision != self._task_revision:
+                raise StaleRevision(self._task_revision)
+            if self._task_read_only_locked():
+                problems = [p for p in (self._task_problem,) if p] or list(self.workspace.problems)
+                raise ReadOnly(problems, self.workspace.read_only, "task settings")
+            settings = ts.parse_task(task_body)
+            disk = ts.read(self.workspace.path)
+            if disk.problem is not None:
+                self._task_problem = disk.problem
+                self._task_revision += 1
+                raise ReadOnly([disk.problem], False, "task settings")
+            raw = ts.build_raw(disk.raw, settings)
+            if disk.exists and raw == disk.raw:
+                self._task_saved = settings
+                return self._view_locked()
+            try:
+                ts.write(self.workspace.path, raw)
+            except OSError as exc:
+                raise WriteFailed(str(self.workspace.path / ts.FILE), exc.strerror or type(exc).__name__) from None
+            self._task_saved = settings
+            self._task_revision += 1
+            return self._view_locked()
+
+    # --- MCP library, tokens and snapshots (Sections 9.1, 9.2) ------------------------------
+    def _refresh_mcp_locked(self, initial: bool = False) -> None:
+        """Reload the library when another process changed it (inode, mtime, size)."""
+        signature = self.mcp_library.fingerprint()
+        if initial or signature != self._mcp_signature:
+            self._mcp = self.mcp_library.read()
+            self._mcp_signature = signature
+            if not initial:
+                self._mcp_revision += 1
+            self._identities_changed_locked()
+
+    def _token_for_locked(self, config: ml.ServerConfig) -> tuple[str | None, str]:
+        typed = self._mcp_tokens.get(config.url)
+        if typed:
+            return typed, "session"
+        if config.token_env:
+            value = os.environ.get(config.token_env, "").strip()
+            if value:
+                return value, "env:" + config.token_env
+        return None, "none"
+
+    def _identities_changed_locked(self) -> None:
+        identities = {(c.url, self._token_for_locked(c)[0]) for c in self._mcp.servers.values()}
+        self.mcp_client.set_current_identities(identities)
+
+    def _mcp_view_locked(self) -> dict:
+        servers = {}
+        for name, config in sorted(self._mcp.servers.items()):
+            era = self.mcp_client.era_of(config.url)
+            servers[name] = {**config.view(), "token_source": self._token_for_locked(config)[1],
+                             "era": era[0] if era else None, "protocol_version": era[1] if era else None}
+        return {"path": str(self.mcp_library.path), "read_only": self._mcp.problem is not None,
+                "problems": [dataclasses.asdict(self._mcp.problem)] if self._mcp.problem else [],
+                "revision": self._mcp_revision, "servers": servers,
+                "protocols": {"modern": [mcp_client.MODERN], "legacy": list(mcp_client.LEGACY)},
+                "operations": self.mcp_ops.view()}
+
+    def _mcp_check_locked(self, revision: int) -> None:
+        self._refresh_mcp_locked()
+        if revision != self._mcp_revision:
+            raise StaleRevision(self._mcp_revision)
+
+    def save_mcp_servers(self, servers_body: object, revision: int) -> dict:
+        with self._lock:
+            with self.mcp_library.locked():
+                self._mcp_check_locked(revision)
+                if self._mcp.problem is not None:
+                    raise ReadOnly([self._mcp.problem], False, "MCP servers")
+                try:
+                    servers = ml.parse_servers(servers_body)
+                except wsmod.InvalidDocument as exc:
+                    raise SettingsError(str(exc)) from None
+                disk = self.mcp_library.read()
+                if disk.problem is not None:
+                    self._mcp = disk
+                    self._mcp_signature = self.mcp_library.fingerprint()
+                    self._mcp_revision += 1
+                    raise ReadOnly([disk.problem], False, "MCP servers")
+                raw = ml.build_raw(disk.raw, servers)
+                if raw != disk.raw or not disk.exists:
+                    try:
+                        self.mcp_library.write(raw)
+                    except OSError as exc:
+                        raise WriteFailed(str(self.mcp_library.path), exc.strerror or type(exc).__name__) from None
+                    self._mcp = self.mcp_library.read()
+                    self._mcp_signature = self.mcp_library.fingerprint()
+                    self._mcp_revision += 1
+                    self._identities_changed_locked()
+                return self._view_locked()
+
+    def set_mcp_token(self, server: object, token: object, revision: int) -> dict:
+        with self._lock:
+            self._mcp_check_locked(revision)
+            config = self._mcp.servers.get(server) if isinstance(server, str) else None
+            if config is None:
+                raise NoSuchServer()
+            if token == "":
+                changed = self._mcp_tokens.pop(config.url, None) is not None
+            else:
+                if not isinstance(token, str) or not token.strip() or \
+                        any(not 0x21 <= ord(c) <= 0x7E for c in token.strip()):
+                    raise SettingsError("the token must be visible ASCII without spaces")
+                value = token.strip()
+                changed = self._mcp_tokens.get(config.url) != value
+                self._mcp_tokens[config.url] = value
+            if changed:
+                self._mcp_revision += 1
+                self._identities_changed_locked()
+            return self._view_locked()
+
+    def mcp_snapshot(self, server: object, revision: int) -> mcp_client.Snapshot:
+        with self._lock:
+            self._mcp_check_locked(revision)
+            config = self._mcp.servers.get(server) if isinstance(server, str) else None
+            if config is None:
+                raise NoSuchServer()
+            token, _source = self._token_for_locked(config)
+            return mcp_client.Snapshot(server, config.url, config.idle_timeout_s, config.call_deadline_s,
+                                       config.discovery_deadline_s, token)
+
     # --- requests ----------------------------------------------------------------------------
     def snapshot(self, revision: int) -> RequestSnapshot:
         with self._lock:
@@ -364,8 +534,8 @@ class ProcessState:
             s = self._settings
             ep = _endpoint(s)
             key = self._keys.get((ep.kind, ep.base_url))
-            return RequestSnapshot(endpoint=_endpoint(s, key), model=s.model,
-                                   kwargs=complete_kwargs(s, s.kind))
+            return RequestSnapshot(endpoint=_endpoint(s, key), model=s.model, kind=s.kind,
+                                   provider=s.provider if s.kind == "openrouter" else "")
 
     def discovery_endpoint(self, kind: object, base_url: object, api_key: object) -> Endpoint:
         """Endpoint for Load models / Load providers, from the dialog's typed values."""
@@ -379,5 +549,5 @@ class ProcessState:
         return _endpoint(typed, key)
 
 
-__all__ = ["DefaultConflict", "NoSuchProfile", "ProcessState", "ReadOnly", "RequestBudget", "SettingsError", "StaleRevision",
+__all__ = ["DefaultConflict", "NoSuchProfile", "NoSuchServer", "ProcessState", "ReadOnly", "RequestBudget", "SettingsError", "StaleRevision",
            "WriteFailed"]

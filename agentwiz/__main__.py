@@ -1,6 +1,6 @@
 """Command line: agentwiz [--port N] [--no-browser] [--workspaces-dir PATH] [--workspace NAME]
-[--profiles-dir PATH] [--version]
-(techspec 7.2).
+[--profiles-dir PATH] [--mcp-servers-dir PATH] [--version]
+(techspec 0.1.1, 7.2; 0.1.2, 5.4).
 
 Exit statuses: 0 after Ctrl-C; 1 when the workspace cannot be opened or the port cannot be bound;
 2 for usage errors, including an invalid workspace name; 3 when another AgentWiz process holds the
@@ -64,6 +64,8 @@ def main(argv: list[str] | None = None) -> None:
                         help="workspace to use, created empty if missing (default: default)")
     parser.add_argument("--profiles-dir", type=Path, default=Path("./model_profiles"), metavar="PATH",
                         help="shared default profiles, created if missing (default: ./model_profiles)")
+    parser.add_argument("--mcp-servers-dir", type=Path, default=Path("./mcp_servers"), metavar="PATH",
+                        help="shared MCP server library, created if missing (default: ./mcp_servers)")
     parser.add_argument("--version", action="version",
                         version=f"AgentWiz {__version__} (modelSpell {modelspell.__version__})")
     args = parser.parse_args(argv)
@@ -81,7 +83,8 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         try:
-            server = UIServer(args.port, workspace=ws, profiles_dir=args.profiles_dir)
+            server = UIServer(args.port, workspace=ws, profiles_dir=args.profiles_dir,
+                              mcp_servers_dir=args.mcp_servers_dir)
         except (OSError, OverflowError) as exc:
             reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
             _say(f"cannot listen on 127.0.0.1:{args.port}: {reason}", err=True)
@@ -90,6 +93,7 @@ def main(argv: list[str] | None = None) -> None:
         _say(server.url)
         _say("this machine only; the address carries a one-time session token. Ctrl-C to stop.")
         _say(f"workspace '{ws.name}' at {ws.path}" + (" (created)" if ws.created else ""))
+        _say(f"MCP servers at {server.state.mcp_library.folder}")
         problems = server.state.problems
         for problem in problems:
             _say(f"warning: {problem.file}: {problem.message}")

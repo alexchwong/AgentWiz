@@ -41,6 +41,11 @@ def test_access_state_and_page(ui):
     assert state["key_source"] == "none"
     assert state["workspace"]["read_only"] is False and state["workspace"]["created"] is True
     assert state["profiles"]["names"] == [] and state["profiles"]["active"] is None
+    assert "reasoning" not in state and "max_tokens" not in state
+    assert state["task"]["saved"] == {"reasoning": "", "temperature": None, "max_tokens": None, "advanced": {}}
+    assert state["task"]["read_only"] is False and state["task"]["revision"] == 1
+    assert state["supported"][""] == ["max_tokens", "temperature", "top_p"]
+    assert "top_k" in state["supported"]["off"]
 
 
 def test_startup_without_hostname_resolution(make_ui, monkeypatch):
@@ -116,15 +121,15 @@ def test_complete_streams_and_maps_settings(ui, server):
     usage = {"prompt_tokens": 5, "completion_tokens": 7, "total_tokens": 12}
     server.reply(Reply(body=[delta(reasoning="think "), delta(reasoning="hard"), delta("an"), delta("s"),
                              delta(finish="stop"), delta(usage=usage), DONE], headers=SSE))
-    configure(ui, server, kind="openrouter", api_key="k", provider="deepinfra/turbo", reasoning="high", max_tokens=64)
-    evs = complete(ui, "task", system="sys")
+    configure(ui, server, kind="openrouter", api_key="k", provider="deepinfra/turbo")
+    evs = complete(ui, "task", system="sys", task={"reasoning": "high", "max_tokens": 64})
     end = last(evs)
     assert end["type"] == "result" and end["outcome"] == "complete"
     assert texts(evs) == end["result"]["text"] == "ans"
     assert texts(evs, "reasoning") == end["result"]["reasoning"] == "think hard"
     sent = server.requests[-1]["body"]
     assert sent["messages"] == [{"role": "system", "content": "sys"}, {"role": "user", "content": "task"}]
-    assert sent["provider"] == {"order": ["deepinfra/turbo"], "allow_fallbacks": False}
+    assert sent["provider"] == {"order": ["deepinfra/turbo"], "allow_fallbacks": False, "require_parameters": True}
     assert sent["reasoning"] == {"effort": "high"}
     assert sent["max_tokens"] == 64
     assert sent["stream"] is True
@@ -139,7 +144,8 @@ def test_errors(ui, server):
     evs = complete(ui, "hi")
     assert len(evs) == 1 and evs[0]["type"] == "error" and evs[0]["error"].startswith("BackendError:")
     rev = get_state(ui)["revision"]
-    for bad in ({"kind": "nope"}, {"kind": "openai_compat", "base_url": ""}, {"reasoning": "extreme"},
+    for bad in ({"kind": "nope"}, {"kind": "openai_compat", "base_url": ""}, {"reasoning": "low"},
+                {"max_tokens": 64},
                 {"kind": "openai_compat", "base_url": server.url + "/vé"}):
         assert status_of(lambda: request(ui, "/api/config", {"revision": rev, **bad})) == 400
     assert get_state(ui)["revision"] == rev
@@ -232,12 +238,12 @@ def test_snapshot_used_for_accepted_request(ui, make_server, monkeypatch):
         return real(*args, **kwargs)
 
     monkeypatch.setattr(model_call, "call_model", paused)
-    configure(ui, a, model="m-a", max_tokens=32, api_key="KEY_A")
+    configure(ui, a, model="m-a", api_key="KEY_A")
     out = {}
-    worker = threading.Thread(target=lambda: out.setdefault("evs", complete(ui, "hi")))
+    worker = threading.Thread(target=lambda: out.setdefault("evs", complete(ui, "hi", task={"max_tokens": 32})))
     worker.start()
     assert entered.wait(10)
-    configure(ui, b, model="m-b", max_tokens=64, api_key="KEY_B")
+    configure(ui, b, model="m-b", api_key="KEY_B")
     proceed.set()
     worker.join(10)
     assert last(out["evs"])["type"] == "result"
