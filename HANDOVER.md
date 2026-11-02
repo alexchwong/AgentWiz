@@ -112,19 +112,17 @@ Two things the owner may want to look at:
 1. The checkpoint-log gap above.
 2. The README tour now has 29 numbered steps in groups; it replaces the 0.1.2 tour rather than extending it.
 
-## Phase H — your checks (D50)
+## Phase H — owner disposition (updated 2 November 2026)
 
-Apply the zip to a working copy of `devel` at `fa345d3`; `scripts/dev_setup.sh` (or `pip install -e '.[dev,checks]'` and
-`python -m playwright install chromium`). Then:
+Objective checks belong in pytest, including browser-scripted checks. The old mandatory 29-step
+walkthrough is withdrawn; the tutorial remains optional learning material, not release sign-off.
 
-1. `python -m pytest -q -m "not live"` — expect 347 passed, 8 deselected.
-2. Follow README "Trying it out" against `python scripts/stub_backend.py` and `python scripts/stub_mcp_server.py` (required).
-   Note step 11 (`slow-headers`, Stop at once) and step 25 (`json-repair` then Preview and Send repair).
-3. Optional: the OpenRouter live checks, for example
-   `OPENROUTER_API_KEY=… AGENTWIZ_LIVE_OPENROUTER_MODEL=qwen/qwen3.8-27b python -m pytest -m live -s -k "stop or checked_request"`.
-   LM Studio and llama-server variants are blocked until 0.2.0 (D72).
+**Remaining subjective UI review: Completed by owner direction.** This covers presentation,
+clarity and usability only. The status records the owner's instruction, not invented individual
+observations. No tutorial acknowledgement or manual pass/fail exercise is required before commit.
 
-Nothing is committed and no pull request is opened until step 2 has passed.
+The offline gate, CI and installed-wheel release smoke are still required. Live backend checks
+remain optional. See DEVEL "Checking a release" for the authoritative maintenance rule.
 
 ## Release checklist (after Phase H)
 

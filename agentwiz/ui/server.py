@@ -17,6 +17,7 @@ import hmac
 import json
 import secrets
 import sys
+import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -121,6 +122,9 @@ class UIServer(ThreadingHTTPServer):
     def __init__(self, port: int = 0, *, workspace: Workspace, profiles_dir: Path, page_timeout: float = 30.0,
                  request_limit: int = 8, mcp_servers_dir: Path | None = None):
         self.token = secrets.token_urlsafe(24)
+        from ..tutorial import Tutorial
+        self.tutorial = Tutorial(self)
+        self.tutorial_session = None
         self.workspace = workspace  # opened and closed by the caller
         self.state = ProcessState(workspace, request_limit, profiles_dir=profiles_dir,
                                   mcp_servers_dir=mcp_servers_dir if mcp_servers_dir is not None
@@ -142,6 +146,10 @@ class UIServer(ThreadingHTTPServer):
         exc = sys.exc_info()[1]
         if exc is not None:
             report_internal("connection", exc)
+
+    def server_close(self) -> None:
+        self.tutorial.close()
+        super().server_close()
 
 
 def _optional_str(body: dict, name: str) -> str:
@@ -314,6 +322,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, self.server.index, "text/html; charset=utf-8")
         if path == "/api/state":
             return self._send(200, self._state_body(self.server.state.view()))
+        if path == "/api/tutorial":
+            session = self.server.tutorial_session
+            return self._send(200, session.info() if session else {"active": False})
         if path.startswith("/api/contracts/"):
             return self._send(200, self.server.state.get_contract(path[len("/api/contracts/"):]))
         if path.startswith("/api/attempts/"):
@@ -331,7 +342,11 @@ class Handler(BaseHTTPRequestHandler):
     def _post(self, path: str) -> None:
         if not self._authorised():
             return self._send(403, {"error": "missing or invalid session token"})
-        routes = {"/api/config": self._config, "/api/models": self._models,
+        routes = {"/api/tutorial/start": self._tutorial_start,
+                  "/api/tutorial/step": self._tutorial_step,
+                  "/api/tutorial/restart": self._tutorial_restart,
+                  "/api/tutorial/exit": self._tutorial_exit,
+                  "/api/config": self._config, "/api/models": self._models,
                   "/api/providers": self._providers, "/api/complete": self._complete,
                   "/api/complete/stop": self._complete_stop, "/api/repair/preview": self._repair_preview,
                   "/api/repair": self._repair, "/api/history/switch": self._history_switch,
@@ -357,6 +372,31 @@ class Handler(BaseHTTPRequestHandler):
     def _state_body(view: dict) -> dict:
         return {**view, "agentwiz_version": __version__, "modelspell_version": modelspell.__version__,
                 "limits": {"request_bytes": insertion.REQUEST_LIMIT, "upload_bytes": UPLOAD_LIMIT}}
+
+    def _tutorial_start(self, body: dict) -> None:
+        session = self.server.tutorial_session
+        self._send(200, {"url": self.server.url} if session else self.server.tutorial.start())
+
+    def _tutorial_step(self, body: dict) -> None:
+        session = self.server.tutorial_session
+        if not session:
+            return self._send(409, {"error": "not a tutorial session"})
+        if type(body.get("step")) is not int or not 0 <= body["step"] < 29:
+            raise BodyError("invalid tutorial step")
+        self._send(200, session.prepare(body))
+
+    def _tutorial_restart(self, body: dict) -> None:
+        session = self.server.tutorial_session
+        if not session or body.get("action") not in ("restart", "damage", "restore"):
+            raise BodyError("invalid tutorial restart")
+        self._send(200, session.recover(body["action"]))
+
+    def _tutorial_exit(self, body: dict) -> None:
+        session = self.server.tutorial_session
+        if not session:
+            raise BodyError("not a tutorial session")
+        self._send(200, {"url": session.parent.url})
+        threading.Thread(target=session.close, daemon=True).start()
 
     def _upload(self) -> None:
         """POST /api/attachments/extract (Section 8.4): the file's bytes; nothing is stored."""

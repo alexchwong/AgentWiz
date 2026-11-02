@@ -266,8 +266,8 @@ the page checks run again). Nothing under `agentwiz/` imports Playwright and the
   the like.
 - **Blocked, never skipped.** If Playwright or its Chromium cannot be provided, the page checks fail
   with that reason and the gate is blocked (D51); they are never passed by skipping.
-- The README tour stays: it is how the owner sees each function (D58), and the page checks cover what
-  clicking cannot do reliably (timing, hidden tabs, the clipboard, stale revisions).
+- The in-UI tutorial is optional learning material. Script-verifiable UI behaviour belongs in
+  page checks, not in owner assignments; subjective review is governed by "Checking a release".
 
 ## Runs and records
 
@@ -482,7 +482,7 @@ installed versions and shell-quoted launch and activation commands.
 At each build checkpoint, run the offline gate below. Never pass it by skipping, weakening or
 deleting a test. Report a check that could not run as blocked, never as passed. Never substitute
 a stand-in for modelSpell or present a source-only check as the installed-wheel smoke. Offline
-tests must run unattended; live checks and the README tour are the owner's after handover.
+tests must run unattended. Live checks are optional; the tutorial is optional learning material.
 
 ```bash
 python -m pytest -q -m "not live"   # offline suite (the gate)
@@ -531,8 +531,8 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 36500 -subj "/CN=AgentWiz test o
 ```
 
 **The page's JavaScript is tested** from 0.1.3 by `tests/test_page.py` (see "Page checks"), with the
-fakes and without a model. README's "Trying it out" tour is still the owner's check of what the page
-looks like (D50).
+fakes and without a model. Owner review is limited to subjective presentation, clarity and
+usability; see "Checking a release" for the current owner disposition overriding the old D50 tour.
 
 **Constants tests lower, 0.1.3.** `runs.RECORD_LIMIT`, `runs.RECORD_BYTES`, `runs.SUMMARY_LIMIT` and
 `history.LIST_LIMIT`; the fake backend's `Reply(hold_headers=True)` (read the request, set
@@ -590,8 +590,8 @@ When a gate passes, the build continues without waiting; a gate is never passed 
 weakening or deleting a test. Phase P prepares the environment (interpreters, the dev install,
 `hatchling`, the hash-checked modelSpell wheel, the test certificate) and is the only phase that may
 use the network beyond loopback. A check whose dependency the environment cannot provide is
-**blocked**, never counted as passed. Checks that need a person (the README tour, the live checks)
-come last, as Phase H, before anything is committed or a pull request is opened.
+**blocked**, never counted as passed. The historical Phase H manual tour is superseded by the
+owner direction under "Checking a release"; live checks remain optional.
 
 **Offline Phase D.** With `hatchling` installed in the interpreter and a local copy of the pinned
 modelSpell wheel:
@@ -611,8 +611,52 @@ can hide a missing prerequisite, so it is not preparation.
 0.1.1 specification's runbook, evidence records, walkthrough steps (W1–W20), lock checks (L1, L2),
 release review (M1–M4) and their definition-of-done items (C1–C5, D1–D5, F3) are withdrawn.
 Bug-checking is automatic: the offline suite in CI, and `build_release.py`'s release checks and
-smoke test, which run before anything is published. The maintainer tries the UI using README's
-"Trying it out" section. Live checks against real backends are optional.
+smoke test, which run before anything is published. README's "Trying it out" section is optional
+learning material. Owner review is limited as directed below; real-backend live checks are optional.
+
+**Owner direction, 2 November 2026 — automate objective checks.** Anything that can be
+verified by Python, HTTP or a scripted browser belongs in pytest, not in an owner checklist.
+Being visible in a browser does not make a deterministic assertion a human UI check. This includes
+expected pass/fail results, exact values, persistence, deletion, protocol negotiation, credentials,
+cancellation, stale revisions, clipboard contents, enabled controls and keyboard/tab behaviour.
+Use existing coverage; add focused functional tests only for actual gaps under T1–T3.
+
+Owner UI review is limited to subjective presentation (readability, spacing, clipping/overlap),
+clarity of guidance/errors/status, and discoverability/understandability of interactions. Any future
+owner review must be supported inside the UI with tips, auto-filled inputs and managed sandbox
+setup, never a manual setup runbook. Do not ask the owner to repeat script-verifiable checks.
+
+**0.1.3 subjective UI review: Completed by owner direction.** The owner instructed that the
+remaining subjective review be marked completed after removing objective owner checks. This is
+an owner disposition, not a claim of individual observations or a new automated test result. The
+old 29-step walkthrough is not a release gate. Offline tests, CI and release smoke requirements
+remain in force; real-backend live checks remain optional.
+
+Tutorial mode is an optional learning aid, not release sign-off. Its header button starts an
+isolated session with persistent tips, auto-filled examples, real application controls and managed
+local scripted services. Inputs are prepared on entry/reset, not continuously overwritten. Normal
+workspaces and credentials stay untouched; Exit, failure and abandoned-session handling clean up
+tutorial resources. It works in the installed application without a source checkout. Keep learning
+examples current with relevant feature changes, without acknowledgement gates or pass/completion
+accounting. No screenshots or evidence dossiers are required.
+
+**Implementation (0.1.3).** `agentwiz/tutorial.py` supervises one disposable child UI per parent,
+with separate temporary workspace, defaults and MCP library. `tutorial_support/backend.py` and
+`tutorial_support/mcp.py` are packaged stand-ins; the scripts are thin checkout entry points to the
+same code. All servers use loopback and dynamic ports. Authenticated `/api/tutorial` and
+`/api/tutorial/{start,step,restart,exit}` routes manage the session. The UI controller has explicit
+per-tab preparation hooks (a narrow exception to tab independence, not inter-tab data transfer).
+The 29 learning topics map to the README optional reference. Only the current topic is retained
+for the session; there are no acknowledgement records, pass counts or release sign-off controls.
+The browser heartbeats every minute; 30 minutes without a heartbeat expires a session, checked
+every 30 seconds. Parent shutdown and Exit also clean up the child servers and temporary files.
+Startup failures clean up partially started services. Restart/damage/restore act only on the child.
+
+`python -m pytest tests/test_tutorial.py` checks isolation/recovery/cleanup, failed-start cleanup,
+and browser preparation across the route with an actual scripted response and repair. Functional
+reasons: prevent modification of normal work, leaked services and broken auto-fill/actions. No
+assertions inspect repository file contents. The README examples are optional learning material,
+not owner assignments. Automated tests remain responsible for deterministic outcomes.
 
 ## Co-developing with modelSpell
 
@@ -670,10 +714,10 @@ judgement.
 
 1. On `devel`, bump `agentwiz/_version.py`, add `## X.Y.Z` to `NEWS.md` (user-visible bullets), and
    update `README.md`. Commit and push; CI runs the offline suite.
-2. **Phase H, before anything is committed to GitHub or a pull request opened** (D50): on a local
-   working copy with the build applied, follow README's "Trying it out" against `stub_backend.py`
-   and `stub_mcp_server.py`; optionally run the live checks and the web-retrieval-mcp example. A
-   failure goes back to the implementer as a defect report.
+2. **Owner UI review:** only subjective presentation, clarity and usability belong here. The
+   0.1.3 review is **Completed by owner direction**, as recorded under "Checking a release".
+   No manual regression walkthrough or tutorial completion is required. Optional live checks and
+   the web-retrieval-mcp example are not gates.
 3. Commit to `devel` and push; CI runs the offline suite (Ubuntu and macOS, Python 3.10 and 3.13).
    This matrix is a release criterion: the build environment cannot run macOS.
 4. Run `python scripts/build_release.py --smoke` (builds from the committed `HEAD`, runs RC1–RC3,

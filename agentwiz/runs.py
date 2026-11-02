@@ -205,6 +205,13 @@ class AttemptStore:
         with self._lock:
             return sum(1 for a in self._attempts.values() if a.state == "running")
 
+    def stop_all(self) -> None:
+        """Cancel active attempts when a disposable tutorial instance closes."""
+        with self._lock:
+            ids = [a.id for a in self._attempts.values() if a.state == "running"]
+        for id_ in ids:
+            self.stop(id_)
+
     def run_view(self, run_id: str) -> dict | None:
         """The run's metadata as a plain dictionary (what the store keeps, never a record), or None."""
         with self._lock:

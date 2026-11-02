@@ -77,6 +77,10 @@
   .checkbox[data-check="incomplete"] .overall { color:var(--warn); }
   .checkbox ul { margin:4px 0; padding-left:18px; font-family:ui-monospace, monospace; font-size:12px; }
   .editor { min-height:260px; }
+  #tutorial-box { position:sticky; top:0; z-index:5; background:var(--bg); border:2px solid var(--accent, #5688cc); padding:12px; margin:12px 0; }
+  #tutorial-box p { margin:6px 0; }
+  #tutorial-box input[type="checkbox"] { width:auto; }
+  .tutorial-target { outline:3px solid var(--accent); outline-offset:3px; }
 </style>
 </head>
 <body>
@@ -90,7 +94,28 @@
   <span id="switch-msg" class="note err-text hidden" data-test="header-switch-msg"></span>
   <button id="open-settings" data-test="header-model-settings">Model settings</button>
   <button id="open-servers" data-test="header-mcp-servers">MCP servers</button>
+  <button id="open-tutorial" data-test="header-tutorial">Tutorial</button>
 </header>
+<aside id="tutorial-box" class="hidden" data-test="tutorial-box" aria-label="Tutorial guidance">
+  <strong id="tutorial-title"></strong>
+  <p id="tutorial-tip"></p>
+  <p id="tutorial-status" role="status" aria-live="polite" data-test="tutorial-status"></p>
+  <div id="tutorial-actions" class="row"></div>
+  <div class="row">
+    <button id="tutorial-back" data-test="tutorial-back">Back</button>
+    <button id="tutorial-reset" data-test="tutorial-reset">Reset step</button>
+    <button id="tutorial-skip" data-test="tutorial-skip">Skip</button>
+    <button id="tutorial-next" data-test="tutorial-next">Next</button>
+    <button id="tutorial-exit" data-test="tutorial-exit">Exit tutorial</button>
+  </div>
+  <label for="tutorial-route">Route</label>
+  <select id="tutorial-route" data-test="tutorial-route">
+    <option value="full">All learning examples (29 topics)</option>
+    <option value="quick">Quick introduction (10 topics)</option>
+  </select>
+  <label for="tutorial-jump">Go to step</label>
+  <select id="tutorial-jump" data-test="tutorial-jump"></select>
+</aside>
 <div id="header-note" class="note hidden" data-test="header-note"></div>
 <div id="banner" class="hidden" data-test="banner"></div>
 
@@ -762,7 +787,7 @@ $("update-profiles").onclick = async () => {
 $("save-profile").onclick = () => { const name = profilesInfo().active; if (name) saveProfile(name); };
 
 $("save-as-profile").onclick = () => {
-  const name = prompt("Profile name (letters, digits, '.', '_' or '-'; up to 64 characters):");
+  const name = prompt("Profile name (letters, digits, '.', '_' or '-'; up to 64 characters):", tutorialInfo ? "tutorial-example" : "");
   if (name === null) return;
   if (!NAME_RE.test(name)) {
     settingsMsg("A profile name is 1 to 64 letters, digits, '.', '_' or '-', starting with a letter or digit.");
@@ -1148,6 +1173,15 @@ function makeRequestTab(frag, source) {
   }
 
   TABS[frag] = {
+    tutorialPrepare(text, preserveTask = false) {
+      if (active) throw new Error("Stop the running request first.");
+      rows = []; clearDisplay();
+      display("idle", "", "");
+      prompt.value = text; system.value = "";
+      if (!preserveTask) panel.querySelector(`[data-test="${prefix}-task-reset"]`).click();
+      if (checked) contractSel.value = "fields";
+      refreshControls();
+    },
     submit,
     onState() {
       task.render();
@@ -1219,8 +1253,7 @@ function previewPanel(prefix, copyLabel = "Copy") {
   };
 
   attach.onclick = () => { file.value = ""; file.click(); };
-  file.onchange = async () => {
-    const f = file.files[0];
+  async function readFile(f) {
     if (!f) return;
     const limit = state.limits ? state.limits.upload_bytes : 52428800;
     if (f.size > limit) { preview.hide(); say("error", `${f.name} is ${f.size} bytes; files over ${limit} bytes cannot be attached.`, "error"); return; }
@@ -1240,9 +1273,16 @@ function previewPanel(prefix, copyLabel = "Copy") {
       say("ready", "");
     } catch (e) { say("error", "Upload failed: " + (e.message || e.name), "error"); }
     finally { setTabRunning("documents", false); }
-  };
+  }
+  file.onchange = () => readFile(file.files[0]);
   preview.discard.addEventListener("click", () => say("idle", ""));
-  TABS.documents = {};
+  TABS.documents = {
+    tutorialExample(kind) {
+      const data = kind === "invalid" ? new Uint8Array([0x63, 0x61, 0x66, 0xe9]) :
+        kind === "large" ? "x".repeat(33 * 1024 * 1024) : "# Tutorial document\n\nHello from AgentWiz.\n";
+      return readFile(new File([data], kind === "markdown" ? "tutorial.md" : "tutorial.txt"));
+    },
+  };
 })();
 
 // --- MCP tools (Section 11.2; 0.1.2 Tools panel, Section 9.10) --------------------------------------------------
@@ -1490,7 +1530,17 @@ function mcpInfo() { return state.mcp || { servers: {}, read_only: true, revisio
     } catch (e) { status.textContent = e.message; }
   };
 
-  TABS["mcp-tools"] = { onState: renderMcp, submit: run };
+  TABS["mcp-tools"] = { onState: renderMcp, submit: run,
+    async tutorialPrepare(server, tool) {
+      if (toolCtl) throw new Error("Stop the running tool first.");
+      serverSel.value = server;
+      await loadBtn.onclick();
+      toolSel.value = tool; renderToolForm();
+      if (tool === "echo") {
+        editJson.click(); argsText.value = '{"text":"Hello from the tutorial","times":2}';
+      }
+    },
+  };
 })();
 
 // --- the MCP servers dialog (a header dialog since 0.1.3) --------------------------------------------------------
@@ -1715,6 +1765,17 @@ $("save-servers").onclick = async () => {
   checkBtn.onclick = runCheck;
 
   TABS.contracts = {
+    async tutorialPrepare(text, checkText, create) {
+      if (create) {
+        const name = text.includes('"schema": {') ? "schema-example" : "my-fields";
+        const existing = items().find((c) => c.name === name);
+        if (existing) await open(name);
+        else { fresh("json"); nameInput.value = name; }
+      }
+      else await open("fields");
+      editor.value = text; checkText_.value = checkText;
+      result.clear(); setEditor("idle");
+    },
     submit: runCheck,
     onState() {
       renderSchemaStatus(); renderList();
@@ -1829,9 +1890,194 @@ $("save-servers").onclick = async () => {
   };
 })();
 
+// Tutorial is an explicit preparation layer, not a bridge between the tabs' working data.
+const tutorialSteps = [
+  ["Workspace", "chat", "This disposable workspace is yours to explore. Restart it below without changing your normal work."],
+  ["Send", "chat", "A message is filled in. Send it to explore streaming responses and the outcome display."],
+  ["Profiles", "chat", "Profiles a and b are ready. Open Model settings to explore switching profiles and saving your own settings."],
+  ["Two pages", "chat", "Open another tutorial page to explore how shared model settings work across pages."],
+  ["Damaged profile", "chat", "Explore recovery using Break example and Restore below. Only tutorial data is affected."],
+  ["Task settings", "chat", "Sampling settings are filled. Open Advanced to learn where additional controls live."],
+  ["Supported settings", "chat", "Task settings accompany each request. The final record lets you explore what was sent. LM Studio reasoning needs an optional real backend."],
+  ["Save task settings", "chat", "Save task settings keeps defaults for later sessions. Restart below to explore saved settings, or Reset to clear the panel."],
+  ["Tab navigation", "contracts", "Explore the tabs with the mouse or arrow keys. URL fragments let you link directly to a tab."],
+  ["Copy", "chat", "Send the example, then use Copy beside the answer or final record. The scratch box below is available for pasting."],
+  ["Stop before first token", "chat", "The slow example leaves time to try Send, then Stop. The status explains cancellation and whether a request may have been sent."],
+  ["Hidden tabs", "chat", "The endless example lets you explore a running request while visiting another tab. Stop it when finished."],
+  ["Markdown document", "documents", "Use the example Markdown document to explore previews, provenance and Copy. You can paste copied text into Chat."],
+  ["Invalid encoding", "documents", "Use the encoding example to learn how document errors are presented and what encoding is supported."],
+  ["Large document", "documents", "Use the large example to learn about preview and request-size limits."],
+  ["Discover tools", "mcp-tools", "The modern MCP server is ready. Load tools to explore discovery and protocol information."],
+  ["Run and stop tools", "mcp-tools", "Echo arguments are filled. Run it to explore results and Copy. Other tools demonstrate progress and cancellation."],
+  ["Exact form numbers", "mcp-tools", "The numbers tool demonstrates exact numeric arguments in the form and structured results."],
+  ["Exact JSON editor", "mcp-tools", "The JSON editor provides an alternative way to supply exact tool arguments. An example is filled in."],
+  ["Legacy cancellation", "mcp-tools", "The legacy MCP server demonstrates older protocol connections. The hang tool is ready for exploring Stop."],
+  ["Credentials", "mcp-tools", "The protected server demonstrates token configuration. Fill example token opens the server dialog with a sandbox credential ready to Save."],
+  ["Save a contract", "contracts", "An example contract is filled. Save it to learn how reusable response requirements are defined."],
+  ["Check text", "contracts", "Explore Check with the prepared values. Buttons below supply alternative inputs and the issue panel explains differences."],
+  ["Optional schema support", "contracts", "This contract uses a schema. Schema validation is optional; the editor describes the capability available in your installation."],
+  ["Repair", "checked-request", "Send the prepared request to explore a response needing repair. Preview repair explains the next request; Send repair continues the same run."],
+  ["Passing request", "checked-request", "This model demonstrates a response matching the selected contract. Send it to explore the check display."],
+  ["Save history", "chat", "Save runs is enabled in this sandbox. Read its disclosure and Send an example, then explore the saved response in History."],
+  ["Delete history", "history", "History lets you open, copy and delete saved runs. Explore the inline deletion confirmation and Save runs switch."],
+  ["Stale page", "chat", "Open another page to explore shared settings. Changing settings there demonstrates how this page refreshes an outdated configuration."],
+
+];
+let tutorialInfo = null, tutorialIndex = 0, tutorialBusy = false;
+const tutorialRoute = () => $("tutorial-route").value === "quick" ? [1, 9, 10, 12, 16, 21, 22, 24, 26, 27] : tutorialSteps.map((_, i) => i);
+const tutorialEl = (name) => document.querySelector(`[data-test="${name}"]`);
+const tutorialFill = (name, value) => {
+  const el = tutorialEl(name); el.value = value; el.dispatchEvent(new Event("input", { bubbles: true }));
+};
+function tutorialStatus(text, state_ = "ready") {
+  $("tutorial-status").textContent = text; $("tutorial-status").dataset.state = state_;
+}
+function tutorialAction(text, action) {
+  const button = h("button", { type: "button", text });
+  button.onclick = async () => { try { await action(); } catch (e) { tutorialStatus(e.message, "error"); } };
+  $("tutorial-actions").append(button);
+}
+async function tutorialRestart(action) {
+  const r = await api("/api/tutorial/restart", { action });
+  if (r.busy) throw new Error("Stop the running request before restarting.");
+  location.assign(r.url);
+}
+async function tutorialPrepare(index) {
+  if (tutorialBusy) return;
+  tutorialBusy = true;
+  tutorialStatus("Preparing example…", "loading");
+  try {
+    if (document.querySelector('[role="tab"][data-state="running"]')) throw new Error("Stop the running operation before changing steps.");
+    const info = await api("/api/tutorial/step", { step: index });
+    if (info.busy) throw new Error("Stop the running request first.");
+    tutorialInfo = info; tutorialIndex = index;
+    for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
+    await refreshState();
+    const [title, tab, tip] = tutorialSteps[index];
+    selectTab(tab);
+    $("tutorial-box").dataset.step = String(index);
+    const route = tutorialRoute();
+    $("tutorial-title").textContent = `Tutorial · ${route.indexOf(index) + 1}/${route.length} — ${title}`;
+    $("tutorial-tip").textContent = tip;
+    $("tutorial-next").disabled = false;
+    $("tutorial-back").disabled = index === route[0];
+    $("tutorial-jump").value = String(index);
+    $("tutorial-actions").replaceChildren();
+    for (const el of document.querySelectorAll(".tutorial-target")) el.classList.remove("tutorial-target");
+    if (tab === "chat" || tab === "checked-request") {
+      TABS[tab].tutorialPrepare(tab === "chat" ? "Hello! Please give a short tutorial response." : "Extract the id and ratio as JSON.", index === 7);
+    }
+    if ([5, 6].includes(index) || (index === 7 && !state.task.saved.temperature)) {
+      tutorialFill("chat-task-temperature", "0.4"); tutorialFill("chat-task-max_tokens", "128");
+      tutorialFill("chat-task-top_p", "0.9");
+    }
+    if ([0, 7].includes(index)) tutorialAction("Restart tutorial instance", () => tutorialRestart("restart"));
+    if ([3, 28].includes(index)) tutorialAction("Open second tutorial page", () => window.open(location.href, "_blank", "noopener"));
+    if (index === 4) {
+      tutorialAction("Break example profile and restart", () => tutorialRestart("damage"));
+      tutorialAction("Restore example and restart", () => tutorialRestart("restore"));
+    }
+    if (index === 9) $("tutorial-actions").append(h("textarea", { rows: 3, placeholder: "Paste copied output here", "aria-label": "Clipboard scratch box" }));
+    if ([12, 13, 14].includes(index)) tutorialAction("Use example document", () => TABS.documents.tutorialExample({12: "markdown", 13: "invalid", 14: "large"}[index]));
+    if (index >= 15 && index <= 20) {
+      await TABS["mcp-tools"].tutorialPrepare(index === 19 ? "legacy" : index === 20 ? "protected" : "modern",
+        index === 19 ? "hang" : [17, 18].includes(index) ? "numbers" : "echo");
+      if (index === 18) {
+        tutorialEl("mcp-edit-json").click();
+        tutorialFill("mcp-args", '{"id":9007199254740997,"ratio":0.12345678901234567890123}');
+      }
+      if (index === 20) tutorialAction("Fill example token", () => {
+        $("open-servers").click();
+        for (const row of document.querySelectorAll(".server-row")) {
+          if (row.querySelector('[data-key="name"]').value === "protected") row.querySelector('[data-key="token"]').value = "tutorial-secret";
+        }
+      });
+    }
+    if ([21, 22, 23].includes(index)) {
+      const text = index === 23 ? info.contract.replace('"schema": null', '"schema": {"type":"object"}') : info.contract;
+      await TABS.contracts.tutorialPrepare(text, '{"id":9007199254740993,"ratio":1.5}', index !== 22);
+      if (index === 23) tutorialFill("contracts-name", "schema-example");
+      if (index === 22) {
+        tutorialAction("Fill passing value", () => tutorialFill("contracts-check-text", '{"id":9007199254740993,"ratio":0.10000000000000000001}'));
+        tutorialAction("Fill wrong integer", () => tutorialFill("contracts-check-text", '{"id":9007199254740992,"ratio":0.10000000000000000001}'));
+      }
+    }
+    const target = tab === "chat" ? "chat-send" : tab === "checked-request" ? "checked-send" :
+      tab === "contracts" ? (index === 22 ? "contracts-run-check" : "contracts-save") :
+      tab === "mcp-tools" ? (index === 15 || index === 20 ? "mcp-load" : "mcp-run") : null;
+    if (target && tutorialEl(target)) tutorialEl(target).classList.add("tutorial-target");
+    tutorialStatus("Example ready. Explore at your own pace; Next is available without completing any task.");
+  } catch (e) { tutorialStatus(e.message, "error"); }
+  finally { tutorialBusy = false; }
+}
+$("open-tutorial").onclick = async () => {
+  $("tutorial-box").classList.remove("hidden");
+  tutorialStatus("Preparing isolated tutorial…", "loading");
+  try { const r = await api("/api/tutorial/start", {}); location.assign(r.url); }
+  catch (e) { tutorialStatus(e.message, "error"); }
+};
+$("tutorial-back").onclick = () => { const r = tutorialRoute(); tutorialPrepare(r[Math.max(0, r.indexOf(tutorialIndex) - 1)]); };
+$("tutorial-reset").onclick = () => tutorialPrepare(tutorialIndex);
+$("tutorial-skip").onclick = () => tutorialAdvance();
+$("tutorial-next").onclick = () => tutorialAdvance();
+async function tutorialAdvance() {
+  try {
+    const route = tutorialRoute(), pos = route.indexOf(tutorialIndex);
+    if (pos < route.length - 1) return await tutorialPrepare(route[pos + 1]);
+    tutorialStatus("End of the learning examples. Revisit any topic or Exit to your normal workspace. This tutorial is not a release checklist.", "finished");
+  } catch (e) { tutorialStatus(e.message, "error"); }
+}
+$("tutorial-exit").onclick = async () => {
+  try { const r = await api("/api/tutorial/exit", {}); location.assign(r.url); }
+  catch (e) { tutorialStatus(e.message, "error"); }
+};
+$("tutorial-jump").onchange = () => tutorialPrepare(Number($("tutorial-jump").value));
+function tutorialRouteOptions() {
+  $("tutorial-jump").replaceChildren();
+  tutorialRoute().forEach((i) => $("tutorial-jump").add(new Option(`${i + 1}. ${tutorialSteps[i][0]}`, String(i))));
+}
+$("tutorial-route").onchange = () => {
+  if (tutorialBusy || document.querySelector('[role="tab"][data-state="running"]')) {
+    $("tutorial-route").value = $("tutorial-jump").options.length === 10 ? "quick" : "full";
+    tutorialStatus("Stop the running operation before changing routes.", "error"); return;
+  }
+  tutorialRouteOptions(); tutorialPrepare(tutorialRoute()[0]);
+};
+document.addEventListener("click", (event) => {
+  if (!tutorialInfo || tutorialBusy || event.target.closest("#tutorial-box")) return;
+  const button = event.target.closest("button");
+  if (button) tutorialStatus(`Action received: ${button.textContent.trim()}. Explore the result; you can move to another topic whenever you like.`);
+});
+// Observe machine-readable states, not output wording, without claiming a visual pass.
+const tutorialObserver = new MutationObserver((changes) => {
+  if (!tutorialInfo || tutorialBusy) return;
+  const change = changes.find((c) => !c.target.closest("#tutorial-box") &&
+    c.target.matches('[data-test$="-status"], [data-test$="-check-result"]'));
+  if (change) {
+    const el = change.target;
+    const value = el.dataset.outcome || el.dataset.state || el.dataset.check || "updated";
+    const next = value === "running" && [10, 19].includes(tutorialIndex) ? "Click Stop now." :
+      value === "running" && tutorialIndex === 11 ? "Switch to Contracts, then return and Stop." :
+      tutorialIndex === 24 && el.dataset.state === "done" ? "Preview repair explains how to continue with a revised response." :
+      "Explore the result or choose another topic.";
+    tutorialStatus(`Detected: ${value}. ${next}`);
+  }
+});
+tutorialObserver.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["data-state", "data-outcome", "data-check"] });
+async function tutorialInit() {
+  const info = await api("/api/tutorial");
+  if (!info.active) return;
+  tutorialInfo = info;
+  $("open-tutorial").classList.add("hidden");
+  $("tutorial-box").classList.remove("hidden");
+  tutorialRouteOptions();
+  await tutorialPrepare(info.step);
+  setInterval(() => api("/api/tutorial").catch(() => tutorialStatus("Tutorial disconnected. Return to the original AgentWiz page to start again.", "error")), 60000);
+}
+
 // --- start -----------------------------------------------------------------------------------------------------------------
 selectTab(fragFromHash(), { hash: false });
-refreshState().catch((e) => {
+refreshState().then(tutorialInit).catch((e) => {
   $("banner").replaceChildren(h("p", { text: e.message }));
   $("banner").classList.remove("hidden");
 });

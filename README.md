@@ -592,9 +592,35 @@ printed address instead.
 
 ## Trying it out
 
-A tour of what AgentWiz does, through the page. It is the check that no automated test replaces: the
-page's scripts are exercised by tests in a headless browser, but not what you see. Use any backend
-you have. With no model running, a clone of this repository has scripted stand-ins: run
+**Click Tutorial in the header.** AgentWiz opens an isolated tutorial workspace, starts its local
+scripted model and MCP services, and shows a persistent tips/status box. No API key, running model,
+service URL or terminal setup is needed. The tutorial works in the installed application too.
+
+Tutorial mode is optional learning material, not a release checklist. Each topic selects the right
+tab and fills example inputs so you can explore the real controls at your own pace. Next needs no
+acknowledgement or successful result. Back, Reset step and the topic selector let you revisit
+examples. The route selector offers all 29 learning topics or a ten-topic quick introduction.
+Use example document runs the normal document extraction flow.
+
+The topics follow the optional reference below. Restart, damaged-profile recovery and MCP protocol
+variants are managed in the sandbox. Exact-number examples work without the checks extra; schema
+examples reflect your installation's actual capability. LM Studio-specific behaviour needs a real
+backend and is not simulated. Deterministic correctness checks belong in pytest, not owner tasks.
+
+Exit tutorial returns to your original workspace and removes the sandbox and its services. Your
+normal profiles, documents and history are not changed. Closing the tutorial tab alone does not
+stop it immediately: abandoned sessions expire after 30 minutes without a page heartbeat (cleanup
+checks run every 30 seconds); stopping the original AgentWiz process also closes its tutorial.
+The current topic lasts only for the active session and is shared by its tutorial pages. There
+are no pass counts, acknowledgement records or release-completion gates.
+
+### Manual reference
+
+The following examples are optional feature-learning material, not owner checks or required setup
+for tutorial mode. Their deterministic outcomes are verified by automated tests.
+
+A tour of what AgentWiz does, through the page. Use any backend you have. With no model running,
+a clone of this repository has scripted stand-ins: run
 `python scripts/stub_backend.py`, then in **Model settings** choose OpenAI-compatible, base URL
 `http://127.0.0.1:8099/v1`, model `complete`; and run `python scripts/stub_mcp_server.py` for the MCP
 steps. Contracts need nothing running.

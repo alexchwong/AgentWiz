@@ -220,6 +220,17 @@ class Ops:
         op.notice_done.wait(CANCEL_ANSWER_S)
         return op.status()
 
+    def active_count(self) -> int:
+        with self._lock:
+            return self.workers
+
+    def cancel_all(self) -> None:
+        """Abandon outstanding work when a disposable tutorial instance closes."""
+        with self._lock:
+            ops = list(self._ops.values())
+        for op in ops:
+            op.abandon("stopped")
+
     # --- maintenance --------------------------------------------------------------------------
     def _take_slot(self) -> bool:
         with self._lock:

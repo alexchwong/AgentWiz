@@ -1,5 +1,6 @@
 # NEWS
 ## 0.1.3
+- Tutorial mode prepares an isolated workbench, fills examples and offers optional learning examples without manual service setup.
 - The page is now tabs: Chat, Documents, MCP tools, Contracts, Checked request and History.
 - Copy buttons replace Insert; copied document text and tool results keep their provenance line.
 - Contracts tab: save text or JSON contracts in the workspace and check pasted text against them.
