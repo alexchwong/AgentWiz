@@ -234,30 +234,39 @@ def test_page_chat_old_save_never_updates_a_new_request(ui, server, open_page, m
                                                        save: el.dataset.save || null}))
           .observe(el, {attributes: true, childList: true, characterData: true, subtree: true});
     }""")
-    say(page, "chat", "one")
-    has(page, "chat-status", "data-state", "done")                   # committed, its save still pending
-    has(page, "chat-status", "data-save", "pending")
-    assert entered.wait(10)
-    first = tid(page, "chat-status").get_attribute("data-attempt-id")
-    tid(page, "chat-send").click()                                   # a second request in the same tab
-    assert server.wait_holding(1)
-    has(page, "chat-status", "data-state", "running")
-    second = tid(page, "chat-status").get_attribute("data-attempt-id")
-    assert second and second != first
-    hold.set()                                                       # the first attempt's save now settles
-    page.wait_for_function(                                          # its stream has ended (a resource entry exists)
-        "performance.getEntriesByType('resource').filter(e => e.name.endsWith('/api/complete')).length >= 1",
-        timeout=WAIT)
-    assert wait_until(lambda: ui.state.store.save_detail(first)[0] == "saved")
-    page.evaluate("0")                                               # the page has handled what it was sent
-    server.release.set()
-    has(page, "chat-status", "data-state", "done")
-    has(page, "chat-status", "data-save", "saved")
-    assert tid(page, "chat-status").get_attribute("data-attempt-id") == second
-    log = page.evaluate("window.__log")
-    for entry in log:
-        if entry["attempt"] == second and entry["state"] == "running":
-            assert entry["save"] is None, log                        # the first attempt's save never reached it
+    try:
+        say(page, "chat", "one")
+        has(page, "chat-status", "data-state", "done")                   # committed, its save still pending
+        has(page, "chat-status", "data-save", "pending")
+        assert entered.wait(10)
+        first = tid(page, "chat-status").get_attribute("data-attempt-id")
+        tid(page, "chat-send").click()                                   # a second request in the same tab
+        assert server.wait_holding(1)
+        has(page, "chat-status", "data-state", "running")
+        # Running is set before fetch; wait until the page has handled the new started event.
+        page.wait_for_function("""first => {
+            const id = document.querySelector('[data-test="chat-status"]').dataset.attemptId;
+            return !!id && id !== first;
+        }""", arg=first, timeout=WAIT)
+        second = tid(page, "chat-status").get_attribute("data-attempt-id")
+        assert second and second != first
+        hold.set()                                                       # the first attempt's save now settles
+        page.wait_for_function(                                          # its stream has ended (a resource entry exists)
+            "performance.getEntriesByType('resource').filter(e => e.name.endsWith('/api/complete')).length >= 1",
+            timeout=WAIT)
+        assert wait_until(lambda: ui.state.store.save_detail(first)[0] == "saved")
+        page.evaluate("0")                                               # the page has handled what it was sent
+        server.release.set()
+        has(page, "chat-status", "data-state", "done")
+        has(page, "chat-status", "data-save", "saved")
+        assert tid(page, "chat-status").get_attribute("data-attempt-id") == second
+        log = page.evaluate("window.__log")
+        for entry in log:
+            if entry["attempt"] == second and entry["state"] == "running":
+                assert entry["save"] is None, log                        # the first attempt's save never reached it
+    finally:
+        hold.set()
+        server.release.set()
 
 
 # 82 --------------------------------------------------------------------------------------------------
