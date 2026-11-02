@@ -344,7 +344,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(403, {"error": "missing or invalid session token"})
         routes = {"/api/tutorial/start": self._tutorial_start,
                   "/api/tutorial/step": self._tutorial_step,
-                  "/api/tutorial/restart": self._tutorial_restart,
                   "/api/tutorial/exit": self._tutorial_exit,
                   "/api/config": self._config, "/api/models": self._models,
                   "/api/providers": self._providers, "/api/complete": self._complete,
@@ -381,15 +380,9 @@ class Handler(BaseHTTPRequestHandler):
         session = self.server.tutorial_session
         if not session:
             return self._send(409, {"error": "not a tutorial session"})
-        if type(body.get("step")) is not int or not 0 <= body["step"] < 29:
+        if type(body.get("step")) is not int or not 0 <= body["step"] < 5:
             raise BodyError("invalid tutorial step")
         self._send(200, session.prepare(body))
-
-    def _tutorial_restart(self, body: dict) -> None:
-        session = self.server.tutorial_session
-        if not session or body.get("action") not in ("restart", "damage", "restore"):
-            raise BodyError("invalid tutorial restart")
-        self._send(200, session.recover(body["action"]))
 
     def _tutorial_exit(self, body: dict) -> None:
         session = self.server.tutorial_session

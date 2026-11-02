@@ -592,142 +592,26 @@ printed address instead.
 
 ## Trying it out
 
-**Click Tutorial in the header.** AgentWiz opens an isolated tutorial workspace, starts its local
-scripted model and MCP services, and shows a persistent tips/status box. No API key, running model,
-service URL or terminal setup is needed. The tutorial works in the installed application too.
+Click **Tutorial** in the header to open an isolated workbench with local scripted services,
+auto-filled inputs and a persistent tips box. No API keys, models or terminal setup are needed.
+The tutorial works in the installed application too.
 
-Tutorial mode is optional learning material, not a release checklist. Each topic selects the right
-tab and fills example inputs so you can explore the real controls at your own pace. Next needs no
-acknowledgement or successful result. Back, Reset step and the topic selector let you revisit
-examples. The route selector offers all 29 learning topics or a ten-topic quick introduction.
-Use example document runs the normal document extraction flow.
+Five short feature introductions show how to:
 
-The topics follow the optional reference below. Restart, damaged-profile recovery and MCP protocol
-variants are managed in the sandbox. Exact-number examples work without the checks extra; schema
-examples reflect your installation's actual capability. LM Studio-specific behaviour needs a real
-backend and is not simulated. Deterministic correctness checks belong in pytest, not owner tasks.
+- **Chat:** send a message and reuse an answer.
+- **Use a document:** preview an example and copy it into a conversation.
+- **Call a tool:** run a prepared local tool and use its result.
+- **Define a contract:** save reusable response requirements.
+- **Repair a response:** preview and send a follow-up using contract feedback.
 
-Exit tutorial returns to your original workspace and removes the sandbox and its services. Your
-normal profiles, documents and history are not changed. Closing the tutorial tab alone does not
-stop it immediately: abandoned sessions expire after 30 minutes without a page heartbeat (cleanup
-checks run every 30 seconds); stopping the original AgentWiz process also closes its tutorial.
-The current topic lasts only for the active session and is shared by its tutorial pages. There
-are no pass counts, acknowledgement records or release-completion gates.
+These are learning workflows, not correctness checks or owner assignments. Move freely with
+Next, Back, Reset step or the feature selector. No acknowledgement or successful outcome is
+required. Regression scenarios and expected pass/fail assertions live in pytest, not this tour.
 
-### Manual reference
-
-The following examples are optional feature-learning material, not owner checks or required setup
-for tutorial mode. Their deterministic outcomes are verified by automated tests.
-
-A tour of what AgentWiz does, through the page. Use any backend you have. With no model running,
-a clone of this repository has scripted stand-ins: run
-`python scripts/stub_backend.py`, then in **Model settings** choose OpenAI-compatible, base URL
-`http://127.0.0.1:8099/v1`, model `complete`; and run `python scripts/stub_mcp_server.py` for the MCP
-steps. Contracts need nothing running.
-
-**Basics (from 0.1.1)**
-
-1. **Workspace.** In an empty folder run `agentwiz`. The terminal's third line names the workspace
-   and ends in `(created)`; the fourth names the MCP server folder. Stop with Ctrl-C and start
-   again: no `(created)` this time.
-2. **Send.** In **Model settings**, set the backend and model and press **Apply**. On **Chat**, type
-   an input and press **Send**: the answer streams in and the status line shows the outcome.
-3. **Profiles.** Press **Save as profile…** and name it `a`; change the model, **Apply**, and see
-   `(modified)`; **Save profile** clears it. Save a second profile `b`, switch between them with the
-   **Profile** list, choose **(no profile)**, then delete `b`. The dialog has no reasoning or max
-   tokens rows. A profile file written by 0.1.1 still loads.
-4. **Two pages.** Change the model in a second browser tab and **Apply**; **Send** in the first tab
-   is refused with a message to check the settings.
-5. **Damaged file.** Stop AgentWiz. In `workspaces/default/model-profiles/profiles.json`, change a
-   `model` value to `64` (no quotes), and start again. A banner names the file and the problem; the
-   profile controls are disabled, but **Send** still works. Undo the edit and restart.
-
-**Task settings**
-
-6. Set temperature and max tokens, open **Advanced**, set top-k, close it and see `Advanced (1 set)`.
-7. With LM Studio, switch reasoning between off and low: top-k is greyed out at low and enabled at
-   off. With `stub_backend.py`, its log shows the fields each request carried.
-8. **Reset** clears the panel. Set values, **Save task settings**, restart AgentWiz: they are restored.
-
-**Tabs**
-
-9. Put `#contracts` at the end of the page's address and reload the page: the **Contracts** tab is
-   selected. Reload again: it stays. Press Left and Right to move between tabs, then Home and End.
-   Change the end to `#nonsense`: Chat is selected.
-
-**Chat**, with `stub_backend.py`
-
-10. Send to `complete` and press **Copy** beside the output; paste somewhere to see the text. Copy
-    the final event too: it is the committed record, with `run_id`, `attempt` and `outcome`.
-11. **Stop before the first token.** Choose model `slow-headers` (it waits 20 seconds before
-    answering) and press **Send**, then **Stop** at once. The outcome is *Stopped* within a second,
-    and the stub's terminal says the client disconnected before any response was sent. The status
-    line says the request may have been sent.
-12. **Hidden tabs keep running.** Choose `endless`, press **Send**, then switch to **Contracts**. The
-    Chat tab shows a running marker. Switch back, and the answer is still arriving. Press **Stop**.
-
-**Documents**
-
-13. Attach a Markdown file: the preview shows `[file "name.md"]` and the text. **Copy**, paste it into
-    the input of Chat, and **Send**.
-14. Attach a Latin-1 text file: it is refused with a message asking for UTF-8.
-15. Attach a large text file (over 32 MiB): the preview says it cannot be sent as it is.
-
-**MCP tools**, with `python scripts/stub_mcp_server.py`
-
-16. Press **MCP servers** in the header, **Add** `stub` at `http://127.0.0.1:8098/mcp`, **Save**, and
-    close the dialog. On the **MCP tools** tab press **Load tools**: era 2026-07-28.
-17. Run `echo` and **Copy** the result. Run `slow` and watch the progress. Run `hang` and press
-    **Stop**: the stub logs the disconnect at once, and the page says the connection was closed.
-18. **Numbers through the form.** Choose `numbers`: the form is pre-filled with
-    `9007199254740993` and `0.10000000000000000001`. Run it unchanged: the stub's log shows
-    `{"id":9007199254740993,"ratio":0.10000000000000000001}` exactly, and the result shows both
-    values exactly. Press **Copy structured content** and paste it to check. Then type
-    `9007199254740995` and `0.30000000000000000004`, run, and check the log and result again.
-19. **Numbers through the editor.** Press **Edit as JSON**, change `id` to `9007199254740997` and
-    `ratio` to `0.12345678901234567890123`, run, and check that the log and result show the same
-    values exactly.
-20. Restart the stub with `--era legacy`, press **Load tools** again (era 2025-11-25), and repeat
-    `hang` and **Stop**: the stub logs a cancellation notice.
-21. Restart the stub with `--token secret`: **Load tools** fails with a credentials error. Type
-    `secret` in the server's token field in **MCP servers**, save, and it works.
-
-**Contracts**
-
-22. On **Contracts** press **New JSON contract**, name it `fields`, and replace the text with the
-    example in **Contracts** above. **Save**, then reload the page: the contract is listed and its
-    text still shows `9007199254740993` and `0.10000000000000000001`.
-23. In **Check text**, paste `{"id": 9007199254740993, "ratio": 1.5}` and press **Check**: the result
-    is `fail`, with an issue at `$.ratio`. **Copy** gives the issue lines. Paste
-    `{"id": 9007199254740993, "ratio": 0.10000000000000000001}` instead: `pass`. Paste an `id` of
-    `9007199254740992`: `fail`.
-24. Without the `checks` extra the status line near the editor says how to install it, and **Save**
-    refuses a contract with a schema.
-
-**Checked request**, with `stub_backend.py`
-
-25. On **Checked request** choose the contract `fields` and the model `json-repair`, and **Send**.
-    The check fails, and **Send repair** is offered. Press **Preview repair**: it lists the original
-    messages, the failed answer and the problem list. Press **Send repair**. Attempt 2 passes, in the
-    same run (same run ID), and the stub's log shows the repair request's roles ending
-    `assistant`, `user`.
-26. Send to `json-pass`: the check passes and no repair is offered.
-
-**History**
-
-27. Turn **Save runs** on in the header and read the disclosure. Send a request on Chat, open the
-    **History** tab and find the run. Open it, **Copy** the answer, and look in
-    `workspaces/default/runs/` for the folder.
-28. Delete the run with its inline confirmation: the row and the folder are gone. Turn **Save runs**
-    off again.
-
-**A stale tab**
-
-29. Open the page in two browser tabs. In one, change the model and **Apply**. In the other, press
-    **Send** on Chat: it is refused, the page reloads its settings, and nothing reached the stub. Send
-    again, and it works.
-
-Optionally, try the web-retrieval-mcp example above.
+Exit returns to your original workspace and removes the sandbox and its services. Normal profiles,
+documents and history remain unchanged. Closing the tab alone does not stop the session immediately:
+abandoned sessions expire after 30 minutes without a page heartbeat (checked every 30 seconds).
+Stopping the original AgentWiz process also closes its tutorial.
 
 ## Limitations
 

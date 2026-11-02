@@ -110,7 +110,8 @@ implementer's discretion, all listed in `DEVEL.md` ("Choices recorded for 0.1.3"
 Two things the owner may want to look at:
 
 1. The checkpoint-log gap above.
-2. The README tour now has 29 numbered steps in groups; it replaces the 0.1.2 tour rather than extending it.
+2. The old 29-step README/UI walkthrough has been deleted. Tutorial mode now introduces only
+   five feature workflows; regression scenarios stay in pytest.
 
 ## Phase H — owner disposition (updated 2 November 2026)
 

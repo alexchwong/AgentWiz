@@ -644,19 +644,20 @@ accounting. No screenshots or evidence dossiers are required.
 with separate temporary workspace, defaults and MCP library. `tutorial_support/backend.py` and
 `tutorial_support/mcp.py` are packaged stand-ins; the scripts are thin checkout entry points to the
 same code. All servers use loopback and dynamic ports. Authenticated `/api/tutorial` and
-`/api/tutorial/{start,step,restart,exit}` routes manage the session. The UI controller has explicit
+`/api/tutorial/{start,step,exit}` routes manage the session. The UI controller has explicit
 per-tab preparation hooks (a narrow exception to tab independence, not inter-tab data transfer).
-The 29 learning topics map to the README optional reference. Only the current topic is retained
-for the session; there are no acknowledgement records, pass counts or release sign-off controls.
-The browser heartbeats every minute; 30 minutes without a heartbeat expires a session, checked
-every 30 seconds. Parent shutdown and Exit also clean up the child servers and temporary files.
-Startup failures clean up partially started services. Restart/damage/restore act only on the child.
+Five feature introductions cover Chat, documents, tools, contracts and repair. There is no full/quick
+route split, manual regression walkthrough, protocol-variant or damaged-file scenario, restart
+control, acknowledgement record, pass count or release sign-off control. Only the current topic
+is retained for the session. The browser heartbeats every minute; 30 minutes without a heartbeat
+expires a session, checked every 30 seconds. Parent shutdown and Exit clean up servers and temporary
+files; startup failures clean up partially started services.
 
-`python -m pytest tests/test_tutorial.py` checks isolation/recovery/cleanup, failed-start cleanup,
-and browser preparation across the route with an actual scripted response and repair. Functional
-reasons: prevent modification of normal work, leaked services and broken auto-fill/actions. No
-assertions inspect repository file contents. The README examples are optional learning material,
-not owner assignments. Automated tests remain responsible for deterministic outcomes.
+`python -m pytest tests/test_tutorial.py` checks isolation/cleanup, failed-start cleanup and
+preparation of the five learning workflows using actual scripted responses and repair. Functional
+reasons: prevent modification of normal work, leaked services and broken auto-fill/actions.
+Regression coverage remains in the existing page, profiles, attachment, MCP and contract tests;
+no human is assigned their deterministic assertions. No assertions inspect repository file contents.
 
 ## Co-developing with modelSpell
 
