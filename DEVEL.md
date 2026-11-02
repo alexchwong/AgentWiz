@@ -378,8 +378,8 @@ with `threading.Barrier`, and by wrapping `model_call.call_model`; waits are dea
 thing tested. The helpers parse every response and event strictly, so any `NaN` or `Infinity`
 AgentWiz emitted fails the test that saw it.
 
-Loopback startup is tested with `socket.getfqdn` forced to fail: constructing a server and serving
-authenticated state must not require hostname resolution. This guards against macOS resolver delays
+Loopback startup is tested with `socket.getfqdn` forced to fail: constructing the UI and stub MCP
+servers, and serving authenticated UI state, must not require hostname resolution. This guards against macOS resolver delays
 without timing assertions. CLI startup failures distinguish timeout, early exit and unexpected output;
 the helper kills and reaps the child and joins its reader before closing streams. Diagnostics report
 exit status and captured stderr size, not raw child output that might contain credentials.

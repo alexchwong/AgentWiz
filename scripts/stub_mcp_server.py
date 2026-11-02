@@ -22,6 +22,7 @@ import socket
 import sys
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 
 MODERN = "2026-07-28"
 LEGACY = ("2025-11-25", "2025-06-18", "2025-03-26")
@@ -245,6 +246,13 @@ class Stub(BaseHTTPRequestHandler):
             log(f"client disconnected during {name}")
 
 
+class StubServer(ThreadingHTTPServer):
+    def server_bind(self) -> None:
+        # HTTPServer.server_bind resolves the hostname, which can stall even for loopback.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, default=8098)
@@ -252,7 +260,7 @@ def main(argv=None) -> None:
     parser.add_argument("--token")
     args = parser.parse_args(argv)
     Stub.era_mode, Stub.token = args.era, args.token
-    httpd = ThreadingHTTPServer(("127.0.0.1", args.port), Stub)
+    httpd = StubServer(("127.0.0.1", args.port), Stub)
     httpd.daemon_threads = True
     print(f"stub MCP server at http://127.0.0.1:{httpd.server_address[1]}/mcp", flush=True)
     print(f"era {args.era}" + (", token required" if args.token else "") + "; Ctrl-C to stop", flush=True)
