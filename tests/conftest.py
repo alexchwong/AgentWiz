@@ -25,6 +25,19 @@ import pytest
 from agentwiz.ui.server import UIServer
 from agentwiz.workspace import open_workspace
 
+def pytest_collection_modifyitems(config, items):
+    """Tests marked needs_checks skip, with a reason, only where the checks extra is really absent: CI's
+    Python 3.10 jobs (techspec 0.1.3, 18.1). Everywhere else they run; the no-extra path is tested by
+    making checks.schema_support() report the extra as missing."""
+    from agentwiz import checks
+    if checks.schema_support()[0]:
+        return
+    skip = pytest.mark.skip(reason="the checks extra is not installed")
+    for item in items:
+        if "needs_checks" in item.keywords:
+            item.add_marker(skip)
+
+
 PROXY_VARS = [v for n in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY") for v in (n, n.lower())]
 KEY = "sk-SENTINEL-1234567890"
 
@@ -39,6 +52,8 @@ class Reply:
     chunk_delay: float = 0.0
     hold: bool = False                # keep the body open after the chunks until release is set
     after_release: list[bytes] = field(default_factory=list)  # sent once release is set; then wait for the client
+    hold_headers: bool = False        # read the request, then send nothing (not even the status line) until
+                                      # release is set or the client disconnects (techspec 0.1.3, 18.2)
 
 
 class TestServer:
@@ -48,6 +63,7 @@ class TestServer:
         self.requests: list[dict] = []
         self.replies: list[Reply] = []
         self.release = threading.Event()
+        self.reached = threading.Event()   # set once a request has been read (hold_headers waits after it)
         self.client_closed = threading.Event()
         self._closing = threading.Event()
         self._holding = 0
@@ -68,6 +84,19 @@ class TestServer:
                 srv.requests.append({"method": self.command, "path": self.path, "body": body,
                                      "headers": {k.lower(): v for k, v in self.headers.items()}})
                 r = srv.replies.pop(0) if len(srv.replies) > 1 else (srv.replies[0] if srv.replies else Reply())
+                srv.reached.set()
+                if r.hold_headers:
+                    # Ported in spirit from modelSpell 0.3.0's tests/conftest.py (hold before the status line).
+                    with srv._lock:
+                        srv._holding += 1
+                    try:
+                        while not srv.release.is_set():
+                            if self._peer_closed():
+                                srv.client_closed.set()
+                                return
+                    finally:
+                        with srv._lock:
+                            srv._holding -= 1
                 time.sleep(r.delay)
                 try:
                     self.send_response(r.status)
@@ -356,13 +385,85 @@ def configure(ui, backend, kind="openai_compat", **fields) -> dict:
     return request(ui, "/api/config", body)
 
 
-def complete(ui, prompt, system="", revision=None, raw=False, task=None):
+def complete(ui, prompt, system="", revision=None, raw=False, task=None, source="chat", contract=None):
+    """POST /api/complete. `contract` is (name, revision) and goes with source="checked_request"."""
     rev = get_state(ui)["revision"] if revision is None else revision
-    body = {"prompt": prompt, "system": system, "revision": rev}
+    body = {"source": source, "prompt": prompt, "system": system, "revision": rev}
     if task is not None:
         body["task"] = task
+    if contract is not None:
+        body["contract"] = {"name": contract[0], "revision": contract[1]}
     resp = request(ui, "/api/complete", body, raw=True)
     return resp if raw else events(resp, ui)
+
+
+def final_of(evs: list[dict]) -> dict:
+    """The stream's `final` event; the stream must end with it, or with it followed by a `save` event."""
+    finals = [e for e in evs if e["type"] == "final"]
+    assert len(finals) == 1, evs
+    return finals[0]
+
+
+def record_of(evs: list[dict]) -> dict:
+    return final_of(evs)["record"]
+
+
+def iter_events(resp):
+    """Events as they arrive, one per line (for tests that act while the stream is open)."""
+    for line in iter(resp.readline, b""):
+        if line.strip():
+            yield strict_loads(line)
+
+
+def read_until(it, kind: str) -> list[dict]:
+    """Consume `it` up to and including the first event of type `kind`."""
+    seen = []
+    for ev in it:
+        seen.append(ev)
+        if ev["type"] == kind:
+            return seen
+    raise AssertionError(f"the stream ended before a {kind!r} event: {seen}")
+
+
+def stop_attempt(ui, attempt_id):
+    return request(ui, "/api/complete/stop", {"attempt_id": attempt_id})
+
+
+def poll_attempt(ui, attempt_id):
+    return request(ui, f"/api/attempts/{attempt_id}")
+
+
+def repair_attempt(ui, attempt_id, raw=False):
+    resp = request(ui, "/api/repair", {"attempt_id": attempt_id}, raw=True)
+    return resp if raw else events(resp, ui)
+
+
+def json_answer(text: str, fenced: bool = False, **kw) -> Reply:
+    """A fake backend answer carrying JSON text, bare or in a fenced code block."""
+    return answer("```json\n" + text + "\n```" if fenced else text, **kw)
+
+
+def history_dir(ui) -> Path:
+    return ui.workspace.path / "runs"
+
+
+def run_folders(ui) -> list[Path]:
+    root = history_dir(ui)
+    return sorted(p for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
+
+
+def read_run_files(ui, run_id: str) -> dict:
+    """What the server wrote for a run, read with the exact reader (X1): {"run": ..., "attempts": {n: ...}}."""
+    from agentwiz import jsonio
+    folder = next(p for p in run_folders(ui) if p.name.endswith("-" + run_id))
+    out = {"folder": folder, "run": jsonio.decode_file_exact((folder / "run.json").read_bytes()), "attempts": {}}
+    for f in sorted(folder.glob("request-*.json")):
+        out["attempts"][int(f.stem.split("-")[1])] = jsonio.decode_file_exact(f.read_bytes())
+    return out
+
+
+def switch_history(ui, on: bool):
+    return request(ui, "/api/history/switch", {"save_runs": on, "revision": get_state(ui)["history"]["revision"]})
 
 
 def events(resp, ui=None) -> list[dict]:
@@ -817,3 +918,35 @@ def rest(resp) -> list[dict]:
 
 def cancel(ui, op_id):
     return request(ui, "/api/mcp/cancel", {"operation_id": op_id})
+
+
+# --- contract helpers (techspec 0.1.3, 18.2) ----------------------------------------------------
+# Contract texts are written as literal text, never built from Python floats, so that exact numbers
+# reach AgentWiz digit for digit.
+TEXT_CONTRACT = '{"format": "text", "checks": [{"type": "contains", "value": "pong"}]}'
+JSON_CONTRACT = """{
+  "format": "json",
+  "description": "Fields pulled from a report",
+  "schema": {"type": "object", "required": ["id", "ratio"],
+             "properties": {"id": {"type": "integer"}, "ratio": {"type": "number", "maximum": 1}}},
+  "checks": [{"type": "contains", "value": "\\"id\\""},
+             {"type": "json_equals", "value": {"id": 9007199254740993, "ratio": 0.10000000000000000001}}]
+}"""
+JSON_CONTRACT_NO_SCHEMA = """{
+  "format": "json",
+  "checks": [{"type": "json_equals", "value": {"id": 9007199254740993, "ratio": 0.10000000000000000001}}]
+}"""
+
+
+def save_contract(ui, name, text, revision=None):
+    """POST /api/contracts/save; returns the response body."""
+    return request(ui, "/api/contracts/save", {"name": name, "text": text, "revision": revision})
+
+
+def contract_files(ui) -> Path:
+    return ui.workspace.path / "contracts"
+
+
+def contract_item(ui, name) -> dict:
+    """The named contract's entry in /api/state, or None."""
+    return next((c for c in get_state(ui)["contracts"]["items"] if c["name"] == name), None)

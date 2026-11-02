@@ -9,8 +9,8 @@ import modelspell
 
 import agentwiz
 from agentwiz import model_call
-from conftest import (DONE, KEY, Reply, answer, base, complete, configure, delta, failure_of, get_state,
-                      request, sse_event, status_of, wait_until)
+from conftest import (DONE, KEY, Reply, answer, base, complete, configure, delta, failure_of, final_of, get_state,
+                      iter_events, read_until, record_of, request, sse_event, status_of, wait_until)
 
 SSE = {"Content-Type": "text/event-stream"}
 
@@ -93,7 +93,8 @@ def test_failures_never_reveal_keys(ui, make_server, monkeypatch, capfd):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-SENTINEL-env\r\nX")
     configure(ui, c, kind="openrouter")
     evs = complete(ui, "hi")
-    assert len(evs) == 1 and evs[0]["type"] == "error" and evs[0]["error"].startswith("InternalError:")
+    rec = record_of(evs)
+    assert rec["outcome"] == "error" and rec["error"]["description"].startswith("InternalError:")
     assert c.requests == []
     fail = failure_of(lambda: request(ui, "/api/models", {"kind": "openrouter", "base_url": c.url + "/v1"}))
     assert fail.status == 500 and fail.body["code"] == "internal"
@@ -106,7 +107,8 @@ def test_failures_never_reveal_keys(ui, make_server, monkeypatch, capfd):
     d = make_server().reply(Reply(status=401, body=reflected, headers={"Content-Type": "application/json"}))
     configure(ui, d, api_key=escaped)
     evs = complete(ui, "hi")
-    assert len(evs) == 1 and evs[0]["type"] == "error" and evs[0]["error"].startswith("AuthError:")
+    rec = record_of(evs)
+    assert rec["outcome"] == "error" and rec["error"]["description"].startswith("AuthError:")
     fail = failure_of(lambda: request(ui, "/api/models", {"kind": "openai_compat", "base_url": d.url + "/v1",
                                                           "api_key": escaped}))
     assert fail.status == 400 and fail.body["error"].startswith("AuthError:")
@@ -123,10 +125,11 @@ def test_complete_streams_and_maps_settings(ui, server):
                              delta(finish="stop"), delta(usage=usage), DONE], headers=SSE))
     configure(ui, server, kind="openrouter", api_key="k", provider="deepinfra/turbo")
     evs = complete(ui, "task", system="sys", task={"reasoning": "high", "max_tokens": 64})
-    end = last(evs)
-    assert end["type"] == "result" and end["outcome"] == "complete"
-    assert texts(evs) == end["result"]["text"] == "ans"
-    assert texts(evs, "reasoning") == end["result"]["reasoning"] == "think hard"
+    end = final_of(evs)
+    assert [e["type"] for e in evs][0] == "started" and evs[-1] is end and end["outcome"] == "complete"
+    assert texts(evs) == end["record"]["result"]["text"] == "ans"
+    assert texts(evs, "reasoning") == end["record"]["result"]["reasoning"] == "think hard"
+    assert end["record"]["task"] == {"reasoning": "high", "max_tokens": 64}
     sent = server.requests[-1]["body"]
     assert sent["messages"] == [{"role": "system", "content": "sys"}, {"role": "user", "content": "task"}]
     assert sent["provider"] == {"order": ["deepinfra/turbo"], "allow_fallbacks": False, "require_parameters": True}
@@ -142,7 +145,8 @@ def test_errors(ui, server):
     server.reply(Reply(status=500, body=b'{"error": "boom"}', headers={"Content-Type": "application/json"}))
     configure(ui, server)
     evs = complete(ui, "hi")
-    assert len(evs) == 1 and evs[0]["type"] == "error" and evs[0]["error"].startswith("BackendError:")
+    rec = record_of(evs)
+    assert rec["outcome"] == "error" and rec["error"]["description"].startswith("BackendError:")
     rev = get_state(ui)["revision"]
     for bad in ({"kind": "nope"}, {"kind": "openai_compat", "base_url": ""}, {"reasoning": "low"},
                 {"max_tokens": 64},
@@ -187,7 +191,7 @@ def test_disconnect_cancels_upstream(ui, server):
     server.reply(Reply(body=[delta("a")], headers=SSE, hold=True, after_release=[delta("b")] * 20, chunk_delay=0.02))
     configure(ui, server)
     resp = complete(ui, "hi", raw=True)
-    assert json.loads(resp.readline())["type"] == "text"
+    read_until(iter_events(resp), "text")
     resp.close()
     assert server.wait_holding(1)
     server.release.set()
@@ -246,7 +250,7 @@ def test_snapshot_used_for_accepted_request(ui, make_server, monkeypatch):
     configure(ui, b, model="m-b", api_key="KEY_B")
     proceed.set()
     worker.join(10)
-    assert last(out["evs"])["type"] == "result"
+    assert record_of(out["evs"])["outcome"] == "complete"
     assert len(a.requests) == 1
     assert a.requests[0]["body"]["model"] == "m-a" and a.requests[0]["body"]["max_tokens"] == 32
     assert a.requests[0]["headers"]["authorization"] == "Bearer KEY_A"
@@ -259,7 +263,7 @@ def test_budget(ui, server):
                        after_release=[delta("b")] * 5 + [delta(finish="stop"), DONE], chunk_delay=0.02))
     configure(ui, server)
     streams = [complete(ui, "hi", raw=True) for _ in range(8)]
-    assert all(json.loads(s.readline())["type"] == "text" for s in streams)
+    assert all(read_until(iter_events(s), "text")[-1]["type"] == "text" for s in streams)
     assert server.wait_holding(8)
     fail = failure_of(lambda: complete(ui, "hi"))
     assert fail.status == 503 and fail.body["code"] == "busy"
@@ -270,7 +274,7 @@ def test_budget(ui, server):
     for s in streams[1:]:
         s.read()
         s.close()
-    assert last(complete(ui, "hi"))["type"] == "result"
+    assert record_of(complete(ui, "hi"))["outcome"] == "complete"
 
 
 # 11 --------------------------------------------------------------------------------------------
@@ -279,7 +283,7 @@ def test_page_write_timeout(make_ui, make_server):
     # (a) a client that never reads: the write times out and the upstream request is cancelled
     flood = make_server().reply(Reply(body=[delta("x" * (256 * 1024))] * 128, headers=SSE, hold=True))
     configure(ui, flood)
-    body = json.dumps({"prompt": "hi", "revision": get_state(ui)["revision"]}).encode()
+    body = json.dumps({"source": "chat", "prompt": "hi", "revision": get_state(ui)["revision"]}).encode()
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     client.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
     try:
@@ -294,8 +298,7 @@ def test_page_write_timeout(make_ui, make_server):
     # (b) a long wait before the first token is unaffected by the page timeout
     slow = make_server().reply(answer(delay=1.5))
     configure(ui, slow)
-    end = last(complete(ui, "hi"))
-    assert end["type"] == "result" and end["outcome"] == "complete"
+    assert record_of(complete(ui, "hi"))["outcome"] == "complete"
 
 
 # 12 --------------------------------------------------------------------------------------------
@@ -304,8 +307,8 @@ def test_nonfinite_values_in_result(ui, server):
                              sse_event('{"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,'
                                        '"weird":NaN,"big":1e400}}'), DONE], headers=SSE))
     configure(ui, server)
-    end = last(complete(ui, "hi"))  # parsed strictly: NaN or Infinity would fail here
-    assert end["type"] == "result"
-    assert end["result"]["raw_usage"]["weird"] is None and end["result"]["raw_usage"]["big"] is None
-    assert end["nonfinite_replaced"] == ["result.raw_usage.weird", "result.raw_usage.big"]
+    end = final_of(complete(ui, "hi"))  # parsed strictly: NaN or Infinity would fail here
+    assert end["outcome"] == "complete"
+    assert end["record"]["result"]["raw_usage"]["weird"] is None and end["record"]["result"]["raw_usage"]["big"] is None
+    assert end["nonfinite_replaced"] == ["record.result.raw_usage.weird", "record.result.raw_usage.big"]
 

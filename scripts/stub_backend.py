@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Scripted OpenAI-compatible backend for trying the UI without a model (techspec 0.1.0 11.3; 0.1.2 13.2).
+"""Scripted OpenAI-compatible backend for trying the UI without a model (techspec 0.1.0 11.3; 0.1.2 13.2; 0.1.3 16.2).
 Not shipped.
 
     python scripts/stub_backend.py [--port 8099]
 
 In AgentWiz choose "OpenAI-compatible" with base URL http://127.0.0.1:8099/v1. The model ID picks
-the behaviour (Load models lists them). Each request, with the sampling fields it carries, and each
+the behaviour (Load models lists them). Each request, with the sampling fields it carries and the roles of its messages, and each
 client disconnect is logged here.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import select
+import socket
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -30,6 +32,9 @@ MODELS = {
     "hold": "One token every 10 s until the client goes (budget check).",
     "nonfinite": "Completes with usage containing NaN and 1e400.",
     "bigint": "Completes with usage.prompt_tokens = 9007199254740993.",
+    "json-pass": "Answers a JSON object in a fenced code block (the README's contract passes).",
+    "json-repair": "Answers a JSON object that fails the README's contract; a repair (a request with an assistant message) gets json-pass's answer.",
+    "slow-headers": "Waits 20 s before sending anything, not even the status line; logs the client's disconnect.",
 }
 USAGE = '{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}'
 
@@ -61,7 +66,12 @@ def words(text: str) -> list[bytes]:
     return [chunk(w) for w in text.replace(" ", " \0").split("\0")]
 
 
+PASS_TEXT = '```json\n{"id": 9007199254740993, "ratio": 0.10000000000000000001}\n```'
+FAIL_TEXT = '```json\n{"id": 9007199254740993, "ratio": 1.5}\n```'
+
 SCRIPTS = {
+    "json-pass": lambda: words(PASS_TEXT) + [chunk(finish="stop", usage_json=USAGE), DONE],
+    "json-repair": lambda: words(FAIL_TEXT) + [chunk(finish="stop", usage_json=USAGE), DONE],
     "complete": lambda: words("The stub backend says hello.") + [chunk(finish="stop", usage_json=USAGE), DONE],
     "complete-reasoning": lambda: [chunk(reasoning=w) for w in ["Thinking ", "about ", "it…"]]
     + words("Here is the answer.") + [chunk(finish="stop", usage_json=USAGE), DONE],
@@ -104,11 +114,17 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             body, model = {}, ""
         sampling = {k: body[k] for k in SAMPLING if k in body}
-        log(f"request model={model!r}" + (f" settings={json.dumps(sampling)}" if sampling else ""))
+        messages = body.get("messages") if isinstance(body.get("messages"), list) else []
+        roles = [m.get("role") for m in messages if isinstance(m, dict)]
+        log(f"request model={model!r} roles={roles}" + (f" settings={json.dumps(sampling)}" if sampling else ""))
         if model == "error-500":
             return self._json(500, {"error": {"message": "stub failure"}})
         if model not in MODELS:
             return self._json(404, {"error": {"message": f"unknown stub model {model!r}"}})
+        if model == "slow-headers":
+            return self._slow_headers()
+        if model == "json-repair" and "assistant" in roles:       # a repair: answer as json-pass would
+            model = "json-pass"
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
@@ -116,6 +132,22 @@ class Handler(BaseHTTPRequestHandler):
             self._stream(model)
         except OSError:
             log(f"client disconnected (model={model!r})")
+
+    def _slow_headers(self) -> None:
+        """Send nothing, not even the status line, for 20 s; log the client's disconnect (Stop before headers)."""
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if select.select([self.connection], [], [], 0.1)[0]:
+                try:
+                    gone = not self.connection.recv(1, socket.MSG_PEEK)
+                except OSError:
+                    gone = True
+                if gone:
+                    return log("client disconnected before any response was sent (model='slow-headers')")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        self._send(chunk("Finally, headers.") + chunk(finish="stop") + DONE)
 
     def _send(self, data: bytes) -> None:
         self.wfile.write(data)

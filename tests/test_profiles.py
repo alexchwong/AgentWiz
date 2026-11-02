@@ -11,7 +11,7 @@ import threading
 import pytest
 
 from agentwiz.workspace import open_workspace
-from conftest import (answer, complete, configure, failure_of, file_stat, get_state, request, status_of,
+from conftest import (answer, complete, configure, failure_of, file_stat, get_state, record_of, request, status_of,
                       write_ws_file)
 
 KEY_A, KEY_B = "sk-SENTINEL-KEY-A-0001", "sk-SENTINEL-KEY-B-0002"
@@ -104,7 +104,7 @@ def test_damaged_files_read_only(make_ui, tmp_path, server, file, text, whole, c
 
     server.reply(answer("still works"))
     configure(ui, server)
-    assert complete(ui, "hi")[-1]["result"]["text"] == "still works"
+    assert record_of(complete(ui, "hi"))["result"]["text"] == "still works"
 
 
 def test_damage_during_session_needs_restart(make_ui, tmp_path, server, restart):
@@ -289,7 +289,7 @@ def test_invalid_defaults_leave_workspace_usable(make_ui, tmp_path, server):
     save(ui, "local", model="m-local")
     select(ui, "local")
     server.reply(answer("working"))
-    assert complete(ui, "hi")[-1]["result"]["text"] == "working"
+    assert record_of(complete(ui, "hi"))["result"]["text"] == "working"
 
 
 # 23 --------------------------------------------------------------------------------------------

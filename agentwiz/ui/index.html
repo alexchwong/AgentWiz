@@ -1,18 +1,18 @@
 <!doctype html>
-<!-- Derived from modelSpell ui/index.html at commit 1759c6e3c28a637731434a73c46088048583e358 (MIT, Copyright (c) 2026 Alex Wong); adapted per the AgentWiz 0.1.0 techspec, Section 7.7, and the 0.1.1 techspec, Section 7.8. -->
+<!-- Derived from modelSpell ui/index.html at commit 1759c6e3c28a637731434a73c46088048583e358 (MIT, Copyright (c) 2026 Alex Wong); adapted per the AgentWiz 0.1.0 techspec, Section 7.7, the 0.1.1 techspec, Section 7.8, and the 0.1.3 techspec, Section 11. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AgentWiz</title>
 <style>
-  :root { --bg:#fafafa; --fg:#1d1d1f; --muted:#6e6e73; --line:#d2d2d7; --box:#fff; --accent:#2f5bd3; --err:#c0392b; --warn:#9a5b00; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#161617; --fg:#ececf0; --muted:#9a9aa2; --line:#3a3a3e; --box:#1f1f22; --accent:#7ea2ff; --err:#ff7a6b; --warn:#f0b35a; } }
+  :root { --bg:#fafafa; --fg:#1d1d1f; --muted:#6e6e73; --line:#d2d2d7; --box:#fff; --accent:#2f5bd3; --err:#c0392b; --warn:#9a5b00; --ok:#1e7a3c; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161617; --fg:#ececf0; --muted:#9a9aa2; --line:#3a3a3e; --box:#1f1f22; --accent:#7ea2ff; --err:#ff7a6b; --warn:#f0b35a; --ok:#6fcf8f; } }
   * { box-sizing: border-box; }
   body { margin:0; padding:16px; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; }
-  header { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  header { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:8px; }
   header h1 { font-size:16px; margin:0; }
-  #summary { color:var(--muted); font-family:ui-monospace, monospace; font-size:12px; flex:1; }
+  #summary { color:var(--muted); font-family:ui-monospace, monospace; font-size:12px; flex:1; min-width:200px; }
   textarea, input, select { width:100%; font:inherit; color:inherit; background:var(--box); border:1px solid var(--line); border-radius:6px; padding:8px; }
   textarea { resize:vertical; font-family:ui-monospace, monospace; }
   button { font:inherit; padding:6px 14px; border-radius:6px; border:1px solid var(--line); background:var(--box); color:inherit; cursor:pointer; }
@@ -23,23 +23,23 @@
   label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
   .checkbox-label { display:flex; align-items:center; gap:8px; }
   .checkbox-label input[type="checkbox"] { width:auto; margin:0; padding:0; flex:none; }
-  pre { margin:0; min-height:180px; max-height:50vh; overflow:auto; white-space:pre-wrap; word-break:break-word;
+  pre { margin:0; min-height:120px; max-height:50vh; overflow:auto; white-space:pre-wrap; word-break:break-word;
         background:var(--box); border:1px solid var(--line); border-radius:6px; padding:8px; font:13px/1.45 ui-monospace, monospace; }
-  #reasoning { color:var(--muted); }
-  .row { display:flex; gap:8px; align-items:center; margin:8px 0; }
-  #status { font-family:ui-monospace, monospace; font-size:12px; color:var(--muted); }
-  #status.error { color:var(--err); }
-  #status.warn { color:var(--warn); }
-  #status.normal { color:var(--fg); }
+  pre.reasoning { color:var(--muted); }
+  pre.exact { overflow-wrap:anywhere; word-break:break-all; }
+  .row { display:flex; gap:8px; align-items:center; margin:8px 0; flex-wrap:wrap; }
+  .status { font-family:ui-monospace, monospace; font-size:12px; color:var(--muted); }
+  .status.error { color:var(--err); }
+  .status.warn { color:var(--warn); }
+  .status.normal { color:var(--fg); }
   #version, #workspace { color:var(--muted); font-weight:normal; font-size:12px; }
   #banner { color:var(--warn); border:1px solid var(--warn); border-radius:6px; padding:8px; margin-bottom:12px; }
   #banner p { margin:0; }
-  #result { overflow-wrap:anywhere; word-break:break-all; }
   #settings-msg.warn { color:var(--warn); }
   dialog { border:1px solid var(--line); border-radius:10px; background:var(--bg); color:var(--fg); width:min(560px, 92vw); }
   dialog::backdrop { background:rgba(0,0,0,.4); }
   .inline { display:flex; gap:8px; } .inline > :first-child { flex:1; }
-  .hidden { display:none; }
+  .hidden, [hidden] { display:none !important; }
   details pre { min-height:0; }
   fieldset { border:1px solid var(--line); border-radius:6px; margin:10px 0; padding:4px 10px 10px; }
   .fields { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:0 12px; }
@@ -49,10 +49,34 @@
   .disabled-field { opacity:.55; }
   .muted { color:var(--muted); }
   .warn-text { color:var(--warn); }
+  .err-text { color:var(--err); }
   .preview { border:1px solid var(--line); border-radius:6px; padding:8px; margin:8px 0; }
   .preview pre { min-height:0; max-height:30vh; }
   .preview .meta { color:var(--muted); font-size:12px; margin:4px 0; }
-  #insertions { margin:4px 0; padding-left:18px; font-size:12px; font-family:ui-monospace, monospace; }
+  .switch { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--fg); margin:0; }
+  .switch input { width:auto; margin:0; padding:0; }
+  .saving { color:var(--warn); font-size:12px; }
+  .tabs { display:flex; gap:2px; flex-wrap:wrap; border-bottom:1px solid var(--line); margin-bottom:12px; }
+  .tabs button[role="tab"] { border:1px solid var(--line); border-bottom:none; border-radius:6px 6px 0 0; background:var(--bg); color:var(--muted); padding:6px 12px; margin-bottom:-1px; }
+  .tabs button[role="tab"][aria-selected="true"] { background:var(--box); color:var(--fg); border-bottom:1px solid var(--box); font-weight:600; }
+  .tabs .mark { display:none; color:var(--accent); margin-left:4px; }
+  .tabs button[data-state="running"] .mark { display:inline; }
+  .panel-intro { color:var(--muted); font-size:12px; margin:0 0 8px; }
+  .panelhead { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .panelhead label { margin:10px 0 4px; }
+  .copy { display:inline-flex; align-items:center; gap:6px; }
+  .copy button { padding:2px 10px; font-size:12px; }
+  .list { list-style:none; margin:4px 0; padding:0; border:1px solid var(--line); border-radius:6px; }
+  .list li { padding:6px 8px; border-bottom:1px solid var(--line); }
+  .list li:last-child { border-bottom:none; }
+  .list li.pick { cursor:pointer; }
+  .list li.pick:hover, .list li.current { background:var(--box); }
+  .checkbox { border:1px solid var(--line); border-radius:6px; padding:8px; margin:8px 0; background:var(--box); }
+  .checkbox[data-check="pass"] .overall { color:var(--ok); }
+  .checkbox[data-check="fail"] .overall, .checkbox[data-check="contract_error"] .overall { color:var(--err); }
+  .checkbox[data-check="incomplete"] .overall { color:var(--warn); }
+  .checkbox ul { margin:4px 0; padding-left:18px; font-family:ui-monospace, monospace; font-size:12px; }
+  .editor { min-height:260px; }
 </style>
 </head>
 <body>
@@ -60,74 +84,30 @@
   <h1>AgentWiz <span id="version"></span></h1>
   <span id="workspace"></span>
   <span id="summary"></span>
-  <button id="open-settings">Model settings</button>
+  <label class="switch" title="Saved as given, except that credentials AgentWiz has held, if at least 8 characters long, are replaced with ***. Shorter credentials are not replaced. Text you paste into a request, including copied documents and tool results, is saved with it.">
+    <input type="checkbox" id="save-runs" data-test="header-save-runs"> Save runs</label>
+  <span id="saving" class="saving hidden" data-test="header-saving">Saving runs</span>
+  <span id="switch-msg" class="note err-text hidden" data-test="header-switch-msg"></span>
+  <button id="open-settings" data-test="header-model-settings">Model settings</button>
+  <button id="open-servers" data-test="header-mcp-servers">MCP servers</button>
 </header>
-<div id="banner" class="hidden"></div>
+<div id="header-note" class="note hidden" data-test="header-note"></div>
+<div id="banner" class="hidden" data-test="banner"></div>
 
-<label for="system">System prompt (optional)</label>
-<textarea id="system" rows="2"></textarea>
-<div class="row" style="margin-bottom:0"><label for="prompt" style="margin:0">Input</label>
-  <button id="attach" type="button">Attach file…</button><input id="file" type="file" class="hidden"></div>
-<textarea id="prompt" rows="6" placeholder="Ctrl+Enter to send"></textarea>
-<div id="attach-preview" class="preview hidden"></div>
-<details id="insertions-box"><summary id="insertions-summary">Insertions (0)</summary>
-  <ul id="insertions"></ul><button id="clear-insertions" type="button">Clear list</button></details>
-
-<fieldset id="task-panel">
-  <legend>Task settings <span id="task-marker" class="muted"></span></legend>
-  <div class="fields">
-    <div id="t-reasoning-row"><label for="t-reasoning">Reasoning</label>
-      <select id="t-reasoning">
-        <option value="">Backend default</option><option value="off">off</option>
-        <option value="low">low</option><option value="medium">medium</option><option value="high">high</option>
-      </select></div>
-    <div data-field="temperature"><label for="t-temperature">Temperature</label><input id="t-temperature" placeholder="backend default"><span class="note"></span></div>
-    <div data-field="max_tokens"><label for="t-max_tokens">Max tokens</label><input id="t-max_tokens" placeholder="backend default"><span class="note"></span></div>
-  </div>
-  <details id="advanced"><summary id="advanced-summary">Advanced</summary>
-    <div class="fields">
-      <div data-field="top_p"><label for="t-top_p">Top-p</label><input id="t-top_p"><span class="note"></span></div>
-      <div data-field="top_k"><label for="t-top_k">Top-k</label><input id="t-top_k"><span class="note"></span></div>
-      <div data-field="min_p"><label for="t-min_p">Min-p</label><input id="t-min_p"><span class="note"></span></div>
-      <div data-field="repetition_penalty"><label for="t-repetition_penalty">Repetition penalty</label><input id="t-repetition_penalty"><span class="note"></span></div>
-      <div data-field="presence_penalty"><label for="t-presence_penalty">Presence penalty</label><input id="t-presence_penalty"><span class="note"></span></div>
-      <div data-field="frequency_penalty"><label for="t-frequency_penalty">Frequency penalty</label><input id="t-frequency_penalty"><span class="note"></span></div>
-      <div data-field="seed"><label for="t-seed">Seed</label><input id="t-seed"><span class="note"></span></div>
-    </div>
-    <div data-field="stop"><label for="t-stop">Stop sequences (one per line)</label><textarea id="t-stop" rows="2"></textarea><span class="note"></span></div>
-  </details>
-  <div class="row"><button id="task-reset" type="button">Reset</button><button id="task-save" type="button">Save task settings</button><span id="task-msg" class="note"></span></div>
-</fieldset>
-
-<div class="row">
-  <button id="send" class="primary">Send</button>
-  <button id="stop" disabled>Stop</button>
-  <span id="status"></span>
+<div class="tabs" role="tablist" aria-label="AgentWiz functions" id="tablist">
+  <button role="tab" id="tab-chat" data-test="tab-chat" aria-controls="panel-chat" aria-selected="false" tabindex="-1" data-state="idle" data-frag="chat">Chat<span class="mark" aria-hidden="true">●</span></button>
+  <button role="tab" id="tab-documents" data-test="tab-documents" aria-controls="panel-documents" aria-selected="false" tabindex="-1" data-state="idle" data-frag="documents">Documents<span class="mark" aria-hidden="true">●</span></button>
+  <button role="tab" id="tab-mcp-tools" data-test="tab-mcp-tools" aria-controls="panel-mcp-tools" aria-selected="false" tabindex="-1" data-state="idle" data-frag="mcp-tools">MCP tools<span class="mark" aria-hidden="true">●</span></button>
+  <button role="tab" id="tab-contracts" data-test="tab-contracts" aria-controls="panel-contracts" aria-selected="false" tabindex="-1" data-state="idle" data-frag="contracts">Contracts<span class="mark" aria-hidden="true">●</span></button>
+  <button role="tab" id="tab-checked-request" data-test="tab-checked-request" aria-controls="panel-checked-request" aria-selected="false" tabindex="-1" data-state="idle" data-frag="checked-request">Checked request<span class="mark" aria-hidden="true">●</span></button>
+  <button role="tab" id="tab-history" data-test="tab-history" aria-controls="panel-history" aria-selected="false" tabindex="-1" data-state="idle" data-frag="history">History<span class="mark" aria-hidden="true">●</span></button>
 </div>
-
-<div class="grid">
-  <div><label>Reasoning stream</label><pre id="reasoning"></pre></div>
-  <div><label>Output</label><pre id="output"></pre></div>
-</div>
-<details><summary>Result event (exact JSON as received)</summary><pre id="result"></pre></details>
-
-<details id="tools-panel"><summary>Tools</summary>
-  <div class="row"><select id="mcp-server" style="max-width:240px"></select>
-    <button id="load-tools" type="button">Load tools</button><button id="open-servers" type="button">Servers…</button></div>
-  <div id="tools-info" class="meta note"></div>
-  <div id="not-offered" class="note"></div>
-  <label for="mcp-tool">Tool</label><select id="mcp-tool"></select>
-  <div id="tool-desc" class="note"></div>
-  <div id="tool-notes" class="note"></div>
-  <div id="tool-form" class="fields"></div>
-  <textarea id="tool-args" class="hidden" rows="5" spellcheck="false"></textarea>
-  <div class="row"><button id="edit-json" type="button">Edit as JSON</button></div>
-  <details><summary>Input schema (exact text)</summary><pre id="tool-schema"></pre></details>
-  <div class="row"><button id="run-tool" class="primary" type="button">Run</button><button id="stop-tool" type="button" disabled>Stop</button>
-    <span id="tool-status" class="note"></span></div>
-  <div id="tool-result"></div>
-  <div id="tool-preview" class="preview hidden"></div>
-</details>
+<section role="tabpanel" id="panel-chat" data-test="panel-chat" aria-labelledby="tab-chat" hidden></section>
+<section role="tabpanel" id="panel-documents" data-test="panel-documents" aria-labelledby="tab-documents" hidden></section>
+<section role="tabpanel" id="panel-mcp-tools" data-test="panel-mcp-tools" aria-labelledby="tab-mcp-tools" hidden></section>
+<section role="tabpanel" id="panel-contracts" data-test="panel-contracts" aria-labelledby="tab-contracts" hidden></section>
+<section role="tabpanel" id="panel-checked-request" data-test="panel-checked-request" aria-labelledby="tab-checked-request" hidden></section>
+<section role="tabpanel" id="panel-history" data-test="panel-history" aria-labelledby="tab-history" hidden></section>
 
 <dialog id="servers-dialog">
   <h3 style="margin:4px 0">MCP servers</h3>
@@ -181,16 +161,18 @@
 const TOKEN = new URLSearchParams(location.search).get("t") || "";
 const $ = (id) => document.getElementById(id);
 const DEFAULT_URL = { lmstudio: "http://localhost:1234/v1", openrouter: "https://openrouter.ai/api/v1", openai_compat: "required" };
-const STALE_SEND = "Settings were changed in another tab. Check them and send again.";
+const STALE_SEND = "Settings, a contract or the saving switch were changed elsewhere. The page has reloaded them; check them and send again.";
 const STALE_SAVE = "Settings were changed in another tab. The header now shows the current settings; check them and save again.";
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-const STOPPED = "Stopped. AgentWiz closes the model connection when more output arrives, which can take a while; whether the backend stops generating is up to the backend.";
-const INTERRUPTED = "Connection ended before a final result was received; completion status is unavailable.";
 const LABELS = { complete: "Complete", empty: "Empty answer", reasoning_only: "Reasoning only, no answer",
-                 truncated: "Truncated answer", truncated_no_answer: "Truncated before any answer" };
-let state = {}, clearKey = false, controller = null, taskFilled = false;
+                 truncated: "Truncated answer", truncated_no_answer: "Truncated before any answer",
+                 stopped: "Stopped", error: "Error" };
+const DISCLOSURE = "Saved as given, except that credentials AgentWiz has held, if at least 8 characters long, are replaced with ***. " +
+  "Shorter credentials are not replaced. Text you paste into a request, including copied documents and tool results, is saved with it.";
+const FRAGS = ["chat", "documents", "mcp-tools", "contracts", "checked-request", "history"];
+const POLL_MS = 2000;
+let state = {}, clearKey = false;
 const modelContexts = {};       // model id -> context length, from the dialog's last Load models
-const insertions = [];          // insertion records; kept until the page is reloaded (Section 8.5)
 const BASIC = ["temperature", "max_tokens"];
 const ADVANCED = ["top_p", "top_k", "min_p", "repetition_penalty", "presence_penalty", "frequency_penalty", "seed", "stop"];
 const INTEGER_FIELDS = ["max_tokens", "top_k", "seed"];
@@ -198,9 +180,10 @@ const NUMBER_RE = /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/;
 const INTEGER_RE = /^-?(0|[1-9][0-9]*)$/;
 const SAFE = 9007199254740991n;
 const TASK_STALE = "Task settings were saved in another tab; your values are kept, so save again to replace them.";
+const TABS = {};                // fragment -> { panel, onShow?, onState?, submit? }
 
 class ApiError extends Error {
-  constructor(message, status, code) { super(message); this.status = status; this.code = code; }
+  constructor(message, status, code, body) { super(message); this.status = status; this.code = code; this.body = body || {}; }
 }
 
 async function api(path, body) {
@@ -209,13 +192,233 @@ async function api(path, body) {
     body: body === undefined ? undefined : JSON.stringify(body) });
   let j = {};
   try { j = await r.json(); } catch (e) { if (r.ok) throw e; }
-  if (!r.ok) throw new ApiError(j.error || r.statusText, r.status, j.code);
+  if (!r.ok) throw new ApiError(j.error || r.statusText, r.status, j.code, j);
   return j;
 }
 
-// style: "normal" | "warn" | "error" | "" (muted)
-function setStatus(text, style = "") { $("status").textContent = text; $("status").className = style; }
+// A GET whose body text is kept exactly as received (the polling envelope).
+async function apiText(path) {
+  const r = await fetch(path, { headers: { "X-Session-Token": TOKEN } });
+  const text = await r.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch (e) { /* reported by the caller */ }
+  return { ok: r.ok, status: r.status, text, json };
+}
 
+// --- shared helpers (techspec 0.1.3, 11.7) -----------------------------------------------------
+// Builds an element. Every string goes in as text; nothing from the server is ever parsed as markup.
+function h(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === "text") e.textContent = v;
+    else if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e[k] = v;
+    else if (k === "value" || k === "checked" || k === "disabled" || k === "hidden") e[k] = v;
+    else e.setAttribute(k, v === true ? "" : v);
+  }
+  put(e, ...kids);
+  return e;
+}
+
+// Appends children: strings as text, arrays flattened, null and false skipped.
+function put(parent, ...kids) {
+  const add = (kid) => {
+    if (kid === null || kid === undefined || kid === false) return;
+    if (Array.isArray(kid)) kid.forEach(add);
+    else parent.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  };
+  kids.forEach(add);
+  return parent;
+}
+
+function selectNode(node) {
+  if (!node) return;
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  const sel = window.getSelection();
+  sel.removeAllRanges(); sel.addRange(range);
+}
+
+// A Copy button (Section 11.4). `getText` is read at click time; `source` returns the element to select
+// if the browser refuses the clipboard.
+function copyControl(test, getText, source, label = "Copy") {
+  const note = h("span", { class: "note" });
+  const button = h("button", { type: "button", "data-test": test, text: label });
+  button.onclick = async () => {
+    delete button.dataset.copy; note.textContent = "";
+    const text = getText();
+    try {
+      await navigator.clipboard.writeText(text);
+      button.dataset.copy = "copied";
+    } catch (e) {
+      if (source) selectNode(source());
+      note.textContent = "Press Ctrl+C (Cmd+C on a Mac) to copy";
+      button.dataset.copy = "refused";
+    }
+  };
+  return h("span", { class: "copy" }, button, note);
+}
+
+// A labelled <pre> with its Copy button: data-test "<prefix>-<name>" and "<prefix>-copy-<name>".
+function outPanel(prefix, name, label, cls = "") {
+  const pre = h("pre", { class: cls, "data-test": `${prefix}-${name}` });
+  const copy = copyControl(`${prefix}-copy-${name}`, () => pre.textContent, () => pre);
+  return { el: h("div", {}, h("div", { class: "panelhead" }, h("label", { text: label }), copy), pre), pre };
+}
+
+// Reads NDJSON lines from a response. onEvent(ev, line) may return "stop". Returns "end" (clean end),
+// "stopped" (onEvent asked) or "broken" (a bad line, a partial last line or a read error).
+async function readLines(resp, onEvent) {
+  const reader = resp.body.getReader(), decoder = new TextDecoder();
+  const quit = async (why) => { try { await reader.cancel(); } catch (e) { /* closed */ } return why; };
+  let buffer = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, nl); buffer = buffer.slice(nl + 1);
+        if (line === "") continue;
+        let ev;
+        try { ev = JSON.parse(line); } catch (e) { return await quit("broken"); }
+        if (ev === null || typeof ev !== "object") return await quit("broken");
+        if (onEvent(ev, line) === "stop") return await quit("stopped");
+      }
+    }
+  } catch (e) { return "broken"; }
+  return buffer === "" ? "end" : "broken";
+}
+
+function seconds(from) { return ((performance.now() - from) / 1000); }
+
+// Token counts: missing → "?"; not a safe integer → "see Result" (the parsed value may be rounded).
+function count(n) {
+  if (n === null || n === undefined) return "?";
+  return Number.isSafeInteger(n) ? String(n) : "see Result";
+}
+
+// One line about a committed record (Section 8.2): what happened, in words.
+function recordStatus(record, elapsed) {
+  const res = record.result, u = (res && res.usage) || {};
+  let label = LABELS[record.outcome] || record.outcome;
+  const parts = [];
+  if (record.outcome === "truncated_no_answer" && res && typeof res.reasoning === "string" && res.reasoning.trim() !== "")
+    label += " (token cap reached during reasoning)";
+  parts.push(label);
+  if (record.outcome === "stopped") {
+    if (record.cancel_reason === "page_closed") parts.push("the page was closed or stopped reading");
+    if (record.sent === false) parts.push("the request had not been sent");
+    else if (record.sent === true) parts.push("the request may have been sent");
+  }
+  if (record.outcome === "error" && record.error) parts.push(record.error.description);
+  if (elapsed !== null) parts.push(`${elapsed.toFixed(1)}s`);
+  if (res) {
+    parts.push(res.transport, `finish=${res.finish_reason ?? "?"}`,
+      `in=${count(u.input_tokens)} out=${count(u.output_tokens)} reasoning=${count(u.reasoning_tokens)}`,
+      typeof res.cost === "number" ? `cost=$${res.cost.toFixed(6)}` : "cost=?");
+    if (res.provider) parts.push(res.provider);
+  }
+  if (record.model_lookup && record.model_lookup !== "used") parts.push("LM Studio model lookup: " + record.model_lookup);
+  if (record.stop_requested_at && record.stop_mode === null && record.outcome !== "stopped") parts.push("Stop arrived after the answer finished");
+  const style = record.outcome === "complete" ? "normal" : (record.outcome === "error" ? "error" : "warn");
+  return { text: parts.filter((p) => p !== undefined && p !== null && p !== "").join(" · "), style };
+}
+
+// --- check results (Section 7.6, 11.4) ----------------------------------------------------------------
+function checkText(check) {
+  const lines = [`Overall: ${check.overall}`];
+  for (const c of check.checks || [])
+    lines.push(`${c.check}${c.type ? " (" + c.type + ")" : ""}: ${c.result}${c.issues ? ` (${c.issues} ${c.issues === 1 ? "issue" : "issues"})` : ""}`);
+  for (const i of check.issues || []) lines.push(`${i.location}: ${i.message}`);
+  const more = (check.issue_count || 0) - (check.issues || []).length;
+  if (more > 0) lines.push(`… and ${more} more ${more === 1 ? "issue" : "issues"} not listed`);
+  for (const n of check.notes || []) lines.push(`Note: ${n}`);
+  return lines.join("\n");
+}
+
+// A check result box with its Copy button; show(check) / clear(reason).
+function checkBox(prefix) {
+  const body = h("div", { "data-test": `${prefix}-check-body` });
+  let text = "";
+  const box = h("div", { class: "checkbox hidden", "data-test": `${prefix}-check` },
+    h("div", { class: "panelhead" }, h("strong", { text: "Check result" }),
+      copyControl(`${prefix}-copy-check`, () => text, () => body)), body);
+  return {
+    el: box,
+    show(check) {
+      text = checkText(check);
+      box.dataset.check = check.overall; box.classList.remove("hidden");
+      body.replaceChildren(h("div", { class: "overall", text: `Overall: ${check.overall}` }));
+      const list = h("ul");
+      for (const c of check.checks || [])
+        list.append(h("li", { text: `${c.check}${c.type ? " (" + c.type + ")" : ""}: ${c.result}${c.issues ? ` (${c.issues} ${c.issues === 1 ? "issue" : "issues"})` : ""}` }));
+      body.append(list);
+      const issues = h("ul", { "data-test": `${prefix}-issues` });
+      for (const i of check.issues || []) issues.append(h("li", { text: `${i.location}: ${i.message}` }));
+      const more = (check.issue_count || 0) - (check.issues || []).length;
+      if (more > 0) issues.append(h("li", { class: "muted", text: `… and ${more} more ${more === 1 ? "issue" : "issues"} not listed` }));
+      body.append(issues);
+      for (const n of check.notes || []) body.append(h("div", { class: "note", text: n }));
+    },
+    note(why) {                    // no check result: say why
+      text = why; delete box.dataset.check; box.classList.remove("hidden");
+      body.replaceChildren(h("div", { class: "muted", text: why }));
+    },
+    clear() { text = ""; delete box.dataset.check; box.classList.add("hidden"); body.replaceChildren(); },
+  };
+}
+
+// --- tabs (Section 11.3) --------------------------------------------------------------------------------
+let activeFrag = "chat";
+
+function fragFromHash() {
+  let f = "";
+  try { f = decodeURIComponent(location.hash.slice(1)); } catch (e) { /* unknown → Chat */ }
+  return FRAGS.includes(f) ? f : "chat";
+}
+
+function selectTab(frag, opts = {}) {
+  activeFrag = frag;
+  for (const f of FRAGS) {
+    const button = $("tab-" + f), selected = f === frag;
+    button.setAttribute("aria-selected", selected ? "true" : "false");
+    button.tabIndex = selected ? 0 : -1;
+    $("panel-" + f).hidden = !selected;
+  }
+  if (opts.focus) $("tab-" + frag).focus();
+  if (opts.hash !== false && location.hash !== "#" + frag) {
+    try { history.replaceState(null, "", "#" + frag); } catch (e) { /* keep the old fragment */ }
+  }
+  if (TABS[frag] && TABS[frag].onShow) TABS[frag].onShow();
+}
+
+function setTabRunning(frag, running) { $("tab-" + frag).dataset.state = running ? "running" : "idle"; }
+
+$("tablist").addEventListener("keydown", (e) => {
+  const i = FRAGS.indexOf(activeFrag);
+  let next = -1;
+  if (e.key === "ArrowRight") next = (i + 1) % FRAGS.length;
+  else if (e.key === "ArrowLeft") next = (i + FRAGS.length - 1) % FRAGS.length;
+  else if (e.key === "Home") next = 0;
+  else if (e.key === "End") next = FRAGS.length - 1;
+  if (next < 0) return;
+  e.preventDefault();
+  selectTab(FRAGS[next], { focus: true });
+});
+for (const f of FRAGS) $("tab-" + f).addEventListener("click", () => selectTab(f));
+window.addEventListener("hashchange", () => { const f = fragFromHash(); if (f !== activeFrag) selectTab(f, { hash: false }); });
+
+// Ctrl/Cmd+Enter acts on the visible tab only.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey)) return;
+  const tab = TABS[activeFrag];
+  if (tab && tab.submit) { e.preventDefault(); tab.submit(); }
+});
+
+// --- header, banner and state ------------------------------------------------------------------------------
 function keySource(s) {
   if (s.key_source === "session") return { summary: "key: session", label: "(set for this endpoint)" };
   if (typeof s.key_source === "string" && s.key_source.startsWith("env:")) {
@@ -226,6 +429,16 @@ function keySource(s) {
 }
 
 function profilesInfo() { return state.profiles || { names: [], active: null, modified: false, read_only: true }; }
+function historyInfo() { return state.history || { save_runs: false, revision: 0, read_only: true, short_credential_held: false }; }
+function profileLabel(name) {
+  return (profilesInfo().conflicts || []).includes(name) ? `${name}-(${state.workspace.name})` : name;
+}
+
+function shortCredentialWarning() {
+  const hi = historyInfo();
+  return hi.save_runs && hi.short_credential_held
+    ? "A credential shorter than 8 characters has been held in this session. It cannot be redacted, so saved runs may contain it." : "";
+}
 
 function renderState() {
   $("version").textContent = state.agentwiz_version
@@ -233,147 +446,183 @@ function renderState() {
   const ws = state.workspace || {};
   $("workspace").textContent = ws.name ? `workspace: ${ws.name}${ws.read_only ? " (read-only)" : ""}` : "";
   $("workspace").title = ws.path || "";
-  const problems = Array.isArray(ws.problems) ? ws.problems : [];
   const banner = $("banner");
   banner.replaceChildren();
-  for (const p of problems) {
-    const line = document.createElement("p"); line.textContent = `${p.file}: ${p.message}`; banner.append(line);
-  }
-  if (problems.length) {
-    const line = document.createElement("p");
-    line.textContent = "Repair or restore the file. Workspace and profile files need a restart; the MCP server library and shared defaults are reloaded when repaired.";
-    banner.append(line);
-  }
-  banner.classList.toggle("hidden", problems.length === 0);
+  const problems = Array.isArray(ws.problems) ? ws.problems : [];
+  for (const p of problems) banner.append(h("p", { text: `${p.file}: ${p.message}` }));
+  if (problems.length)
+    banner.append(h("p", { text: "Repair or restore the file. Workspace and profile files need a restart; the MCP server library, shared defaults and contracts are reloaded when repaired." }));
   const pr = profilesInfo();
   $("summary").title = `${pr.path || ""}\nDefaults: ${pr.defaults_path || ""}`;
-  if (pr.unresolved_active) {
-    const line = document.createElement("p");
-    line.textContent = `Profile ${pr.unresolved_active} is missing; default settings are in use.`;
-    banner.append(line); banner.classList.remove("hidden");
-  }
+  if (pr.unresolved_active) banner.append(h("p", { text: `Profile ${pr.unresolved_active} is missing; default settings are in use.` }));
+  for (const c of (state.contracts && state.contracts.items) || [])
+    if (c.problem) banner.append(h("p", { text: `${c.problem.file}: ${c.problem.message}` }));
+  const warning = shortCredentialWarning();
+  if (warning) banner.append(h("p", { "data-test": "banner-short-credential", text: warning }));
+  banner.classList.toggle("hidden", banner.childElementCount === 0);
   const profile = pr.active === null || pr.active === undefined ? "no profile"
     : `profile: ${profileLabel(pr.active)}${pr.modified ? " (modified)" : ""}`;
   const parts = [profile, state.kind, state.base_url || "(default URL)", state.model || "(no model)"];
   if (state.kind === "openrouter") parts.push("provider=" + (state.provider || "any"));
   parts.push(keySource(state).summary);
   $("summary").textContent = parts.join(" · ");
-  renderTask();
-  renderMcp();
+  const hi = historyInfo();
+  $("save-runs").checked = !!hi.save_runs;
+  $("save-runs").disabled = !!hi.read_only;
+  $("saving").classList.toggle("hidden", !hi.save_runs);
+  $("header-note").textContent = hi.save_runs ? DISCLOSURE : "";
+  $("header-note").classList.toggle("hidden", !hi.save_runs);
+  for (const f of FRAGS) if (TABS[f] && TABS[f].onState) TABS[f].onState();
 }
 
 async function refreshState() {
   state = await api("/api/state"); renderState();
-  if (!taskFilled && state.task) { fillTask(state.task.saved); taskFilled = true; }
-  renderTask();
 }
 
-// --- task settings (techspec 0.1.2, Section 7.7) ---------------------------------------------
-function fieldInput(name) { return $("t-" + name); }
-
-function supportedNow() {
-  const sup = state.supported || {};
-  const level = state.kind === "openai_compat" ? "" : $("t-reasoning").value;
-  return sup[level] || sup[""] || [];
-}
-
-function fieldNote(name) {
-  if (state.kind === "openai_compat") return "not sent to OpenAI-compatible servers";
-  if (state.kind === "lmstudio") return "not sent to LM Studio at this reasoning level";
-  return "not sent at this reasoning level";
-}
-
-// Reads the panel: {values: {name: value}, errors: [labels]}. Values include disabled fields.
-function readTask() {
-  const values = {}, errors = [];
-  for (const name of [...BASIC, ...ADVANCED]) {
-    const el = fieldInput(name);
-    el.classList.remove("invalid");
-    if (name === "stop") {
-      const lines = el.value.split("\n").filter((s) => s !== "");
-      if (lines.length) values.stop = lines;
-      continue;
-    }
-    const text = el.value.trim();
-    if (text === "") continue;
-    const integer = INTEGER_FIELDS.includes(name);
-    let ok = integer ? INTEGER_RE.test(text) : NUMBER_RE.test(text);
-    if (ok && name === "seed") { const b = BigInt(text); ok = b <= SAFE && b >= -SAFE; }
-    if (ok && name === "max_tokens") ok = BigInt(text) >= 1n;
-    if (ok && !integer && !Number.isFinite(Number(text))) ok = false;
-    if (!ok) { el.classList.add("invalid"); errors.push(name); continue; }
-    values[name] = Number(text);
-  }
-  return { values, errors };
-}
-
-function taskShape(values, reasoning) {
-  const out = { reasoning, temperature: values.temperature ?? null, max_tokens: values.max_tokens ?? null, advanced: {} };
-  for (const name of ADVANCED) if (values[name] !== undefined) out.advanced[name] = values[name];
-  return out;
-}
-
-// What is sent: only enabled, non-blank fields; reasoning omitted for OpenAI-compatible servers.
-function requestTask() {
-  const { values, errors } = readTask();
-  const enabled = supportedNow(), task = {};
-  const reasoning = $("t-reasoning").value;
-  if (reasoning && state.kind !== "openai_compat") task.reasoning = reasoning;
-  for (const name of BASIC) if (values[name] !== undefined && enabled.includes(name)) task[name] = values[name];
-  const adv = {};
-  for (const name of ADVANCED) if (values[name] !== undefined && enabled.includes(name)) adv[name] = values[name];
-  if (Object.keys(adv).length) task.advanced = adv;
-  return { task, errors };
-}
-
-function fillTask(saved) {
-  saved = saved || {};
-  $("t-reasoning").value = saved.reasoning || "";
-  for (const name of BASIC) fieldInput(name).value = saved[name] === null || saved[name] === undefined ? "" : String(saved[name]);
-  const adv = saved.advanced || {};
-  for (const name of ADVANCED) {
-    const v = adv[name];
-    fieldInput(name).value = v === undefined || v === null ? "" : (name === "stop" ? v.join("\n") : String(v));
-  }
-}
-
-function renderTask() {
-  if (!state.task) return;
-  const enabled = supportedNow();
-  $("t-reasoning-row").classList.toggle("hidden", state.kind === "openai_compat");
-  const { values } = readTask();
-  let set = 0, notSent = 0;
-  for (const name of [...BASIC, ...ADVANCED]) {
-    const box = document.querySelector(`[data-field="${name}"]`), on = enabled.includes(name);
-    box.classList.toggle("disabled-field", !on);
-    box.querySelector(".note").textContent = on ? "" : fieldNote(name);
-    if (ADVANCED.includes(name) && values[name] !== undefined) { set++; if (!on) notSent++; }
-  }
-  $("advanced-summary").textContent = notSent ? `Advanced (${set} set, ${notSent} not sent)` : `Advanced (${set} set)`;
-  const ro = state.task.read_only;
-  $("task-save").disabled = ro;
-  const current = JSON.stringify(taskShape(values, $("t-reasoning").value));
-  const saved = JSON.stringify(taskShape(Object.assign({}, state.task.saved, state.task.saved.advanced || {}), state.task.saved.reasoning || ""));
-  $("task-marker").textContent = ro ? "(read-only)" : (current !== saved ? "(modified)" : "");
-}
-
-document.querySelectorAll("#task-panel input, #task-panel textarea, #task-panel select")
-  .forEach((el) => el.addEventListener("input", renderTask));
-$("task-reset").onclick = () => { fillTask({}); renderTask(); $("task-msg").textContent = ""; };
-$("task-save").onclick = async () => {
-  const { values, errors } = readTask();
-  if (errors.length) { $("task-msg").textContent = "Correct the marked fields first."; return; }
+$("save-runs").onchange = async () => {
+  const want = $("save-runs").checked, msg = $("switch-msg");
+  msg.classList.add("hidden");
   try {
-    state = await api("/api/task_settings/save", { task: taskShape(values, $("t-reasoning").value), revision: state.task.revision });
-    renderState(); renderTask(); $("task-msg").textContent = "Task settings saved.";
+    state = await api("/api/history/switch", { save_runs: want, revision: historyInfo().revision });
+    renderState();
   } catch (e) {
-    if (e.code === "stale_revision") {
-      try { await refreshState(); } catch (e2) { /* keep the last state */ }
-      $("task-msg").textContent = TASK_STALE;
-    } else { try { await refreshState(); } catch (e2) { /* keep */ } $("task-msg").textContent = e.message; }
+    try { await refreshState(); } catch (e2) { /* keep the last state */ }
+    msg.textContent = e.code === "stale_revision" ? "Run saving was changed elsewhere; the switch shows the current setting." : e.message;
+    msg.classList.remove("hidden");
   }
 };
 
+// A route answered 409 stale_revision: reload the state, keep the tab's inputs, and let the tab show it.
+async function reloadAfterStale() {
+  try { await refreshState(); } catch (e) { /* the header keeps its last value */ }
+}
+
+// --- task settings: one component, one instance per request tab (Section 11.5) ---------------------------
+function makeTaskPanel(prefix) {
+  const els = {}, boxes = {}, notes = {};
+  let filled = false;
+  const field = (name, label, ph, tag = "input") => {
+    const input = h(tag, { id: `${prefix}-t-${name}`, "data-test": `${prefix}-task-${name}`, placeholder: ph, rows: tag === "textarea" ? 2 : null });
+    const note = h("span", { class: "note" });
+    els[name] = input; notes[name] = note;
+    boxes[name] = h("div", { "data-field": name }, h("label", { for: `${prefix}-t-${name}`, text: label }), input, note);
+    return boxes[name];
+  };
+  els.reasoning = h("select", { id: `${prefix}-t-reasoning`, "data-test": `${prefix}-task-reasoning` },
+    h("option", { value: "", text: "Backend default" }), h("option", { value: "off", text: "off" }),
+    h("option", { value: "low", text: "low" }), h("option", { value: "medium", text: "medium" }), h("option", { value: "high", text: "high" }));
+  const reasoningRow = h("div", {}, h("label", { for: `${prefix}-t-reasoning`, text: "Reasoning" }), els.reasoning);
+  const basic = h("div", { class: "fields" }, reasoningRow, field("temperature", "Temperature", "backend default"),
+    field("max_tokens", "Max tokens", "backend default"));
+  const advancedSummary = h("summary", { text: "Advanced" });
+  const advanced = h("details", {}, advancedSummary,
+    h("div", { class: "fields" }, field("top_p", "Top-p"), field("top_k", "Top-k"), field("min_p", "Min-p"),
+      field("repetition_penalty", "Repetition penalty"), field("presence_penalty", "Presence penalty"),
+      field("frequency_penalty", "Frequency penalty"), field("seed", "Seed")),
+    field("stop", "Stop sequences (one per line)", "", "textarea"));
+  const marker = h("span", { class: "muted", "data-test": `${prefix}-task-marker` });
+  const msg = h("span", { class: "note", "data-test": `${prefix}-task-msg` });
+  const reset = h("button", { type: "button", text: "Reset", "data-test": `${prefix}-task-reset` });
+  const save = h("button", { type: "button", text: "Save task settings", "data-test": `${prefix}-task-save` });
+  const el = h("fieldset", {}, h("legend", {}, "Task settings ", marker), basic, advanced, h("div", { class: "row" }, reset, save, msg));
+
+  const supportedNow = () => {
+    const sup = state.supported || {};
+    const level = state.kind === "openai_compat" ? "" : els.reasoning.value;
+    return sup[level] || sup[""] || [];
+  };
+  const fieldNote = () => {
+    if (state.kind === "openai_compat") return "not sent to OpenAI-compatible servers";
+    if (state.kind === "lmstudio") return "not sent to LM Studio at this reasoning level";
+    return "not sent at this reasoning level";
+  };
+  // Reads the panel: {values: {name: value}, errors: [names]}. Values include disabled fields.
+  const readTask = () => {
+    const values = {}, errors = [];
+    for (const name of [...BASIC, ...ADVANCED]) {
+      const input = els[name];
+      input.classList.remove("invalid");
+      if (name === "stop") {
+        const lines = input.value.split("\n").filter((s) => s !== "");
+        if (lines.length) values.stop = lines;
+        continue;
+      }
+      const text = input.value.trim();
+      if (text === "") continue;
+      const integer = INTEGER_FIELDS.includes(name);
+      let ok = integer ? INTEGER_RE.test(text) : NUMBER_RE.test(text);
+      if (ok && name === "seed") { const b = BigInt(text); ok = b <= SAFE && b >= -SAFE; }
+      if (ok && name === "max_tokens") ok = BigInt(text) >= 1n;
+      if (ok && !integer && !Number.isFinite(Number(text))) ok = false;
+      if (!ok) { input.classList.add("invalid"); errors.push(name); continue; }
+      values[name] = Number(text);
+    }
+    return { values, errors };
+  };
+  const taskShape = (values, reasoning) => {
+    const out = { reasoning, temperature: values.temperature ?? null, max_tokens: values.max_tokens ?? null, advanced: {} };
+    for (const name of ADVANCED) if (values[name] !== undefined) out.advanced[name] = values[name];
+    return out;
+  };
+  const fill = (saved) => {
+    saved = saved || {};
+    els.reasoning.value = saved.reasoning || "";
+    for (const name of BASIC) els[name].value = saved[name] === null || saved[name] === undefined ? "" : String(saved[name]);
+    const adv = saved.advanced || {};
+    for (const name of ADVANCED) {
+      const v = adv[name];
+      els[name].value = v === undefined || v === null ? "" : (name === "stop" ? v.join("\n") : String(v));
+    }
+  };
+  const render = () => {
+    if (!state.task) return;
+    if (!filled) { fill(state.task.saved); filled = true; }     // each panel starts from the saved set
+    const enabled = supportedNow();
+    reasoningRow.classList.toggle("hidden", state.kind === "openai_compat");
+    const { values } = readTask();
+    let set = 0, notSent = 0;
+    for (const name of [...BASIC, ...ADVANCED]) {
+      const on = enabled.includes(name);
+      boxes[name].classList.toggle("disabled-field", !on);
+      notes[name].textContent = on ? "" : fieldNote();
+      if (ADVANCED.includes(name) && values[name] !== undefined) { set++; if (!on) notSent++; }
+    }
+    advancedSummary.textContent = notSent ? `Advanced (${set} set, ${notSent} not sent)` : `Advanced (${set} set)`;
+    const ro = state.task.read_only;
+    save.disabled = ro;
+    const current = JSON.stringify(taskShape(values, els.reasoning.value));
+    const saved = JSON.stringify(taskShape(Object.assign({}, state.task.saved, state.task.saved.advanced || {}), state.task.saved.reasoning || ""));
+    marker.textContent = ro ? "(read-only)" : (current !== saved ? "(modified)" : "");
+  };
+  // What is sent: only enabled, non-blank fields; reasoning omitted for OpenAI-compatible servers.
+  const requestTask = () => {
+    const { values, errors } = readTask();
+    const enabled = supportedNow(), task = {};
+    const reasoning = els.reasoning.value;
+    if (reasoning && state.kind !== "openai_compat") task.reasoning = reasoning;
+    for (const name of BASIC) if (values[name] !== undefined && enabled.includes(name)) task[name] = values[name];
+    const adv = {};
+    for (const name of ADVANCED) if (values[name] !== undefined && enabled.includes(name)) adv[name] = values[name];
+    if (Object.keys(adv).length) task.advanced = adv;
+    return { task, errors };
+  };
+  el.addEventListener("input", render);
+  reset.onclick = () => { fill({}); render(); msg.textContent = ""; };
+  save.onclick = async () => {
+    const { values, errors } = readTask();
+    if (errors.length) { msg.textContent = "Correct the marked fields first."; return; }
+    try {
+      state = await api("/api/task_settings/save", { task: taskShape(values, els.reasoning.value), revision: state.task.revision });
+      renderState(); msg.textContent = "Task settings saved.";
+    } catch (e) {
+      await reloadAfterStale();
+      msg.textContent = e.code === "stale_revision" ? TASK_STALE : e.message;
+    }
+  };
+  return { el, render, requestTask };
+}
+
+// --- the Model settings dialog (unchanged from 0.1.2) ----------------------------------------------------
 function syncDialogVisibility() {
   const kind = $("kind").value;
   $("base_url").placeholder = DEFAULT_URL[kind];
@@ -391,10 +640,6 @@ function dialogConfig() {
 function settingsMsg(text, warn = false) {
   $("settings-msg").textContent = text; $("settings-msg").classList.toggle("hidden", !text);
   $("settings-msg").classList.toggle("warn", warn);
-}
-
-function profileLabel(name) {
-  return (profilesInfo().conflicts || []).includes(name) ? `${name}-(${state.workspace.name})` : name;
 }
 
 function renderProfileControls() {
@@ -466,7 +711,7 @@ async function dialogFailure(e) {
 $("apply").onclick = async () => {
   try {
     state = await api("/api/config", { ...dialogConfig(), revision: state.revision });
-    renderState(); renderTask(); $("settings").close();
+    renderState(); $("settings").close();
   } catch (e) { await dialogFailure(e); }
 };
 
@@ -527,426 +772,738 @@ $("save-as-profile").onclick = () => {
   saveProfile(name);
 };
 
-// Token counts: missing → "?"; not a safe integer → "see Result" (the parsed value may be rounded).
-function count(n) {
-  if (n === null || n === undefined) return "?";
-  return Number.isSafeInteger(n) ? String(n) : "see Result";
+// --- the request tabs: Chat and Checked request (Sections 5.2, 8.6–8.8, 9, 11.2) ------------------------------
+// One controller per tab, built from the same code. Every asynchronous update is correlated by attempt ID, so a
+// `save` event, a polling answer or a pending Stop for an earlier attempt never changes a newer request's display.
+const REPAIR_REASONS = {
+  none: "Send a request first.",
+  running: "A request is running.",
+  run_stopped: "This run was stopped; send the request again.",
+  not_repairable: "A repair is offered only for a completed answer that failed its checks.",
+  not_held: "This attempt is no longer held in memory; send the request again.",
+  not_latest: "Only the latest attempt of a run can be repaired.",
+};
+const SKIPPED = { blank_answer: "Not checked: the answer was blank.", not_completed: "Not checked: the request did not complete." };
+
+function repairPreviewText(plan) {
+  const s = plan.settings, lines = [
+    `Repair of ${plan.parent_id} (next attempt: ${plan.attempt})`,
+    `Settings: ${s.kind} · ${s.base_url || "(default URL)"} · model ${s.model || "(none)"}${s.provider ? " · provider " + s.provider : ""}`,
+    `Task settings: ${JSON.stringify(s.task)}`,
+    `Contract: ${plan.contract.name} (revision ${plan.contract.revision})`,
+    "", "Messages:"];
+  for (const m of plan.messages) lines.push("", `[${m.role}]`, m.content);
+  return lines.join("\n");
 }
 
-function resultStatus(ev, seconds) {
-  const res = ev.result, u = res.usage || {};
-  let label = LABELS[ev.outcome] || ev.outcome;
-  if (ev.outcome === "truncated_no_answer" && typeof res.reasoning === "string" && res.reasoning.trim() !== "")
-    label += " (token cap reached during reasoning)";
-  const parts = [label, `${seconds.toFixed(1)}s`, res.transport, `finish=${res.finish_reason ?? "?"}`,
-    `in=${count(u.input_tokens)} out=${count(u.output_tokens)} reasoning=${count(u.reasoning_tokens)}`,
-    typeof res.cost === "number" ? `cost=$${res.cost.toFixed(6)}` : "cost=?"];
-  if (res.provider) parts.push(res.provider);
-  if (ev.model_lookup && ev.model_lookup !== "used") parts.push("LM Studio model lookup: " + ev.model_lookup);
-  if (Array.isArray(ev.nonfinite_replaced) && ev.nonfinite_replaced.length) parts.push("non-finite values replaced (see Result)");
-  return { text: parts.join(" · "), style: ev.outcome === "complete" ? "normal" : "warn" };
-}
+function makeRequestTab(frag, source) {
+  const prefix = frag === "chat" ? "chat" : "checked", checked = source === "checked_request";
+  const panel = $("panel-" + frag);
+  const task = makeTaskPanel(prefix);
+  const system = h("textarea", { id: prefix + "-system", rows: 2, "data-test": prefix + "-system" });
+  const prompt = h("textarea", { id: prefix + "-prompt", rows: 6, placeholder: "Ctrl+Enter to send", "data-test": prefix + "-prompt" });
+  const send = h("button", { class: "primary", "data-test": prefix + "-send", text: "Send" });
+  const stop = h("button", { disabled: true, "data-test": prefix + "-stop", text: "Stop" });
+  const statusEl = h("span", { class: "status", "data-test": prefix + "-status", "data-state": "idle" });
+  const attemptEl = h("span", { class: "status", "data-test": prefix + "-attempt-id" });
+  const reasoning = outPanel(prefix, "reasoning", "Reasoning stream", "reasoning");
+  const output = outPanel(prefix, "output", "Output");
+  const final = outPanel(prefix, "final", "Final event (exact JSON as received)", "exact");
+  const checkResult = checkBox(prefix);
+  let active = null, shown = null, rows = [], override = null;
 
-function isTerminal(ev) {
-  if (!ev || typeof ev !== "object") return false;
-  if (ev.type === "result") return ev.result !== null && typeof ev.result === "object" && typeof ev.outcome === "string";
-  return ev.type === "error" && typeof ev.error === "string";
-}
+  // checked only
+  const contractSel = h("select", { id: "checked-contract", "data-test": "checked-contract" });
+  const sendReason = h("span", { class: "note", "data-test": "checked-send-reason" });
+  const attemptsEl = h("ul", { class: "list", "data-test": "checked-attempts" });
+  const repairReason = h("span", { class: "note", "data-test": "checked-repair-reason" });
+  const previewBtn = h("button", { type: "button", "data-test": "checked-repair-preview-btn", text: "Preview repair" });
+  const repairSend = h("button", { type: "button", "data-test": "checked-repair-send", text: "Send repair" });
+  const repairBox = h("div", { class: "row", "data-test": "checked-repair", "data-repair": "none" }, previewBtn, repairSend, repairReason);
+  const previewOut = outPanel("checked", "repair-preview", "Repair preview (exactly what a repair would send)");
+  previewOut.el.classList.add("hidden");
 
-async function send() {
-  if (controller) return;                       // keyboard guard: one request per page at a time
-  const ctl = new AbortController();
-  controller = ctl;
-  let terminal = false, stopped = false, streaming = false;
-  ctl.stopRequested = () => { stopped = true; };
-  const done = (text, style) => {               // final outcome for this request; never overwritten
-    if (terminal) return;
-    terminal = true;
-    setStatus(text, style);
-    if (controller === ctl) { controller = null; $("send").disabled = false; $("stop").disabled = true; }
-  };
-  const sendTask = requestTask();
-  if (sendTask.errors.length) {
-    controller = null;
-    setStatus("Correct the marked task settings before sending.", "error");
-    return;
+  const intro = checked
+    ? "Checked request: send a prompt, check the answer against a saved contract, then preview and send a repair."
+    : "Chat: send a prompt to the model and watch the answer stream. Stop ends a request at any stage.";
+  put(panel, h("p", { class: "panel-intro", text: intro }),
+    checked ? [h("label", { for: "checked-contract", text: "Contract" }), contractSel] : null,
+    h("label", { for: prefix + "-system", text: "System prompt (optional)" }), system,
+    h("label", { for: prefix + "-prompt", text: "Input" }), prompt, task.el,
+    h("div", { class: "row" }, send, stop, statusEl, attemptEl, sendReason),
+    h("div", { class: "grid" }, reasoning.el, output.el),
+    checked ? [checkResult.el, h("label", { text: "Attempts of this run" }), attemptsEl, repairBox, previewOut.el] : null,
+    final.el);
+
+  const mark = (name, value) => { if (value === null || value === undefined) delete statusEl.dataset[name]; else statusEl.dataset[name] = value; };
+  const display = (state_, text, style = "") => { statusEl.dataset.state = state_; statusEl.textContent = text; statusEl.className = "status " + style; };
+  const displays = (req) => req === active || (req.attemptId !== null && req.attemptId === shown);
+
+  function selectedContract() {
+    const items = (state.contracts && state.contracts.items) || [];
+    return items.find((c) => c.name === contractSel.value && !c.problem) || null;
   }
-  const payload = JSON.stringify({ prompt: $("prompt").value, system: $("system").value, revision: state.revision, task: sendTask.task });
-  if (state.limits && new TextEncoder().encode(payload).length > state.limits.request_bytes) {
-    controller = null;
-    setStatus(`This request is larger than ${state.limits.request_bytes} bytes and cannot be sent. Insert a smaller part of the file.`, "error");
-    return;
+
+  function repairCode() {
+    if (override) return override;
+    if (active) return "running";
+    const last = rows[rows.length - 1];
+    if (!last) return "none";
+    const rec = last.record;
+    if (!rec) return "not_held";
+    if (rec.stop_requested_at) return "run_stopped";
+    if (!(rec.outcome === "complete" || rec.outcome === "truncated") || !rec.check || rec.check.overall !== "fail") return "not_repairable";
+    return "allowed";
   }
-  $("reasoning").textContent = ""; $("output").textContent = ""; $("result").textContent = "";
-  $("send").disabled = true; $("stop").disabled = false; setStatus("waiting for first token…");
-  const started = performance.now();
-  let reader = null;
-  try {
-    const r = await fetch("/api/complete", { method: "POST", signal: ctl.signal,
-      headers: { "X-Session-Token": TOKEN, "Content-Type": "application/json" },
-      body: payload });
-    if (!r.ok) {
-      let j = {};
-      try { j = await r.json(); } catch (e) { /* keep the status text */ }
-      if (r.status === 409) {
-        done(STALE_SEND, "warn");
-        try { await refreshState(); } catch (e) { /* header keeps its last value */ }
-      } else if (r.status === 503) done(j.error || r.statusText, "warn");
-      else if (r.status === 413) done(j.error || "The request is too large. Insert a smaller part of the file.", "error");
-      else done(j.error || `${r.status} ${r.statusText}`, "error");
-      return;
+
+  function refreshControls() {
+    const busy = !!active;
+    const noContract = checked && !selectedContract();
+    send.disabled = busy || noContract;
+    stop.disabled = !(active && !active.final);
+    if (checked) {
+      sendReason.textContent = noContract && !busy ? "Choose a usable contract first." : "";
+      const code = repairCode();
+      repairBox.dataset.repair = code;
+      previewBtn.disabled = repairSend.disabled = code !== "allowed";
+      repairReason.textContent = code === "allowed" ? "" : (REPAIR_REASONS[code] || code);
     }
-    streaming = true;
-    reader = r.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    read: for (;;) {
-      const { value, done: ended } = await reader.read();
-      if (ended) break;
-      buffer += decoder.decode(value, { stream: true });
-      let nl;
-      while ((nl = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, nl); buffer = buffer.slice(nl + 1);
-        let ev;
-        try { ev = JSON.parse(line); } catch (e) { break read; }
-        if (ev === null || typeof ev !== "object") break read;
-        if (ev.type === "reasoning" && typeof ev.text === "string") { $("reasoning").textContent += ev.text; setStatus("streaming…"); }
-        else if (ev.type === "text" && typeof ev.text === "string") { $("output").textContent += ev.text; setStatus("streaming…"); }
-        else if (isTerminal(ev)) {
-          if (ev.type === "result") {
-            $("result").textContent = line;     // exact line as received; never re-serialised
-            const s = resultStatus(ev, (performance.now() - started) / 1000);
-            done(s.text, s.style);
-          } else {
-            let text = ev.error;
-            if (ev.model_lookup && ev.model_lookup !== "used") text += ` (LM Studio model lookup: ${ev.model_lookup}; reasoning "off" was sent as is)`;
-            done(text, "error");
-          }
-          break read;                            // 0.1.0 sends nothing after a terminal event
+  }
+
+  function renderRows() {
+    attemptsEl.replaceChildren();
+    for (const r of rows) {
+      const li = h("li", { "data-test": "checked-attempt", "data-attempt-id": r.id,
+        text: `${r.attempt}. ${r.outcome ? (LABELS[r.outcome] || r.outcome) : "running"} · check: ${r.check || "not checked"}${r.save && r.save !== "not_requested" ? " · save: " + r.save : ""}` });
+      if (r.outcome) li.dataset.outcome = r.outcome;
+      if (r.check) li.dataset.check = r.check;
+      if (r.save) li.dataset.save = r.save;
+      attemptsEl.append(li);
+    }
+  }
+
+  function upsertRow(id, patch) {
+    if (!checked) return;
+    let row = rows.find((r) => r.id === id);
+    if (!row) { row = { id, attempt: Number(id.slice(id.lastIndexOf("-") + 1)) }; rows.push(row); }
+    Object.assign(row, patch);
+    renderRows();
+  }
+
+  function clearDisplay() {
+    reasoning.pre.textContent = ""; output.pre.textContent = ""; final.pre.textContent = "";
+    checkResult.clear();
+    for (const name of ["outcome", "attemptId", "save", "error"]) delete statusEl.dataset[name];
+    attemptEl.textContent = "";
+    if (checked) { previewOut.el.classList.add("hidden"); previewOut.pre.textContent = ""; }
+  }
+
+  function release(req) {
+    if (active !== req) return;
+    active = null;
+    setTabRunning(frag, false);
+    refreshControls();
+  }
+
+  function showSave(req, status, reason) {
+    if (!displays(req)) return;
+    mark("save", status);
+    if (status === "failed") statusEl.textContent = `${statusEl.textContent} · Run not saved: ${reason || "unknown reason"}`;
+  }
+
+  function showRecord(req, record, line, saveStatus, elapsed) {
+    const s = recordStatus(record, elapsed);
+    display("done", s.text, s.style);
+    mark("outcome", record.outcome); mark("attemptId", record.id); mark("save", saveStatus);
+    attemptEl.textContent = record.id;
+    final.pre.textContent = line;
+    if (output.pre.textContent === "") output.pre.textContent = (record.result && record.result.text) || (record.partial && record.partial.text) || "";
+    if (reasoning.pre.textContent === "") reasoning.pre.textContent = (record.result && record.result.reasoning) || (record.partial && record.partial.reasoning) || "";
+    if (checked) {
+      if (record.check) checkResult.show(record.check);
+      else checkResult.note(SKIPPED[record.check_skipped] || "Not checked.");
+    }
+  }
+
+  function onFinal(req, ev, line) {
+    const record = ev.record;
+    if (!record || typeof record !== "object" || req.final) return;
+    req.final = ev;
+    if (req.attemptId === null) req.attemptId = record.id;
+    upsertRow(record.id, { outcome: record.outcome, check: record.check ? record.check.overall : null,
+                           save: ev.save_status, record });
+    if (displays(req)) showRecord(req, record, line, ev.save_status, req.live ? seconds(req.started) : null);
+    if (ev.save_status !== "pending") req.saveSettled = true;
+    override = null;
+    release(req);
+    refreshControls();
+  }
+
+  function onSave(req, ev) {
+    if (ev.attempt_id !== req.attemptId) return;
+    req.saveSettled = true;
+    upsertRow(req.attemptId, { save: ev.save_status });
+    showSave(req, ev.save_status, ev.reason);
+  }
+
+  function unknown(req, text) {
+    if (displays(req)) display("unknown", text, "error");
+    release(req);
+  }
+
+  function refused(req, status, j) {
+    req.pendingStop = false;                      // nothing was created, so there is nothing to stop
+    const code = j.code || null;
+    let text = j.error || `${status}`;
+    if (status === 409 && code === "stale_revision") { text = STALE_SEND; display("stale", text, "warn"); reloadAfterStale(); }
+    else display("idle", text, status === 503 || status === 409 ? "warn" : "error");
+    if (code) mark("error", code);
+    if (checked && req.isRepair && ["run_stopped", "not_latest", "not_repairable", "not_held"].includes(code)) override = code;
+    release(req);
+    refreshControls();
+  }
+
+  async function sendStop(req) {
+    req.pendingStop = false;
+    try {
+      const r = await api("/api/complete/stop", { attempt_id: req.attemptId });
+      if (r.status === "already_finished" && !req.final && displays(req))
+        display("stopping", "Stop arrived after the request finished; waiting for its outcome…", "warn");
+    } catch (e) {
+      if (!req.final && displays(req)) display("running", "Stop failed: " + e.message, "error");
+    }
+  }
+
+  function doStop() {
+    const req = active;
+    if (!req || req.final) return;
+    req.stopRequested = true;
+    display("stopping", "Stopping…", "warn");
+    if (req.attemptId === null) { req.pendingStop = true; return; }     // sent when `started` arrives
+    sendStop(req);
+  }
+
+  function onEvent(req, ev, line) {
+    if (ev.type === "started" && typeof ev.attempt_id === "string") {
+      req.attemptId = ev.attempt_id; req.live = true; shown = ev.attempt_id;
+      mark("attemptId", ev.attempt_id); attemptEl.textContent = ev.attempt_id;
+      upsertRow(ev.attempt_id, { outcome: null, check: null, save: null, record: null });
+      if (!req.stopRequested) display("running", "waiting for first token…");
+      if (req.pendingStop) sendStop(req);
+    } else if ((ev.type === "reasoning" || ev.type === "text") && typeof ev.text === "string") {
+      if (!displays(req)) return;
+      (ev.type === "text" ? output : reasoning).pre.textContent += ev.text;
+      if (!req.stopRequested && statusEl.dataset.state === "running") display("running", "streaming…");
+    } else if (ev.type === "final") onFinal(req, ev, line);
+    else if (ev.type === "save") onSave(req, ev);
+    // unknown event types are ignored
+  }
+
+  function applyEnvelope(req, env, text) {
+    if (!req.final) {
+      if (env.record_held && env.record) {
+        onFinal(req, { type: "final", attempt_id: req.attemptId, outcome: env.record.outcome, record: env.record,
+                       save_status: env.save_status }, text);
+      } else if (env.summary) {
+        req.final = { summary: env.summary };
+        upsertRow(req.attemptId, { outcome: env.summary.outcome, check: env.summary.check || null, save: env.save_status, record: null });
+        if (displays(req)) {
+          display("done", `${LABELS[env.summary.outcome] || env.summary.outcome} · Full result no longer held`, "warn");
+          mark("outcome", env.summary.outcome); mark("save", env.save_status);
+          final.pre.textContent = text;
         }
-        // unknown event types are ignored
+        release(req);
       }
     }
-    if (terminal) { try { await reader.cancel(); } catch (e) { /* already closed */ } }
-    else if (stopped) done(STOPPED, "");
-    else done(INTERRUPTED, "error");
-  } catch (e) {
-    if (terminal) return;
-    if (stopped) done(STOPPED, "");
-    else if (streaming) done(INTERRUPTED, "error");
-    else done("Request failed: " + (e.message || e.name), "error");
-  } finally {
-    if (!terminal) done(stopped ? STOPPED : INTERRUPTED, stopped ? "" : "error");
+    if (env.save_status && env.save_status !== "pending") {
+      req.saveSettled = true;
+      upsertRow(req.attemptId, { save: env.save_status });
+      showSave(req, env.save_status, env.reason);
+    } else if (env.save_status === "pending" && displays(req)) mark("save", "pending");
+    refreshControls();
   }
+
+  // After a lost stream, or a stream that ended with the save still pending: ask the server, every 2 seconds.
+  function startPolling(req) {
+    if (req.polling || req.attemptId === null) return;
+    req.polling = true;
+    let failures = 0;
+    if (!req.final && displays(req)) display("polling", "Connection lost; asking AgentWiz for the outcome…", "warn");
+    const stopPolling = () => { req.polling = false; };
+    const tick = async () => {
+      if (!req.polling) return;
+      let res;
+      try { res = await apiText(`/api/attempts/${req.attemptId}`); }
+      catch (e) {
+        if (++failures >= 15) {
+          stopPolling();
+          if (!req.final && displays(req)) display("unknown", "Outcome unknown: AgentWiz could not be reached.", "error");
+        } else setTimeout(tick, POLL_MS);
+        return;
+      }
+      failures = 0;
+      if (res.status === 410) {
+        stopPolling();
+        if (!req.final && displays(req)) display("unknown", "This attempt's outcome is no longer held.", "error");
+        return;
+      }
+      if (!res.ok || !res.json) {
+        stopPolling();
+        if (displays(req)) display("unknown", (res.json && res.json.error) || `${res.status}`, "error");
+        return;
+      }
+      const env = res.json;
+      if (env.state === "committed") applyEnvelope(req, env, res.text);
+      if (env.state === "running" || (env.state === "committed" && env.save_status === "pending")) setTimeout(tick, POLL_MS);
+      else stopPolling();
+    };
+    tick();
+  }
+
+  function streamEnded(req) {
+    if (req.final) {
+      if (req.final.save_status === "pending" && !req.saveSettled) startPolling(req);
+      return;
+    }
+    if (req.attemptId === null) {
+      unknown(req, "Outcome unknown: AgentWiz may have accepted this request." +
+        (historyInfo().save_runs ? " Open the History tab to see whether it was saved." : ""));
+      return;
+    }
+    release(req);                   // the tab is free again; polling carries on for this attempt
+    startPolling(req);
+  }
+
+  async function begin(path, payloadText, isRepair) {
+    if (active) return;                              // one active request per tab
+    const req = { attemptId: null, pendingStop: false, stopRequested: false, final: null, polling: false,
+                  saveSettled: false, started: performance.now(), isRepair, live: false };
+    active = req; shown = null; override = null;
+    clearDisplay();
+    if (!isRepair) { rows = []; renderRows(); }
+    setTabRunning(frag, true);
+    display("running", "waiting for first token…");
+    refreshControls();
+    let resp;
+    try {
+      resp = await fetch(path, { method: "POST",
+        headers: { "X-Session-Token": TOKEN, "Content-Type": "application/json" }, body: payloadText });
+    } catch (e) {
+      unknown(req, "Outcome unknown: AgentWiz may have accepted this request." +
+        (historyInfo().save_runs ? " Open the History tab to see whether it was saved." : ""));
+      return;
+    }
+    if (!resp.ok) {
+      let j = {};
+      try { j = await resp.json(); } catch (e) { /* keep the status */ }
+      refused(req, resp.status, j);
+      return;
+    }
+    await readLines(resp, (ev, line) => onEvent(req, ev, line));
+    streamEnded(req);
+  }
+
+  function submit() {
+    if (active) return;
+    const t = task.requestTask();
+    if (t.errors.length) { display("idle", "Correct the marked task settings before sending.", "error"); return; }
+    const body = { source, prompt: prompt.value, system: system.value, revision: state.revision, task: t.task };
+    if (checked) {
+      const c = selectedContract();
+      if (!c) { display("idle", "Choose a usable contract first.", "error"); return; }
+      body.contract = { name: c.name, revision: c.revision };
+    }
+    const payload = JSON.stringify(body);
+    if (state.limits && new TextEncoder().encode(payload).length > state.limits.request_bytes) {
+      display("idle", `This request is larger than ${state.limits.request_bytes} bytes and cannot be sent. Copy a smaller part of the file.`, "error");
+      return;
+    }
+    begin("/api/complete", payload, false);
+  }
+
+  send.onclick = submit;
+  stop.onclick = doStop;
+
+  if (checked) {
+    contractSel.onchange = refreshControls;
+    previewBtn.onclick = async () => {
+      const last = rows[rows.length - 1];
+      if (!last) return;
+      try {
+        const plan = await api("/api/repair/preview", { attempt_id: last.id });
+        previewOut.pre.textContent = repairPreviewText(plan);
+        previewOut.el.classList.remove("hidden");
+      } catch (e) {
+        previewOut.el.classList.add("hidden");
+        if (["run_stopped", "not_latest", "not_repairable", "not_held"].includes(e.code)) override = e.code;
+        refreshControls();
+        if (!REPAIR_REASONS[e.code]) repairReason.textContent = e.message;
+      }
+    };
+    repairSend.onclick = () => {
+      const last = rows[rows.length - 1];
+      if (!last || active) return;
+      begin("/api/repair", JSON.stringify({ attempt_id: last.id }), true);
+    };
+  }
+
+  TABS[frag] = {
+    submit,
+    onState() {
+      task.render();
+      if (checked) {
+        const keep = contractSel.value, items = ((state.contracts && state.contracts.items) || []).filter((c) => !c.problem);
+        contractSel.replaceChildren();
+        if (!items.length) contractSel.add(new Option("(no usable contracts)", ""));
+        for (const c of items) contractSel.add(new Option(`${c.name} (${c.format})`, c.name));
+        if (items.some((c) => c.name === keep)) contractSel.value = keep;
+      }
+      refreshControls();
+    },
+  };
+  refreshControls();
 }
 
-// --- insertion pipeline (techspec 0.1.2, Section 8.5) ----------------------------------------
-function el(tag, text, cls) { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; }
+makeRequestTab("chat", "chat");
+makeRequestTab("checked-request", "checked_request");
 
+// --- previews shared by Documents and MCP tools: Copy replaces Insert (Section 11.4) ------------------------------
 function sizeLine(ins) {
   const ctx = modelContexts[state.model];
   const tokens = `~${ins.estimated_tokens} tokens (estimate)` + (ctx ? ` of ${ctx} context` : "; context length unknown");
   return `${ins.chars} characters · ${tokens} · ${ins.request_bytes} request bytes`;
 }
 
-function insertText(target, ins, source) {
-  const field = $(target === "system" ? "system" : "prompt");
-  let v = field.value;
-  if (v !== "") v += v.endsWith("\n") ? "\n" : "\n\n";
-  field.value = v + ins.text;
-  insertions.push({ text: ins.text, sha256: ins.sha256, provenance: ins.provenance, target,
-                    time: new Date().toISOString(), chars: ins.chars, source });
-  renderInsertions();
-}
-
-function renderInsertions() {
-  const list = $("insertions"); list.replaceChildren();
-  for (const r of insertions) list.append(el("li", `${r.provenance} → ${r.target === "system" ? "System prompt" : "Input"} · ${r.chars} characters`));
-  $("insertions-summary").textContent = `Insertions (${insertions.length})`;
-}
-$("clear-insertions").onclick = () => { insertions.length = 0; renderInsertions(); };
-
-// Shows `ins` (and optionally an alternative) in `box`, with Insert into Input / System prompt.
-function showPreview(box, opts) {
-  box.replaceChildren(); box.classList.remove("hidden");
-  let current = opts.insertion;
-  const meta = el("div", "", "meta"), pre = el("pre"), notes = el("div", "", "meta");
-  const render = () => {
-    meta.textContent = sizeLine(current);
-    pre.textContent = current.text;
-    notes.replaceChildren();
-    if (current.too_large_to_send) notes.append(el("div", "This text cannot be sent as it is: it is larger than a request may be.", "warn-text"));
-    for (const n of opts.notes || []) notes.append(el("div", n));
+// A preview of text the user can copy: the provenance line, a newline, then the content (insertion.preview).
+// Copy puts exactly `insertion.text` on the clipboard, so a pasted result still says where it came from.
+function previewPanel(prefix, copyLabel = "Copy") {
+  const title = h("div"), notes = h("div", { class: "meta" }), meta = h("div", { class: "meta" });
+  const pre = h("pre", { "data-test": prefix + "-text" });
+  let current = null;
+  const discard = h("button", { type: "button", "data-test": prefix + "-discard", text: "Discard" });
+  const el = h("div", { class: "preview hidden", "data-test": prefix, "data-state": "idle" },
+    title, notes, meta, pre,
+    h("div", { class: "row" }, copyControl(prefix + "-copy", () => (current ? current.text : ""), () => pre, copyLabel), discard));
+  const api_ = {
+    el, discard,
+    show(opts) {
+      current = opts.insertion;
+      title.textContent = opts.title || "";
+      meta.textContent = sizeLine(current);
+      pre.textContent = current.text;
+      notes.replaceChildren();
+      if (current.too_large_to_send) notes.append(h("div", { class: "warn-text", text: "This text cannot be sent as it is: it is larger than a request may be." }));
+      for (const n of opts.notes || []) notes.append(h("div", { text: n }));
+      discard.classList.toggle("hidden", !opts.discardable);
+      el.classList.remove("hidden"); el.dataset.state = "ready";
+    },
+    hide() { current = null; el.classList.add("hidden"); el.dataset.state = "idle"; pre.textContent = ""; },
   };
-  render();
-  const row = el("div", "", "row");
-  const toInput = el("button", "Insert into Input"), toSystem = el("button", "Insert into System prompt");
-  toInput.type = toSystem.type = "button";
-  toInput.onclick = () => { insertText("prompt", current, opts.source(current)); if (opts.onInserted) opts.onInserted(); };
-  toSystem.onclick = () => { insertText("system", current, opts.source(current)); if (opts.onInserted) opts.onInserted(); };
-  row.append(toInput, toSystem);
-  if (opts.alternative) {
-    const alt = el("button", opts.alternative.label); alt.type = "button";
-    alt.onclick = () => { const t = current; current = opts.alternative.insertion; opts.alternative.insertion = t;
-                          alt.textContent = alt.textContent === opts.alternative.label ? "Insert text content instead" : opts.alternative.label; render(); };
-    row.append(alt);
-  }
-  if (opts.discard) { const d = el("button", "Discard"); d.type = "button"; d.onclick = () => { box.classList.add("hidden"); box.replaceChildren(); }; row.append(d); }
-  box.append(el("div", opts.title), notes, meta, pre, row);
+  discard.onclick = () => api_.hide();
+  return api_;
 }
 
-$("attach").onclick = () => { $("file").value = ""; $("file").click(); };
-$("file").onchange = async () => {
-  const f = $("file").files[0];
-  if (!f) return;
-  const limit = state.limits ? state.limits.upload_bytes : 52428800;
-  if (f.size > limit) { setStatus(`${f.name} is ${f.size} bytes; files over ${limit} bytes cannot be attached.`, "error"); return; }
-  setStatus(`Reading ${f.name}…`);
-  try {
-    const r = await fetch("/api/attachments/extract", { method: "POST",
-      headers: { "X-Session-Token": TOKEN, "Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(f.name) },
-      body: f });
-    let j = {};
-    try { j = await r.json(); } catch (e) { /* keep the status */ }
-    if (!r.ok) { setStatus(j.error || `${r.status} ${r.statusText}`, "error"); return; }
-    setStatus("");
-    const notes = (j.warnings || []).map((w) => "Reader warning: " + w.message);
-    if (j.notice) notes.push(j.notice);
-    showPreview($("attach-preview"), { title: `File ${j.filename} (${j.format}, ${j.source_bytes} bytes)`,
-      insertion: j.insertion, notes, discard: true,
-      source: () => ({ kind: "file", filename: j.filename, source_sha256: j.source_sha256, source_bytes: j.source_bytes }),
-      onInserted: () => { $("attach-preview").classList.add("hidden"); } });
-  } catch (e) { setStatus("Upload failed: " + (e.message || e.name), "error"); }
-};
+// --- Documents (Section 11.2; 0.1.2 attachments) -------------------------------------------------------------
+(function documentsTab() {
+  const panel = $("panel-documents");
+  const file = h("input", { type: "file", class: "hidden", "data-test": "documents-file" });
+  const attach = h("button", { type: "button", "data-test": "documents-attach", text: "Attach file…" });
+  const status = h("span", { class: "status", "data-test": "documents-status", "data-state": "idle" });
+  const preview = previewPanel("documents-preview");
+  panel.append(h("p", { class: "panel-intro", text: "Documents: read a file into text with its provenance line, then copy it into any request." }),
+    h("div", { class: "row" }, attach, file, status), preview.el);
 
-// --- MCP tools (techspec 0.1.2, Section 9.10) ------------------------------------------------
-let toolsData = null, rawMode = false, toolCtl = null, toolOpId = null;
+  const say = (state_, text, style = "") => {
+    status.dataset.state = state_; status.textContent = text; status.className = "status " + style;
+    preview.el.dataset.state = state_ === "loading" || state_ === "error" ? state_ : preview.el.dataset.state;
+  };
+
+  attach.onclick = () => { file.value = ""; file.click(); };
+  file.onchange = async () => {
+    const f = file.files[0];
+    if (!f) return;
+    const limit = state.limits ? state.limits.upload_bytes : 52428800;
+    if (f.size > limit) { preview.hide(); say("error", `${f.name} is ${f.size} bytes; files over ${limit} bytes cannot be attached.`, "error"); return; }
+    preview.hide();
+    setTabRunning("documents", true);
+    say("loading", `Reading ${f.name}…`);
+    try {
+      const r = await fetch("/api/attachments/extract", { method: "POST",
+        headers: { "X-Session-Token": TOKEN, "Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(f.name) },
+        body: f });
+      let j = {};
+      try { j = await r.json(); } catch (e) { /* keep the status */ }
+      if (!r.ok) { say("error", j.error || `${r.status} ${r.statusText}`, "error"); return; }
+      const notes = (j.warnings || []).map((w) => "Reader warning: " + w.message);
+      if (j.notice) notes.push(j.notice);
+      preview.show({ title: `File ${j.filename} (${j.format}, ${j.source_bytes} bytes)`, insertion: j.insertion, notes, discardable: true });
+      say("ready", "");
+    } catch (e) { say("error", "Upload failed: " + (e.message || e.name), "error"); }
+    finally { setTabRunning("documents", false); }
+  };
+  preview.discard.addEventListener("click", () => say("idle", ""));
+  TABS.documents = {};
+})();
+
+// --- MCP tools (Section 11.2; 0.1.2 Tools panel, Section 9.10) --------------------------------------------------
 const SERVER_STALE = "The server list was changed elsewhere. Check it and save again.";
 const LIMIT_FIELDS = [["idle_timeout_s", "Idle timeout (s)"], ["call_deadline_s", "Call deadline (s)"], ["discovery_deadline_s", "Discovery deadline (s)"]];
-
 function mcpInfo() { return state.mcp || { servers: {}, read_only: true, revision: 0 }; }
 
-function renderMcp() {
-  const sel = $("mcp-server"), keep = sel.value, servers = Object.keys(mcpInfo().servers);
-  sel.replaceChildren();
-  if (!servers.length) sel.add(new Option("(no servers; use Servers…)", ""));
-  for (const name of servers) sel.add(new Option(name, name));
-  if (servers.includes(keep)) sel.value = keep;
-  $("load-tools").disabled = !servers.length;
-}
+(function mcpTab() {
+  const panel = $("panel-mcp-tools");
+  let toolsData = null, rawMode = false, toolCtl = null, toolOpId = null;
+  const serverSel = h("select", { "data-test": "mcp-server", style: "max-width:240px" });
+  const loadBtn = h("button", { type: "button", "data-test": "mcp-load", text: "Load tools" });
+  const info = h("div", { class: "meta note", "data-test": "mcp-info" });
+  const notOffered = h("div", { class: "note", "data-test": "mcp-not-offered" });
+  const toolSel = h("select", { id: "mcp-tool", "data-test": "mcp-tool" });
+  const desc = h("div", { class: "note" }), notes = h("div", { class: "note" });
+  const formBox = h("div", { class: "fields", "data-test": "mcp-form" });
+  const argsText = h("textarea", { class: "hidden", rows: 5, spellcheck: "false", "data-test": "mcp-args" });
+  const editJson = h("button", { type: "button", "data-test": "mcp-edit-json", text: "Edit as JSON" });
+  const schemaPre = h("pre", { "data-test": "mcp-schema" });
+  const runBtn = h("button", { class: "primary", type: "button", "data-test": "mcp-run", text: "Run" });
+  const stopBtn = h("button", { type: "button", disabled: true, "data-test": "mcp-stop", text: "Stop" });
+  const status = h("span", { class: "note", "data-test": "mcp-status", "data-state": "idle" });
+  const resultBox = h("div", { "data-test": "mcp-result" });
+  const textPreview = previewPanel("mcp-preview");
+  const structuredPreview = previewPanel("mcp-structured", "Copy structured content");
+  textPreview.discard.classList.add("hidden"); structuredPreview.discard.classList.add("hidden");
+  panel.append(h("p", { class: "panel-intro", text: "MCP tools: discover a server's tools, run one with exact arguments, and copy its result." }),
+    h("div", { class: "row" }, serverSel, loadBtn), info, notOffered,
+    h("label", { for: "mcp-tool", text: "Tool" }), toolSel, desc, notes, formBox, argsText,
+    h("div", { class: "row" }, editJson),
+    h("details", {}, h("summary", { text: "Input schema (exact text)" }), schemaPre),
+    h("div", { class: "row" }, runBtn, stopBtn, status), resultBox, textPreview.el, structuredPreview.el);
 
-function selectedTool() {
-  if (!toolsData) return null;
-  return toolsData.tools.find((t) => t.name === $("mcp-tool").value) || null;
-}
+  const say = (state_, text, outcome) => {
+    status.dataset.state = state_; status.textContent = text;
+    if (outcome) status.dataset.outcome = outcome; else delete status.dataset.outcome;
+  };
+  const selectedTool = () => (toolsData ? toolsData.tools.find((t) => t.name === toolSel.value) || null : null);
 
-$("load-tools").onclick = async () => {
-  const server = $("mcp-server").value;
-  if (!server) return;
-  $("tool-status").textContent = "Loading tools…";
-  try {
-    toolsData = await api("/api/mcp/tools", { server, revision: mcpInfo().revision });
-    const info = toolsData.server_info ? ` · server says it is ${toolsData.server_info.name || "?"} ${toolsData.server_info.version || ""} (self-reported)` : "";
-    $("tools-info").textContent = `MCP ${toolsData.era} (${toolsData.protocol_version || "?"})${info}`;
-    $("not-offered").replaceChildren();
-    if (toolsData.not_offered.length) {
-      $("not-offered").append(el("div", "Tools not offered:"));
-      for (const n of toolsData.not_offered) $("not-offered").append(el("div", `${n.name}: ${n.reason}`, "warn-text"));
+  function renderMcp() {
+    const keep = serverSel.value, servers = Object.keys(mcpInfo().servers);
+    serverSel.replaceChildren();
+    if (!servers.length) serverSel.add(new Option("(no servers; use MCP servers…)", ""));
+    for (const name of servers) serverSel.add(new Option(name, name));
+    if (servers.includes(keep)) serverSel.value = keep;
+    loadBtn.disabled = !servers.length;
+  }
+
+  loadBtn.onclick = async () => {
+    const server = serverSel.value;
+    if (!server) return;
+    say("running", "Loading tools…");
+    setTabRunning("mcp-tools", true);
+    try {
+      toolsData = await api("/api/mcp/tools", { server, revision: mcpInfo().revision });
+      const si = toolsData.server_info ? ` · server says it is ${toolsData.server_info.name || "?"} ${toolsData.server_info.version || ""} (self-reported)` : "";
+      info.textContent = `MCP ${toolsData.era} (${toolsData.protocol_version || "?"})${si}`;
+      notOffered.replaceChildren();
+      if (toolsData.not_offered.length) {
+        notOffered.append(h("div", { text: "Tools not offered:" }));
+        for (const n of toolsData.not_offered) notOffered.append(h("div", { class: "warn-text", text: `${n.name}: ${n.reason}` }));
+      }
+      toolSel.replaceChildren();
+      for (const tool of toolsData.tools) toolSel.add(new Option(tool.title ? `${tool.title} (${tool.name})` : tool.name, tool.name));
+      say("idle", `${toolsData.tools.length} tools.`);
+      renderToolForm();
+      await refreshState();
+    } catch (e) {
+      if (e.code === "stale_revision") { await reloadAfterStale(); say("stale", SERVER_STALE); }
+      else say("idle", e.message);
+    } finally { setTabRunning("mcp-tools", !!toolCtl); }
+  };
+
+  function fieldInputFor(f) {
+    let input;
+    if (f.enum || f.type === "boolean") {
+      input = document.createElement("select");
+      if (!f.required || f.type === "boolean" && !f.required) input.add(new Option("(unset)", ""));
+      const values = f.enum || ["true", "false"];
+      for (const v of values) input.add(new Option(v, v));
+      if (f.default !== null && f.default !== undefined) input.value = String(f.default);
+      else input.value = f.required ? values[0] : "";
+    } else {
+      input = document.createElement("input");
+      if (f.default !== null && f.default !== undefined) input.value = String(f.default);
     }
-    const sel = $("mcp-tool"); sel.replaceChildren();
-    for (const tool of toolsData.tools) sel.add(new Option(tool.title ? `${tool.title} (${tool.name})` : tool.name, tool.name));
-    $("tool-status").textContent = `${toolsData.tools.length} tools.`;
-    renderToolForm();
-    await refreshState();
-  } catch (e) {
-    if (e.code === "stale_revision") { try { await refreshState(); } catch (e2) { /* keep */ } }
-    $("tool-status").textContent = e.message;
+    input.dataset.name = f.name;
+    input.setAttribute("data-test", "mcp-field-" + f.name);
+    return input;
   }
-};
 
-function fieldInputFor(f) {
-  let input;
-  if (f.enum || f.type === "boolean") {
-    input = document.createElement("select");
-    if (!f.required || f.type === "boolean" && !f.required) input.add(new Option("(unset)", ""));
-    const values = f.enum || ["true", "false"];
-    for (const v of values) input.add(new Option(v, v));
-    if (f.default !== null && f.default !== undefined) input.value = String(f.default);
-    else input.value = f.required ? values[0] : "";
-  } else {
-    input = document.createElement("input");
-    if (f.default !== null && f.default !== undefined) input.value = String(f.default);
-  }
-  input.dataset.name = f.name;
-  return input;
-}
-
-function renderToolForm() {
-  const tool = selectedTool(), box = $("tool-form");
-  box.replaceChildren(); $("tool-notes").replaceChildren(); $("tool-result").replaceChildren();
-  $("tool-preview").classList.add("hidden");
-  $("tool-desc").textContent = tool && tool.description ? tool.description : "";
-  $("tool-schema").textContent = tool ? tool.input_schema_text : "";
-  for (const n of (tool && tool.form_notes) || []) $("tool-notes").append(el("div", n));
-  rawMode = !tool || !tool.form;
-  if (tool && tool.form) {
-    for (const f of tool.form.fields) {
-      const wrap = el("div"), label = el("label", (f.title || f.name) + (f.required ? " *" : "") +
-        (tool.header_params.includes(f.name) ? " (sent as a header)" : ""));
-      wrap.append(label, fieldInputFor(f));
-      if (f.description) wrap.append(el("span", f.description, "note"));
-      box.append(wrap);
-    }
-  }
-  $("tool-args").value = rawMode ? "{}" : (formArgs().text || "{}");
-  $("tool-args").classList.toggle("hidden", !rawMode);
-  box.classList.toggle("hidden", rawMode);
-  $("edit-json").disabled = rawMode;
-}
-
-// Builds the arguments' JSON text from the form, keeping numbers exactly as typed.
-function formArgs() {
-  const tool = selectedTool(), parts = [], errors = [];
-  for (const f of tool.form.fields) {
-    const input = $("tool-form").querySelector(`[data-name="${CSS.escape(f.name)}"]`);
-    input.classList.remove("invalid");
-    const v = input.value;
-    if (v === "" || (f.type !== "string" && v.trim() === "")) {
-      if (f.required) { input.classList.add("invalid"); errors.push(f.name); }
-      continue;
-    }
-    let text;
-    if (f.type === "string") text = JSON.stringify(v);
-    else if (f.type === "boolean") text = v === "true" ? "true" : "false";
-    else {
-      const s = v.trim();
-      if (!(f.type === "integer" ? INTEGER_RE : NUMBER_RE).test(s)) { input.classList.add("invalid"); errors.push(f.name); continue; }
-      text = s;
-    }
-    parts.push(`${JSON.stringify(f.name)}:${text}`);
-  }
-  return { text: errors.length ? null : "{" + parts.join(",") + "}", errors };
-}
-
-$("mcp-tool").onchange = renderToolForm;
-$("edit-json").onclick = () => {
-  const { text } = formArgs();
-  rawMode = true; $("tool-args").value = text || "{}";
-  $("tool-args").classList.remove("hidden"); $("tool-form").classList.add("hidden"); $("edit-json").disabled = true;
-};
-
-function toolFacts(ev) {
-  const facts = [];
-  if (ev.cancel_status) {
-    facts.push("AgentWiz stopped waiting for the tool.");
-    const what = { stream_closed: "The connection was closed, which MCP 2026-07-28 defines as cancellation.",
-      delivered: "The server acknowledged the cancellation notice.", failed: "The cancellation notice could not be delivered.",
-      not_sent: "No cancellation was sent.", unconfirmed: "A cancellation notice was sent; its delivery is not yet confirmed." };
-    facts.push(what[ev.cancel_status] || ev.cancel_status);
-    if (ev.outcome === "unknown") facts.push("The call may have been sent, so whether the tool actually stopped is unknown.");
-  }
-  return facts;
-}
-
-function renderToolFinal(ev) {
-  const box = $("tool-result"); box.replaceChildren();
-  const labels = { ok: "OK", tool_error: "Tool error (the tool ran and reported a failure)",
-    rejected: "Rejected (the call did not run)", unknown: "Unknown (the call may have run; it is not resent)" };
-  box.append(el("div", `${labels[ev.outcome] || ev.outcome} · MCP ${ev.era || "?"} ${ev.protocol_version || ""}`,
-    ev.outcome === "ok" ? "" : "warn-text"));
-  for (const f of toolFacts(ev)) box.append(el("div", f, "note"));
-  if (ev.result) {
-    if (ev.result.text !== "") { box.append(el("label", "Text")); box.append(el("pre", ev.result.text)); }
-    if (ev.result.structured_text !== null) { box.append(el("label", "Structured content (as sent)")); box.append(el("pre", ev.result.structured_text)); }
-    if (ev.result.other_items.length) box.append(el("div", "Other items: " + ev.result.other_items.map((i) => i.type).join(", "), "note"));
-  } else {
-    box.append(el("div", ev.description || ev.reason || "", "warn-text"));
-    if (ev.server_text) box.append(el("pre", "the server says: " + ev.server_text));
-  }
-  if ((ev.outcome === "ok" || ev.outcome === "tool_error") && ev.insertion) {
-    const notes = [];
-    if (ev.result.other_items.length) notes.push(`${ev.result.other_items.length} other content items are not inserted.`);
-    showPreview($("tool-preview"), { title: `Result of ${ev.server}.${ev.tool} (${ev.outcome})`, insertion: ev.insertion, notes,
-      alternative: ev.insertion_structured ? { label: "Insert structured content instead", insertion: ev.insertion_structured } : null,
-      source: () => ({ kind: "tool", server: ev.server, tool: ev.tool, arguments_text: ev.arguments_text,
-                       outcome: ev.outcome, operation_id: toolOpId }) });
-  } else $("tool-preview").classList.add("hidden");
-}
-
-$("run-tool").onclick = async () => {
-  if (toolCtl) return;
-  const tool = selectedTool(), server = $("mcp-server").value;
-  if (!tool) { $("tool-status").textContent = "Load tools and choose one first."; return; }
-  let text;
-  if (rawMode) {
-    text = $("tool-args").value;
-    try { JSON.parse(text); } catch (e) { $("tool-status").textContent = "The arguments are not valid JSON: " + e.message; return; }
-  } else {
-    const built = formArgs();
-    if (built.text === null) { $("tool-status").textContent = "Correct the marked fields: " + built.errors.join(", "); return; }
-    text = built.text;
-  }
-  const payload = JSON.stringify({ server, tool: tool.name, arguments_text: text, revision: mcpInfo().revision });
-  if (state.limits && new TextEncoder().encode(payload).length > state.limits.request_bytes) {
-    $("tool-status").textContent = "The arguments are larger than a request may be."; return;
-  }
-  toolCtl = new AbortController(); toolOpId = null;
-  $("run-tool").disabled = true; $("stop-tool").disabled = false;
-  $("tool-result").replaceChildren(); $("tool-preview").classList.add("hidden");
-  $("tool-status").textContent = "Running…";
-  let final = false;
-  try {
-    const r = await fetch("/api/mcp/call", { method: "POST", signal: toolCtl.signal,
-      headers: { "X-Session-Token": TOKEN, "Content-Type": "application/json" }, body: payload });
-    if (!r.ok) {
-      let j = {}; try { j = await r.json(); } catch (e) { /* keep */ }
-      if (r.status === 409) { try { await refreshState(); } catch (e) { /* keep */ } }
-      $("tool-status").textContent = j.error || `${r.status} ${r.statusText}`;
-      return;
-    }
-    const reader = r.body.getReader(), decoder = new TextDecoder();
-    let buffer = "";
-    read: for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let nl;
-      while ((nl = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, nl); buffer = buffer.slice(nl + 1);
-        let ev; try { ev = JSON.parse(line); } catch (e) { break read; }
-        if (ev.type === "started") toolOpId = ev.operation_id;
-        else if (ev.type === "progress") $("tool-status").textContent = `Progress ${ev.progress}${ev.total !== null ? " of " + ev.total : ""}${ev.message ? " · " + ev.message : ""}`;
-        else if (ev.type === "final") { final = true; $("tool-status").textContent = ""; renderToolFinal(ev); break read; }
+  function renderToolForm() {
+    const tool = selectedTool();
+    formBox.replaceChildren(); notes.replaceChildren(); resultBox.replaceChildren();
+    textPreview.hide(); structuredPreview.hide();
+    desc.textContent = tool && tool.description ? tool.description : "";
+    schemaPre.textContent = tool ? tool.input_schema_text : "";
+    for (const n of (tool && tool.form_notes) || []) notes.append(h("div", { text: n }));
+    rawMode = !tool || !tool.form;
+    if (tool && tool.form) {
+      for (const f of tool.form.fields) {
+        const wrap = h("div", {}, h("label", { text: (f.title || f.name) + (f.required ? " *" : "") +
+          (tool.header_params.includes(f.name) ? " (sent as a header)" : "") }), fieldInputFor(f));
+        if (f.description) wrap.append(h("span", { class: "note", text: f.description }));
+        formBox.append(wrap);
       }
     }
-    if (final) { try { await reader.cancel(); } catch (e) { /* closed */ } }
-  } catch (e) { /* reported below */ }
-  finally {
-    if (!final) $("tool-status").textContent = "Connection ended before a final result was received; the tool may or may not have run.";
-    toolCtl = null; $("run-tool").disabled = false; $("stop-tool").disabled = true;
+    argsText.value = rawMode ? "{}" : (formArgs().text || "{}");
+    argsText.classList.toggle("hidden", !rawMode);
+    formBox.classList.toggle("hidden", rawMode);
+    editJson.disabled = rawMode;
   }
-};
 
-$("stop-tool").onclick = async () => {
-  if (!toolOpId) return;
-  $("tool-status").textContent = "Stopping…";
-  try {
-    const res = await api("/api/mcp/cancel", { operation_id: toolOpId });
-    const facts = toolFacts({ cancel_status: res.status, outcome: "unknown" });
-    $("tool-status").textContent = facts.join(" ") + (res.reason ? ` (${res.reason})` : "");
-  } catch (e) { $("tool-status").textContent = e.message; }
-};
+  // Builds the arguments' JSON text from the form, keeping numbers exactly as typed.
+  function formArgs() {
+    const tool = selectedTool(), parts = [], errors = [];
+    for (const f of tool.form.fields) {
+      const input = formBox.querySelector(`[data-name="${CSS.escape(f.name)}"]`);
+      input.classList.remove("invalid");
+      const v = input.value;
+      if (v === "" || (f.type !== "string" && v.trim() === "")) {
+        if (f.required) { input.classList.add("invalid"); errors.push(f.name); }
+        continue;
+      }
+      let text;
+      if (f.type === "string") text = JSON.stringify(v);
+      else if (f.type === "boolean") text = v === "true" ? "true" : "false";
+      else {
+        const s = v.trim();
+        if (!(f.type === "integer" ? INTEGER_RE : NUMBER_RE).test(s)) { input.classList.add("invalid"); errors.push(f.name); continue; }
+        text = s;
+      }
+      parts.push(`${JSON.stringify(f.name)}:${text}`);
+    }
+    return { text: errors.length ? null : "{" + parts.join(",") + "}", errors };
+  }
 
-// --- MCP servers dialog ---------------------------------------------------------------------
+  toolSel.onchange = renderToolForm;
+  editJson.onclick = () => {
+    const { text } = formArgs();
+    rawMode = true; argsText.value = text || "{}";
+    argsText.classList.remove("hidden"); formBox.classList.add("hidden"); editJson.disabled = true;
+  };
+
+  function toolFacts(ev) {
+    const facts = [];
+    if (ev.cancel_status) {
+      facts.push("AgentWiz stopped waiting for the tool.");
+      const what = { stream_closed: "The connection was closed, which MCP 2026-07-28 defines as cancellation.",
+        delivered: "The server acknowledged the cancellation notice.", failed: "The cancellation notice could not be delivered.",
+        not_sent: "No cancellation was sent.", unconfirmed: "A cancellation notice was sent; its delivery is not yet confirmed." };
+      facts.push(what[ev.cancel_status] || ev.cancel_status);
+      if (ev.outcome === "unknown") facts.push("The call may have been sent, so whether the tool actually stopped is unknown.");
+    }
+    return facts;
+  }
+
+  function renderToolFinal(ev) {
+    resultBox.replaceChildren();
+    const labels = { ok: "OK", tool_error: "Tool error (the tool ran and reported a failure)",
+      rejected: "Rejected (the call did not run)", unknown: "Unknown (the call may have run; it is not resent)" };
+    resultBox.append(h("div", { class: ev.outcome === "ok" ? "" : "warn-text", text: `${labels[ev.outcome] || ev.outcome} · MCP ${ev.era || "?"} ${ev.protocol_version || ""}` }));
+    for (const f of toolFacts(ev)) resultBox.append(h("div", { class: "note", text: f }));
+    if (ev.result) {
+      if (ev.result.text !== "") {
+        const p = outPanel("mcp", "result-text", "Text");
+        p.pre.textContent = ev.result.text; resultBox.append(p.el);
+      }
+      if (ev.result.structured_text !== null) {
+        const p = outPanel("mcp", "result-structured", "Structured content (as sent)");
+        p.pre.textContent = ev.result.structured_text; resultBox.append(p.el);
+      }
+      if (ev.result.other_items.length)
+        resultBox.append(h("div", { class: "note", text: "Other items: " + ev.result.other_items.map((i) => i.type).join(", ") }));
+    } else {
+      resultBox.append(h("div", { class: "warn-text", text: ev.description || ev.reason || "" }));
+      if (ev.server_text) resultBox.append(h("pre", { text: "the server says: " + ev.server_text }));
+    }
+    textPreview.hide(); structuredPreview.hide();
+    if ((ev.outcome === "ok" || ev.outcome === "tool_error") && ev.insertion) {
+      const pnotes = [];
+      if (ev.result.other_items.length) pnotes.push(`${ev.result.other_items.length} other content items are not copied.`);
+      textPreview.show({ title: `Result of ${ev.server}.${ev.tool} (${ev.outcome})`, insertion: ev.insertion, notes: pnotes });
+      if (ev.insertion_structured)
+        structuredPreview.show({ title: `Structured content of ${ev.server}.${ev.tool}`, insertion: ev.insertion_structured, notes: [] });
+    }
+  }
+
+  async function run() {
+    if (toolCtl) return;
+    const tool = selectedTool(), server = serverSel.value;
+    if (!tool) { say("idle", "Load tools and choose one first."); return; }
+    let text;
+    if (rawMode) {
+      text = argsText.value;
+      try { JSON.parse(text); } catch (e) { say("idle", "The arguments are not valid JSON: " + e.message); return; }
+    } else {
+      const built = formArgs();
+      if (built.text === null) { say("idle", "Correct the marked fields: " + built.errors.join(", ")); return; }
+      text = built.text;
+    }
+    const payload = JSON.stringify({ server, tool: tool.name, arguments_text: text, revision: mcpInfo().revision });
+    if (state.limits && new TextEncoder().encode(payload).length > state.limits.request_bytes) {
+      say("idle", "The arguments are larger than a request may be."); return;
+    }
+    toolCtl = new AbortController(); toolOpId = null;
+    runBtn.disabled = true; stopBtn.disabled = false;
+    resultBox.replaceChildren(); textPreview.hide(); structuredPreview.hide();
+    say("running", "Running…");
+    setTabRunning("mcp-tools", true);
+    let final = false, outcome = null;
+    try {
+      const r = await fetch("/api/mcp/call", { method: "POST", signal: toolCtl.signal,
+        headers: { "X-Session-Token": TOKEN, "Content-Type": "application/json" }, body: payload });
+      if (!r.ok) {
+        let j = {}; try { j = await r.json(); } catch (e) { /* keep */ }
+        if (r.status === 409 && j.code === "stale_revision") { await reloadAfterStale(); say("stale", SERVER_STALE); }
+        else { if (r.status === 409) await reloadAfterStale(); say("idle", j.error || `${r.status} ${r.statusText}`); }
+        final = true;                      // answered: nothing is left to report
+        return;
+      }
+      await readLines(r, (ev) => {
+        if (ev.type === "started") toolOpId = ev.operation_id;
+        else if (ev.type === "progress") status.textContent = `Progress ${ev.progress}${ev.total !== null ? " of " + ev.total : ""}${ev.message ? " · " + ev.message : ""}`;
+        else if (ev.type === "final") { final = true; outcome = ev.outcome; renderToolFinal(ev); return "stop"; }
+      });
+      if (final) say("done", "", outcome);
+    } catch (e) { /* reported below */ }
+    finally {
+      if (!final) say("done", "Connection ended before a final result was received; the tool may or may not have run.", "unknown");
+      toolCtl = null; runBtn.disabled = false; stopBtn.disabled = true;
+      setTabRunning("mcp-tools", false);
+    }
+  }
+  runBtn.onclick = run;
+
+  stopBtn.onclick = async () => {
+    if (!toolOpId) return;
+    status.textContent = "Stopping…";
+    try {
+      const res = await api("/api/mcp/cancel", { operation_id: toolOpId });
+      const facts = toolFacts({ cancel_status: res.status, outcome: "unknown" });
+      status.textContent = facts.join(" ") + (res.reason ? ` (${res.reason})` : "");
+    } catch (e) { status.textContent = e.message; }
+  };
+
+  TABS["mcp-tools"] = { onState: renderMcp, submit: run };
+})();
+
+// --- the MCP servers dialog (a header dialog since 0.1.3) --------------------------------------------------------
 function serverRow(name, s) {
-  const row = el("fieldset", ""), ro = mcpInfo().read_only;
-  row.className = "server-row";
-  const fields = el("div", "", "fields");
+  const ro = mcpInfo().read_only;
+  const row = h("fieldset", { class: "server-row" });
+  const fields = h("div", { class: "fields" });
   const add = (label, key, value, ph) => {
-    const w = el("div"); const input = document.createElement("input");
-    input.value = value === null || value === undefined ? "" : String(value); input.dataset.key = key;
-    if (ph) input.placeholder = ph; input.disabled = ro;
-    w.append(el("label", label), input); fields.append(w); return input;
+    const input = h("input", { "data-key": key, placeholder: ph });
+    input.value = value === null || value === undefined ? "" : String(value);
+    input.disabled = ro;
+    fields.append(h("div", {}, h("label", { text: label }), input));
+    return input;
   };
   add("Name", "name", name);
   add("URL", "url", s.url || "", "http://127.0.0.1:8765/mcp");
@@ -954,14 +1511,16 @@ function serverRow(name, s) {
   add("Token variable (optional)", "token_env", s.token_env || "", "MY_SERVER_TOKEN");
   const tok = add(`Token (write-only; ${s.token_source || "none"})`, "token", "");
   tok.type = "password"; tok.autocomplete = "off";
-  row.dataset.original = name || "";
-  const actions = el("div", "", "row");
-  const clear = el("button", "Clear token"); clear.type = "button"; clear.disabled = ro || !name;
+  const actions = h("div", { class: "row" });
+  const clear = h("button", { type: "button", text: "Clear token", disabled: ro || !name });
   clear.onclick = async () => {
-    try { state = await api("/api/mcp/token", { server: name, token: "", revision: mcpInfo().revision }); renderState(); renderMcp(); fillServers(); $("servers-msg").textContent = "Token cleared."; }
-    catch (e) { await serversFailure(e); }
+    try {
+      state = await api("/api/mcp/token", { server: name, token: "", revision: mcpInfo().revision });
+      renderState(); fillServers(); $("servers-msg").textContent = "Token cleared.";
+    } catch (e) { await serversFailure(e); }
   };
-  const del = el("button", "Delete"); del.type = "button"; del.disabled = ro; del.onclick = () => row.remove();
+  const del = h("button", { type: "button", text: "Delete", disabled: ro });
+  del.onclick = () => row.remove();
   actions.append(clear, del);
   row.append(fields, actions);
   return row;
@@ -1003,19 +1562,279 @@ $("save-servers").onclick = async () => {
   try {
     state = await api("/api/mcp/servers", { servers, revision: mcpInfo().revision });
     for (const [name, token] of tokens) state = await api("/api/mcp/token", { server: name, token, revision: mcpInfo().revision });
-    renderState(); renderMcp(); fillServers(); $("servers-msg").textContent = "Saved.";
+    renderState(); fillServers(); $("servers-msg").textContent = "Saved.";
   } catch (e) { await serversFailure(e); }
 };
 
-$("send").onclick = send;
-$("stop").onclick = () => {
-  if (controller) { controller.stopRequested(); controller.abort(); setStatus("stopping…"); }
-};
-$("prompt").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { if (controller) return; send(); }
-});
+// --- Contracts (Section 11.2; contracts are saved in the workspace, Section 7.8) --------------------------------------
+(function contractsTab() {
+  const panel = $("panel-contracts");
+  const TEMPLATES = {
+    text: { format: "text", description: "", checks: [{ type: "contains", value: "TEXT THE ANSWER MUST CONTAIN" }] },
+    json: { format: "json", strict: false, description: "", schema: null, checks: [] },
+  };
+  let current = null;                 // {name, revision, problem} of the opened contract; null for a new one
+  let arming = false;
+  const listEl = h("ul", { class: "list", "data-test": "contracts-list" });
+  const schemaStatus = h("div", { class: "note", "data-test": "contracts-schema-status" });
+  const nameInput = h("input", { id: "contracts-name", "data-test": "contracts-name", placeholder: "contract name" });
+  const editor = h("textarea", { class: "editor", spellcheck: "false", "data-test": "contracts-editor", "data-state": "idle" });
+  const newText = h("button", { type: "button", "data-test": "contracts-new-text", text: "New text contract" });
+  const newJson = h("button", { type: "button", "data-test": "contracts-new-json", text: "New JSON contract" });
+  const saveBtn = h("button", { class: "primary", type: "button", "data-test": "contracts-save", text: "Save" });
+  const deleteBtn = h("button", { type: "button", "data-test": "contracts-delete", text: "Delete" });
+  const confirmBtn = h("button", { type: "button", class: "hidden", "data-test": "contracts-delete-confirm", text: "Confirm: delete this contract" });
+  const cancelBtn = h("button", { type: "button", class: "hidden", "data-test": "contracts-delete-cancel", text: "Cancel" });
+  const msg = h("div", { class: "note", "data-test": "contracts-msg" });
+  const errorsEl = h("ul", { class: "err-text", "data-test": "contracts-errors" });
+  const checkText_ = h("textarea", { rows: 5, "data-test": "contracts-check-text", placeholder: "Paste text to check against the contract above" });
+  const checkBtn = h("button", { type: "button", "data-test": "contracts-run-check", text: "Check" });
+  const result = checkBox("contracts");
+  panel.append(h("p", { class: "panel-intro", text: "Contracts: define, save and delete contracts, and check pasted text against one. No model is involved." }),
+    schemaStatus,
+    h("label", { text: "Saved contracts" }), listEl,
+    h("div", { class: "row" }, newText, newJson),
+    h("label", { for: "contracts-name", text: "Name" }), nameInput,
+    h("label", { text: "Contract (JSON text)" }), editor,
+    h("div", { class: "row" }, saveBtn, deleteBtn, confirmBtn, cancelBtn, copyControl("contracts-copy-editor", () => editor.value, () => editor)),
+    msg, errorsEl,
+    h("label", { text: "Check text" }), checkText_,
+    h("div", { class: "row" }, checkBtn), result.el);
 
-refreshState().catch((e) => setStatus(e.message, "error"));
+  const items = () => (state.contracts && state.contracts.items) || [];
+  const readOnly = () => !!(state.contracts && state.contracts.read_only);
+  const setEditor = (s) => { editor.dataset.state = s; };
+
+  function refreshButtons() {
+    const damaged = !!(current && current.problem);
+    saveBtn.disabled = readOnly() || damaged;
+    deleteBtn.disabled = readOnly() || !current || arming;
+    deleteBtn.classList.toggle("hidden", arming);
+    confirmBtn.classList.toggle("hidden", !arming); cancelBtn.classList.toggle("hidden", !arming);
+    nameInput.readOnly = !!current;
+  }
+
+  function renderList() {
+    listEl.replaceChildren();
+    if (!items().length) listEl.append(h("li", { class: "muted", text: "No saved contracts yet." }));
+    for (const c of items()) {
+      const li = h("li", { class: "pick" + (current && current.name === c.name ? " current" : ""), "data-test": "contracts-row",
+        "data-name": c.name, "data-revision": String(c.revision) },
+        `${c.name} · ${c.format || "?"} · revision ${c.revision}${c.description ? " · " + c.description : ""}${c.problem ? " · PROBLEM: " + c.problem.message : ""}`);
+      li.onclick = () => open(c.name);
+      listEl.append(li);
+    }
+  }
+
+  function renderSchemaStatus() {
+    const c = (state.contracts && state.contracts.checks) || { available: false, detail: "unknown" };
+    schemaStatus.dataset.available = c.available ? "true" : "false";
+    schemaStatus.textContent = c.available ? `JSON Schema checks: available (${c.detail})`
+      : `JSON Schema checks: not available (${c.detail}). Install them with: pip install 'AgentWiz[checks]'`;
+  }
+
+  function showIssues(body) {
+    errorsEl.replaceChildren();
+    for (const i of body.issues || []) errorsEl.append(h("li", { text: `${i.location}: ${i.message}` }));
+    const more = (body.issue_count || 0) - (body.issues || []).length;
+    if (more > 0) errorsEl.append(h("li", { text: `… and ${more} more` }));
+  }
+
+  async function open(name) {
+    arming = false;
+    try {
+      const c = await api("/api/contracts/" + encodeURIComponent(name));
+      current = { name: c.name, revision: c.revision, problem: c.problem };
+      nameInput.value = c.name; editor.value = c.text; setEditor("idle"); errorsEl.replaceChildren();
+      msg.textContent = c.problem ? `This contract has a problem (${c.problem.message}). It cannot be saved over; repair the file with an editor.` : "";
+    } catch (e) { msg.textContent = e.message; }
+    renderList(); refreshButtons();
+  }
+
+  function fresh(kind) {
+    arming = false; current = null;
+    nameInput.value = ""; editor.value = JSON.stringify(TEMPLATES[kind], null, 2) + "\n";
+    setEditor("idle"); msg.textContent = ""; errorsEl.replaceChildren();
+    renderList(); refreshButtons();
+  }
+
+  newText.onclick = () => fresh("text");
+  newJson.onclick = () => fresh("json");
+  editor.addEventListener("input", () => setEditor("idle"));
+
+  saveBtn.onclick = async () => {
+    const name = nameInput.value.trim();
+    errorsEl.replaceChildren();
+    if (!NAME_RE.test(name)) {
+      setEditor("error"); msg.textContent = "A contract name is 1 to 64 letters, digits, '.', '_' or '-', starting with a letter or digit."; return;
+    }
+    setTabRunning("contracts", true);
+    try {
+      const res = await api("/api/contracts/save", { name, text: editor.value, revision: current ? current.revision : null });
+      state = res;
+      current = { name: res.contract.name, revision: res.contract.revision, problem: res.contract.problem };
+      editor.value = res.contract.text;
+      msg.textContent = "Saved." + ((res.notes || []).length ? " " + res.notes.join(" ") : "");
+      setEditor("saved"); renderState(); renderList(); refreshButtons();
+    } catch (e) {
+      setEditor("error");
+      if (e.code === "contract_error") { msg.textContent = e.message; showIssues(e.body); }
+      else if (e.code === "stale_revision") { await reloadAfterStale(); msg.textContent = "This contract changed elsewhere. Reopen it to load the current text; your edits are kept here."; }
+      else { if (e.status === 409 || e.status === 404) await reloadAfterStale(); msg.textContent = e.message; }
+    } finally { setTabRunning("contracts", false); }
+  };
+
+  deleteBtn.onclick = () => { arming = true; refreshButtons(); };
+  cancelBtn.onclick = () => { arming = false; refreshButtons(); };
+  confirmBtn.onclick = async () => {
+    if (!current) return;
+    arming = false;
+    try {
+      state = await api("/api/contracts/delete", { name: current.name, revision: current.revision });
+      current = null; nameInput.value = ""; editor.value = ""; setEditor("idle"); errorsEl.replaceChildren();
+      msg.textContent = "Deleted."; renderState();
+    } catch (e) {
+      if (e.status === 409 || e.status === 404) await reloadAfterStale();
+      msg.textContent = e.code === "stale_revision" ? "This contract changed elsewhere; reopen it before deleting." : e.message;
+    }
+    renderList(); refreshButtons();
+  };
+
+  async function runCheck() {
+    errorsEl.replaceChildren();
+    setTabRunning("contracts", true);
+    try {
+      const r = await api("/api/contracts/check", { contract_text: editor.value, text: checkText_.value });
+      result.show(r.check);
+    } catch (e) {
+      result.clear();
+      if (e.code === "contract_error") { msg.textContent = e.message; showIssues(e.body); result.note("The contract is not valid, so nothing was checked."); }
+      else msg.textContent = e.message;
+    } finally { setTabRunning("contracts", false); }
+  }
+  checkBtn.onclick = runCheck;
+
+  TABS.contracts = {
+    submit: runCheck,
+    onState() {
+      renderSchemaStatus(); renderList();
+      if (current) {                  // a file changed on disk since it was opened
+        const now = items().find((c) => c.name === current.name);
+        if (!now) msg.textContent = "This contract no longer exists. Saving creates it again only if you reopen a new one.";
+        else if (now.revision !== current.revision) msg.textContent = "This contract changed on disk. Reopen it to load the current text; saving now will be refused as stale.";
+      }
+      refreshButtons();
+    },
+  };
+  refreshButtons();
+})();
+
+// --- History (Section 10.5, 11.2) ---------------------------------------------------------------------------------------
+(function historyTab() {
+  const panel = $("panel-history");
+  let openId = null, arming = false;
+  const savingNote = h("div", { class: "note", "data-test": "history-saving" });
+  const warning = h("div", { class: "warn-text", "data-test": "history-short-credential" });
+  const refresh = h("button", { type: "button", "data-test": "history-refresh", text: "Refresh" });
+  const count = h("span", { class: "note", "data-test": "history-count" });
+  const listEl = h("ul", { class: "list", "data-test": "history-list" });
+  const msg = h("div", { class: "note", "data-test": "history-msg" });
+  const detail = h("div", { "data-test": "history-detail" });
+  panel.append(h("p", { class: "panel-intro", text: "History: saved runs, read-only. Open one, copy any part, or delete it. A run is never loaded back into another tab." }),
+    savingNote, warning, h("div", { class: "row" }, refresh, count), listEl, msg, detail);
+
+  function sayList(text) { msg.textContent = text; }
+
+  function messagesText(list) {
+    return (list || []).map((m) => `[${m.role}]\n${m.content}`).join("\n\n");
+  }
+
+  function section(prefix, name, label, text, cls = "") {
+    const p = outPanel(prefix, name, label, cls);
+    p.pre.textContent = text;
+    return p.el;
+  }
+
+  function renderRun(r) {
+    detail.replaceChildren();
+    arming = false;
+    const run = r.run;
+    const del = h("button", { type: "button", "data-test": "history-delete", text: "Delete this run" });
+    const confirm_ = h("button", { type: "button", class: "hidden", "data-test": "history-delete-confirm", text: "Confirm: delete this run's folder" });
+    const cancel_ = h("button", { type: "button", class: "hidden", "data-test": "history-delete-cancel", text: "Cancel" });
+    const close = h("button", { type: "button", "data-test": "history-close", text: "Close" });
+    del.onclick = () => { del.classList.add("hidden"); confirm_.classList.remove("hidden"); cancel_.classList.remove("hidden"); };
+    cancel_.onclick = () => { del.classList.remove("hidden"); confirm_.classList.add("hidden"); cancel_.classList.add("hidden"); };
+    close.onclick = () => { openId = null; detail.replaceChildren(); renderList(lastList); };
+    confirm_.onclick = async () => {
+      try {
+        await api("/api/runs/delete", { run_id: openId });
+        openId = null; detail.replaceChildren(); msg.textContent = "Deleted."; await load();
+      } catch (e) { cancel_.onclick(); msg.textContent = e.message; if (e.code === "run_active") msg.dataset.code = e.code; }
+    };
+    detail.append(h("div", { class: "row" }, h("strong", { text: `Run ${openId}` }), del, confirm_, cancel_, close));
+    detail.dataset.runId = openId;
+    if (run) detail.append(section("history", "run", "run.json", JSON.stringify(run, null, 2), "exact"));
+    for (const p of r.problems || []) detail.append(h("div", { class: "warn-text", text: `${p.file}: ${p.message}` }));
+    for (const a of r.attempts || []) {
+      const res = a.result || a.partial || {};
+      detail.append(h("fieldset", { "data-test": "history-attempt", "data-attempt-id": a.id },
+        h("legend", { text: `Attempt ${a.attempt} · ${LABELS[a.outcome] || a.outcome} · check: ${a.check ? a.check.overall : (a.check_skipped ? "not checked" : "none")}` }),
+        section("history", "messages", "Messages sent", messagesText(a.messages_sent)),
+        section("history", "answer", "Answer", res.text || ""),
+        section("history", "reasoning", "Reasoning", res.reasoning || "", "reasoning"),
+        section("history", "check", "Check result", a.check ? checkText(a.check) : (a.check_skipped ? (SKIPPED[a.check_skipped] || "Not checked.") : "No contract.")),
+        section("history", "record", "Full record", JSON.stringify(a, null, 2), "exact")));
+    }
+  }
+
+  let lastList = null;
+  function renderList(r) {
+    lastList = r;
+    listEl.replaceChildren();
+    if (!r) return;
+    count.textContent = `${r.shown} of ${r.total} shown`;
+    count.dataset.shown = String(r.shown); count.dataset.total = String(r.total);
+    if (!r.runs.length) listEl.append(h("li", { class: "muted", text: "No saved runs." }));
+    for (const row of r.runs) {
+      const li = h("li", { class: "pick" + (row.run_id === openId ? " current" : ""), "data-test": "history-row", "data-run-id": row.run_id },
+        `${row.created_at || row.folder} · ${row.source || "?"} · ${row.attempts} ${row.attempts === 1 ? "attempt" : "attempts"} · ${row.outcome ? (LABELS[row.outcome] || row.outcome) : "no attempt saved"} · check: ${row.check || "none"}${row.problem ? " · PROBLEM: " + row.problem.message : ""}`);
+      li.onclick = () => openRun(row.run_id);
+      listEl.append(li);
+    }
+  }
+
+  async function load() {
+    setTabRunning("history", true);
+    try { renderList(await api("/api/runs")); }
+    catch (e) { sayList(e.message); }
+    finally { setTabRunning("history", false); }
+  }
+
+  async function openRun(id) {
+    openId = id;
+    try { renderRun(await api("/api/runs/" + id)); msg.textContent = ""; }
+    catch (e) { openId = null; detail.replaceChildren(); msg.textContent = e.message; if (e.code === "no_such_run") await load(); }
+    renderList(lastList);
+  }
+
+  refresh.onclick = load;
+  TABS.history = {
+    onShow() { msg.textContent = ""; load(); },
+    onState() {
+      const hi = historyInfo();
+      savingNote.textContent = (hi.save_runs ? "Saving runs is on. " : "Saving runs is off; turn it on in the header. ") + DISCLOSURE;
+      warning.textContent = shortCredentialWarning();
+    },
+  };
+})();
+
+// --- start -----------------------------------------------------------------------------------------------------------------
+selectTab(fragFromHash(), { hash: false });
+refreshState().catch((e) => {
+  $("banner").replaceChildren(h("p", { text: e.message }));
+  $("banner").classList.remove("hidden");
+});
 </script>
 </body>
 </html>

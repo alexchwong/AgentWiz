@@ -5,7 +5,7 @@ import threading
 import pytest
 
 from conftest import (Reply, answer, complete, configure, failure_of, file_stat, get_state, lmstudio_models,
-                      native_answer, request, responses_answer, write_ws_file)
+                      native_answer, record_of, request, responses_answer, write_ws_file)
 
 JSON = {"Content-Type": "application/json"}
 
@@ -31,8 +31,8 @@ def test_task_settings_reach_backend(ui, server, kind, reasoning, task_field, va
     else:
         task["advanced"] = {task_field: value}
     evs = complete(ui, "hi", task=task)
-    end = evs[-1]
-    assert end["type"] == "result", end
+    end = record_of(evs)
+    assert end["outcome"] == "complete", end
     sent = server.requests[-1]["body"]
     assert sent[wire] == value
     assert "temperature" not in sent and "top_p" not in sent and "seed" not in sent
@@ -75,8 +75,8 @@ def test_blank_model_refused(ui, server):
 def test_lmstudio_off_model_lookup(ui, server, models, sent_reasoning, lookup):
     server.reply(models(), native_answer())
     lmstudio(ui, server)
-    end = complete(ui, "hi", task={"reasoning": "off"})[-1]
-    assert end["type"] == "result" and end["model_lookup"] == lookup
+    end = record_of(complete(ui, "hi", task={"reasoning": "off"}))
+    assert end["outcome"] == "complete" and end["model_lookup"] == lookup
     chat = [r for r in server.requests if r["path"] == "/api/v1/chat"]
     assert len(chat) == 1
     assert chat[0]["body"].get("reasoning") == sent_reasoning
@@ -87,7 +87,8 @@ def test_lmstudio_off_failed_lookup_then_400(ui, server):
     server.reply(Reply(status=500, body=b"{}", headers=JSON), Reply(status=400, body=secret, headers=JSON))
     lmstudio(ui, server)
     evs = complete(ui, "hi", task={"reasoning": "off"})
-    assert len(evs) == 1 and evs[0]["type"] == "error" and evs[0]["model_lookup"] == "failed"
+    rec = record_of(evs)
+    assert rec["outcome"] == "error" and rec["model_lookup"] == "failed"
     assert not any(b"BACKEND-BODY-TEXT" in body for body in ui.transcript)
     assert len([r for r in server.requests if r["path"] == "/api/v1/chat"]) == 1
 
@@ -101,10 +102,10 @@ def test_openrouter_require_parameters(ui, server):
                                                        "require_parameters": True}
     server.reply(Reply(status=404, body=b'{"error": {"message": "No endpoints found"}}', headers=JSON))
     evs = complete(ui, "hi", task={"temperature": 0.5})
-    assert len(evs) == 1 and evs[0]["type"] == "error" and evs[0]["hint"] == "openrouter_no_provider"
+    assert record_of(evs)["outcome"] == "error" and record_of(evs)["error"]["hint"] == "openrouter_no_provider"
     server.reply(Reply(status=500, body=b"{}", headers=JSON))
     evs = complete(ui, "hi", task={"temperature": 0.5})
-    assert evs[0]["type"] == "error" and "hint" not in evs[0]
+    assert record_of(evs)["outcome"] == "error" and "hint" not in record_of(evs)["error"]
 
 
 # 34 --------------------------------------------------------------------------------------------
@@ -116,7 +117,7 @@ def test_task_settings_per_request(ui, server):
 
     def tab(temperature):
         barrier.wait()
-        results[temperature] = complete(ui, "hi", task={"temperature": temperature})[-1]
+        results[temperature] = record_of(complete(ui, "hi", task={"temperature": temperature}))
 
     threads = [threading.Thread(target=tab, args=(t,)) for t in (0.1, 0.9)]
     for t in threads:
@@ -186,7 +187,7 @@ def test_saved_task_settings_read_only(make_ui, tmp_path, server, text, code):
     assert file_stat(folder / "task_settings.json") == before
     server.reply(answer("still works"))
     configure(ui, server)
-    assert complete(ui, "hi", task={"temperature": 0.3})[-1]["result"]["text"] == "still works"
+    assert record_of(complete(ui, "hi", task={"temperature": 0.3}))["result"]["text"] == "still works"
 
 
 def test_task_settings_in_read_only_workspace(make_ui, tmp_path):
