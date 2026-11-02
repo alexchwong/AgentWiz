@@ -1,26 +1,19 @@
-# AgentWiz — operating rules
+# Cline — reviewing Claude's handover
 
-1. Work only in `.venv`, set up with `scripts/dev_setup.sh` from the checkout root (it creates
-   `.venv` if needed and installs AgentWiz editable with pytest), then activate it. Run
-   `python -m pytest`, never bare `pytest`. Never commit `.venv/` or a real API key.
-2. Keep audiences separate: `README.md` for users, `DEVEL.md` for maintenance, `NEWS.md` for
-   the changelog. Update `DEVEL.md` in the same change when layout, commands, tests or release
-   steps change.
-3. Use modelSpell's public API only; no `modelspell._…` imports or underscore attributes.
-4. Change shared state only in `agentwiz/state.py`, under the state lock, with a revision check.
-   Workspace files change only through `agentwiz/workspace.py`, called from `state.py` under the
-   state lock with a revision check. `.agentwiz.lock` is never replaced, renamed or deleted.
-   Profile files use `agentwiz/profiles.py`; default-library operations also hold the blocking
-   `.profiles.lock` after the state lock. That permanent lock file is never replaced or deleted.
-5. All JSON output goes through `agentwiz/jsonio.py` (`encode`/`encode_line` for HTTP,
-   `encode_file`/`decode_file` for AgentWiz's own files).
-6. Error text reaches the page or terminal only as `DEVEL.md` "Error reporting" allows: never
-   format the message of an exception that is not AgentWiz's own.
-7. Tests follow T1–T3: sparingly, functionality only. Tests never assert the contents of files in
-   the repository; they may check files AgentWiz creates when it runs, in their temporary folders.
-8. Tests never write outside `tmp_path`.
-9. Scope changes, new dependencies and behavioural departures from the specification are reported
-   to the owner before merging; routine choices are recorded in `DEVEL.md` or the pull request.
+Project maintenance rules live in `DEVEL.md`. Read it before changing code and consult the
+relevant sections for the area being reviewed; do not maintain a second copy of those rules here.
 
-Details: `DEVEL.md`. Where this file and `DEVEL.md` disagree, `DEVEL.md` wins; correct this file
-in the same change.
+1. Read the handover, inspect the actual changes and check the working tree before editing.
+   Preserve existing uncommitted work. Treat Claude's completion and validation claims as claims
+   to verify, not evidence that the work is correct.
+2. Review for functional defects, regressions, missing requirements and unsafe behaviour against
+   the agreed specification. Make the smallest justified correction, following existing patterns;
+   avoid unrelated refactoring, stylistic rewrites and new features.
+3. Follow `DEVEL.md` for setup, architecture, testing and release requirements. Add tests only
+   for a functional reason under its T1–T3 policy, not merely to demonstrate review activity.
+4. Finish the agreed review and correction scope; do not infer permission to continue a larger
+   build. Raise scope changes, new dependencies and unrecorded specification departures with
+   the owner. Do not commit, push or publish unless instructed.
+5. Run the required checks, inspect the final diff and report the corrections and their reasons,
+   checks passed, failed or blocked, and anything left for the owner. Never weaken a check to
+   obtain a pass or describe an unrun check as passed.

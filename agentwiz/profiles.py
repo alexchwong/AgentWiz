@@ -2,6 +2,10 @@
 
 Call mutations from state.py under its lock. Shared defaults additionally use the
 permanent .profiles.lock, held only across a read/change/replace operation.
+
+Profile files are format version 2 from AgentWiz 0.1.2 (techspec 0.1.2, Section 7.6): a profile holds
+kind, base_url, model and provider. Version 1 files are read; their retired `reasoning` and
+`max_tokens` are ignored, not validated, and dropped by every write, which always writes version 2.
 """
 from __future__ import annotations
 
@@ -14,13 +18,14 @@ from pathlib import Path
 from typing import Any
 
 from modelspell import ModelSpellError
-from .model_call import _FIELDS, KINDS, REASONING_LEVELS, ModelSettings, SettingsError, settings_from_body
-from .workspace import (FORMAT_VERSION, NAME_RULE, Problem, InvalidDocument as _Invalid,
+from .model_call import _FIELDS, KINDS, RETIRED, ModelSettings, SettingsError, settings_from_body
+from .workspace import (NAME_RULE, Problem, InvalidDocument as _Invalid,
                         check_format_version as _format_version, read_document, valid_name, write_atomic)
 
 PROFILES_FILE = "profiles.json"
+PROFILES_FORMAT_VERSION = 2
 PROFILE_FIELDS = _FIELDS
-_NEWER = f"written by a newer AgentWiz (format_version greater than {FORMAT_VERSION})"
+_NEWER = f"written by a newer AgentWiz (format_version greater than {PROFILES_FORMAT_VERSION})"
 
 def _check_profile(name: str, obj: Any) -> ModelSettings:
     where = f"profiles.{name}"
@@ -34,11 +39,6 @@ def _check_profile(name: str, obj: Any) -> ModelSettings:
     for f in ("base_url", "model", "provider"):
         if not isinstance(obj[f], str):
             raise _Invalid(f"{where}.{f} must be a string")
-    if obj["reasoning"] not in REASONING_LEVELS:
-        raise _Invalid(f"{where}.reasoning must be one of: \"\", off, low, medium, high")
-    mt = obj["max_tokens"]
-    if mt is not None and not (isinstance(mt, int) and not isinstance(mt, bool) and mt >= 1):
-        raise _Invalid(f"{where}.max_tokens must be null or an integer of at least 1")
     try:
         return settings_from_body(ModelSettings(), {f: obj[f] for f in PROFILE_FIELDS})
     except SettingsError as exc:  # AgentWiz's own messages; they name fields, never values
@@ -58,7 +58,7 @@ class ProfilesFile:
 
 
 def empty_profiles_raw() -> dict:
-    return {"format_version": FORMAT_VERSION, "profiles": {}}
+    return {"format_version": PROFILES_FORMAT_VERSION, "profiles": {}}
 
 
 def read_profiles(folder: Path) -> ProfilesFile:
@@ -69,7 +69,7 @@ def read_profiles(folder: Path) -> ProfilesFile:
     if raw is None:
         return ProfilesFile(None, exists=False, raw=empty_profiles_raw())
     try:
-        if _format_version(raw) > FORMAT_VERSION:
+        if _format_version(raw) > PROFILES_FORMAT_VERSION:
             return ProfilesFile(Problem(str(folder / PROFILES_FILE), "newer_format", _NEWER))
         if "profiles" not in raw or not isinstance(raw["profiles"], dict):
             raise _Invalid("profiles must be an object")
@@ -84,19 +84,29 @@ def read_profiles(folder: Path) -> ProfilesFile:
 
 
 def profile_object(settings: ModelSettings, previous: Mapping | None = None) -> dict:
-    """A profile's object: the previous object's unknown fields kept, the six fields replaced.
-
-    Only the six ModelSettings fields are written; ModelSettings holds no key (P6).
+    """A profile's object: the previous object's unknown fields kept, the four fields replaced, the
+    retired fields dropped. ModelSettings holds no key (P6).
     """
-    out = dict(previous) if isinstance(previous, Mapping) else {}
+    out = {k: v for k, v in previous.items() if k not in RETIRED} if isinstance(previous, Mapping) else {}
     for f in PROFILE_FIELDS:
         out[f] = getattr(settings, f)
     return out
 
 
+def version2(raw: Mapping[str, Any]) -> dict:
+    """The whole file as version 2: every profile object without the retired fields, unknown fields kept."""
+    out = dict(raw)
+    out["format_version"] = PROFILES_FORMAT_VERSION
+    profiles = raw.get("profiles")
+    if isinstance(profiles, Mapping):
+        out["profiles"] = {name: ({k: v for k, v in obj.items() if k not in RETIRED} if isinstance(obj, Mapping)
+                                  else obj) for name, obj in profiles.items()}
+    return out
+
 
 def write_profiles(folder: Path, raw: Mapping[str, Any]) -> None:
-    write_atomic(folder, PROFILES_FILE, raw)
+    """Every write of a profile file writes version 2 without the retired fields (Section 7.6)."""
+    write_atomic(folder, PROFILES_FILE, version2(raw))
 
 
 def fingerprint(folder: Path) -> tuple | None:

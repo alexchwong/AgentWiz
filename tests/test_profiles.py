@@ -18,8 +18,7 @@ KEY_A, KEY_B = "sk-SENTINEL-KEY-A-0001", "sk-SENTINEL-KEY-B-0002"
 
 
 def profile_fields(backend, model, **extra):
-    return {"kind": "openai_compat", "base_url": backend.url + "/v1", "model": model, "provider": "",
-            "reasoning": "", "max_tokens": None, **extra}
+    return {"kind": "openai_compat", "base_url": backend.url + "/v1", "model": model, "provider": "", **extra}
 
 
 def save(ui, name, revision=None, **fields):
@@ -38,7 +37,7 @@ def delete(ui, name, revision=None):
 
 
 def settings_of(state):
-    return {k: state[k] for k in ("kind", "base_url", "model", "provider", "reasoning", "max_tokens")}
+    return {k: state[k] for k in ("kind", "base_url", "model", "provider")}
 
 
 def open_ui(make_ui, tmp_path, name="w"):
@@ -72,9 +71,9 @@ DAMAGED = [
     ("profiles.json", '{"format_version": 1, "active": null, "active": null, "profiles": {}}', False,
      "invalid_json"),
     ("profiles.json", profiles_text()[:-1] + ', "extra": 0.10000000000000000001}', False, "invalid_json"),
-    ("profiles.json", profiles_text(format_version=2), False, "newer_format"),
+    ("profiles.json", profiles_text(format_version=3), False, "newer_format"),
     ("workspace.json", '{"format_version": 1, "created_by": "AgentWiz", "save_runs": false, "active_profile": 4}', True, "invalid_field"),
-    ("profiles.json", bad_profile(max_tokens="64"), False, "invalid_field"),
+    ("profiles.json", bad_profile(model=64), False, "invalid_field"),
     ("profiles.json", bad_profile(base_url="http://u:p@127.0.0.1:1/v1"), False, "invalid_field"),
 ]
 
@@ -115,7 +114,7 @@ def test_damage_during_session_needs_restart(make_ui, tmp_path, server, restart)
     ui = open_ui(make_ui, tmp_path)
     assert get_state(ui)["profiles"]["read_only"] is False
 
-    (folder / "model-profiles" / "profiles.json").write_text(bad_profile(max_tokens="64"))
+    (folder / "model-profiles" / "profiles.json").write_text(bad_profile(model=64))
     damaged = file_stat(folder / "model-profiles" / "profiles.json")
     rev = get_state(ui)["revision"]
     fail = failure_of(lambda: save(ui, "p", revision=rev, model="m2"))
@@ -398,3 +397,59 @@ def test_profile_conflicts(make_ui, tmp_path, server, restart, monkeypatch):
     assert "unselected" in state["profiles"]["names"]
     assert state["profiles"]["active"] == before["profiles"]["active"]
     assert settings_of(state) == settings_of(before) and state["key_source"] == before["key_source"]
+
+
+# 36 (techspec 0.1.2) -------------------------------------------------------------------------
+V1_PROFILE = {"kind": "lmstudio", "base_url": "", "model": "m", "provider": "", "reasoning": "high",
+              "max_tokens": 64, "future_field": "kept"}
+
+
+def read_json(path):
+    return json.loads(path.read_bytes())
+
+
+def test_profile_format_v2(make_ui, tmp_path, server):
+    defaults = tmp_path / "model_profiles" / "profiles.json"
+    write_ws_file(defaults, json.dumps({"format_version": 1, "profiles": {
+        "d": dict(V1_PROFILE), "same": {**V1_PROFILE, "reasoning": "low"}}}))
+    folder = tmp_path / "ws" / "w"
+    write_ws_file(folder / "model-profiles" / "profiles.json", json.dumps({
+        "format_version": 1, "future_top": 1,
+        "profiles": {"a": dict(V1_PROFILE), "same": {**V1_PROFILE, "reasoning": "off"}}}))
+
+    # a version 1 workspace copy loads; reasoning differences alone are not a conflict
+    ui = open_ui(make_ui, tmp_path)
+    state = get_state(ui)
+    assert state["profiles"]["read_only"] is False and state["profiles"]["names"] == ["a", "same"]
+    assert state["profiles"]["conflicts"] == []
+
+    # the next save writes version 2 without the retired fields, keeping unknown fields
+    save(ui, "a", model="m2")
+    doc = read_json(folder / "model-profiles" / "profiles.json")
+    assert doc["format_version"] == 2 and doc["future_top"] == 1
+    for name in ("a", "same"):
+        assert "reasoning" not in doc["profiles"][name] and "max_tokens" not in doc["profiles"][name]
+    assert doc["profiles"]["a"]["future_field"] == "kept" and doc["profiles"]["a"]["model"] == "m2"
+
+    # update from defaults imports without the retired fields
+    update_defaults(ui)
+    doc = read_json(folder / "model-profiles" / "profiles.json")
+    assert set(doc["profiles"]["d"]) == {"kind", "base_url", "model", "provider", "future_field"}
+
+    # a new workspace seeded from version 1 defaults gets a version 2 file without them
+    second = open_ui(make_ui, tmp_path, "two")
+    doc = read_json(second.workspace.path / "model-profiles" / "profiles.json")
+    assert doc["format_version"] == 2
+    assert all("reasoning" not in p and "max_tokens" not in p for p in doc["profiles"].values())
+
+    # export rewrites the whole defaults file as version 2
+    save(ui, "a", export_default=True)
+    doc = read_json(defaults)
+    assert doc["format_version"] == 2 and sorted(doc["profiles"]) == ["a", "d", "same"]
+    assert all("reasoning" not in p and "max_tokens" not in p for p in doc["profiles"].values())
+
+    # the retired fields are refused on the settings and profile routes
+    for path, body in (("/api/config", {"reasoning": "low"}), ("/api/profiles/save", {"name": "a", "max_tokens": 9})):
+        fail = failure_of(lambda: request(ui, path, {"revision": get_state(ui)["revision"], **body}))
+        assert fail.status == 400
+

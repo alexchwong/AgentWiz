@@ -1,19 +1,31 @@
-"""model_call without HTTP: techspec 13.3 tests #13-#14."""
+"""model_call without HTTP: techspec 0.1.1 13.3 tests #13-#14; 0.1.2 Section 15.3 (test_task_arguments)."""
 import pytest
 from modelspell import Result
 
-from agentwiz.model_call import ModelSettings, classify_outcome, complete_kwargs
+from agentwiz.model_call import classify_outcome, task_arguments
+from agentwiz.task_settings import TaskSettings
+
+PIN = {"order": ["deepinfra/turbo"], "allow_fallbacks": False}
 
 
-@pytest.mark.parametrize("settings, expected", [
-    (ModelSettings(kind="openrouter", provider="deepinfra/turbo", reasoning="high", max_tokens=64),
-     {"reasoning": "high", "max_tokens": 64, "provider": {"order": ["deepinfra/turbo"], "allow_fallbacks": False}}),
-    (ModelSettings(kind="lmstudio", provider="deepinfra/turbo", reasoning="off"), {"reasoning": "off"}),
-    (ModelSettings(kind="openai_compat", base_url="http://x/v1", reasoning="high"), {}),
-    (ModelSettings(), {}),
+@pytest.mark.parametrize("task, kind, pin, expected", [
+    # Section 7.4's table: provider pin x (only max_tokens | another setting)
+    (TaskSettings(), "openrouter", "", {}),
+    (TaskSettings(max_tokens=64), "openrouter", "", {"max_tokens": 64}),
+    (TaskSettings(temperature=0.5), "openrouter", "", {"temperature": 0.5, "provider": {"require_parameters": True}}),
+    (TaskSettings(reasoning="off"), "openrouter", "", {"reasoning": "off", "provider": {"require_parameters": True}}),
+    (TaskSettings(max_tokens=64), "openrouter", "deepinfra/turbo", {"max_tokens": 64, "provider": PIN}),
+    (TaskSettings(reasoning="high", max_tokens=64), "openrouter", "deepinfra/turbo",
+     {"reasoning": "high", "max_tokens": 64, "provider": {**PIN, "require_parameters": True}}),
+    (TaskSettings(advanced={"top_k": 40, "stop": ("x",)}), "openrouter", "",
+     {"top_k": 40, "stop": ["x"], "provider": {"require_parameters": True}}),
+    # other kinds: no provider; blanks absent
+    (TaskSettings(reasoning="off", advanced={"top_k": 3}), "lmstudio", "", {"reasoning": "off", "top_k": 3}),
+    (TaskSettings(temperature=0.2, advanced={"seed": 7}), "openai_compat", "", {"temperature": 0.2, "seed": 7}),
+    (TaskSettings(), "lmstudio", "", {}),
 ])
-def test_complete_kwargs(settings, expected):
-    assert complete_kwargs(settings, settings.kind) == expected
+def test_task_arguments(task, kind, pin, expected):
+    assert task_arguments(task, kind, pin) == expected
 
 
 def result(text, reasoning, truncated, **kw):

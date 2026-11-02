@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Scripted OpenAI-compatible backend for trying the UI without a model (techspec 11.3). Not shipped.
+"""Scripted OpenAI-compatible backend for trying the UI without a model (techspec 0.1.0 11.3; 0.1.2 13.2).
+Not shipped.
 
     python scripts/stub_backend.py [--port 8099]
 
 In AgentWiz choose "OpenAI-compatible" with base URL http://127.0.0.1:8099/v1. The model ID picks
-the behaviour (Load models lists them). Each request and each client disconnect is logged here.
+the behaviour (Load models lists them). Each request, with the sampling fields it carries, and each
+client disconnect is logged here.
 """
 from __future__ import annotations
 
@@ -30,6 +32,10 @@ MODELS = {
     "bigint": "Completes with usage.prompt_tokens = 9007199254740993.",
 }
 USAGE = '{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}'
+
+
+SAMPLING = ("temperature", "max_tokens", "top_p", "top_k", "min_p", "repetition_penalty", "presence_penalty",
+            "frequency_penalty", "seed", "stop", "reasoning", "reasoning_effort")
 
 
 def log(message: str) -> None:
@@ -93,10 +99,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         try:
-            model = json.loads(raw).get("model", "")
+            body = json.loads(raw)
+            model = body.get("model", "")
         except ValueError:
-            model = ""
-        log(f"request model={model!r}")
+            body, model = {}, ""
+        sampling = {k: body[k] for k in SAMPLING if k in body}
+        log(f"request model={model!r}" + (f" settings={json.dumps(sampling)}" if sampling else ""))
         if model == "error-500":
             return self._json(500, {"error": {"message": "stub failure"}})
         if model not in MODELS:

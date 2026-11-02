@@ -129,3 +129,96 @@ def decode_file(data: bytes) -> dict:
     if not isinstance(value, dict):
         raise ValueError("the top level must be a JSON object")
     return value
+
+
+# --- exact numbers for MCP traffic, tool arguments and tool results (techspec 0.1.2, 8.1) --------
+INT_DIGITS_LIMIT = 4300
+_JSON_NUMBER = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
+
+
+def _exact_int(text: str) -> int:
+    # Counted here, not left to the interpreter's conversion limit, which Python 3.10.0-3.10.6 lack
+    # and PYTHONINTMAXSTRDIGITS can lift (D49).
+    if len(text.lstrip("-")) > INT_DIGITS_LIMIT:
+        raise _Refused(f"an integer has more than {INT_DIGITS_LIMIT:,} digits")
+    return int(text)
+
+
+def _no_constants_exact(name: str) -> Any:
+    raise _Refused("NaN and Infinity are not allowed")
+
+
+def decode_exact(text: str) -> Any:
+    """Parse JSON text keeping every number exactly: fractions and exponents become Decimal, integers
+    int (at most 4,300 digits). Refuses NaN, Infinity and repeated keys. Raises ValueError naming the
+    rule broken, never the offending text. No float is ever produced."""
+    if not isinstance(text, str):
+        raise ValueError("JSON text must be a string")
+    try:
+        return json.loads(text, object_pairs_hook=_no_duplicates, parse_constant=_no_constants_exact,
+                          parse_float=Decimal, parse_int=_exact_int)
+    except _Refused as exc:
+        raise ValueError(str(exc)) from None
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"not valid JSON (line {exc.lineno}, column {exc.colno})") from None
+    except (ValueError, RecursionError):
+        raise ValueError("a value cannot be read") from None
+
+
+def _number_text(value: Any) -> str:
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError("a non-finite number cannot be written as JSON")
+        text = str(value)
+    elif isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("a non-finite number cannot be written as JSON")
+        text = repr(value)
+    else:
+        text = str(int(value))
+    if not _JSON_NUMBER.match(text):
+        raise ValueError("a number does not match JSON's number grammar")
+    return text
+
+
+def _write_exact(value: Any, out: list[str]) -> None:
+    if value is None:
+        out.append("null")
+    elif value is True:
+        out.append("true")
+    elif value is False:
+        out.append("false")
+    elif isinstance(value, str):
+        out.append(json.dumps(value, ensure_ascii=True))
+    elif isinstance(value, (int, float, Decimal)):
+        out.append(_number_text(value))
+    elif isinstance(value, Mapping):
+        out.append("{")
+        first = True
+        for k, v in value.items():
+            if not isinstance(k, str):
+                raise TypeError(f"mapping keys must be str, got {type(k).__name__}")
+            if not first:
+                out.append(",")
+            first = False
+            out.append(json.dumps(k, ensure_ascii=True))
+            out.append(":")
+            _write_exact(v, out)
+        out.append("}")
+    elif isinstance(value, (list, tuple)):
+        out.append("[")
+        for i, v in enumerate(value):
+            if i:
+                out.append(",")
+            _write_exact(v, out)
+        out.append("]")
+    else:
+        raise TypeError(f"cannot encode {type(value).__name__} as JSON")
+
+
+def encode_exact(value: Any) -> str:
+    """Compact, ASCII-only JSON text; Decimal written as str(value), keeping its digits and exponent.
+    Raises ValueError for a non-finite number, TypeError for an unsupported type."""
+    out: list[str] = []
+    _write_exact(value, out)
+    return "".join(out)
