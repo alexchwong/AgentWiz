@@ -6,6 +6,8 @@ every completion, save and profile operation states the revision its page was sh
 never act on settings or profiles it is not showing. Three revisions exist, and a change to one never
 makes another stale: the configuration revision (settings, keys, profiles), the task-settings
 revision (the workspace's saved task settings) and the MCP revision (the MCP library and tokens).
+Each saved contract has a revision of its own (techspec 0.1.3, 7.8), so a contract change never makes a
+settings dialog stale either.
 
 The state lock is held to compare, snapshot, view and apply, and across the read-validate-change-
 replace of workspace profiles (through profiles.py), so one profile change can never overwrite another.
@@ -24,7 +26,7 @@ from pathlib import Path
 import modelspell
 from modelspell import Endpoint
 
-from . import mcp_client, mcp_ops
+from . import checks, contracts, history, mcp_client, mcp_ops, runs
 from . import mcp_library as ml
 from . import profiles as pf
 from . import task_settings as ts
@@ -153,6 +155,15 @@ class ProcessState:
             self._task_problem: Problem | None = loaded_task.problem
             self._task_saved = loaded_task.settings
             self._task_revision = 1
+            self.contracts = contracts.ContractStore(workspace.path)
+            self.contracts.rescan()
+            # Run history (techspec 0.1.3, 10): the switch, its own revision, and every credential held.
+            self._save_runs = bool(raw.get("save_runs")) if raw and problem is None and not workspace.read_only else False
+            self._history_revision = 1
+            self._credentials: set[str] = set()      # typed keys and tokens, kept until the process exits
+            self._env_names: set[str] = set()        # environment variables read for credentials
+            self.store = runs.AttemptStore()
+            self.history = history.Writer(workspace.path, self.store, self.credentials)
             # The MCP library (Section 9.1), its revision and typed tokens (bound to a URL).
             self.mcp_library = ml.Library(mcp_servers_dir if mcp_servers_dir is not None else Path("./mcp_servers"))
             self.mcp_library.ensure()
@@ -215,6 +226,9 @@ class ProcessState:
                          "path": str(self.workspace.path / ts.FILE)},
                 "supported": supported_view(s.kind),
                 "mcp": self._mcp_view_locked(),
+                "contracts": self._contracts_view_locked(),
+                "history": self._history_view_locked(),
+                "attempts": {"running": self.store.running_count()},
                 "workspace": {"name": ws.name, "path": str(ws.path), "created": ws.created,
                               "read_only": ws.read_only,
                               "problems": [dataclasses.asdict(p) for p in self._problems_locked()]},
@@ -228,6 +242,17 @@ class ProcessState:
                               "modified": active is not None and self._profiles.get(active) != s,
                              "read_only": self._profiles_read_only_locked()}}
 
+    def _contracts_view_locked(self) -> dict:
+        available, detail = checks.schema_support()
+        return {"items": [entry.list_view() for entry in self.contracts.entries()],
+                "read_only": self.workspace.read_only, "path": str(self.contracts.path),
+                "checks": {"available": available, "detail": detail}}
+
+    def _history_view_locked(self) -> dict:
+        return {"save_runs": self._save_runs and not self.workspace.read_only, "revision": self._history_revision,
+                "read_only": self.workspace.read_only, "path": str(self.history.path),
+                "short_credential_held": self._short_credential_locked()}
+
     def _task_read_only_locked(self) -> bool:
         return self.workspace.read_only or self._task_problem is not None
 
@@ -235,6 +260,7 @@ class ProcessState:
         with self._lock:
             self._refresh_locked()
             self._refresh_mcp_locked()
+            self.contracts.rescan()
             return self._view_locked()
 
     # --- settings ----------------------------------------------------------------------------
@@ -259,6 +285,7 @@ class ProcessState:
             new, keys = self._settings_and_keys_locked(body)
             if new != self._settings or keys != self._keys:
                 self._settings, self._keys = new, keys
+                self._credentials.update(keys.values())
                 self._revision += 1
             return self._view_locked()
 
@@ -362,6 +389,7 @@ class ProcessState:
                         self._revision += 1
                         raise
                 self._settings, self._keys = settings, keys
+                self._credentials.update(keys.values())
                 self._profiles, self._active = dict(profiles), active
                 self._unresolved = None
                 if changed:
@@ -423,6 +451,47 @@ class ProcessState:
                 raise WriteFailed(str(self.workspace.path / ts.FILE), exc.strerror or type(exc).__name__) from None
             self._task_saved = settings
             self._task_revision += 1
+            return self._view_locked()
+
+    # --- contracts (techspec 0.1.3, 7.8) ------------------------------------------------------
+    def get_contract(self, name: object) -> dict:
+        """One contract with its text as stored; 404 (NoSuchContract) if there is none."""
+        with self._lock:
+            self.contracts.rescan()
+            entry = self.contracts.get(name) if isinstance(name, str) else None
+            if entry is None:
+                raise contracts.NoSuchContract()
+            return entry.full_view()
+
+    def save_contract(self, name: str, text: str, revision: int | None) -> tuple[dict, dict, list[str]]:
+        """Create (revision None) or update a contract under the state lock. Returns the state view, the
+        contract's view and the notes. Raises the contracts.* exceptions the server maps, StaleRevision,
+        ReadOnly, SettingsError (a bad name) and WriteFailed."""
+        with self._lock:
+            try:
+                entry, notes = self.contracts.save(name, text, revision, self.workspace.read_only)
+            except contracts.StaleContract as exc:
+                raise StaleRevision(exc.current) from None
+            except contracts.WorkspaceReadOnly:
+                raise ReadOnly(list(self.workspace.problems), True) from None
+            except contracts.BadName as exc:
+                raise SettingsError(str(exc)) from None
+            except OSError as exc:
+                raise WriteFailed(str(self.contracts.path / (name + contracts.SUFFIX)),
+                                  exc.strerror or type(exc).__name__) from None
+            return self._view_locked(), entry.full_view(), notes
+
+    def delete_contract(self, name: str, revision: int) -> dict:
+        with self._lock:
+            try:
+                self.contracts.delete(name, revision, self.workspace.read_only)
+            except contracts.StaleContract as exc:
+                raise StaleRevision(exc.current) from None
+            except contracts.WorkspaceReadOnly:
+                raise ReadOnly(list(self.workspace.problems), True) from None
+            except OSError as exc:
+                raise WriteFailed(str(self.contracts.path / (name + contracts.SUFFIX)),
+                                  exc.strerror or type(exc).__name__) from None
             return self._view_locked()
 
     # --- MCP library, tokens and snapshots (Sections 9.1, 9.2) ------------------------------
@@ -510,6 +579,7 @@ class ProcessState:
                 value = token.strip()
                 changed = self._mcp_tokens.get(config.url) != value
                 self._mcp_tokens[config.url] = value
+                self._credentials.add(value)
             if changed:
                 self._mcp_revision += 1
                 self._identities_changed_locked()
@@ -525,6 +595,62 @@ class ProcessState:
             return mcp_client.Snapshot(server, config.url, config.idle_timeout_s, config.call_deadline_s,
                                        config.discovery_deadline_s, token)
 
+    # --- contracts for a request (techspec 5.2, step 2) ---------------------------------------
+    def contract_for_request(self, name: str, revision: int) -> contracts.Entry:
+        """The usable contract a Checked request names, at that revision. NoSuchContract (404), StaleRevision
+        (409) or ContractUnusable (409)."""
+        with self._lock:
+            self.contracts.rescan()
+            entry = self.contracts.get(name) if isinstance(name, str) else None
+            if entry is None:
+                raise contracts.NoSuchContract()
+            if entry.problem is not None:
+                raise contracts.ContractUnusable(entry.problem)
+            if entry.revision != revision:
+                raise StaleRevision(entry.revision)
+            return entry
+
+    # --- run history (techspec 10.1) -------------------------------------------------------------
+    def credentials(self) -> list[str]:
+        """Every credential AgentWiz has held: typed keys and tokens (even cleared ones), and the current
+        values of the environment variables it reads for credentials (10.4)."""
+        with self._lock:
+            return self._credentials_locked()
+
+    def _credentials_locked(self) -> list[str]:
+        names = set(self._env_names)
+        names.update(c.token_env for c in self._mcp.servers.values() if c.token_env)
+        values = set(self._credentials)
+        values.update(v for v in (os.environ.get(n, "").strip() for n in names) if v)
+        return sorted(values)
+
+    def _short_credential_locked(self) -> bool:
+        return any(0 < len(c) < history.MIN_CREDENTIAL for c in self._credentials_locked())
+
+    def save_runs_now(self) -> bool:
+        """The switch's value for a run created now (R5-8)."""
+        with self._lock:
+            return self._save_runs and not self.workspace.read_only
+
+    def set_history_switch(self, save_runs: bool, revision: int) -> dict:
+        with self._lock:
+            if revision != self._history_revision:
+                raise StaleRevision(self._history_revision)
+            if self.workspace.read_only:
+                raise ReadOnly(list(self.workspace.problems), True)
+            raw, problem = wsmod.read_workspace(self.workspace)
+            if problem:
+                self.workspace.problems = [problem]
+                self.workspace.read_only = True
+                self._revision += 1
+                raise ReadOnly([problem], True)
+            if raw.get("save_runs") != save_runs:
+                raw["save_runs"] = save_runs
+                self._write_locked(self.workspace.path, wsmod.WORKSPACE_FILE, raw)
+                self._history_revision += 1
+            self._save_runs = save_runs
+            return self._view_locked()
+
     # --- requests ----------------------------------------------------------------------------
     def snapshot(self, revision: int) -> RequestSnapshot:
         with self._lock:
@@ -534,8 +660,22 @@ class ProcessState:
             s = self._settings
             ep = _endpoint(s)
             key = self._keys.get((ep.kind, ep.base_url))
+            if ep.api_key_env:
+                self._env_names.add(ep.api_key_env)
+            active = self._active
             return RequestSnapshot(endpoint=_endpoint(s, key), model=s.model, kind=s.kind,
-                                   provider=s.provider if s.kind == "openrouter" else "")
+                                   provider=s.provider if s.kind == "openrouter" else "",
+                                   profile_name=active,
+                                   profile_modified=active is not None and self._profiles.get(active) != s)
+
+    def key_for(self, kind: str, base_url: str) -> str | None:
+        """The typed key held for an endpoint, or None (the environment variable then applies). Used by a
+        repair, which sends to the endpoint its parent captured (techspec 9.2)."""
+        with self._lock:
+            ep = Endpoint(kind, base_url or None)
+            if ep.api_key_env:
+                self._env_names.add(ep.api_key_env)
+            return self._keys.get((ep.kind, ep.base_url))
 
     def discovery_endpoint(self, kind: object, base_url: object, api_key: object) -> Endpoint:
         """Endpoint for Load models / Load providers, from the dialog's typed values."""
@@ -546,6 +686,8 @@ class ProcessState:
                 key = self._keys.get((ep.kind, ep.base_url))
         else:
             key = validate_key(api_key)
+            with self._lock:
+                self._credentials.add(key)
         return _endpoint(typed, key)
 
 

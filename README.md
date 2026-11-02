@@ -7,22 +7,32 @@ You choose a model backend (LM Studio, OpenRouter, or any OpenAI-compatible serv
 llama-server), type an optional system prompt and an input, and watch the reasoning and the answer
 stream back, followed by token usage, cost and a clear outcome.
 
-What 0.1.2 does:
+What 0.1.3 does:
 
-- **Each request stands alone.** There is no chat history; prompts, inputs and outputs are not saved.
+- **Six tabs, one function each.** **Chat** sends a request; **Documents** previews a text file;
+  **MCP tools** calls a tool on a local MCP server; **Contracts** saves and tests output contracts;
+  **Checked request** sends a request and checks the answer against a contract; **History** shows
+  saved runs. Model settings and MCP servers are dialogs in the header, shared by every tab.
+- **Contracts and checks.** A contract says what an answer should look like: text or JSON, content
+  checks, and optionally a JSON Schema. Checks are deterministic and keep every number exact.
+- **Checked requests and repair.** A failed answer can be sent back to the model with the checks'
+  findings, as the next attempt of the same run. You see exactly what will be sent first.
+- **Stop works before the first token.** The server ends a request at any stage, within about a
+  second, and reports whether the request may have reached the backend.
+- **Run history, off by default.** When you turn **Save runs** on, each run is written to a folder in
+  the workspace, with the credentials AgentWiz has held replaced by `***`.
+- **Copy replaces Insert.** Every output has a **Copy** button. Nothing is inserted into a request for
+  you; the clipboard is the only way between tabs.
 - **Task settings belong to the request.** Reasoning level, temperature, max tokens and eight
-  advanced sampling settings are set in the request panel, and one set can be saved per workspace.
-- **Attachments.** `.txt`, `.md`, `.csv` and `.json` files are previewed and inserted into the input
-  or system prompt, with a line saying where the text came from.
-- **MCP tools.** AgentWiz calls tools on MCP servers you run locally, shows the result, and inserts
-  it only when you ask. The model never decides when a tool runs.
+  advanced sampling settings are set in each request panel, and one set can be saved per workspace.
 - **Model settings can be saved as named profiles** in a workspace folder. Profiles, the saved task
-  settings and the list of MCP servers are saved; nothing else is.
-- **Settings are shared by all tabs of one AgentWiz process.** If another tab changes them, a tab
-  that is still showing the old settings is asked to check them before sending, so a request never
-  goes to a backend the tab is not showing.
+  settings, the list of MCP servers and the contracts are saved; nothing else is, unless you turn on
+  run history.
+- **Settings are shared by all tabs of one AgentWiz process.** If another browser tab changes them,
+  a page that is still showing the old settings is asked to check them before sending, so a request
+  never goes to a backend the page is not showing.
 - **API keys and MCP tokens stay in memory.** They are never shown again, never written to disk
-  (profiles included) and are lost when AgentWiz stops.
+  (profiles and saved runs included) and are lost when AgentWiz stops.
 
 ## Install
 
@@ -34,7 +44,8 @@ curl -fsSL https://github.com/alexchwong/AgentWiz/releases/latest/download/insta
 
 The script creates `.venv` in the current directory, checks the newest release wheel against the
 sha256 GitHub publishes, installs it, and prints how to launch. Pin a release with
-`… | bash -s -- --version 0.1.2`; download the script first if you want to read it before running it.
+`… | bash -s -- --version 0.1.3`; download the script first if you want to read it before running it.
+Add `--with-checks` (`… | bash -s -- --with-checks`) to install the optional JSON Schema checks.
 
 Working from a clone? See DEVEL.md for the developer setup.
 
@@ -44,12 +55,20 @@ then run:
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install ./agentwiz-0.1.2-py3-none-any.whl
+python -m pip install ./agentwiz-0.1.3-py3-none-any.whl
 ```
 
 For checksum verification, use `python -m pip install` with the wheel URL and `#sha256=…` fragment
-from the release notes instead of the local filename. Both methods also install modelSpell 0.2.1,
+from the release notes instead of the local filename. Both methods also install modelSpell 0.3.0,
 pinned by URL and checksum.
+
+**JSON Schema checks are optional.** Contracts with a `schema` need the extra
+`AgentWiz[checks]` (it installs `jsonschema` 4.26 or later, below 5): add `--with-checks` to
+`install.sh`, or run `python -m pip install './agentwiz-0.1.3-py3-none-any.whl[checks]'`. Without it
+everything else works; a contract with a schema cannot be saved, and a schema in a contract file
+is reported as not run, so the answer never passes on it (see **Contracts**). The extra brings
+`rpds-py`, a compiled package; a platform without a published wheel needs a Rust toolchain to
+install it.
 
 ## Launch
 
@@ -92,9 +111,43 @@ starting with a letter or digit.
   be visible from another machine. Under WSL2, workspaces on `/mnt/c` (the Windows drive) have not
   been tested; prefer a folder in WSL2's own filesystem, such as `~/agentwiz`.
 
+## The workbench
+
+The page is a row of tabs, one per function. Each works without visiting any other.
+
+| Tab | Address | What it does |
+| --- | --- | --- |
+| **Chat** | `#chat` | Send a system prompt and an input to the model; reasoning and answer stream in. |
+| **Documents** | `#documents` | Read a `.txt`, `.md`, `.csv` or `.json` file and preview it; copy it. |
+| **MCP tools** | `#mcp-tools` | Call a tool on a local MCP server and copy the result. |
+| **Contracts** | `#contracts` | Save text or JSON contracts; check pasted text against one, with no model. |
+| **Checked request** | `#checked-request` | Send a request, check the answer against a contract, preview and send a repair. |
+| **History** | `#history` | Open saved runs read-only; copy any part; delete them. |
+
+- **The address holds the tab.** Open `http://127.0.0.1:<port>/?t=<token>#contracts` and a reload
+  stays there. An unknown fragment selects Chat. The arrow keys move between tabs; Home and End go
+  to the first and last.
+- **Shared configuration lives in the header.** **Model settings** (with profiles) and **MCP
+  servers** are dialogs; so is the **Save runs** switch. Contracts, once saved, are shared by name.
+- **One request per tab.** Chat and Checked request can each have a model request running at once,
+  MCP tools one tool call, Documents one upload. AgentWiz as a whole still runs at most 8 model
+  requests and 8 tool operations.
+- **Hidden tabs keep running.** Switching tabs hides a panel without stopping what it does; a tab
+  with work in progress shows a marker, and the result is there when you come back.
+- **Ctrl/Cmd+Enter** acts on the visible tab: Send on Chat and Checked request, Run on MCP tools,
+  Check on Contracts.
+- **Copy.** Every output panel has a **Copy** button. For documents and tool results it copies the
+  preview exactly, provenance line included, so a pasted result still says where it came from. If
+  the browser refuses clipboard access, the text is selected and the page says to press Ctrl+C
+  (Cmd+C on a Mac).
+- **Inputs are not kept across a reload.** What you typed in a tab is lost when the page reloads.
+- **A tab that is out of date.** If settings, task settings, the MCP server list, a contract or the
+  Save runs switch were changed elsewhere, the tab that tried to use them reloads, keeps what you
+  typed, says so, and sends nothing. Send again.
+
 ## Settings
 
-Open **Model settings** to choose where requests go:
+Open **Model settings** in the header to choose where requests go:
 
 | Setting | Notes |
 | --- | --- |
@@ -104,7 +157,7 @@ Open **Model settings** to choose where requests go:
 | Model ID | Type it, or use **Load models**. |
 | Provider | OpenRouter only. **Load providers** lists the model's providers; choosing one pins the request to it with no fallback. |
 
-Reasoning and max tokens moved to the request panel in 0.1.2 (see **Task settings**).
+Reasoning and max tokens are set in each request panel (see **Task settings**).
 
 **Apply** uses the dialog's settings for this AgentWiz process.
 
@@ -177,8 +230,8 @@ The request panel, under the input, holds the settings of the request itself:
   penalty, seed, and stop sequences (one per line). Its heading counts the fields set, for example
   `Advanced (2 set)`, and says how many of them are not sent.
 
-A blank field uses the backend's default. Each request sends the panel as it is; two tabs can send
-different settings at the same time.
+A blank field uses the backend's default. Each request sends the panel as it is. Chat and Checked
+request each have their own panel, so they can send different settings at the same time.
 
 **Which settings are sent.** AgentWiz sends a setting only on a route that takes it:
 
@@ -206,33 +259,33 @@ that each backend accepts these settings, not that every model honours them.
   such a model, leaves reasoning out of the request. If that lookup fails, the request is sent as
   before and the result or error says the lookup did not apply.
 
-**Save task settings** stores the panel in the workspace (`task_settings.json`); new pages and
-restarts start from it. `(modified)` beside the heading means the panel differs from the saved set.
-**Reset** clears the panel without saving. If another tab saved in the meantime, the save is refused
+**Save task settings** stores the panel in the workspace (`task_settings.json`), replacing the one
+saved set; new pages and restarts start from it, and each panel starts from it. `(modified)` beside the heading means the panel differs from the saved set.
+**Reset** clears the panel without saving. If another page saved in the meantime, the save is refused
 and your values are kept, so you can save again to replace them. Sending never uses the saved set:
 it sends what the panel shows.
 
 ## Attachments
 
-**Attach file…** beside the input reads `.txt`, `.md`, `.csv` and `.json` files, chosen by the
+**Attach file…** on the **Documents** tab reads `.txt`, `.md`, `.csv` and `.json` files, chosen by the
 extension in any letter case. Files must be UTF-8 (with or without a byte-order mark) or UTF-16 with
 a byte-order mark; anything else, including Latin-1 and UTF-32, is refused with a message asking for
-a UTF-8 copy. Line endings become `\n`. The file is inserted as it is: CSV is not turned into a table
+a UTF-8 copy. Line endings become `\n`. The file is kept as it is: CSV is not turned into a table
 and JSON is not reformatted.
 
-The preview shows exactly what will be inserted: a provenance line such as `[file "report.md"]`,
-then the file's text. Beside it are its characters, an estimated token count (characters ÷ 4; compared
-with the model's context length when **Load models** reported one), and its size in a request.
-**Insert into Input** or **Insert into System prompt** appends it to that field, after a blank line
-if the field is not empty. Nothing is sent until you press **Send**.
+The preview shows exactly what **Copy** will put on the clipboard: a provenance line such as
+`[file "report.md"]`, then the file's text. Beside it are its characters, an estimated token count
+(characters ÷ 4; compared with the model's context length when **Load models** reported one), and its
+size in a request. **Discard** clears the preview. Paste the text into a request yourself; nothing is
+sent until you press **Send**.
 
 - Uploads are limited to 50 MiB and requests to 32 MiB. A file whose text is larger than a request
-  may be is still shown and can be inserted, with a note that it cannot be sent as it is: insert a
+  may be is still shown and can be copied, with a note that it cannot be sent as it is: copy a
   smaller part of the file instead.
 - Nothing uploaded is stored: AgentWiz reads the file in memory, and the file name is used only for
   display and the provenance line.
-- The **Insertions** list under the input records each insertion (its provenance line, target and
-  size) until the page is reloaded. **Clear list** empties it.
+- Earlier versions had **Insert into Input**, **Insert into System prompt** and an **Insertions**
+  list. They are gone; copy and paste instead.
 - PDF and Word files need docSpell, which arrives in a later release.
 
 ## MCP tools
@@ -240,13 +293,13 @@ if the field is not empty. Nothing is sent until you press **Send**.
 The Model Context Protocol (MCP) lets a program offer **tools**, such as a web search, to AI
 applications. AgentWiz connects to MCP servers that you run on your own machine and reach over HTTP
 (MCP's Streamable HTTP transport), lists their tools, and calls the one you choose with the arguments
-you give. The result is shown; you decide whether to insert it, and nothing is sent to the model
-until you insert it and press **Send**.
+you give. The result is shown on the **MCP tools** tab; you decide whether to copy it, and nothing is
+sent to the model until you paste it into a request and press **Send**.
 
 - **Both protocol eras.** AgentWiz speaks MCP 2026-07-28 and the earlier handshake revisions
   (2025-03-26 to 2025-11-25), and detects which one each server uses. The era and version appear
   after **Load tools**.
-- **Servers…** opens the shared server list (`./mcp_servers/servers.json`, or `--mcp-servers-dir`),
+- **MCP servers** in the header opens the shared server list (`./mcp_servers/servers.json`, or `--mcp-servers-dir`),
   used by every workspace. Each server has a name, a URL, an idle timeout, a call deadline and a
   discovery deadline, and optionally a token. URLs must not contain a user name, password, query or
   fragment. A **token** is either typed (held in memory, bound to the server's URL, never saved) or
@@ -264,12 +317,13 @@ until you insert it and press **Send**.
   notice. Whether the tool actually stops is up to the server.
 - At most 8 tool operations run at once, stopped ones included until they finish; further ones are
   refused, not queued. One tool call runs per page at a time; a model request can run alongside it.
-- Results and their sizes are previewed like attachments, with a provenance line such as
+- Results and their sizes are previewed like documents, with a provenance line such as
   `[tool web.search_web arguments={"query":"lighthouse"}]`. When a result has both text and structured
-  content, **Insert structured content instead** switches the preview. Images and other items are
-  listed, not inserted.
-- Tool results and attachments may contain instructions aimed at the model. AgentWiz shows them
-  before insertion and never sends them by itself; it does not sanitise them.
+  content, **Copy structured content** copies the structured part instead of the text preview. The
+  provenance line is copied with the text. Images and other items are listed, not copied.
+- Tool results and documents may contain instructions aimed at the model. AgentWiz shows them
+  and never sends them by itself; they reach a model only if you paste them into a request. It does
+  not sanitise them.
 
 ### Example: web search with web-retrieval-mcp
 
@@ -287,18 +341,196 @@ any Streamable HTTP MCP server is added the same way, and AgentWiz needs none of
    listening on this machine only.
 3. Check with `docker compose ps` that both services are up. The MCP endpoint is
    `http://localhost:8765/mcp`.
-4. In AgentWiz open **Tools**, press **Servers…**, then **Add**: name `web`, URL
+4. In AgentWiz press **MCP servers** in the header, then **Add**: name `web`, URL
    `http://127.0.0.1:8765/mcp`, no token (the server listens on this machine only and has none).
    Press **Save**.
-5. Choose `web` and press **Load tools**: `search_web` and `read_url` appear, with the era. An image
+5. On the **MCP tools** tab choose `web` and press **Load tools**: `search_web` and `read_url` appear, with the era. An image
    built before FastMCP 4 shows 2025-11-25; a fresh build shows 2026-07-28. Both work.
-6. Choose `search_web`, type a query, press **Run**. Read the passages, press **Insert into Input**,
-   add a question, and press **Send**.
+6. Choose `search_web`, type a query, press **Run**. Read the passages, press **Copy**, paste them
+   into the input of **Chat**, add a question, and press **Send**.
 7. Try `read_url` on one of the cited URLs, and press **Stop** while it runs.
 8. Afterwards: `docker compose down`.
 
 Notes: web-retrieval-mcp fetches the open web from the machine it runs on; its `settings.toml` tunes
 how much it returns; under WSL2, use the address where Docker publishes port 8765.
+
+## Contracts
+
+A contract says what an answer should look like. Checks compare an answer with it deterministically
+and report every problem with its location, in words both you and a model can act on. They check
+format, structure and stated values; they cannot judge whether an answer is right.
+
+A contract is a JSON object. The **Contracts** tab edits it as JSON text and saves it as
+`<workspace>/contracts/<name>.json`. You can also edit those files with any editor: AgentWiz notices
+changes, and a file you repair is usable again without a restart. Names follow the profile-name rule.
+
+```json
+{
+  "format_version": 1,
+  "format": "json",
+  "strict": false,
+  "description": "Fields pulled from a report",
+  "schema": {"type": "object", "required": ["id", "ratio"],
+             "properties": {"id": {"type": "integer"}, "ratio": {"type": "number", "maximum": 1}}},
+  "checks": [
+    {"type": "contains", "value": "\"id\""},
+    {"type": "json_equals", "value": {"id": 9007199254740993, "ratio": 0.10000000000000000001}}
+  ]
+}
+```
+
+| Field | Rule |
+| --- | --- |
+| `format_version` | 1. The editor may leave it out; the server writes it. A greater number means a newer file, which AgentWiz will not use or overwrite. |
+| `format` | `"text"` or `"json"`. Required. |
+| `strict` | `true` or `false` (default `false`). JSON contracts only; see below. |
+| `description` | Shown in lists; never checked. |
+| `schema` | `null`, or a JSON Schema (Draft 2020-12). JSON contracts only. |
+| `checks` | A list of checks. An unknown `type` or key is refused, because a mistyped key would otherwise do nothing. |
+
+Unknown top-level fields are kept when AgentWiz rewrites the file, and a save names them, so a
+mistyped field is visible.
+
+**Reading an answer.** Reasoning is never checked, only the answer text. A text contract checks the
+whole text. A JSON contract first parses the answer. If it contains exactly one fenced code block
+(three or more backticks or tildes, as in CommonMark), that block is parsed; with `strict` the whole
+answer, trimmed, is parsed and a fence is a parse failure. Two or more fenced blocks fail the parse,
+located at the second. The other checks run on the whole answer text, not on the extracted block.
+
+| Check | Keys | Passes when |
+| --- | --- | --- |
+| `exact` | `value` | the answer equals it, after normalising line endings and trimming both |
+| `contains` / `not_contains` | `value` (not empty) | the answer does / does not contain it, case-sensitive |
+| `regex` | `pattern` | Python's `re.search` finds it, unanchored; flags only inline, such as `(?i)` |
+| `length` | `min`, `max` | the trimmed answer has that many Unicode code points; at least one bound set |
+| `json_equals` | `value` | the parsed JSON equals it: objects ignore key order, arrays do not, `1` equals `1.0`, `true` never equals `1` (JSON contracts only) |
+
+**Numbers are exact.** Integers and decimals are kept digit for digit and compared by value; no
+number is ever converted to a float. `9007199254740993` and `9007199254740992` are different, and
+so are `0.10000000000000000001` and `0.1`. The page never parses a contract's numbers: the contract
+travels as text. The limits are integers of at most 4,300 digits and a 2,100-digit decimal
+precision. Beyond them a check reports **not run**, never an approximation.
+
+**JSON Schema** needs the `checks` extra (see **Install**). It is Draft 2020-12 only, and:
+
+- References (`$ref`, `$dynamicRef`) must be local, starting with `#`; nothing is ever fetched.
+- Every `$schema` in the schema must name Draft 2020-12; a subschema declaring another draft is refused.
+- `format` is an annotation and is not asserted. `pattern` uses Python's regular expressions, which
+  differ from the ECMA-262 dialect JSON Schema specifies.
+- `1` and `1.0` are treated alike (`"type": "integer"` accepts `1.0`), as JSON Schema specifies.
+- A reference to a local target that does not exist is not refused when you save; it makes the
+  result `contract_error` when an answer is checked.
+- Without the extra, a contract with a schema cannot be saved. One already in a file still loads and
+  is usable, but its schema check is **not run**, so the result is `incomplete`, or `fail` if
+  something else failed. It never passes.
+
+**Results.** Each check gives `pass`, `fail` or `not_run`. The overall result:
+
+| Overall | Meaning |
+| --- | --- |
+| `pass` | Every check ran and passed. |
+| `fail` | At least one check failed. |
+| `incomplete` | Nothing failed, but at least one check could not run: the schema extra is missing, a number was too large to check exactly, or the answer could not be parsed. |
+| `contract_error` | The contract itself could not be applied, for example a reference that does not resolve. This is never the model's fault, and Repair is not offered. |
+
+Issues are listed by location (`answer`, then `line 3, column 7`, then `$.items[2].name`). The first
+20 are shown with the total count; the repair message lists the same 20.
+
+**Check text.** The Contracts tab can check pasted text against the contract in its editor, saved
+or not, with no model involved. Use it to try a contract on an answer you already have. For example,
+with the contract above, `{"id": 9007199254740993, "ratio": 1.5}` fails with an issue at `$.ratio`.
+
+**Damaged contracts.** A file that cannot be read, is not valid, or is from a newer AgentWiz is
+listed with its problem. You can open it, read its text and delete it, but not select it for a
+request, check against it, or save over it from the page. Repair it with an editor; AgentWiz picks
+the change up.
+
+A regular expression in a contract is yours and runs on model answers. A pathological one can take a
+long time on a long answer, holding that request.
+
+## Checked requests and repair
+
+The **Checked request** tab is Chat with a contract. Choose a contract (only usable ones are listed;
+Send stays disabled, with the reason, until one is chosen), type a system prompt and an input, and
+press **Send**. When the answer completes, it is checked, and the tab shows the overall result, each
+check, and the first 20 issues.
+
+- **What is checked.** Only answers whose outcome is *Complete* or *Truncated answer*. Blank,
+  stopped and failed requests are not checked; the tab says why.
+- **Runs and attempts.** Each Send starts a **run**; the first send and each repair are numbered
+  **attempts** of it. The tab lists them with their outcomes and check results.
+- **Repair** is offered when the latest attempt's check *failed*. It is not offered after a pass,
+  an incomplete or `contract_error` result (neither is the model's fault), a blank or failed
+  answer (send again, usually with a higher token cap), for an attempt that is not the latest, or
+  once the run has been stopped (send again). The button says which, and an attempt that has dropped
+  out of memory cannot be repaired.
+- **Preview repair** shows exactly what **Send repair** will send: the original messages, the failed
+  answer as an assistant message, then a fixed request listing the problems and asking for the whole
+  corrected output. Only the latest answer and repair message are sent, not earlier failed attempts.
+  The preview and the send cannot differ.
+- **Settings are the captured ones.** A repair uses the model, endpoint, provider pin, task settings
+  and contract copy of the attempt it repairs, not what the screen shows now. Changing the input,
+  profile or contract means starting a new run with **Send**. The API key is looked up again when you
+  send the repair; if you cleared it, the backend's refusal is an ordinary error.
+- **LM Studio with reasoning off** uses LM Studio's native route, which flattens a conversation into
+  one text. Repair still works, but the roles are lost.
+- A repair counts toward the limit of 8 model requests in progress.
+
+## Stop
+
+**Stop** (on Chat, Checked request and MCP tools) asks AgentWiz's server to end the request. For a
+model request this works at any stage: while connecting, while waiting for the first token, or in the
+middle of an answer. The request normally ends within about a second, the outcome is **Stopped**, and
+the page keeps showing the text that had arrived.
+
+- **"The request may have been sent"** means that some of it was written to the connection, so the
+  backend may have seen, and may charge for, the request. "Not sent" means nothing was written.
+- **Stopping is local.** AgentWiz closes its connection. Whether the backend stops generating, and
+  stops charging, is up to the backend.
+- **Two exceptions.** While the host name is being looked up, Stop takes effect when the lookup
+  returns, before anything is sent. And with LM Studio and reasoning off, AgentWiz first asks LM
+  Studio about the model; Stop waits for that lookup (at most 10 seconds).
+- **If Stop arrives just after the answer completes**, the answer is kept, the page says "Stop
+  arrived after the answer finished", and the run takes no repairs (send again).
+- **A request that is stopped, or whose page is closed**, is still recorded, with its partial text.
+
+## Run history
+
+Off by default. The **Save runs** switch in the header turns it on; while it is on, the header says
+"Saving runs". The switch is saved in `workspace.json`, survives a restart, and cannot be turned on in
+a read-only workspace.
+
+- **What is saved.** Prompts, answers, reasoning, check results and settings, as the record of each
+  attempt, so text you paste into a request, including documents and tool results, is saved with it.
+  Keys are never part of a record.
+- **Credentials.** Every API key and MCP token AgentWiz has held during the process (including ones
+  you replaced or cleared, and the `OPENROUTER_API_KEY` and token variables) of at least 8
+  characters is replaced with `***` in the saved files, which then say `"redacted": true`. Shorter
+  credentials cannot be replaced without corrupting ordinary text and are saved as given; while that
+  could happen, the header says so. Secrets you type into a prompt, or a model returns, are not
+  recognised.
+- **When it is read.** A run uses the switch as it was when the run was created, repairs included.
+  Turning it on later does not save a running request; turning it off later does not stop a run that
+  was already being saved. Turning it off never deletes anything.
+- **Where.** `<workspace>/runs/<YYYYMMDD-HHMMSS>-<run id>/` holds `run.json`, written when the run
+  starts, and `request-1.json`, `request-2.json`, … one per attempt, each written once after the
+  attempt ends and never rewritten. Folders are private to you (mode 0700, files 0600). The
+  attempt's save status is shown: saved (with the file), or failed with the reason. A failed write
+  is reported, not retried.
+- **The History tab** lists the newest 200 saved runs (and says "200 of N shown"). Open one to read
+  it, read-only, with a **Copy** button on every message, answer, reasoning, check result and
+  record. A run is never loaded back into another tab.
+- **Delete this run** removes its folder after an inline confirmation. A run with an attempt in
+  progress or a save pending is refused. A deletion that fails part-way leaves the run marked as
+  incompletely deleted; no further attempts are written into it, and you can retry. Deletion never
+  follows a symbolic link.
+- **After a lost connection**, a page that did not receive a final result asks the server for the
+  committed outcome; nothing is ever resent. If the connection dies before the request is
+  acknowledged, the page says "Outcome unknown: AgentWiz may have accepted this request" and, with
+  saving on, points you at the History tab.
+- Without saving, the latest 100 finished attempts (256 MiB at most) stay in memory, with
+  summaries of the latest 1,000; older ones cannot be repaired, and eventually their outcomes cannot
+  be retrieved.
 
 ## Outcomes
 
@@ -312,11 +544,12 @@ When a request ends, the status line starts with its outcome:
 | Truncated answer | The answer was cut off by the token limit. |
 | Truncated before any answer | The token limit was reached before any answer; "(token cap reached during reasoning)" is added when there was reasoning. |
 | Error text | The request failed, was refused, or the connection ended before a final result. |
-| Stopped | You pressed Stop. |
+| Stopped | You pressed Stop, or the page was closed. See **Stop**. |
 
 The rest of the line gives the time, transport, finish reason, token counts and cost. A missing
-value is shown as `?`, never as zero. **Result event** shows the final event exactly as received,
-including the task settings sent.
+value is shown as `?`, never as zero. **Final event** shows the final event exactly as received:
+the committed record, with the identity of the run and attempt, the task settings sent and, for a
+stopped request, whether it may have been sent.
 
 ## Backends
 
@@ -359,70 +592,36 @@ printed address instead.
 
 ## Trying it out
 
-A tour of what AgentWiz does, through the page. It is the check of the page itself, which no
-automated test reaches. Use any backend you have. With no model running, a clone of this repository
-has scripted stand-ins: run `python scripts/stub_backend.py`, then in **Model settings** choose
-OpenAI-compatible, base URL `http://127.0.0.1:8099/v1`, model `complete`; and run
-`python scripts/stub_mcp_server.py` for the MCP steps.
+Click **Tutorial** in the header to open an isolated workbench with local scripted services,
+auto-filled inputs and a persistent tips box. No API keys, models or terminal setup are needed.
+The tutorial works in the installed application too.
 
-**Basics (from 0.1.1)**
+Five short feature introductions show how to:
 
-1. **Workspace.** In an empty folder run `agentwiz`. The terminal's third line names the workspace
-   and ends in `(created)`; the fourth names the MCP server folder. Stop with Ctrl-C and start
-   again: no `(created)` this time.
-2. **Send.** In **Model settings**, set the backend and model and press **Apply**. Type an input
-   and press **Send**: the answer streams in and the status line shows the outcome.
-3. **Profiles.** Press **Save as profile…** and name it `a`; change the model, **Apply**, and see
-   `(modified)`; **Save profile** clears it. Save a second profile `b`, switch between them with the
-   **Profile** list, choose **(no profile)**, then delete `b`. The dialog has no reasoning or max
-   tokens rows. A profile file written by 0.1.1 still loads.
-4. **Two tabs.** Change the model in a second tab and **Apply**; **Send** in the first tab is refused
-   with a message to check the settings.
-5. **Damaged file.** Stop AgentWiz. In `workspaces/default/model-profiles/profiles.json`, change a
-   `model` value to `64` (no quotes), and start again. A banner names the file and the problem; the
-   profile controls are disabled, but **Send** still works. Undo the edit and restart.
+- **Chat:** send a message and reuse an answer.
+- **Use a document:** preview an example and copy it into a conversation.
+- **Call a tool:** run a prepared local tool and use its result.
+- **Define a contract:** save reusable response requirements.
+- **Repair a response:** preview and send a follow-up using contract feedback.
 
-**Task settings**
+These are learning workflows, not correctness checks or owner assignments. Move freely with
+Next, Back, Reset step or the feature selector. No acknowledgement or successful outcome is
+required. Regression scenarios and expected pass/fail assertions live in pytest, not this tour.
 
-6. Set temperature and max tokens, open **Advanced**, set top-k, close it and see `Advanced (1 set)`.
-7. With LM Studio, switch reasoning between off and low: top-k is greyed out at low and enabled at
-   off. With `stub_backend.py`, its log shows the fields each request carried.
-8. **Reset** clears the panel. Set values, **Save task settings**, restart AgentWiz: they are restored.
-
-**Attachments**
-
-9. Attach a Markdown file: the preview shows `[file "name.md"]` and the text. **Insert into Input**,
-   then **Send**. The **Insertions** list shows it.
-10. Attach a Latin-1 text file: it is refused with a message asking for UTF-8.
-11. Attach a large text file (over 32 MiB): the preview says it cannot be sent as it is.
-
-**MCP**, with `python scripts/stub_mcp_server.py`
-
-12. Open **Tools**, **Servers…**, **Add** `stub` at `http://127.0.0.1:8098/mcp`, **Save**, then
-    **Load tools**: era 2026-07-28.
-13. Run `echo` and insert the result. Run `slow` and watch the progress. Run `hang` and press
-    **Stop**: the stub logs the disconnect at once, and the page says the connection was closed.
-14. **Numbers through the form.** Choose `numbers`: the form is pre-filled with
-    `9007199254740993` and `0.10000000000000000001`. Run it unchanged: the stub's log shows
-    `{"id":9007199254740993,"ratio":0.10000000000000000001}` exactly, and the result and the
-    insertion preview show both values exactly. Then type `9007199254740995` and
-    `0.30000000000000000004`, run, and check the log and result again.
-15. **Numbers through the editor.** Press **Edit as JSON**, change `id` to `9007199254740997` and
-    `ratio` to `0.12345678901234567890123`, run, and check that the log and result show the same
-    values exactly.
-16. Restart the stub with `--era legacy`, press **Load tools** again (era 2025-11-25), and repeat
-    `hang` and **Stop**: the stub logs a cancellation notice.
-17. Restart the stub with `--token secret`: **Load tools** fails with a credentials error. Type
-    `secret` in the server's token field in **Servers…**, save, and it works.
-
-Optionally, try the web-retrieval-mcp example above.
+Exit returns to your original workspace and removes the sandbox and its services. Normal profiles,
+documents and history remain unchanged. Closing the tab alone does not stop the session immediately:
+abandoned sessions expire after 30 minutes without a page heartbeat (checked every 30 seconds).
+Stopping the original AgentWiz process also closes its tutorial.
 
 ## Limitations
 
-- **Stop and the 8-request limit.** Stop closes the model connection only when more output
-  arrives, which can take a long time before the first token or while a backend sends only
-  keepalive traffic. At most 8 model requests can be in progress, stopped ones included. If all 8
-  stay occupied, new requests are refused; restarting AgentWiz is the remedy.
+- **Stop.** Stop ends a model request within about a second at every stage, except while a host name
+  is being looked up (it takes effect when the lookup returns) and during LM Studio's model lookup
+  for reasoning "off" (at most 10 seconds). Stopping is local: whether the backend stops generating,
+  and charging, is up to it. A text event already being written to the page finishes first. At most
+  8 model requests can be in progress, stopped ones included until they end; further ones are refused.
+- **Stop after the answer.** A Stop that arrives just after the answer completes keeps the answer, but
+  closes the run to repairs; send again.
 - **Backend error details are not shown.** Failures after a request is sent appear as a fixed
   description with the error class, HTTP status and base URL, because backend error text can
   contain your API key in forms AgentWiz cannot reliably remove. MCP servers' error text is shown
@@ -431,35 +630,56 @@ Optionally, try the web-retrieval-mcp example above.
   OpenRouter's provider restriction can refuse requests that would otherwise have succeeded with a
   setting quietly ignored. On LM Studio, seed, stop sequences and the presence and frequency
   penalties are never sent; top-k, min-p and repetition penalty need reasoning off.
-- **Settings and keys.** Model settings are shared by all tabs of one AgentWiz process; only
-  profiles, the saved task settings and the MCP server list survive a restart. Keys and typed MCP
-  tokens are held in memory only and must be re-entered after a restart.
+- **Settings and keys.** Model settings are shared by all pages of one AgentWiz process; only
+  profiles, the saved task settings, the MCP server list, contracts, the Save runs switch and (if on)
+  saved runs survive a restart. Keys and typed MCP tokens are held in memory only and must be
+  re-entered after a restart.
+- **Inputs are not kept.** Each tab's fields are lost when the page reloads.
+- **Checks are syntactic.** They check format, structure and stated values, not whether an answer is
+  right. Regular expressions use Python's dialect, in `regex` checks and in a schema's `pattern`; a
+  pathological expression can take a long time on a long answer.
+- **Number limits.** Exact checks stop at 4,300-digit integers and a 2,100-digit decimal precision;
+  beyond them a check reports not run, never an approximation.
+- **JSON Schema** needs the `checks` extra, which brings the compiled package `rpds-py`.
+- **A contract edited on disk while a request uses it** does not affect that request, which uses the
+  copy taken when it was accepted. A repair uses the contract of the attempt it repairs.
+- **Memory.** At most 100 finished attempts and 256 MiB are held, plus 1,000 summaries. Older
+  attempts cannot be repaired, and eventually their outcomes are no longer retrievable, unless the
+  run was saved.
+- **Redaction** covers only credentials AgentWiz has held, and only those of at least 8 characters.
+  Shorter ones, and secrets typed into prompts or returned by models, are saved as given when
+  history is on.
+- **History** has no search, filters or export, lists the newest 200 runs, and never loads a run back
+  into a tab.
+- **The final event repeats the request's messages**, since it carries the whole record; a prompt near
+  the 32 MiB request limit makes it two to three times that size.
 - **MCP.** Local servers over Streamable HTTP only; tools only (no resources, prompts, sampling,
   elicitation, roots, logging, tasks or subscriptions); no stdio servers; no servers that speak only
   the 2024-11-05 HTTP+SSE transport; no stream resumption; tool results are not checked against the
-  tool's output schema. On a 2026-07-28 server, only tools that the server lists can be called. A
-  tool argument that is required but may be `null` needs the JSON editor. At most 8 tool operations
-  and 4 cancellation or session-ending tasks run at once; a server whose name never resolves holds
-  its slot until the resolver gives up.
+  tool's output schema, nor against a contract. On a 2026-07-28 server, only tools that the server
+  lists can be called. A tool argument that is required but may be `null` needs the JSON editor. At
+  most 8 tool operations and 4 cancellation or session-ending tasks run at once; a server whose name
+  never resolves holds its slot until the resolver gives up.
 - **Unknown tool outcomes.** A lost connection, a server failure, a deadline or Stop after a call
   was sent leaves its outcome unknown; AgentWiz never resends it.
-- **Attachments** are the four text formats, inserted whole; the token count is an estimate.
-  Insertion records live in the page and are lost on reload.
+- **Documents** are the four text formats, kept whole; the token count is an estimate.
 - **Workspaces.** One AgentWiz process per workspace; restart to switch. The default folders are
   relative to where AgentWiz is launched. Shared, network and cloud-synced folders are unsupported
   and not detected.
 - **Damaged or newer local files** make the workspace, its profiles or its task settings read-only
   until AgentWiz restarts. Damaged defaults disable import/export only, and a damaged MCP server list
-  disables MCP; both are detected again as soon as they are repaired. Numbers with more precision
-  than AgentWiz can keep exactly count as damage.
-- **Profile files rewritten by 0.1.2** are read-only to AgentWiz 0.1.1.
+  disables MCP; both are detected again as soon as they are repaired, as are contract files. Numbers
+  with more precision than AgentWiz can keep exactly count as damage in those files.
+- **Profile files rewritten by 0.1.2 or later** are read-only to AgentWiz 0.1.1.
 - **Files.** Files AgentWiz rewrites become readable by their owner only (mode 0600). A crash during
   a write can leave a `.<file>.<random>.tmp` file beside an intact original; after a power cut, the
   most recent change may be lost.
 - **Backends.** OpenAI-compatible servers (including llama-server) have no reasoning control from
   AgentWiz; their reasoning text is still displayed. On LM Studio's native route (reasoning "off"),
-  truncation is modelSpell's estimate.
-- **The page's JavaScript** is not covered by automated tests; the tour above is its check.
+  truncation is modelSpell's estimate. Stop, contracts and repair on LM Studio and llama-server are
+  checked by the automated tests only, not against a live server, until 0.2.0.
+- **The page** is checked in a headless Chromium by the developer tests; other browsers are covered
+  only by the tour above.
 - **WSL2** is not checked by the automated tests.
 
 ## License

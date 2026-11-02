@@ -7,7 +7,9 @@ as null, and their locations are listed under the reserved top-level key `nonfin
 
 AgentWiz's own files (workspace files and the lock file) go through `encode_file` and
 `decode_file`. The reader refuses anything AgentWiz could not write back unchanged, because files
-are rewritten whole. Standard library only; knows nothing about HTTP.
+are rewritten whole. Contract files, which hold exact numbers, go through `encode_file_exact` and
+`decode_file_exact`; run files go through `encode_record_file` (techspec 0.1.3, 7.9). Standard library
+only; knows nothing about HTTP.
 """
 from __future__ import annotations
 
@@ -136,33 +138,112 @@ INT_DIGITS_LIMIT = 4300
 _JSON_NUMBER = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
 
 
+class JSONSyntax(ValueError):
+    """decode_exact: the text is not valid JSON. `line` and `column` locate the first error (1-based)."""
+
+    def __init__(self, line: int, column: int):
+        super().__init__(f"not valid JSON (line {line}, column {column})")
+        self.line, self.column = line, column
+
+
+class ExactLimit(ValueError):
+    """decode_exact: a number cannot be represented exactly (an integer of more than 4,300 digits, or a
+    decimal whose exponent `Decimal` cannot construct). The message names the rule, never the text.
+    `line` and `column` locate the first such number (1-based) when decode_exact could find it again in
+    the text; the parser itself does not report where a number was."""
+
+    def __init__(self, message: str, line: int | None = None, column: int | None = None):
+        super().__init__(message)
+        self.line, self.column = line, column
+
+
 def _exact_int(text: str) -> int:
     # Counted here, not left to the interpreter's conversion limit, which Python 3.10.0-3.10.6 lack
     # and PYTHONINTMAXSTRDIGITS can lift (D49).
     if len(text.lstrip("-")) > INT_DIGITS_LIMIT:
-        raise _Refused(f"an integer has more than {INT_DIGITS_LIMIT:,} digits")
+        raise ExactLimit(f"an integer has more than {INT_DIGITS_LIMIT:,} digits")
     return int(text)
+
+
+def _exact_decimal(text: str) -> Decimal:
+    # Decimal("1e9223372036854775808") raises a bare InvalidOperation, which is not a ValueError.
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        raise ExactLimit("a number's exponent is too large to be represented exactly") from None
 
 
 def _no_constants_exact(name: str) -> Any:
     raise _Refused("NaN and Infinity are not allowed")
 
 
+_STRING_OR_NUMBER = re.compile(r'"(?:[^"\\]|\\.)*"|-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?', re.DOTALL)
+
+
+def _locate_limit(text: str) -> tuple[int, int] | None:
+    """Where the first number breaking a representation limit starts: (line, column), 1-based, counted
+    as json.JSONDecodeError counts. Strings are skipped, so digits inside them are never mistaken for
+    numbers. Only called after decode_exact has already refused the text."""
+    for found in _STRING_OR_NUMBER.finditer(text):
+        token = found.group()
+        if token.startswith('"'):
+            continue
+        digits = re.match(r"-?([0-9]+)\Z", token)
+        if digits:
+            broken = len(digits.group(1)) > INT_DIGITS_LIMIT
+        else:
+            try:
+                Decimal(token)
+                broken = False
+            except InvalidOperation:
+                broken = True
+        if broken:
+            start = found.start()
+            line = text.count("\n", 0, start) + 1
+            return line, start - (text.rfind("\n", 0, start) + 1) + 1
+    return None
+
+
 def decode_exact(text: str) -> Any:
     """Parse JSON text keeping every number exactly: fractions and exponents become Decimal, integers
-    int (at most 4,300 digits). Refuses NaN, Infinity and repeated keys. Raises ValueError naming the
-    rule broken, never the offending text. No float is ever produced."""
+    int (at most 4,300 digits). Refuses NaN, Infinity and repeated keys.
+
+    Raises only ValueError subclasses (techspec 0.1.3, 7.9, R4-31): `JSONSyntax` (with line and column)
+    for malformed JSON, `ExactLimit` for a number it cannot represent exactly, and a plain ValueError
+    naming the rule for everything else. Messages name the rule broken, never the offending text. No
+    float is ever produced."""
     if not isinstance(text, str):
         raise ValueError("JSON text must be a string")
     try:
         return json.loads(text, object_pairs_hook=_no_duplicates, parse_constant=_no_constants_exact,
-                          parse_float=Decimal, parse_int=_exact_int)
+                          parse_float=_exact_decimal, parse_int=_exact_int)
     except _Refused as exc:
         raise ValueError(str(exc)) from None
+    except ExactLimit as exc:
+        where = _locate_limit(text) if exc.line is None else None
+        if where is not None:
+            exc.line, exc.column = where
+        raise
     except json.JSONDecodeError as exc:
-        raise ValueError(f"not valid JSON (line {exc.lineno}, column {exc.colno})") from None
+        raise JSONSyntax(exc.lineno, exc.colno) from None
     except (ValueError, RecursionError):
         raise ValueError("a value cannot be read") from None
+
+
+def decode_file_exact(data: bytes) -> dict:
+    """Read a contract file: UTF-8 (a leading byte-order mark is allowed), then `decode_exact`; the top
+    level must be an object. Raises ValueError (or its subclasses `JSONSyntax` and `ExactLimit`) naming
+    the rule and, where known, the location; never the offending text."""
+    if data.startswith(codecs.BOM_UTF8):
+        data = data[len(codecs.BOM_UTF8):]
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError("the file is not UTF-8 text") from None
+    value = decode_exact(text)
+    if not isinstance(value, dict):
+        raise ValueError("the top level must be a JSON object")
+    return value
 
 
 def _number_text(value: Any) -> str:
@@ -181,7 +262,8 @@ def _number_text(value: Any) -> str:
     return text
 
 
-def _write_exact(value: Any, out: list[str]) -> None:
+def _write_exact(value: Any, out: list[str], indent: int | None, level: int) -> None:
+    """Append `value` as JSON. With `indent` set, the layout is json.dumps(..., indent=indent)'s."""
     if value is None:
         out.append("null")
     elif value is True:
@@ -193,32 +275,72 @@ def _write_exact(value: Any, out: list[str]) -> None:
     elif isinstance(value, (int, float, Decimal)):
         out.append(_number_text(value))
     elif isinstance(value, Mapping):
-        out.append("{")
+        if not value:
+            out.append("{}")
+            return
+        if indent is None:
+            separator, colon, opener, closer = ",", ":", "{", "}"
+        else:
+            inner = "\n" + " " * (indent * (level + 1))
+            separator, colon = "," + inner, ": "
+            opener, closer = "{" + inner, "\n" + " " * (indent * level) + "}"
+        out.append(opener)
         first = True
         for k, v in value.items():
             if not isinstance(k, str):
                 raise TypeError(f"mapping keys must be str, got {type(k).__name__}")
             if not first:
-                out.append(",")
+                out.append(separator)
             first = False
             out.append(json.dumps(k, ensure_ascii=True))
-            out.append(":")
-            _write_exact(v, out)
-        out.append("}")
+            out.append(colon)
+            _write_exact(v, out, indent, level + 1)
+        out.append(closer)
     elif isinstance(value, (list, tuple)):
-        out.append("[")
+        if not value:
+            out.append("[]")
+            return
+        if indent is None:
+            separator, opener, closer = ",", "[", "]"
+        else:
+            inner = "\n" + " " * (indent * (level + 1))
+            separator, opener, closer = "," + inner, "[" + inner, "\n" + " " * (indent * level) + "]"
+        out.append(opener)
         for i, v in enumerate(value):
             if i:
-                out.append(",")
-            _write_exact(v, out)
-        out.append("]")
+                out.append(separator)
+            _write_exact(v, out, indent, level + 1)
+        out.append(closer)
     else:
         raise TypeError(f"cannot encode {type(value).__name__} as JSON")
 
 
-def encode_exact(value: Any) -> str:
-    """Compact, ASCII-only JSON text; Decimal written as str(value), keeping its digits and exponent.
-    Raises ValueError for a non-finite number, TypeError for an unsupported type."""
+def encode_exact(value: Any, indent: int | None = None) -> str:
+    """ASCII-only JSON text; Decimal written as str(value), keeping its digits and exponent. Compact by
+    default; with `indent`, the layout of json.dumps(..., indent=indent). Raises ValueError for a
+    non-finite number, TypeError for an unsupported type."""
     out: list[str] = []
-    _write_exact(value, out)
+    _write_exact(value, out, indent, 0)
     return "".join(out)
+
+
+def encode_file_exact(payload: Mapping[str, Any]) -> bytes:
+    """A contract file: encode_exact(payload, indent=2) and a newline, ASCII-only. Refuses non-finite
+    numbers (ValueError)."""
+    if not isinstance(payload, Mapping):
+        raise TypeError("payload must be a mapping")
+    return (encode_exact(payload, indent=2) + "\n").encode("ascii")
+
+
+def encode_record_file(payload: Mapping[str, Any]) -> bytes:
+    """A run file: indented, ASCII-only JSON with R0-12's rule (non-finite floats written as null, their
+    locations listed under `nonfinite_replaced`). Refuses Decimal (TypeError): records hold none."""
+    if not isinstance(payload, Mapping):
+        raise TypeError("payload must be a mapping")
+    if RESERVED in payload:
+        raise TypeError(f"payload must not contain the reserved key {RESERVED!r}")
+    found: list[str] = []
+    out = _clean(payload, "", found)
+    if found:
+        out[RESERVED] = found
+    return (json.dumps(out, allow_nan=False, ensure_ascii=True, indent=2) + "\n").encode("ascii")

@@ -49,6 +49,8 @@ class RequestSnapshot:
     model: str
     kind: str
     provider: str               # the profile's OpenRouter provider pin; "" means none
+    profile_name: str | None = None   # the active profile, for the attempt record (techspec 0.1.3, 8.2)
+    profile_modified: bool = False    # the settings differ from the active profile's saved ones
 
 
 def settings_from_body(current: ModelSettings, body: Mapping) -> ModelSettings:
@@ -153,11 +155,13 @@ def lmstudio_model_info(endpoint: Endpoint, model_id: str) -> tuple[ModelInfo | 
 
 def call_model(snapshot: RequestSnapshot, messages: list[dict], arguments: Mapping[str, Any], *,
                model_info: ModelInfo | None = None,
-               on_text: Callable[[str], None], on_reasoning: Callable[[str], None]) -> Result:
-    """One modelSpell call. No retries; exceptions propagate unchanged."""
+               on_text: Callable[[str], None], on_reasoning: Callable[[str], None],
+               cancel: modelspell.CancelHandle | None = None) -> Result:
+    """One modelSpell call. No retries; exceptions propagate unchanged. `cancel` is the run's
+    CancelHandle (techspec 0.1.3, 8.3); cancelling it ends the call at any stage."""
     model = model_info if model_info is not None else snapshot.model
     return modelspell.complete(snapshot.endpoint, model, messages,
-                               on_text=on_text, on_reasoning=on_reasoning, **arguments)
+                               on_text=on_text, on_reasoning=on_reasoning, cancel=cancel, **arguments)
 
 
 def classify_outcome(result: Result) -> str:

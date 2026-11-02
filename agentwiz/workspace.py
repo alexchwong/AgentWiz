@@ -112,13 +112,13 @@ def _check_workspace(obj: dict) -> Problem | None:
 
 
 # --- writing ----------------------------------------------------------------------------------
-def write_atomic(folder: Path, file: str, payload: Mapping[str, Any]) -> None:
-    """Write `payload` to folder/file through a temporary file, fsync and os.replace (7.5.4).
+def write_atomic_bytes(folder: Path, file: str, data: bytes) -> None:
+    """Write `data` to folder/file through a temporary file, fsync and os.replace (7.5.4; techspec
+    0.1.3, 7.9). The file has mode 0600 (mkstemp's).
 
     On OSError the temporary file is removed (best effort), the target is unchanged, and the error
     propagates.
     """
-    data = encode_file(payload)
     fd, tmp = tempfile.mkstemp(dir=folder, prefix="." + file + ".", suffix=".tmp")
     try:
         try:
@@ -135,6 +135,11 @@ def write_atomic(folder: Path, file: str, payload: Mapping[str, Any]) -> None:
         except OSError:
             pass
         raise
+
+
+def write_atomic(folder: Path, file: str, payload: Mapping[str, Any]) -> None:
+    """write_atomic_bytes of encode_file(payload): AgentWiz's own JSON files."""
+    write_atomic_bytes(folder, file, encode_file(payload))
 
 
 # --- the workspace ----------------------------------------------------------------------------

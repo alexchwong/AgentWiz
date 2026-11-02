@@ -1,4 +1,20 @@
 # NEWS
+## 0.1.3
+- Tutorial mode prepares an isolated workbench, fills examples and offers optional learning examples without manual service setup.
+- The page is now tabs: Chat, Documents, MCP tools, Contracts, Checked request and History.
+- Copy buttons replace Insert; copied document text and tool results keep their provenance line.
+- Contracts tab: save text or JSON contracts in the workspace and check pasted text against them.
+- JSON Schema checks need the optional extra AgentWiz[checks]; without it they report not run, never pass.
+- Numbers in contracts and checks stay exact; nothing is rounded or converted to a float.
+- Checked request tab: check a model's answer against a contract, then preview and send a repair.
+- Stop is handled by the server and ends a request at any stage, even before the first token.
+- A stopped request reports whether it may have reached the backend.
+- Each request is a run of numbered attempts; a repair is the next attempt of the same run.
+- Save runs, off by default, writes each run to a workspace folder, redacting credentials AgentWiz has held.
+- History tab: open saved runs read-only, copy any part, or delete them.
+- After a lost connection the page asks the server for the committed outcome; nothing is resent.
+- Requires modelSpell 0.3.0, pinned by URL and sha256.
+
 ## 0.1.2
 - Reasoning, temperature and max tokens moved from model settings to the request panel; each request sends its own.
 - Advanced panel: top-p, top-k, min-p, repetition, presence and frequency penalties, seed and stop sequences.

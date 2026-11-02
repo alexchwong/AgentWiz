@@ -17,6 +17,7 @@ import hmac
 import json
 import secrets
 import sys
+import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -25,11 +26,13 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 import modelspell
-from modelspell import Cancelled, ModelSpellError
+from modelspell import ModelSpellError
 
-from .. import __version__, attachments, insertion, jsonio, mcp_ops, model_call, tool_forms
+from .. import (__version__, attachments, checks, contracts, history, insertion, jsonio, mcp_ops, model_call, model_step,
+                runs, tool_forms)
+from .. import workspace as wsmod
 from ..mcp_client import MCPError
-from ..model_call import SettingsError, build_messages, classify_outcome, describe_error, result_to_dict
+from ..model_call import SettingsError, describe_error
 from ..task_settings import TaskSettingError, parse_task
 from ..state import (DefaultConflict, NoSuchProfile, NoSuchServer, ProcessState, ReadOnly, StaleRevision,
                      WriteFailed)
@@ -119,6 +122,9 @@ class UIServer(ThreadingHTTPServer):
     def __init__(self, port: int = 0, *, workspace: Workspace, profiles_dir: Path, page_timeout: float = 30.0,
                  request_limit: int = 8, mcp_servers_dir: Path | None = None):
         self.token = secrets.token_urlsafe(24)
+        from ..tutorial import Tutorial
+        self.tutorial = Tutorial(self)
+        self.tutorial_session = None
         self.workspace = workspace  # opened and closed by the caller
         self.state = ProcessState(workspace, request_limit, profiles_dir=profiles_dir,
                                   mcp_servers_dir=mcp_servers_dir if mcp_servers_dir is not None
@@ -140,6 +146,10 @@ class UIServer(ThreadingHTTPServer):
         exc = sys.exc_info()[1]
         if exc is not None:
             report_internal("connection", exc)
+
+    def server_close(self) -> None:
+        self.tutorial.close()
+        super().server_close()
 
 
 def _optional_str(body: dict, name: str) -> str:
@@ -256,6 +266,34 @@ class Handler(BaseHTTPRequestHandler):
             self._reply_safely(404, {"error": "no such MCP server", "code": "no_such_server"})
         except mcp_ops.NoSuchOperation:
             self._reply_safely(404, {"error": "no such tool operation", "code": "no_such_operation"})
+        except contracts.NoSuchContract:  # contract names are not echoed
+            self._reply_safely(404, {"error": "no such contract", "code": "no_such_contract"})
+        except contracts.ContractExists:
+            self._reply_safely(409, {"error": "a contract with that name already exists", "code": "exists"})
+        except contracts.ContractUnusable as exc:  # names a file, a code and a rule; never a value
+            self._reply_safely(409, {"error": f"the existing contract has a problem and cannot be replaced: {exc}",
+                                     "code": "contract_unusable", "problem": dataclasses.asdict(exc.problem)})
+        except contracts.ContractInvalid as exc:  # locations and rules, never values
+            first = exc.issues[0] if exc.issues else {"location": "contract", "message": "is not valid"}
+            self._reply_safely(400, {"error": f"ContractError: {first['location']}: {first['message']}",
+                                     "code": "contract_error", "issues": exc.issues, "issue_count": exc.total})
+        except runs.RepairRefused as exc:
+            self._reply_safely(exc.status, {"error": exc.message, "code": exc.code})
+        except runs.NoSuchAttempt:
+            self._reply_safely(404, {"error": "no such attempt", "code": "no_such_attempt"})
+        except runs.NotHeld:
+            self._reply_safely(410, {"error": "This attempt's outcome is no longer held.", "code": "not_held"})
+        except runs.RunActive:
+            self._reply_safely(409, {"error": "This run is still active; try again when it has finished.",
+                                     "code": "run_active"})
+        except history.NoSuchRun:
+            self._reply_safely(404, {"error": "no such run", "code": "no_such_run"})
+        except history.NotDeletable:
+            self._reply_safely(409, {"error": "that run's folder cannot be deleted from here", "code": "not_deletable"})
+        except history.HistoryReadOnly:
+            self._reply_safely(409, {"error": "the workspace is read-only", "code": "read_only"})
+        except history.DeleteFailed as exc:  # AgentWiz's text plus the system's error text
+            self._reply_safely(500, {"error": str(exc), "code": "delete_failed"})
         except NoSuchProfile:  # profile names are not echoed
             self._reply_safely(404, {"error": "no such profile", "code": "no_such_profile"})
         except WriteFailed as exc:  # AgentWiz's text plus an OS strerror
@@ -284,6 +322,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, self.server.index, "text/html; charset=utf-8")
         if path == "/api/state":
             return self._send(200, self._state_body(self.server.state.view()))
+        if path == "/api/tutorial":
+            session = self.server.tutorial_session
+            return self._send(200, session.info() if session else {"active": False})
+        if path.startswith("/api/contracts/"):
+            return self._send(200, self.server.state.get_contract(path[len("/api/contracts/"):]))
+        if path.startswith("/api/attempts/"):
+            return self._attempt_poll(path[len("/api/attempts/"):])
+        if path == "/api/runs":
+            return self._send(200, self.server.state.history.list_runs())
+        if path.startswith("/api/runs/"):
+            return self._send(200, self.server.state.history.read_run(self._run_id(path[len("/api/runs/"):])))
         self._send(404, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
@@ -293,18 +342,26 @@ class Handler(BaseHTTPRequestHandler):
     def _post(self, path: str) -> None:
         if not self._authorised():
             return self._send(403, {"error": "missing or invalid session token"})
-        routes = {"/api/config": self._config, "/api/models": self._models,
+        routes = {"/api/tutorial/start": self._tutorial_start,
+                  "/api/tutorial/step": self._tutorial_step,
+                  "/api/tutorial/exit": self._tutorial_exit,
+                  "/api/config": self._config, "/api/models": self._models,
                   "/api/providers": self._providers, "/api/complete": self._complete,
+                  "/api/complete/stop": self._complete_stop, "/api/repair/preview": self._repair_preview,
+                  "/api/repair": self._repair, "/api/history/switch": self._history_switch,
+                  "/api/runs/delete": self._runs_delete,
                   "/api/profiles/save": self._profile_save, "/api/profiles/select": self._profile_select,
                   "/api/profiles/delete": self._profile_delete,
                   "/api/profiles/update": self._profile_update,
                   "/api/task_settings/save": self._task_save,
+                  "/api/contracts/save": self._contract_save, "/api/contracts/delete": self._contract_delete,
+                  "/api/contracts/check": self._contract_check,
                   "/api/mcp/servers": self._mcp_servers, "/api/mcp/token": self._mcp_token,
                   "/api/mcp/tools": self._mcp_tools, "/api/mcp/call": self._mcp_call,
                   "/api/mcp/cancel": self._mcp_cancel}
         if path == UPLOAD_ROUTE:
             return self._upload()
-        body = self._body(" Insert a smaller part of the file." if path == "/api/complete" else "")
+        body = self._body(" Copy a smaller part of the file." if path == "/api/complete" else "")
         handler = routes.get(path)
         if handler is None:
             return self._send(404, {"error": "not found"})
@@ -314,6 +371,25 @@ class Handler(BaseHTTPRequestHandler):
     def _state_body(view: dict) -> dict:
         return {**view, "agentwiz_version": __version__, "modelspell_version": modelspell.__version__,
                 "limits": {"request_bytes": insertion.REQUEST_LIMIT, "upload_bytes": UPLOAD_LIMIT}}
+
+    def _tutorial_start(self, body: dict) -> None:
+        session = self.server.tutorial_session
+        self._send(200, {"url": self.server.url} if session else self.server.tutorial.start())
+
+    def _tutorial_step(self, body: dict) -> None:
+        session = self.server.tutorial_session
+        if not session:
+            return self._send(409, {"error": "not a tutorial session"})
+        if type(body.get("step")) is not int or not 0 <= body["step"] < 5:
+            raise BodyError("invalid tutorial step")
+        self._send(200, session.prepare(body))
+
+    def _tutorial_exit(self, body: dict) -> None:
+        session = self.server.tutorial_session
+        if not session:
+            raise BodyError("not a tutorial session")
+        self._send(200, {"url": session.parent.url})
+        threading.Thread(target=session.close, daemon=True).start()
 
     def _upload(self) -> None:
         """POST /api/attachments/extract (Section 8.4): the file's bytes; nothing is stored."""
@@ -364,6 +440,44 @@ class Handler(BaseHTTPRequestHandler):
     def _task_save(self, body: dict) -> None:
         revision = _revision(body)
         self._send(200, self._state_body(self.server.state.save_task_settings(body.get("task"), revision)))
+
+    # --- contracts (techspec 0.1.3, 7.8, 13.3) ----------------------------------------------------
+    @staticmethod
+    def _contract_name(body: dict) -> str:
+        name = body.get("name")
+        if not isinstance(name, str):
+            raise BodyError("name must be a string")
+        return name
+
+    def _contract_save(self, body: dict) -> None:
+        name = self._contract_name(body)
+        text = body.get("text")
+        if not isinstance(text, str):
+            raise BodyError("text must be a string")
+        revision = body.get("revision")
+        if revision is not None and (not isinstance(revision, int) or isinstance(revision, bool)):
+            raise BodyError("revision must be an integer, or null to create a contract")
+        view, contract, notes = self.server.state.save_contract(name, text, revision)
+        self._send(200, {**self._state_body(view), "contract": contract, "notes": notes})
+
+    def _contract_delete(self, body: dict) -> None:
+        name = self._contract_name(body)
+        revision = _revision(body)
+        self._send(200, self._state_body(self.server.state.delete_contract(name, revision)))
+
+    def _contract_check(self, body: dict) -> None:
+        """Check pasted text against contract text, saved or not. No revision: nothing shared is used,
+        and no model is called (R4-19)."""
+        contract_text, text = body.get("contract_text"), body.get("text")
+        if not isinstance(contract_text, str):
+            raise BodyError("contract_text must be a string")
+        if not isinstance(text, str):
+            raise BodyError("text must be a string")
+        try:
+            contract = checks.contract_from_text(contract_text)
+        except checks.ContractError as exc:
+            raise contracts.ContractInvalid(exc.issues, exc.total) from None
+        self._send(200, {"check": checks.check_answer(contract, text)})
 
     # --- MCP (Sections 9, 10.7) -------------------------------------------------------------
     def _mcp_servers(self, body: dict) -> None:
@@ -569,81 +683,159 @@ class Handler(BaseHTTPRequestHandler):
             raise BodyError("model must be a string")
         self._send(200, {"providers": self._entries(modelspell.list_providers(endpoint, model or ""))})
 
+
+    # --- model requests (techspec 0.1.3, 5.2, 8.6-8.8, 9.4) ----------------------------------------------
+    def write_event(self, event: dict) -> None:
+        """The one writer of stream events (a test hook, techspec 18.1). Raises OSError (TimeoutError
+        included) when the page cannot be written to; every event is bounded by the page timeout."""
+        self.wfile.write(jsonio.encode_line(event))
+        self.wfile.flush()
+
     def _complete(self, body: dict) -> None:
-        # Section 7.2: every refusal is a real HTTP status, before the backend or the budget is touched.
+        # Every refusal is a real HTTP status, before a run is created or a budget slot is taken (5.2).
+        state = self.server.state
         system, prompt = _optional_str(body, "system"), _optional_str(body, "prompt")
+        source = body.get("source")
+        if source not in ("chat", "checked_request"):
+            raise BodyError('source must be "chat" or "checked_request"')
         revision = _revision(body)
-        snapshot = self.server.state.snapshot(revision)          # 409 on a stale revision
+        contract_ref = None
+        if source == "chat":
+            if "contract" in body:
+                raise BodyError("a Chat request takes no contract")
+        else:
+            ref = body.get("contract")
+            if (not isinstance(ref, dict) or not wsmod.valid_name(ref.get("name"))
+                    or not isinstance(ref.get("revision"), int) or isinstance(ref.get("revision"), bool)):
+                raise BodyError("a Checked request needs contract: {name, revision}")
+            contract_ref = (ref["name"], ref["revision"])
+        snapshot = state.snapshot(revision)                     # 409 on a stale revision
         if snapshot.model.strip() == "":
             raise SettingsError("choose a model in Model settings")
         task = parse_task(body.get("task"))
         arguments = model_call.task_arguments(task, snapshot.kind, snapshot.provider)
-        budget = self.server.state.budget
+        copy_ = None
+        if contract_ref is not None:
+            entry = state.contract_for_request(*contract_ref)   # 404, 409 stale_revision, 409 contract_unusable
+            copy_ = model_step.ContractCopy.of(entry.name, entry.revision, entry.contract)
+        budget = state.budget
         if not budget.try_acquire():
-            return self._send(503, {"error": f"{budget.limit} model requests are still running or stopping. "
-                                             "Wait for one to finish.", "code": "busy"})
+            return self._busy()
         try:
-            extra: dict = {}
-            model_info = None
-            if snapshot.kind == "lmstudio" and task.reasoning == "off":
-                model_info, extra["model_lookup"] = model_call.lmstudio_model_info(snapshot.endpoint, snapshot.model)
-            self._stream(snapshot, build_messages(system, prompt), arguments, model_info, task, extra)
+            prepared = model_step.prepare_first(state.store, snapshot=snapshot, system=system, prompt=prompt,
+                                                task=task, arguments=arguments, source=source,
+                                                save_runs=state.save_runs_now(), contract=copy_)
+            if prepared.run.save_runs:
+                try:
+                    state.history.start_run(prepared.run)       # run.json, before the first attempt starts
+                except BaseException:
+                    state.store.abandon_run(prepared.run, prepared.number)
+                    raise
+            self._run_stream(prepared)
         finally:
             budget.release()
 
-    def _stream(self, snapshot, messages: list[dict], arguments: dict, model_info, task, extra: dict) -> None:
-        try:
-            self.send_response(200)
-            self.send_header("Content-Type", "application/x-ndjson")
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-        except OSError:
-            return
+    def _busy(self) -> None:
+        budget = self.server.state.budget
+        self._send(503, {"error": f"{budget.limit} model requests are still running or stopping. "
+                                  "Wait for one to finish.", "code": "busy"})
+
+    def _run_stream(self, prepared: model_step.PreparedAttempt) -> None:
+        """Stream one attempt (Section 8.7). The stream is the handler's; the outcome is run_attempt's."""
+        state = self.server.state
+        head_sent = False
 
         def emit(event: dict) -> None:
-            data = jsonio.encode_line(event)
             try:
-                self.wfile.write(data)
-                self.wfile.flush()
-            except OSError:  # includes TimeoutError from the page timeout
-                raise Cancelled("page disconnected") from None  # makes modelSpell close upstream
+                self.write_event(event)
+            except OSError:                                      # includes TimeoutError
+                raise model_step.PageGone() from None
 
-        def emit_error(text: str, **fields) -> None:
+        def started(info: dict) -> None:
+            nonlocal head_sent
+            if not head_sent:
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/x-ndjson")
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                except OSError:
+                    raise model_step.PageGone() from None
+                head_sent = True
+            emit({"type": "started", **info})
+
+        def committed(record: dict, status: str) -> None:
+            emit({"type": "final", "attempt_id": record["id"], "outcome": record["outcome"],
+                  "record": record, "save_status": status})
+
+        callbacks = model_step.Callbacks(
+            started=started, text=lambda t: emit({"type": "text", "text": t}),
+            reasoning=lambda t: emit({"type": "reasoning", "text": t}), committed=committed)
+        record = model_step.run_attempt(state.store, prepared, callbacks,
+                                        state.history if prepared.run.save_runs else None)
+        if prepared.run.save_runs and head_sent:
+            status, detail = state.store.save_detail(record["id"])
+            if status in ("saved", "failed"):
+                try:
+                    self.write_event({"type": "save", "attempt_id": record["id"], "save_status": status, **detail})
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _attempt_id(body: dict) -> str:
+        value = body.get("attempt_id")
+        if not runs.valid_attempt_id(value):
+            raise BodyError("attempt_id must be an attempt ID")
+        return value
+
+    def _complete_stop(self, body: dict) -> None:
+        self._send(200, {"status": self.server.state.store.stop(self._attempt_id(body))})
+
+    def _repair_preview(self, body: dict) -> None:
+        _run, record, number = self.server.state.store.admit_repair(self._attempt_id(body), reserve=False)
+        plan = model_step.repair_plan(record)
+        contract = plan["contract"]
+        self._send(200, {"parent_id": record["id"], "attempt": number, "messages": plan["messages"],
+                         "settings": plan["settings"],
+                         "contract": {"name": contract.name, "revision": contract.revision},
+                         "repair_message": plan["repair_message"]})
+
+    def _repair(self, body: dict) -> None:
+        state = self.server.state
+        run, parent, number = state.store.admit_repair(self._attempt_id(body))
+        budget = state.budget
+        if not budget.try_acquire():
+            state.store.abandon_run(run, number)
+            return self._busy()
+        try:
             try:
-                emit({"type": "error", "error": text, **extra, **fields})
-            except Cancelled:
-                pass
+                prepared = model_step.prepare_repair(run, number, parent, state.key_for)
+            except BaseException:
+                state.store.abandon_run(run, number)
+                raise
+            self._run_stream(prepared)
+        finally:
+            budget.release()
 
-        base_url = snapshot.endpoint.base_url
-        try:
-            result = model_call.call_model(snapshot, messages, arguments, model_info=model_info,
-                                           on_text=lambda t: emit({"type": "text", "text": t}),
-                                           on_reasoning=lambda t: emit({"type": "reasoning", "text": t}))
-        except Cancelled:
-            return  # the page has gone; partial output is discarded in 0.1.0
-        except ModelSpellError as exc:
-            text = describe_error(exc, base_url)
-            status = getattr(exc, "status", None)
-            if snapshot.kind == "openrouter" and isinstance(exc, modelspell.BackendError) and status == 404:
-                hint = model_call.OPENROUTER_HINT
-                if (arguments.get("provider") or {}).get("require_parameters"):
-                    hint += ", and whether any provider supports every task setting sent"
-                return emit_error(f"{text} {hint}.", hint="openrouter_no_provider")
-            return emit_error(text)
-        except Exception as exc:  # noqa: BLE001 - messages may carry keys (techspec 7.6)
-            report_internal("/api/complete", exc)
-            return emit_error(f"InternalError: {type(exc).__name__}")
+    def _attempt_poll(self, attempt_id: str) -> None:
+        if not runs.valid_attempt_id(attempt_id):
+            raise BodyError("attempt_id must be an attempt ID")
+        self._send(200, self.server.state.store.envelope(attempt_id))
 
-        # Outside the model call's error handling (R0-13): a failed write here only loses the event.
-        try:
-            line = jsonio.encode_line({"type": "result", "result": result_to_dict(result),
-                                       "outcome": classify_outcome(result), "task": task.request_shape(),
-                                       **extra})
-        except Exception as exc:  # noqa: BLE001
-            report_internal("/api/complete", exc)
-            return emit_error(f"InternalError: {type(exc).__name__}")
-        try:
-            self.wfile.write(line)
-            self.wfile.flush()
-        except OSError:
-            pass
+    # --- run history (techspec 10) ----------------------------------------------------------------------
+    def _history_switch(self, body: dict) -> None:
+        value = body.get("save_runs")
+        if not isinstance(value, bool):
+            raise BodyError("save_runs must be true or false")
+        self._send(200, self._state_body(self.server.state.set_history_switch(value, _revision(body))))
+
+    @staticmethod
+    def _run_id(value: object) -> str:
+        if not runs.valid_run_id(value):
+            raise BodyError("run_id must be a run ID")
+        return value
+
+    def _runs_delete(self, body: dict) -> None:
+        run_id = self._run_id(body.get("run_id"))
+        self.server.state.history.delete_run(run_id, read_only=self.server.workspace.read_only)
+        self._send(200, {"deleted": run_id})

@@ -1,9 +1,12 @@
 # Developer guide
 
 This file is for repository maintenance. Usage is documented in `README.md`; the build reference
-for 0.1.2 is *AgentWiz 0.1.2 — Technical Specification* (version 5.1), which takes precedence over
-Sections 8–10 of the release plan (*AgentWiz 0.1.x — Release Plan*, version 10.1) and the 0.1.2
-parts of its other sections; its Section 19 lists every departure. Its companion, *AgentWiz
+for 0.1.3 is *AgentWiz 0.1.3 — Technical Specification* (version 4), which takes precedence over
+Section 8 of the release plan (*AgentWiz 0.1.x — Release Plan and 0.2 Design*, version 11) and over
+Sections 11–12 of version 10.1, which the plan carries forward; its Section 22 lists every
+departure. The build reference for 0.1.2 was *AgentWiz 0.1.2 — Technical Specification* (version
+5.1), whose build process (D42, D44, D48–D51), error-text rule, MCP design and task settings stand
+unless the 0.1.3 specification says otherwise. Its companion, *AgentWiz
 attachment interface* (version 3, draft; `interface_version` 1), is kept as
 `docs/attachment_interface.md`. The plan carries everything that still binds from the 0.1.0 and
 0.1.1 specifications (plan 2.9, 6.13), except that the owner has replaced the 0.1.1 specification's
@@ -25,19 +28,22 @@ Update this guide in the same change when layout, commands, tests or release ste
 From the repository root:
 
 ```bash
-scripts/dev_setup.sh                        # ./.venv + editable install + pytest (downloads the pinned modelSpell wheel)
+scripts/dev_setup.sh                        # ./.venv + editable install + pytest, jsonschema, Playwright and Chromium (downloads the pinned modelSpell wheel)
 . .venv/bin/activate
 
 python -m pytest -q -m "not live"          # the offline suite (the gate; live checks deselected)
+python -m pytest tests/test_page.py         # the page checks alone (headless Chromium)
 agentwiz --no-browser                       # run the UI from your checkout (workspace: ./workspaces/default)
 python scripts/stub_backend.py              # scripted backend for trying the UI without a model
-python scripts/stub_mcp_server.py           # scripted MCP server (both protocol eras) for the Tools panel
+python scripts/stub_mcp_server.py           # scripted MCP server (both protocol eras) for the MCP tools tab
 python scripts/build_release.py --smoke     # build, check (RC1-RC3) and smoke-test the release wheel
 ```
 
 `scripts/dev_setup.sh [--python PATH]` is the one developer setup command. It refuses to run outside
-a checkout, creates `./.venv` if missing, and runs `python -m pip install -e '.[dev]'`; it also
-converts a `.venv` made by the user installer (wheel only, no pytest). The user installer
+a checkout, creates `./.venv` if missing, runs `python -m pip install -e '.[dev,checks]'` and then
+`python -m playwright install chromium` (if the browser download fails it says so and how to retry;
+the page checks will not run without it); it also converts a `.venv` made by the user installer
+(wheel only, no pytest). The user installer
 (`scripts/install.sh`) refuses to run in a checkout unless `--dir` is given. `./workspaces/`, `./model_profiles/` and
 `./mcp_servers/` are ignored by git in this checkout.
 
@@ -48,6 +54,10 @@ converts a `.venv` made by the user installer (wheel only, no pytest). The user 
 - [MCP protocol versions](#mcp-protocol-versions)
 - [The attachment interface](#the-attachment-interface)
 - [UI provenance](#ui-provenance)
+- [The page: one function per tab](#the-page-one-function-per-tab)
+- [Page checks](#page-checks)
+- [Runs and records](#runs-and-records)
+- [Contracts and checks](#contracts-and-checks)
 - [Concurrency and resource limits](#concurrency-and-resource-limits)
 - [Error reporting](#error-reporting)
 - [Tests](#tests)
@@ -64,29 +74,34 @@ converts a `.venv` made by the user installer (wheel only, no pytest). The user 
 | `agentwiz/__init__.py` | yes | Re-exports `__version__`; no other imports, no side effects. |
 | `agentwiz/_version.py` | yes | Only version source: exactly `__version__ = "X.Y.Z"`. |
 | `agentwiz/__main__.py` | yes | Command line (`agentwiz`, `python -m agentwiz`); opens the workspace before binding; exit statuses 1, 2, 3. |
-| `agentwiz/model_call.py` | yes | Settings and key validation, message building, task arguments (`task_arguments`: route support, `require_parameters`, `check_settings`), the LM Studio model lookup, the call, outcome classification, error descriptions. No HTTP. |
+| `agentwiz/model_call.py` | yes | Settings and key validation, message building, task arguments (`task_arguments`: route support, `require_parameters`, `check_settings`), the LM Studio model lookup, the call (`call_model(..., cancel=)`, passed to `modelspell.complete`), outcome classification, error descriptions. No HTTP. |
+| `agentwiz/checks.py` | yes | **0.1.3.** Contract parsing and validation, answer parsing, every check, results, the repair message. Pure functions that accept any value. `jsonschema` is imported lazily, only here. No HTTP. |
+| `agentwiz/contracts.py` | yes | **0.1.3.** Contract files in `<workspace>/contracts/`: reading, re-scanning by fingerprint, revisions, writing. Called from `state.py` under the state lock. No HTTP. |
+| `agentwiz/runs.py` | yes | **0.1.3.** `CancelToken`; runs; the attempt store: identity, records, end point, commit, summaries, retention, save status, deletion reservation. No HTTP. |
+| `agentwiz/model_step.py` | yes | **0.1.3.** `run_attempt`, the headless model-step function, and the hook `before_end_point`. No HTTP. |
+| `agentwiz/history.py` | yes | **0.1.3.** The run-history writer (run folders, redaction), listing, reading and deleting saved runs; `remove_tree`. No HTTP. |
 | `agentwiz/task_settings.py` | yes | `TaskSettings`, its rules, and `task_settings.json`. No HTTP. |
-| `agentwiz/state.py` | yes | Process state: settings, keys, profiles, saved task settings, the MCP library and tokens, the three revisions, state lock, request budget, snapshots, key and token sources. No HTTP. |
+| `agentwiz/state.py` | yes | Process state: settings, keys, profiles, saved task settings, the MCP library and tokens, contracts, the history switch, the five revisions, state lock, request budget, snapshots, key and token sources, every credential held (for redaction), `key_for(kind, base_url)` for repairs. No HTTP. |
 | `agentwiz/workspace.py` | yes | Workspace names, opening and locking (`flock`), reading and validating workspace.json, atomic writes. Called only from `state.py` under the state lock. No HTTP. Not imported by `import agentwiz`. |
 | `agentwiz/profiles.py` | yes | Workspace profile copies and shared defaults (format version 2; reads 1): validation, preservation, atomic writes, fingerprints and permanent short-lived library lock. No HTTP. |
-| `agentwiz/jsonio.py` | yes | The one JSON writer (`encode`, `encode_line`); the file writer and strict reader for AgentWiz's own files (`encode_file`, `decode_file`); the exact-number reader and writer for MCP traffic (`decode_exact`, `encode_exact`). Standard library only. |
+| `agentwiz/jsonio.py` | yes | The one JSON writer (`encode`, `encode_line`); the file writer and strict reader for AgentWiz's own files (`encode_file`, `decode_file`); the exact-number reader and writer (`decode_exact`, `encode_exact(value, indent=None)`, `encode_file_exact`, `decode_file_exact`; `JSONSyntax` and `ExactLimit` are its only errors besides other `ValueError`s) and `encode_record_file` for run files. Standard library only. |
 | `agentwiz/attachments.py` | yes | The basic attachment reader (`.txt`, `.md`, `.csv`, `.json`) and `check_document`, implementing `docs/attachment_interface.md`. No HTTP. |
-| `agentwiz/insertion.py` | yes | Provenance lines and preview sizes for files and tool results; `REQUEST_LIMIT`. No HTTP. |
+| `agentwiz/insertion.py` | yes | Provenance lines and preview sizes for files and tool results; `REQUEST_LIMIT`. The page now copies `preview.text` instead of inserting it. No HTTP. |
 | `agentwiz/mcp_library.py` | yes | The shared MCP server library (`servers.json`, `.servers.lock`): validation, fingerprints, atomic writes. No HTTP server code. |
 | `agentwiz/mcp_client.py` | yes | Streamable HTTP MCP client, both eras, standard library only: probe and era cache, discovery entries, legacy sessions and the session lock, gates, reply reading with limits, `classify`. An HTTP *client*; knows nothing of AgentWiz's server. |
 | `agentwiz/mcp_ops.py` | yes | Operations: worker threads, one commit per operation, abandonment and socket shutdown, capacity, maintenance (notices, `DELETE`s), retention. No HTTP server code. |
 | `agentwiz/tool_forms.py` | yes | Form specifications from tool input schemas. No HTTP. |
-| `agentwiz/ui/server.py` | yes | The HTTP server; the only module that knows HTTP. |
-| `agentwiz/ui/index.html` | yes | The page. |
+| `agentwiz/ui/server.py` | yes | The HTTP server; the only module that knows HTTP. `Handler.write_event` is the one writer of stream events. |
+| `agentwiz/ui/index.html` | yes | The page: six tabs, header dialogs, one file with no build step. |
 | `pyproject.toml`, `README.md`, `LICENSE` | metadata | Packaging, wheel description, MIT license. |
-| `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`), opt-in live checks (`test_live.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
+| `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`; 0.1.3: `test_checks.py`, `test_contracts.py`, `test_runs.py`, `test_model_step.py`, `test_attempts.py`, `test_history.py`, `test_page.py`, `test_live_judgement.py`), opt-in live checks (`test_live.py`, with the pure judgement function `live_stop.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
 | `docs/attachment_interface.md` | no | The attachment interface (companion document, version 3, draft). |
 | `scripts/build_release.py` | no | Builds the release wheel from `HEAD`, runs release checks RC1–RC3; `--smoke`; `--no-isolation`; `--modelspell-wheel` (offline smoke); `--changed-since`. |
-| `scripts/smoke_installed.py` | no | Smoke check (S1–S10) against an installed wheel. |
-| `scripts/dev_setup.sh` | no | Developer setup: `./.venv` with an editable install and pytest. |
-| `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for trying the UI without a model; logs the sampling fields each request carries. |
-| `scripts/stub_mcp_server.py` | no | Scripted MCP server (`--era dual|modern|legacy`, `--token`) for trying the Tools panel; logs every request, disconnect, notice and `DELETE`. |
-| `scripts/install.sh` | no | Installer behind the README one-liner; refuses to run in a checkout without `--dir`; re-attached to every release as `install.sh`. |
+| `scripts/smoke_installed.py` | no | Smoke check (S1–S12) against an installed wheel. |
+| `scripts/dev_setup.sh` | no | Developer setup: `./.venv` with an editable install, pytest, `jsonschema`, Playwright and Chromium. |
+| `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for trying the UI without a model; logs the sampling fields and message roles each request carries. Models `json-pass`, `json-repair` and `slow-headers` serve the README tour. |
+| `scripts/stub_mcp_server.py` | no | Scripted MCP server (`--era dual|modern|legacy`, `--token`) for trying the MCP tools tab; logs every request, disconnect, notice and `DELETE`. |
+| `scripts/install.sh` | no | Installer behind the README one-liner; refuses to run in a checkout without `--dir`; `--with-checks` installs `AgentWiz[checks]`; re-attached to every release as `install.sh`. |
 | `DEVEL.md`, `NEWS.md`, `.clinerules` | no | Maintenance guide, changelog, agent rules. |
 | `.github/workflows/` | no | `tests.yml` (push, PR) and `release.yml` (push to `main`). |
 
@@ -95,11 +110,22 @@ and no 3.11-only modules or APIs (`tomllib`, `datetime.UTC`, exception groups).
 
 ## The modelSpell dependency
 
-AgentWiz depends on the modelSpell **v0.2.1 release wheel**, pinned by URL and sha256 in
-`pyproject.toml`. The error-text re-check below was done for the move from 0.1.0 to 0.2.1
-(specification 0.1.2, Section 3.2): `_http.py`, `errors.py`, `_sse.py` and `_discovery.py` are
-unchanged, and every new error is a pre-send `ConfigError` or `UnsupportedSetting` naming arguments,
-routes and rules, never a value. Nothing moved groups. Task settings use `supported_settings()` and
+AgentWiz depends on the modelSpell **v0.3.0 release wheel**, pinned by URL and sha256 in
+`pyproject.toml` (D74). The error-text re-check below was done for the move from 0.2.1 to 0.3.0
+(specification 0.1.3, Section 3.2): `errors.py` adds only `Cancelled.sent` and a docstring and no
+error class; the one new pre-send message, `ConfigError("cancel must be None or a CancelHandle")`,
+names an argument; `Cancelled` messages are fixed; the watched transport's new failures
+(`TimeoutError`, `OSError` from the non-blocking connect) are mapped by the existing handlers to
+`RequestTimeout` and `ConnectError`, which are already fixed-description errors. Nothing moved
+groups. (For 0.1.0 to 0.2.1 the same check, specification 0.1.2 Section 3.2, found that `_http.py`,
+`errors.py`, `_sse.py` and `_discovery.py` were unchanged and every new error was a pre-send
+`ConfigError` or `UnsupportedSetting` naming arguments, routes and rules, never a value.)
+The public API AgentWiz uses includes `CancelHandle` (one per run; `cancel()` never blocks and may
+be called from any thread any number of times) and `complete(..., cancel=)`; `Cancelled.sent` is
+`False` when no byte of the request was written, `True` when it may have been, and `None` until
+modelSpell has handled the exception.
+A modelSpell defect found while building AgentWiz is fixed in modelSpell and released as 0.3.1;
+AgentWiz takes it as a pin change. Task settings use `supported_settings()` and
 `check_settings()`; AgentWiz keeps no support table of its own, and words its own refusal for a
 setting a route does not send (modelSpell's suggests `extra`, which AgentWiz does not offer). Adding any dependency, required or optional, needs the owner's approval.
 
@@ -186,6 +212,132 @@ so docSpell's results meet the same check from 0.1.4.
 `1759c6e3c28a637731434a73c46088048583e358` and adapted (each file names its source). Later changes to
 modelSpell's copies are ported only by deliberate review, never synced automatically.
 
+## The page: one function per tab
+
+> **The page: one function per tab.**
+> 1. Each tab demonstrates one function from start to finish and works without visiting any other tab.
+> 2. A release's new function gets a new tab. Changes to an existing tab only extend that tab's own function.
+> 3. Tabs never pass data to each other in 0.1.x. The clipboard is the only bridge.
+> 4. Configuration is not a function. Model profiles, MCP servers and roles are header dialogs shared by every tab. Saved definitions (contracts, blocks) are shared the same way.
+> 5. At most seven top-level tabs. The eighth means grouping into nested tabs, at most two levels deep.
+> 6. Integration in 0.2.x arrives as new tabs; existing tabs stay as a workbench.
+> 7. Every output panel has a Copy button.
+> 8. Page checks find elements by `data-test` attributes and assert values and states, never wording or layout.
+>
+> Development rules live in this file. Agents do not edit `.clinerules`.
+
+The page is one file, `agentwiz/ui/index.html`, with markup, styles and script and no build step,
+no framework. Its script has shared helpers (the API call with the session token, the NDJSON reader,
+Copy, the task-panel component, the stale-revision handler, the request controller Chat and Checked
+request use) and one section per tab. No tab reads or writes another tab's state. Every
+server-provided string is inserted with `textContent` or `new Option`, never as markup.
+
+The request controller correlates every asynchronous update with an attempt ID, keeps reading its
+stream after `final` (a `save` event can follow), holds a Stop pressed before `started` as pending
+and drops it if the request is refused, polls `/api/attempts/<id>` only after a stream is lost or a
+save is still pending, and never polls or resends before `started` has arrived.
+
+State attributes, which page checks assert: tab buttons `aria-selected` and `data-state`
+(`idle`, `running`); a request status `data-state` (`idle`, `running`, `stopping`, `done`, `polling`,
+`unknown`, `stale`) with `data-outcome`, `data-attempt-id`, `data-save`; check results `data-check`;
+repair controls `data-repair`; tool status `data-state` and `data-outcome`; the document preview
+`data-state`; the contract editor `data-state`; history rows `data-run-id`; Copy buttons `data-copy`
+(`copied`, `refused`). `data-test` names are `<tab>-<element>`; tab buttons are `tab-<fragment>` and
+panels `panel-<fragment>`.
+
+## Page checks
+
+`tests/test_page.py` drives the page in headless Chromium through Playwright for Python, which is
+a developer-only dependency pinned in the `dev` extra (1.63.0: each Playwright release expects one
+Chromium build, and the build environment provided this one; upgrading it is a deliberate change with
+the page checks run again). Nothing under `agentwiz/` imports Playwright and the wheel never carries it.
+
+- **Install.** `scripts/dev_setup.sh` runs `python -m playwright install chromium`. Where
+  `PLAYWRIGHT_BROWSERS_PATH` already holds the matching build (the Claude cloud environment's
+  `/opt/pw-browsers`), nothing is downloaded. CI runs `playwright install --with-deps chromium` on
+  Ubuntu and `playwright install chromium` on macOS.
+- **Run.** `python -m pytest tests/test_page.py`. One Chromium per test module, a fresh browser
+  context per test with the clipboard permissions granted for the server's origin, and a fresh AgentWiz
+  server from `make_ui` with the fake backend and `FakeMCP` of `conftest.py`.
+- **Conventions.** Find elements by `data-test`; assert values (field contents, clipboard text, what
+  the fakes received) and the state attributes above; wait with Playwright's `expect(...)` conditions
+  on those attributes, or on conditions in the page; never sleep, never assert wording or layout.
+  Force orderings with the fakes' hold and release, `history.before_write`, `Handler.write_event` and
+  the like.
+- **Blocked, never skipped.** If Playwright or its Chromium cannot be provided, the page checks fail
+  with that reason and the gate is blocked (D51); they are never passed by skipping.
+- The in-UI tutorial is optional learning material. Script-verifiable UI behaviour belongs in
+  page checks, not in owner assignments; subjective review is governed by "Checking a release".
+
+## Runs and records
+
+Every model request is a **run** with one step, `request`; the first send and each repair are numbered
+**attempts**. `run_id` is 12 lowercase hex characters (random), the attempt ID `<run_id>-<n>`; routes
+check IDs against `[0-9a-f]{12}-[1-9][0-9]{0,5}`. A record's layout is the 0.2 attempt record (0.1.4
+and 0.2 add fields and never change these): see specification 0.1.3, Section 8.2. Records hold
+plain JSON only (no `Decimal`; a contract travels as `{"name", "revision", "text"}`), never a key.
+
+- **End point and commit.** `model_step.run_attempt` reaches its end point and its commit exactly
+  once, whatever is raised: everything between creating the record and the end point sits in one
+  `try`, and the end point, the checks and the commit follow it. The outcome is decided by the five
+  rules of specification 8.5 (0: `started` failed; 1: `complete()` returned; 2: `Cancelled`; 3: another
+  exception with the token cancelled; 4: any other exception). After the commit a record never changes.
+- **The token.** `runs.CancelToken` has two halves, publish and dispatch. Stop's acceptance, its
+  timestamp and the token's publication are one decision under the attempt store's lock (token lock
+  inside it); stop actions run after every lock is released, each exactly once. Lock order: state lock,
+  then store lock, then token lock. A Stop is addressed to an attempt: one that has already ended
+  answers `already_finished` and cancels nothing, even while a later repair runs.
+- **The modelSpell handle.** One `modelspell.CancelHandle` per run, registered with `on_cancel`, and
+  passed as `cancel=` to every attempt including repairs. A cancelled handle stays cancelled, so a
+  cancelled run takes no more attempts (409 `run_stopped`).
+- **Retention.** At most `runs.RECORD_LIMIT = 100` committed records and `runs.RECORD_BYTES =
+  268_435_456` bytes of them (by the length of `jsonio.encode(record)`), oldest dropped first;
+  `runs.SUMMARY_LIMIT = 1000` summaries of settled attempts; run metadata is kept by lifecycle (an
+  attempt running, a save pending, a deletion reserved or any record held) and holds no record
+  objects; a monotonic attempt counter is never reset. Tests lower all three constants.
+- **Run history.** `history.Writer` writes `runs/<UTC time>-<run_id>/run.json` and `request-<n>.json`,
+  each once and redacted (credentials of at least 8 characters, longest first, in every string
+  value), mode 0700 folders and 0600 files; it never recreates a folder. The switch is `save_runs` in
+  `workspace.json`, read at run creation, with its own revision. `history.LIST_LIMIT = 200` (tests
+  lower it). Deletion is a reservation under the store's lock (`deleting`, remembering the prior
+  history state), a removal with no lock held through `history.remove_tree`, and a settlement that
+  restores the prior state only if the tree is unchanged, else `history_incomplete`; an unknown
+  failure counts as changed.
+- **Hooks tests use** (all do nothing in shipped code): `model_step.before_end_point()` (a Stop between
+  modelSpell's return and the end point), `history.before_write()` (an ordering between a commit and its
+  attempt file, or removing the folder), `history.remove_tree()` (replaced to block, or to fail with
+  `RemoveError(changed=False)` or after a partial removal with `changed=True`, so deletion cases work
+  as root) and `Handler.write_event` (the one writer of stream events; made to raise `OSError` or
+  `TimeoutError` or to block). Stop actions may themselves block, to hold dispatch after publication.
+
+## Contracts and checks
+
+- **File format.** `<workspace>/contracts/<name>.json`, `format_version` 1, written with
+  `jsonio.encode_file_exact` (indented, ASCII, numbers digit for digit) through `workspace.write_atomic`.
+  Unknown top-level fields are kept. Revisions come from one process-wide counter, so a deleted and
+  recreated contract never repeats one. Files are re-scanned on `/api/state`, every contract route
+  and when `/api/complete` names a contract (inode, mtime in nanoseconds and size).
+- **Validation copy.** `jsonschema` picks its validator class from `$schema`, in `check_schema` and
+  while following `$ref`, so extending its `integer` check does not reach every path. AgentWiz
+  therefore validates a **copy** of the schema and of the value in which every whole-number decimal is
+  a Python integer, with the stock Draft 2020-12 validator and `referencing.Registry()` (empty: nothing
+  is ever fetched). The saved contract and every displayed value keep their original form.
+- **Decimal context.** Every comparison and validation runs in a fresh `checks.exact_context()`:
+  `prec=2100`, `ROUND_HALF_EVEN`, the full exponent range, and `InvalidOperation`, `DivisionByZero`,
+  `Overflow`, `Underflow`, `Subnormal` and `Inexact` trapped (not `Rounded` or `Clamped`). A
+  `decimal.DecimalException` makes only the check that needed it `not_run`; handlers are tried in the
+  order: `DecimalException` (`not_run`), `ValidationError` (issues), anything else (`contract_error`).
+  Never fall back to float arithmetic.
+- **The extra.** `jsonschema>=4.26,<5` is the optional extra `checks`; `checks.schema_support()`
+  reports it, and a version outside the range counts as missing. Tests that need it carry the marker
+  `needs_checks`, which skips with the reason "the checks extra is not installed" only where it is
+  absent (CI's Python 3.10 jobs); the build's gates install it, so nothing skips there. The no-extra
+  path is tested everywhere by making `schema_support()` report the extra missing.
+- **One dialect.** Every `$schema` on an actual schema, at the root or reached from it, must be
+  Draft 2020-12; `$ref` and `$dynamicRef` must start with `#`; a `$schema` key inside literal data
+  (`const`, `enum`, `default`, `examples`) is data. A missing local target is not refused at save; it
+  gives `contract_error` when applied.
+
 ## Concurrency and resource limits
 
 | Shared thing | Rule |
@@ -208,19 +360,30 @@ modelSpell's copies are ported only by deliberate review, never synced automatic
 | The workspace across processes | `.agentwiz.lock`, opened once at launch and held with `flock(LOCK_EX \| LOCK_NB)` for the life of the process; never replaced, renamed or deleted (a new file would have a new inode that a second process could lock); released by the kernel when the process ends for any reason. The descriptor is non-inheritable, so child processes never keep it. A second process exits with status 3. |
 | Shared defaults across processes | `model_profiles/.profiles.lock`: a permanent file, opened separately per operation and held with blocking `flock(LOCK_EX)` only across read/change/replace. Lock order is state lock, then defaults lock. Never replaced or deleted. Workspace copies remain protected by their lifetime workspace lock. |
 | Lock-file details | pid, host and start time, written in place once at launch; informative only, never used for ownership. |
-| Model requests | At most 8 in progress (`RequestBudget`), counted from acceptance until the handler returns, including after the page stopped or closed; the ninth gets 503; nothing is queued. |
-| Writes to a page | A 30-second socket timeout on every page connection, set in `Handler.setup()`. One writer per stream, on the handler's thread. |
+| Model requests | At most 8 in progress (`RequestBudget`), repairs included, counted from acceptance until the handler returns, including after the page stopped or closed and a stopped request until it ends; the ninth gets 503; nothing is queued. |
+| Writes to a page | A 30-second socket timeout on every page connection, set in `Handler.setup()`. One writer per stream (`Handler.write_event`), on the handler's thread; it bounds every event, `final` and `save` included. |
+| The attempt store | One lock, held only to create an attempt, reach the end point, commit, apply retention, settle a save status, accept Stop and publish the token's cancellation, answer polling, admit repairs, and reserve and settle deletions. Never held during a model call, a page write, a model-answer check, a run-history write, a folder removal or a stop action. |
+| Run cancellation tokens | One per run, with their own lock; `cancel()` idempotent; each stop action runs exactly once, outside every lock. Order: state lock, store lock, token lock; a token's lock is never held while taking another. |
+| modelSpell handles | One per run, registered as the token's stop action; `cancel()` never blocks. |
+| Attempt numbers | Reserved under the store's lock together with the repair checks, so a step's attempts form one chain. |
+| Contracts | Changed only through `contracts.py`, called from `state.py` under the state lock; re-read before each change; written atomically; external changes noticed by fingerprint; revisions from one process-wide counter. |
+| The history switch | `workspace.json` changed under the state lock with the history revision, re-read first, written atomically. |
+| Run folders | New files, each written once, without the state or store lock; the writer never recreates a folder; deletion reserved under the store's lock, files removed with no lock held, outcome settled under the store's lock. |
+| Records in memory | 100 records and 256 MiB of full records, 1,000 settled summaries plus pending envelopes, run metadata while needed; uncommitted attempts never dropped. |
+| Revisions | Five: configuration, task settings, MCP, one per contract, and history. A change to one never makes a page's view of another stale. |
 
 **What frees a budget slot:** the model call completes or raises (including modelSpell's 900 s
-per-read timeout); after the page has gone, a text or reasoning fragment whose write fails (usually
-the first or second after the close, because TCP accepts the first write to a closed peer); or a
-write to a page that has stopped reading times out after 30 s.
+per-read timeout); Stop, which cancels the run's modelSpell handle and ends the call at any stage,
+normally within milliseconds; after the page has gone, a text or reasoning fragment whose write fails
+(usually the first or second after the close, because TCP accepts the first write to a closed peer);
+or a write to a page that has stopped reading times out after 30 s.
 
-**What does not:** modelSpell 0.1.0 has no overall deadline, so a slot stays occupied while a
-backend sends only keepalive comments, empty deltas or usage-only chunks, while it sends bytes more
-often than the read timeout, or while DNS resolution hangs. Before the first token, Stop takes
-effect only when output arrives. If all 8 slots stay occupied, restarting is the only recovery.
-Discovery calls and connection threads are not budgeted.
+**What does not:** modelSpell has no overall deadline, so without a Stop a slot stays occupied while a
+backend sends only keepalive comments, empty deltas or usage-only chunks, or while it sends bytes more
+often than the read timeout. Stop's two exceptions: a host name still being resolved (cancellation
+takes effect when resolution returns, before anything is sent) and the LM Studio model lookup (a
+discovery call modelSpell does not cancel; it has its own 10-second timeout). Discovery calls and
+connection threads are not budgeted.
 
 **Supported workspace locations.** Local disks on Linux and macOS, and WSL2's own filesystem.
 `/mnt/c` under WSL2 has not been tested. Network, shared and cloud-synced
@@ -291,6 +454,10 @@ The page and the terminal receive only text that cannot contain a credential:
 | MCP failures (`MCPError`) | AgentWiz's description (failure class, HTTP status or JSON-RPC code, server name, era) with `reason`, `http_status`, `jsonrpc_code`; `server_text` (the server's own message, cut at 2,000 characters, labelled "the server says:" in the page) only when no token is held for the operation's identity. A `tool_error` result is tool output and is shown as content. | nothing |
 | `BadArguments` | 400 `{"code": "bad_arguments"}`, naming the rule broken, never the text | nothing |
 | `ModelSpellError` | `describe_error(exc, base_url)`: 400 on non-streaming routes, an `error` event while streaming | nothing |
+| `ContractError` and contract problems | 400 `{"code": "contract_error", "issues": [{"location", "message"}]}` on save and check; a contract file's problem is `{"file", "code" (`unreadable`, `invalid`, `newer_format`), "message"}`. Messages name rules and locations, never values. | nothing |
+| Run-file problems | `problems` of `GET /api/runs/<id>`: file, code (`unreadable`, `invalid`), location and rule, never values | nothing |
+| New refusals | 404 `no_such_contract`, `no_such_attempt`, `no_such_run`; 409 `exists`, `contract_unusable`, `run_stopped`, `not_latest`, `not_repairable`, `run_active`, `not_deletable` (and `stale_revision`, `read_only` for contracts and the history switch); 410 `not_held`; 500 `delete_failed` with AgentWiz's text and the system's error text | nothing |
+| Errors inside an attempt | The committed record's `error`: `{"class", "status", "description", "hint"}`, AgentWiz's own text from `describe_error`, never backend text | nothing (an unexpected exception: `[AgentWiz] internal error in /api/complete: <Class>`) |
 | `ReadOnly` | 409 `{"error": "profiles are read-only: <file>: <problem>", "code": "read_only"}` (or "the workspace is read-only: …") | nothing |
 | `NoSuchProfile` | 404 `{"error": "no such profile", "code": "no_such_profile"}`; profile names are not echoed | nothing |
 | `WriteFailed` | 500 `{"error": "could not write <path>: <strerror>", "code": "write_failed"}` | nothing |
@@ -315,7 +482,7 @@ installed versions and shell-quoted launch and activation commands.
 At each build checkpoint, run the offline gate below. Never pass it by skipping, weakening or
 deleting a test. Report a check that could not run as blocked, never as passed. Never substitute
 a stand-in for modelSpell or present a source-only check as the installed-wheel smoke. Offline
-tests must run unattended; live checks and the README tour are the owner's after handover.
+tests must run unattended. Live checks are optional; the tutorial is optional learning material.
 
 ```bash
 python -m pytest -q -m "not live"   # offline suite (the gate)
@@ -363,8 +530,14 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 36500 -subj "/CN=AgentWiz test o
   -keyout test_key.pem -out test_cert.pem
 ```
 
-**The page's JavaScript is not tested** (O1). Its check is README's "Trying it out" tour, which the
-owner follows after a build and before any pull request (D50).
+**The page's JavaScript is tested** from 0.1.3 by `tests/test_page.py` (see "Page checks"), with the
+fakes and without a model. Owner review is limited to subjective presentation, clarity and
+usability; see "Checking a release" for the current owner disposition overriding the old D50 tour.
+
+**Constants tests lower, 0.1.3.** `runs.RECORD_LIMIT`, `runs.RECORD_BYTES`, `runs.SUMMARY_LIMIT` and
+`history.LIST_LIMIT`; the fake backend's `Reply(hold_headers=True)` (read the request, set
+`server.reached`, send nothing, not even the status line, until released or the client disconnects,
+recorded in `client_closed`; ported from modelSpell 0.3.0's `tests/conftest.py`).
 
 Tests never write outside `tmp_path`: `make_ui` opens a workspace under `tmp_path` for every server
 (including the live tests'), and a defaults library and an MCP library under `tmp_path` (`mcp_dir=`
@@ -394,6 +567,8 @@ workspace, and print one summary line.
 | OpenRouter | `OPENROUTER_API_KEY`, `AGENTWIZ_LIVE_OPENROUTER_MODEL` (`author/slug`); optional `AGENTWIZ_LIVE_OPENROUTER_PROVIDER` (slug to pin; default the first listed) |
 | llama-server | `AGENTWIZ_LIVE_LLAMASERVER_URL` (e.g. `http://127.0.0.1:8080/v1`), `AGENTWIZ_LIVE_LLAMASERVER_MODEL` |
 
+| OpenRouter, 0.1.3 | `test_live_stop_openrouter` (a long padded prompt, then Stop after `started`; judged by the pure function in `tests/live_stop.py`, itself tested offline) and `test_live_checked_request_openrouter` (a JSON contract, then up to two repairs). LM Studio and llama-server variants skip with "blocked until AgentWiz 0.2.0 (D72)". |
+
 | Any MCP server (`test_live_mcp`) | `AGENTWIZ_LIVE_MCP_URL`, `AGENTWIZ_LIVE_MCP_TOOL`, `AGENTWIZ_LIVE_MCP_ARGUMENTS` (the arguments as JSON text); optional `AGENTWIZ_LIVE_MCP_TOKEN`. Example, with web-retrieval-mcp running: `http://127.0.0.1:8765/mcp`, `search_web`, `{"query":"model context protocol"}` |
 
 The model checks send task settings (`temperature`, `max_tokens`). All accept
@@ -403,20 +578,26 @@ live checks are human checks: they never run in a checkpoint gate, which deselec
 `-m "not live"` (unsetting `AGENTWIZ_LIVE_*` alone would not be enough: the OpenRouter check reads
 `OPENROUTER_API_KEY`).
 
+**Building 0.1.3.** Phases P, 0, A, B, D and E (specification 0.1.3, Section 21); the 0.1.2 rules
+below apply unchanged. The gate in every phase is the whole offline suite on the prepared
+interpreter with `.[dev,checks]` and Chromium installed; Phase E's also runs on Python 3.10 when it can
+be provided, then the offline release smoke below on a throwaway local commit that is never pushed.
+The hand-over is a zip of new and changed files, `DELETIONS.txt` and `HANDOVER.md`; the owner commits.
+
 **Building 0.1.2 (D48–D51).** The build runs as phases (P, 0, A, B, C1, C2, D), each ending at a
 checkpoint gate: `python -m pytest -q -m "not live"`, passing with no failures, errors or skips.
 When a gate passes, the build continues without waiting; a gate is never passed by skipping,
 weakening or deleting a test. Phase P prepares the environment (interpreters, the dev install,
 `hatchling`, the hash-checked modelSpell wheel, the test certificate) and is the only phase that may
 use the network beyond loopback. A check whose dependency the environment cannot provide is
-**blocked**, never counted as passed. Checks that need a person (the README tour, the live checks)
-come last, as Phase H, before anything is committed or a pull request is opened.
+**blocked**, never counted as passed. The historical Phase H manual tour is superseded by the
+owner direction under "Checking a release"; live checks remain optional.
 
 **Offline Phase D.** With `hatchling` installed in the interpreter and a local copy of the pinned
 modelSpell wheel:
 
 ```bash
-python scripts/build_release.py --smoke --no-isolation --modelspell-wheel ../agentwiz-prep/wheels/modelspell-0.2.1-py3-none-any.whl
+python scripts/build_release.py --smoke --no-isolation --modelspell-wheel ../agentwiz-prep/wheels/modelspell-0.3.0-py3-none-any.whl
 ```
 
 `--modelspell-wheel` refuses a file whose name is not the pinned URL's file name or whose sha256 is
@@ -430,8 +611,53 @@ can hide a missing prerequisite, so it is not preparation.
 0.1.1 specification's runbook, evidence records, walkthrough steps (W1–W20), lock checks (L1, L2),
 release review (M1–M4) and their definition-of-done items (C1–C5, D1–D5, F3) are withdrawn.
 Bug-checking is automatic: the offline suite in CI, and `build_release.py`'s release checks and
-smoke test, which run before anything is published. The maintainer tries the UI using README's
-"Trying it out" section. Live checks against real backends are optional.
+smoke test, which run before anything is published. README's "Trying it out" section is optional
+learning material. Owner review is limited as directed below; real-backend live checks are optional.
+
+**Owner direction, 2 November 2026 — automate objective checks.** Anything that can be
+verified by Python, HTTP or a scripted browser belongs in pytest, not in an owner checklist.
+Being visible in a browser does not make a deterministic assertion a human UI check. This includes
+expected pass/fail results, exact values, persistence, deletion, protocol negotiation, credentials,
+cancellation, stale revisions, clipboard contents, enabled controls and keyboard/tab behaviour.
+Use existing coverage; add focused functional tests only for actual gaps under T1–T3.
+
+Owner UI review is limited to subjective presentation (readability, spacing, clipping/overlap),
+clarity of guidance/errors/status, and discoverability/understandability of interactions. Any future
+owner review must be supported inside the UI with tips, auto-filled inputs and managed sandbox
+setup, never a manual setup runbook. Do not ask the owner to repeat script-verifiable checks.
+
+**0.1.3 subjective UI review: Completed by owner direction.** The owner instructed that the
+remaining subjective review be marked completed after removing objective owner checks. This is
+an owner disposition, not a claim of individual observations or a new automated test result. The
+old 29-step walkthrough is not a release gate. Offline tests, CI and release smoke requirements
+remain in force; real-backend live checks remain optional.
+
+Tutorial mode is an optional learning aid, not release sign-off. Its header button starts an
+isolated session with persistent tips, auto-filled examples, real application controls and managed
+local scripted services. Inputs are prepared on entry/reset, not continuously overwritten. Normal
+workspaces and credentials stay untouched; Exit, failure and abandoned-session handling clean up
+tutorial resources. It works in the installed application without a source checkout. Keep learning
+examples current with relevant feature changes, without acknowledgement gates or pass/completion
+accounting. No screenshots or evidence dossiers are required.
+
+**Implementation (0.1.3).** `agentwiz/tutorial.py` supervises one disposable child UI per parent,
+with separate temporary workspace, defaults and MCP library. `tutorial_support/backend.py` and
+`tutorial_support/mcp.py` are packaged stand-ins; the scripts are thin checkout entry points to the
+same code. All servers use loopback and dynamic ports. Authenticated `/api/tutorial` and
+`/api/tutorial/{start,step,exit}` routes manage the session. The UI controller has explicit
+per-tab preparation hooks (a narrow exception to tab independence, not inter-tab data transfer).
+Five feature introductions cover Chat, documents, tools, contracts and repair. There is no full/quick
+route split, manual regression walkthrough, protocol-variant or damaged-file scenario, restart
+control, acknowledgement record, pass count or release sign-off control. Only the current topic
+is retained for the session. The browser heartbeats every minute; 30 minutes without a heartbeat
+expires a session, checked every 30 seconds. Parent shutdown and Exit clean up servers and temporary
+files; startup failures clean up partially started services.
+
+`python -m pytest tests/test_tutorial.py` checks isolation/cleanup, failed-start cleanup and
+preparation of the five learning workflows using actual scripted responses and repair. Functional
+reasons: prevent modification of normal work, leaked services and broken auto-fill/actions.
+Regression coverage remains in the existing page, profiles, attachment, MCP and contract tests;
+no human is assigned their deterministic assertions. No assertions inspect repository file contents.
 
 ## Co-developing with modelSpell
 
@@ -489,10 +715,10 @@ judgement.
 
 1. On `devel`, bump `agentwiz/_version.py`, add `## X.Y.Z` to `NEWS.md` (user-visible bullets), and
    update `README.md`. Commit and push; CI runs the offline suite.
-2. **Phase H, before anything is committed to GitHub or a pull request opened** (D50): on a local
-   working copy with the build applied, follow README's "Trying it out" against `stub_backend.py`
-   and `stub_mcp_server.py`; optionally run the live checks and the web-retrieval-mcp example. A
-   failure goes back to the implementer as a defect report.
+2. **Owner UI review:** only subjective presentation, clarity and usability belong here. The
+   0.1.3 review is **Completed by owner direction**, as recorded under "Checking a release".
+   No manual regression walkthrough or tutorial completion is required. Optional live checks and
+   the web-retrieval-mcp example are not gates.
 3. Commit to `devel` and push; CI runs the offline suite (Ubuntu and macOS, Python 3.10 and 3.13).
    This matrix is a release criterion: the build environment cannot run macOS.
 4. Run `python scripts/build_release.py --smoke` (builds from the committed `HEAD`, runs RC1–RC3,
@@ -514,6 +740,33 @@ does not already record is reported to the owner before merging.
 Departures from the plan, including the two approved for 0.1.0 (errors inside an accepted stream
 described without "HTTP 200"; non-ASCII base URLs refused), are recorded in the 0.1.1
 specification's Section 16.2.
+
+Choices recorded for 0.1.3 (specification 0.1.3, Section 22.2, plus the builder's):
+
+- ID forms: 12-hex run IDs, `<run>-<n>` attempt IDs, step `request`; the record's field names,
+  including `check_skipped`, `stop_mode` and `sent`.
+- Polling: the first poll is immediate, then every 2 seconds; the history list limit is 200.
+- The repair message's wording and instructions; schema issue messages are AgentWiz's own, built
+  from the keyword and values (quoting the keyword's value as written in the contract, not the
+  validation copy's integer form), cut at 200 characters; issue sort order.
+- Contract problem codes `unreadable`, `invalid`, `newer_format`; a problem's `file` is the absolute
+  path; unknown top-level fields are noted on save.
+- A `strict` flag or a schema on a text contract is refused; a boolean schema needs the extra like
+  any other; `length` accepts `null` for either bound.
+- A `RecursionError` while checking a deeply nested value makes that check `not_run` ("nested too
+  deeply") rather than an internal error; an `ExactLimit` is re-scanned for its location.
+- The OpenRouter 404 hint is appended to the error's description as a sentence, and `hint` is
+  `"openrouter_no_provider"`.
+- `/api/complete`: `source` is required; a request with `source` `chat` that has any `contract` key is
+  refused with 400, even `null`; a repair of an attempt while a later one is running is refused as
+  `not_latest`.
+- Page refusals show the tab's status as `idle` with `data-error` set to the code; MCP tool status can
+  also be `stale`; the History tab refreshes its list when it is shown; a saved contract's editor is
+  replaced with the server's stored text; delete confirmations for contracts and runs are inline
+  (no browser dialog), while the Model settings dialog keeps its `confirm()` and `prompt()`; History's
+  "Full record" Copy puts `JSON.stringify` of the parsed run file on the clipboard.
+- `data-test` naming and state values (Section 11.6); the stub backend's models `json-pass`,
+  `json-repair` and `slow-headers`; smoke steps S11 and S12; `install.sh --with-checks`.
 
 Choices recorded for 0.1.2 (specification 0.1.2, Section 19.2, plus the builder's):
 
@@ -539,8 +792,9 @@ Choices recorded for 0.1.2 (specification 0.1.2, Section 19.2, plus the builder'
   (commit, notice reservation, socket shutdown), so an operation is still committed once.
 - MCP tokens typed in the dialog are validated like API keys (visible ASCII, no spaces) and keyed by
   the server's URL.
-- The page's preview for a tool result with both text and structured content toggles between them
-  with one button; insertion records hold the provenance line, target, time, size, hash and source.
+- The page's preview for a tool result with both text and structured content toggled between them
+  with one button, and insertion records held the provenance line, target, time, size, hash and
+  source. (0.1.3 replaced both: **Copy** and **Copy structured content**, and no records.)
 
 Choices recorded for 0.1.1:
 

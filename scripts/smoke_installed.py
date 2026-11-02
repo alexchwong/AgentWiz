@@ -1,12 +1,14 @@
 # Adapted from modelSpell scripts/smoke_installed.py at commit 1759c6e3c28a637731434a73c46088048583e358
-# (MIT, Copyright (c) 2026 Alex Wong), per AgentWiz techspec 11.2 (0.1.0), 11.1 (0.1.1) and 13.1 (0.1.2).
-"""Smoke check against the installed AgentWiz wheel (steps S1-S10). Run with the environment's
+# (MIT, Copyright (c) 2026 Alex Wong), per AgentWiz techspec 11.2 (0.1.0), 11.1 (0.1.1), 13.1 (0.1.2) and 16.1 (0.1.3).
+"""Smoke check against the installed AgentWiz wheel (steps S1-S12). Run with the environment's
 `python -I` from a scratch directory. Every step checks behaviour; none reads a file's contents.
 The launch's default workspace (./workspaces/default) is validated by AgentWiz itself and checked
 through /api/state."""
 import json
 import os
+import select
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -35,8 +37,8 @@ prefix = Path(sys.prefix).resolve()
 for mod in (agentwiz, modelspell):
     check(prefix in Path(mod.__file__).resolve().parents, f"{mod.__name__} imported from {mod.__file__}")
 
-# S2: --version from the console script and from python -m; modelSpell is the pinned 0.2.1
-check(modelspell.__version__ == "0.2.1", f"modelSpell {modelspell.__version__} installed, expected 0.2.1")
+# S2: --version from the console script and from python -m; modelSpell is the pinned 0.3.0
+check(modelspell.__version__ == "0.3.0", f"modelSpell {modelspell.__version__} installed, expected 0.3.0")
 expected = f"AgentWiz {agentwiz.__version__} (modelSpell {modelspell.__version__})"
 bindir = Path(sys.executable).parent
 exe = bindir / ("agentwiz.exe" if os.name == "nt" else "agentwiz")
@@ -45,18 +47,33 @@ for cmd in ([str(exe), "--version"], [sys.executable, "-m", "agentwiz", "--versi
     check(run.returncode == 0 and run.stdout.strip() == expected, f"{cmd}: {run.returncode} {run.stdout!r}")
 
 
-# S3: inline OpenAI-compatible stub streaming "pong" in two deltas
+# S3: inline OpenAI-compatible stub streaming "pong" in two deltas. The model "silent" (S12) accepts the
+# connection, reads the request and never sends response headers; it ends when the client disconnects.
 def chunk(content=None, finish=None):
     d = {} if content is None else {"content": content}
     return b"data: " + json.dumps({"choices": [{"delta": d, "finish_reason": finish}]}).encode() + b"\n\n"
 
 
 received = []
+silent_reached, silent_closed = threading.Event(), threading.Event()
 
 
 class Stub(BaseHTTPRequestHandler):
     def do_POST(self):
         received.append(json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}"))
+        if received[-1].get("model") == "silent":
+            silent_reached.set()
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:       # until the client goes (or a minute passes)
+                if select.select([self.connection], [], [], 0.05)[0]:
+                    try:
+                        gone = not self.connection.recv(1, socket.MSG_PEEK)
+                    except OSError:
+                        gone = True
+                    if gone:
+                        silent_closed.set()
+                        return
+            return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
@@ -113,6 +130,10 @@ try:
     check(initial["mcp"]["read_only"] is False and initial["mcp"]["servers"] == {}, f"MCP library: {initial['mcp']}")
     check(initial["task"]["read_only"] is False, f"task settings: {initial['task']}")
     check("reasoning" not in initial and "max_tokens" not in initial, "retired settings still in /api/state")
+    # S4 (0.1.3): contracts and history are present, empty and off
+    check(initial["contracts"]["items"] == [] and "checks" in initial["contracts"], f"contracts: {initial['contracts']}")
+    check(initial["history"]["save_runs"] is False and initial["history"]["read_only"] is False,
+          f"history: {initial['history']}")
 
     # S5: configure the stub with the current revision
     rev = json.loads(api("/api/state").read())["revision"]
@@ -120,16 +141,48 @@ try:
                                            "model": "m"}).read())
     check(state["revision"] == rev + 1, f"revision did not advance: {state}")
 
-    # S6: one completion
+    # S6: one completion; the stream is `started`, then text, then one `final` carrying the record
     events = [json.loads(line) for line in api("/api/complete", {
-        "prompt": "ping", "revision": state["revision"], "task": {"temperature": 0.5, "max_tokens": 64}})
-              .read().splitlines() if line]
+        "source": "chat", "prompt": "ping", "system": "", "revision": state["revision"],
+        "task": {"temperature": 0.5, "max_tokens": 64}}).read().splitlines() if line]
     text = "".join(e["text"] for e in events if e["type"] == "text")
     end = events[-1]
-    check(text == "pong" and end["type"] == "result" and end["result"]["text"] == "pong"
-          and end["outcome"] == "complete", f"unexpected events: {events}")
+    check(events[0]["type"] == "started" and [e["type"] for e in events[1:-1]] == ["text"] * len(events[1:-1]),
+          f"unexpected event order: {[e['type'] for e in events]}")
+    check(text == "pong" and end["type"] == "final" and end["outcome"] == "complete"
+          and end["record"]["result"]["text"] == "pong" and end["record"]["run_id"] == events[0]["run_id"],
+          f"unexpected events: {events}")
     check(received and received[-1].get("temperature") == 0.5 and received[-1].get("max_tokens") == 64,
           f"task settings did not arrive under Chat Completions' names: {received[-1:]}")
+
+    # S11 (0.1.3): save a text contract, then a Checked request against it passes. Needs no extra.
+    saved_contract = json.loads(api("/api/contracts/save", {
+        "name": "smoke", "revision": None,
+        "text": '{"format": "text", "checks": [{"type": "contains", "value": "pong"}]}'}).read())
+    ref = {"name": "smoke", "revision": saved_contract["contract"]["revision"]}
+    events = [json.loads(line) for line in api("/api/complete", {
+        "source": "checked_request", "prompt": "ping", "system": "", "revision": state["revision"],
+        "contract": ref}).read().splitlines() if line]
+    end = events[-1]
+    check(end["type"] == "final" and end["record"]["check"]["overall"] == "pass", f"checked request: {events}")
+
+    # S12 (0.1.3): Stop reaches a request that is still waiting for response headers, from the installed wheel:
+    # the handle modelSpell 0.3.0 provides works here. The stub reads the request, so it was sent.
+    state = json.loads(api("/api/config", {"revision": state["revision"], "kind": "openai_compat",
+                                           "base_url": stub_url, "model": "silent"}).read())
+    stream = api("/api/complete", {"source": "chat", "prompt": "ping", "system": "", "revision": state["revision"]})
+    started = json.loads(stream.readline())
+    check(started["type"] == "started", f"first event: {started}")
+    check(silent_reached.wait(10), "the stub never saw the request")
+    asked = time.monotonic()
+    answer = json.loads(api("/api/complete/stop", {"attempt_id": started["attempt_id"]}).read())
+    check(answer == {"status": "stopping"}, f"stop answered {answer}")
+    rest = [json.loads(line) for line in stream.read().splitlines() if line]
+    final = rest[-1]
+    check(time.monotonic() - asked < 5, "the stopped request took more than 5 seconds to end")
+    check(final["type"] == "final" and final["outcome"] == "stopped" and final["record"]["stop_mode"] == "immediate"
+          and final["record"]["sent"] is True, f"stopped request: {final}")
+    check(silent_closed.wait(5), "the stub never saw the client disconnect")
 
     # S9 (0.1.2): an attachment with a non-ASCII name is read and previewed with its provenance line
     from urllib.parse import quote
