@@ -240,7 +240,7 @@ def test_stop_between_the_end_point_and_the_commit(ui, server, monkeypatch):
     switch_history(ui, True)
     server.reply(answer("pong"))
     from agentwiz import checks
-    real = checks.check_answer
+    real = checks.check_answer_value
     entered, proceed = threading.Event(), threading.Event()
 
     def slow(contract, text):
@@ -248,7 +248,7 @@ def test_stop_between_the_end_point_and_the_commit(ui, server, monkeypatch):
         assert proceed.wait(10)
         return real(contract, text)
 
-    monkeypatch.setattr(checks, "check_answer", slow)
+    monkeypatch.setattr(checks, "check_answer_value", slow)
     it = iter_events(start_checked(ui, "c"))
     started = read_until(it, "started")[-1]
     assert entered.wait(10)
@@ -679,3 +679,34 @@ def test_a_damaged_contract_is_refused_and_usable_after_repair(ui, server):
     revision = contract_item(ui, "c")["revision"]
     rec = record_of(complete(ui, "hi", source="checked_request", contract=("c", revision)))
     assert rec["check"]["overall"] == "pass"
+
+
+# 99 ---------------------------------------------------------------------------------------------
+def test_checked_request_repair_reason(ui, server):
+    """0.1.4, 12.2: a repair of a truncated answer carries the truncation message and `repair_reason`."""
+    from agentwiz import checks
+    save_contract(ui, "c", TEXT_CONTRACT)
+    configure(ui, server)
+    # a truncated answer whose check passes: outcome truncated, check pass, and no repair
+    server.reply(Reply(body=[delta("pong"), delta(finish="length"), DONE], headers=SSE))
+    rec = record_of(checked(ui, "c"))
+    assert rec["outcome"] == "truncated" and rec["check"]["overall"] == "pass" and rec["repair_reason"] is None
+    fail = failure_of(lambda: repair_attempt(ui, rec["id"]))
+    assert fail.status == 409 and fail.body["code"] == "not_repairable"
+    # a truncated answer whose check fails: the preview, the repair's messages and its record all say `truncated`
+    server.reply(Reply(body=[delta("pon"), delta(finish="length"), DONE], headers=SSE), answer("pong"))
+    rec = record_of(checked(ui, "c"))
+    assert rec["outcome"] == "truncated" and rec["check"]["overall"] == "fail"
+    preview = request(ui, "/api/repair/preview", {"attempt_id": rec["id"]})
+    assert preview["repair_reason"] == "truncated"
+    contract = checks.contract_from_text(TEXT_CONTRACT)
+    assert preview["repair_message"] == checks.repair_message(contract, rec["check"], truncated=True)
+    repaired = record_of(repair_attempt(ui, rec["id"]))
+    assert repaired["repair_reason"] == "truncated" and repaired["messages_sent"] == preview["messages"]
+    assert repaired["role"] is None and repaired["fills"] == []
+    # a complete answer that fails its check: `check_failed`
+    server.reply(answer("nope"), answer("pong"))
+    rec = record_of(checked(ui, "c"))
+    assert request(ui, "/api/repair/preview", {"attempt_id": rec["id"]})["repair_reason"] == "check_failed"
+    assert record_of(repair_attempt(ui, rec["id"]))["repair_reason"] == "check_failed"
+    assert rec["repair_reason"] is None and rec["role"] is None and rec["fills"] == []

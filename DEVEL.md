@@ -1,7 +1,9 @@
 # Developer guide
 
 This file is for repository maintenance. Usage is documented in `README.md`; the build reference
-for 0.1.3 is *AgentWiz 0.1.3 — Technical Specification* (version 4), which takes precedence over
+for 0.1.4 is *AgentWiz 0.1.4 — Technical Specification* (version 5), which takes precedence over
+release plan version 13; its Section 24 lists every departure, and `HANDOVER.md` lists the ones found
+while building it. The build reference for 0.1.3 was *AgentWiz 0.1.3 — Technical Specification* (version 4), which took precedence over
 Section 8 of the release plan (*AgentWiz 0.1.x — Release Plan and 0.2 Design*, version 11) and over
 Sections 11–12 of version 10.1, which the plan carries forward; its Section 22 lists every
 departure. The build reference for 0.1.2 was *AgentWiz 0.1.2 — Technical Specification* (version
@@ -58,6 +60,9 @@ the page checks will not run without it); it also converts a `.venv` made by the
 - [Page checks](#page-checks)
 - [Runs and records](#runs-and-records)
 - [Contracts and checks](#contracts-and-checks)
+- [Contracts and repair](#contracts-and-repair)
+- [Blocks, roles and scripts](#blocks-roles-and-scripts)
+- [The tutorial: one demo per feature](#the-tutorial-one-demo-per-feature)
 - [Concurrency and resource limits](#concurrency-and-resource-limits)
 - [Error reporting](#error-reporting)
 - [Tests](#tests)
@@ -66,6 +71,7 @@ the page checks will not run without it); it also converts a `.venv` made by the
 - [Branches and releases](#branches-and-releases)
 - [NEWS entries](#news-entries)
 - [Implementation discretion](#implementation-discretion)
+- [Building 0.1.4](#building-014)
 
 ## Repository layout
 
@@ -91,13 +97,22 @@ the page checks will not run without it); it also converts a `.venv` made by the
 | `agentwiz/mcp_client.py` | yes | Streamable HTTP MCP client, both eras, standard library only: probe and era cache, discovery entries, legacy sessions and the session lock, gates, reply reading with limits, `classify`. An HTTP *client*; knows nothing of AgentWiz's server. |
 | `agentwiz/mcp_ops.py` | yes | Operations: worker threads, one commit per operation, abandonment and socket shutdown, capacity, maintenance (notices, `DELETE`s), retention. No HTTP server code. |
 | `agentwiz/tool_forms.py` | yes | Form specifications from tool input schemas. No HTTP. |
+| `agentwiz/errors.py` | yes | **0.1.4.** `report_internal` (re-exported by `ui/server.py`) and `ShuttingDown`, the base of every "admission closed" error. |
+| `agentwiz/roles.py` | yes | **0.1.4.** `roles.json`: parsing, reading, writing. Called from `state.py` under the state lock. No HTTP. |
+| `agentwiz/templates.py` | yes | **0.1.4.** `{{inputs.x.y}}` scanning and filling (text and typed), with provenance. No HTTP. |
+| `agentwiz/blocks.py` | yes | **0.1.4.** The block loader, problems, the block store (fingerprints, effective revisions, cache) and the `GET /api/blocks/<name>` view. Reads files only, never writes. No HTTP. |
+| `agentwiz/script_step.py` | yes | **0.1.4.** The script step: the single `selectors` supervisor owning the pipes, process-group handling, `Retained` cleanup owners. Hooks `spawn`, `after_spawn`. No HTTP. |
+| `agentwiz/executor.py` | yes | **0.1.4.** `execute_step` for model, tool and script steps; token tally; step results. Called only by `runner.py`. No HTTP. |
+| `agentwiz/runner.py` | yes | **0.1.4.** `run_block`: input checks, admission, preparation, the executor, the one finaliser, the observer, timers (`make_timer`, `before_run_end`). No HTTP. |
+| `agentwiz/tutorial.py`, `agentwiz/tutorial_topics.py` | yes | The tutorial session manager (child UI, seeding, the pending session) and, **0.1.4**, the topic registry the server, page and tests read. |
+| `agentwiz/tutorial_support/blocks/` | yes | **0.1.4.** The four example blocks (`extract_fields`, `echo_numbers`, `word_count`, `wait_for_stop`) copied byte for byte into the tutorial's temporary workspace. |
 | `agentwiz/ui/server.py` | yes | The HTTP server; the only module that knows HTTP. `Handler.write_event` is the one writer of stream events. |
-| `agentwiz/ui/index.html` | yes | The page: six tabs, header dialogs, one file with no build step. |
+| `agentwiz/ui/index.html` | yes | The page: seven tabs, header dialogs (Model settings, MCP servers, Roles), one file with no build step. |
 | `pyproject.toml`, `README.md`, `LICENSE` | metadata | Packaging, wheel description, MIT license. |
-| `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`; 0.1.3: `test_checks.py`, `test_contracts.py`, `test_runs.py`, `test_model_step.py`, `test_attempts.py`, `test_history.py`, `test_page.py`, `test_live_judgement.py`), opt-in live checks (`test_live.py`, with the pure judgement function `live_stop.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
+| `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`; 0.1.3: `test_checks.py`, `test_contracts.py`, `test_runs.py`, `test_model_step.py`, `test_attempts.py`, `test_history.py`, `test_page.py`, `test_live_judgement.py`; 0.1.4: `test_roles.py`, `test_templates.py`, `test_blocks.py`, `test_block_routes.py`, `test_block_tool.py`, `test_scripts.py`, `test_script_cleanup.py`, `test_runner.py`, `test_shutdown.py`, `test_signals.py`, `test_tutorial.py`), opt-in live checks (`test_live.py`, with the pure judgement function `live_stop.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
 | `docs/attachment_interface.md` | no | The attachment interface (companion document, version 3, draft). |
 | `scripts/build_release.py` | no | Builds the release wheel from `HEAD`, runs release checks RC1–RC3; `--smoke`; `--no-isolation`; `--modelspell-wheel` (offline smoke); `--changed-since`. |
-| `scripts/smoke_installed.py` | no | Smoke check (S1–S12) against an installed wheel. |
+| `scripts/smoke_installed.py` | no | Smoke check (S1–S14) against an installed wheel. |
 | `scripts/dev_setup.sh` | no | Developer setup: `./.venv` with an editable install, pytest, `jsonschema`, Playwright and Chromium. |
 | `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for trying the UI without a model; logs the sampling fields and message roles each request carries. Models `json-pass`, `json-repair` and `slow-headers` serve the README tour. |
 | `scripts/stub_mcp_server.py` | no | Scripted MCP server (`--era dual|modern|legacy`, `--token`) for trying the MCP tools tab; logs every request, disconnect, notice and `DELETE`. |
@@ -243,7 +258,15 @@ State attributes, which page checks assert: tab buttons `aria-selected` and `dat
 repair controls `data-repair`; tool status `data-state` and `data-outcome`; the document preview
 `data-state`; the contract editor `data-state`; history rows `data-run-id`; Copy buttons `data-copy`
 (`copied`, `refused`). `data-test` names are `<tab>-<element>`; tab buttons are `tab-<fragment>` and
-panels `panel-<fragment>`.
+panels `panel-<fragment>`. **0.1.4:** checked attempts carry `data-repair-reason`; the Blocks tab's
+elements and attributes (`blocks-row` `data-block`/`data-problem`, `blocks-status` `data-state`
+`idle|running|stopping|done|polling|stale` with `data-outcome`/`data-run-id`/`data-save`,
+`blocks-attempt`, `blocks-trace`, `blocks-operation`, `blocks-output`) and the Roles dialog
+(`roles-dialog` `data-state` `idle|saved|error|stale`, `roles-row` `data-role`/`data-unresolved`) are
+listed in specification 13.1 and 13.2. A tab's preparation hook (`TABS.<tab>.tutorialPrepare`) fills
+that tab's own inputs from a tutorial topic and moves no data between tabs. The Blocks tab never
+starts a second load of a block while one is in flight (a keep-less load would discard the texts a
+tutorial hook was asked to fill).
 
 ## Page checks
 
@@ -266,7 +289,8 @@ the page checks run again). Nothing under `agentwiz/` imports Playwright and the
   the like.
 - **Blocked, never skipped.** If Playwright or its Chromium cannot be provided, the page checks fail
   with that reason and the gate is blocked (D51); they are never passed by skipping.
-- The in-UI tutorial is optional learning material. Script-verifiable UI behaviour belongs in
+- The in-UI tutorial is a required demo of each feature, checked in the gate (`tests/test_tutorial.py`),
+  that the owner may also use for subjective review. Script-verifiable UI behaviour belongs in
   page checks, not in owner assignments; subjective review is governed by "Checking a release".
 
 ## Runs and records
@@ -338,7 +362,97 @@ plain JSON only (no `Decimal`; a contract travels as `{"name", "revision", "text
   (`const`, `enum`, `default`, `examples`) is data. A missing local target is not refused at save; it
   gives `contract_error` when applied.
 
+## Contracts and repair
+
+> **Contracts and repair.**
+> 1. A contract decides every answer, first or repaired. Nothing upstream of the checks changes what counts as a pass.
+> 2. The answer parser accepts the whole trimmed answer, or a single fenced block when not strict. A new recovery rule needs replay evidence on saved answers and the owner's approval.
+> 3. A contract is never sent to the model. Prompts state the required output themselves.
+> 4. A truncated attempt never provides a block output.
+> 5. Repairs reuse the attempt's captured settings. Nothing raises a token cap automatically.
+
+Implementation: `checks.check_answer_value` returns the check result and the parsed value from one
+decision; `model_step.run_attempt_with_value` is the only path a block attempt takes, repairs
+included, so an accepted value is never re-derived by a second check. `checks.repair_message` has a
+truncation branch; `repair_reason` (`null`, `check_failed`, `truncated`) is on every record and in the
+repair preview. Only a `complete` attempt whose check `pass`es is accepted.
+
+## Blocks, roles and scripts
+
+- **Loader.** `blocks.py` turns a folder into a `Block` or a problem (`unreadable`, `invalid`,
+  `newer_format`, `unusable`; precedence `invalid` > `unreadable` > `unusable`, `newer_format` alone).
+  Every issue is listed (at most 100). Files are read link-free and bounded
+  (`blocks.BLOCK_FILE_LIMIT`, `FILE_LIMIT`); only the files `block.json` references are hashed or
+  fingerprinted. The store lists the first `LIST_LIMIT` (200) blocks, caches `CACHE_LIMIT` (400), and
+  keeps every name's revision in a small table so eviction never changes a revision. A revision comes
+  from one process-wide counter and covers the block's own files **and** the revisions and usability
+  of the saved contracts it names.
+- **Admission.** `POST /api/blocks/run` checks, in order, body and size, the block at the revision the
+  page showed (404 `no_such_block`, 409 `stale_revision`, 409 `block_unusable`), the `inputs` shape,
+  then the runner: **inputs are checked before any slot is taken** (BD-03), then non-blocking
+  admission (503 `busy` naming the budget), then preparation (role, fills, server, script hash).
+- **One finaliser.** `runner._finalise` decides the outcome from explicit input, preparation and step
+  results, commits the run, releases slots, delivers `final` (best effort) and saves `result.json`
+  once. Delivery is an observer (`BlockDelivery`); no delivery failure affects a run.
+- **Cancellation.** One token per run with a reason (first cancellation wins: `user_stop`,
+  `budget_exceeded`). Each step kind has one dispatch gate (model: `reserve_attempt`; tool and
+  script: the step lock). Cancellation is inspected before repair, exhaustion and the token allowance.
+- **Script steps.** `script_step.py`: one `selectors` supervisor owns every pipe; the unbuffered pipe
+  objects are the sole close owners of their descriptors (never `os.close` on a recorded number);
+  every wait is bounded and every deadline is a `runner.make_timer` timer. A group whose cleanup
+  cannot be confirmed is handed, with the process and pipes, to a `Retained` owner that keeps the
+  script slot and a writer registration until the group is gone. Scripts need POSIX process groups.
+- **Roles.** `roles.json` through `roles.py`, under the state lock, with its own revision; a save
+  refuses a profile that does not exist. Resolution is live, at preparation (`state.resolve_role`).
+- **Shutdown.** `ProcessState.shutdown(grace_s, wait=)` closes the writer barrier and every admission
+  gate, interrupts delivery, cancels admitted work, escalates, and drains the writer count;
+  `UIServer.server_close(wait=)` calls it (and the tutorial's halves around it); `__main__.py` owns the
+  one signal controller. `UIServer.grace_s` exists so the tutorial's bounded Exit can be lowered in tests.
+- **Hooks tests use (all do nothing in shipped code):** `runner.make_timer`, `runner.before_run_end`,
+  `script_step.spawn`, `script_step.after_spawn`, `state.before_register_writer`, `state.before_write`,
+  and the `BlockDelivery` write boundary (`Handler.write_event`).
+- **Constants tests lower:** `blocks.BLOCK_FILE_LIMIT`, `FILE_LIMIT`, `LIST_LIMIT`, `CACHE_LIMIT`;
+  `script_step.POLL_S`, `RETAINED_POLL_S`, `OUTPUT_LIMIT`, `STDERR_TAIL`, `KILL_GRACE_S`;
+  `runs.RESULT_LIMIT`, `RESULT_BYTES`; `state.SHUTDOWN_GRACE_S` (and `UIServer.grace_s`).
+- **New error mappings.** 400 `block_body`; 404 `no_such_block`, `no_such_run`; 409 `stale_revision`,
+  `block_unusable` (with the problem), `not_held` (410); 503 `busy` (with `budget` for admission);
+  400 `no_such_profile` for a role save naming a missing profile. `RoleUnresolved` and `FillError`
+  name the role or the placeholder, never a value; a rejected run records them as located issues.
+
+## The tutorial: one demo per feature
+
+> **The tutorial: one demo per feature.**
+> 1. Every function a release adds gets a tutorial topic, or a new stage in an existing topic. Configuration is shown inside the topic of the function that uses it.
+> 2. A topic shows its feature's main path against the packaged stand-ins. Limits, refusals, races and edge cases belong in tests, not in the tutorial.
+> 3. Each topic carries `updated_in`: the version that last changed what it shows or prepares. A release that changes a demo sets it in the same change; nothing else moves it.
+> 4. Topics live in one registry. The server, the page and the tests read it; topics are addressed by ID.
+> 5. The tutorial writes only into its own temporary workspace, and only packaged files and fixed examples. It never touches a user's workspace, profiles or credentials.
+> 6. Preparation hooks fill one tab's inputs from a topic. They never move data between tabs.
+> 7. The tutorial check prepares every topic and drives its main action to its expected state in the headless browser. It is part of the gate.
+> 8. Walking the tutorial is optional for the owner. No acknowledgement, pass or completion is recorded.
+
+Implementation (0.1.4): `agentwiz/tutorial_topics.py` holds `TOPICS`, `public()` and `by_id()`;
+`/api/tutorial` returns the topic list and `/api/tutorial/step` takes `{"topic": <id>}` (400 for an
+unknown ID, `{"busy": true}` while a model request, a tool call or a block run is running). A session
+seeds its temporary workspace with the profile `tutorial-json`, `roles.json` (`fast` to that profile)
+and the four example blocks, and re-saves the `fields` contract. Exit closes the child through
+`UIServer.server_close(wait=False)` once; an outstanding cleanup makes the session the manager's one
+pending session (state, workspace and `TemporaryDirectory` kept until it drains); `Tutorial.shutdown_all()`
+(built from `begin_shutdown()` and `finish()`) drains it at the parent's shutdown. `test_tutorial_topics`
+requires a driver for every topic in the registry, so a new topic without one fails the gate.
+
 ## Concurrency and resource limits
+
+**0.1.4 lock map (specification 16, which replaces the rows it supersedes).** The permitted nestings
+are exactly: C1 state lock → attempt store lock → token lock; C2 step lock → reservation lock → `Ops`
+internal lock; C3 step lock → `ProcessState.cleanups` lock, and step lock → writer-barrier lock
+(`Writer.inherit`); C4 reservation lock → `Ops` internal lock; C5 operation lock → MCP client locks.
+The reverse of a chain never happens; no step lock is held while taking the state, store, token or
+operation lock; stop actions decide under the step lock and act after releasing it. A writer
+registration is a count, not a lock. Nothing is held during contract checks, model or tool calls,
+script execution, page writes, run-history writes or waiting in shutdown. The tutorial manager's lock
+is outermost and is never held during a `wait=True` drain. Budgets: 8 model requests, 8 MCP workers
+(abandoned ones count until they exit), 4 script processes (owned by the run, or by a cleanup owner).
 
 | Shared thing | Rule |
 | --- | --- |
@@ -482,7 +596,7 @@ installed versions and shell-quoted launch and activation commands.
 At each build checkpoint, run the offline gate below. Never pass it by skipping, weakening or
 deleting a test. Report a check that could not run as blocked, never as passed. Never substitute
 a stand-in for modelSpell or present a source-only check as the installed-wheel smoke. Offline
-tests must run unattended. Live checks are optional; the tutorial is optional learning material.
+tests must run unattended. Live checks are optional; walking the tutorial is optional for the owner, but its check is in the gate.
 
 ```bash
 python -m pytest -q -m "not live"   # offline suite (the gate)
@@ -632,7 +746,8 @@ an owner disposition, not a claim of individual observations or a new automated 
 old 29-step walkthrough is not a release gate. Offline tests, CI and release smoke requirements
 remain in force; real-backend live checks remain optional.
 
-Tutorial mode is an optional learning aid, not release sign-off. Its header button starts an
+Tutorial mode is a required demo of each feature, checked in the gate, that the owner may also use for
+subjective review; walking it is optional and is not release sign-off. Its header button starts an
 isolated session with persistent tips, auto-filled examples, real application controls and managed
 local scripted services. Inputs are prepared on entry/reset, not continuously overwritten. Normal
 workspaces and credentials stay untouched; Exit, failure and abandoned-session handling clean up
@@ -640,13 +755,18 @@ tutorial resources. It works in the installed application without a source check
 examples current with relevant feature changes, without acknowledgement gates or pass/completion
 accounting. No screenshots or evidence dossiers are required.
 
-**Implementation (0.1.3).** `agentwiz/tutorial.py` supervises one disposable child UI per parent,
+**Implementation (0.1.4, replacing the 0.1.3 paragraph).** Topics come from `tutorial_topics.TOPICS` (eight:
+the five 0.1.3 topics, annotated 0.1.3, and `model-block`, `tool-block`, `script-block`, annotated 0.1.4);
+see "The tutorial: one demo per feature". The gate drives every topic's main action in headless
+Chromium (`tests/test_tutorial.py`, #112) and checks the sandbox and the bounded Exit (#113).
+
+**Implementation (0.1.3, as carried forward).** `agentwiz/tutorial.py` supervises one disposable child UI per parent,
 with separate temporary workspace, defaults and MCP library. `tutorial_support/backend.py` and
 `tutorial_support/mcp.py` are packaged stand-ins; the scripts are thin checkout entry points to the
 same code. All servers use loopback and dynamic ports. Authenticated `/api/tutorial` and
 `/api/tutorial/{start,step,exit}` routes manage the session. The UI controller has explicit
 per-tab preparation hooks (a narrow exception to tab independence, not inter-tab data transfer).
-Five feature introductions cover Chat, documents, tools, contracts and repair. There is no full/quick
+Five feature introductions (0.1.3) cover Chat, documents, tools, contracts and repair. There is no full/quick
 route split, manual regression walkthrough, protocol-variant or damaged-file scenario, restart
 control, acknowledgement record, pass count or release sign-off control. Only the current topic
 is retained for the session. The browser heartbeats every minute; 30 minutes without a heartbeat
@@ -722,7 +842,7 @@ judgement.
 3. Commit to `devel` and push; CI runs the offline suite (Ubuntu and macOS, Python 3.10 and 3.13).
    This matrix is a release criterion: the build environment cannot run macOS.
 4. Run `python scripts/build_release.py --smoke` (builds from the committed `HEAD`, runs RC1–RC3,
-   then the smoke test S1–S10).
+   then the smoke test S1–S14).
 5. Merge `devel` into `main`. The release workflow reruns the tests and RC1–RC3, then publishes.
 
 ## NEWS entries
@@ -833,3 +953,12 @@ Choices recorded for 0.1.0:
 - `build_release.py` falls back to plain extraction on Pythons without tarfile filters (3.10.0–3.10.11).
 - Test #3(b) puts the CR/LF in the middle of the environment key, because modelSpell strips the
   ends; test #8's racing saves both change the model, so the winner really changes the revision.
+
+## Building 0.1.4
+
+The build order is specification Section 23, in gated phases (P prepare, 0 baseline, A definitions, B
+runs of blocks, C the page, D the tutorial, E finish); every gate is `python -m pytest -q -m "not live"`
+on Python 3.13 and 3.10 with no failures, errors or skips. The checkpoint log is in `HANDOVER.md`
+(written as the build went; an interrupted build resumes from `BUILD_LOG_0.1.4.md`'s "NEXT ACTION").
+The final steps are, offline and on a throwaway local commit that is never pushed,
+`python scripts/build_release.py --smoke --no-isolation --modelspell-wheel <the 0.3.0 wheel>`.

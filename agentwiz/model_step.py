@@ -15,6 +15,7 @@ from typing import Callable
 
 from modelspell import Endpoint, ModelSpellError
 
+from .errors import report_internal
 from . import __version__, checks, history, jsonio, model_call, runs
 from .model_call import RequestSnapshot, build_messages, classify_outcome, describe_error, result_to_dict
 from .task_settings import TaskSettings, parse_task
@@ -63,6 +64,11 @@ class PreparedAttempt:
     input_messages: list
     messages_sent: list
     contract: ContractCopy | None = None
+    # 0.1.4: defaults reproduce 0.1.3's page records
+    step_id: str = runs.STEP_ID
+    role: str | None = None                  # a block's model step: the role name
+    fills: tuple = ()                        # a block's fills with provenance (first attempt only)
+    repair_reason: str | None = None         # "check_failed" or "truncated" for a repair, else None
 
 
 @dataclass(frozen=True)
@@ -87,13 +93,16 @@ def prepare_first(store: runs.AttemptStore, *, snapshot: RequestSnapshot, system
 
 
 def repair_plan(record: dict) -> dict:
-    """What a repair of this committed record would send (9.2, 9.4): used by the preview and by the send,
-    so they cannot differ."""
+    """What a repair of this committed record would send (9.2, 9.4; 0.1.4, 12.1): used by the preview, by the
+    manual send and by automatic repair, so they cannot differ. An attempt that ended `truncated` gets the
+    truncation message and `repair_reason` "truncated"; any other gets "check_failed"."""
     contract = ContractCopy.from_record(record["contract"])
-    text = checks.repair_message(contract.parsed, record["check"])
+    truncated = record["outcome"] == "truncated"
+    text = checks.repair_message(contract.parsed, record["check"], truncated=truncated)
     messages = [*record["input_messages"], {"role": "assistant", "content": record["result"]["text"]},
                 {"role": "user", "content": text}]
     return {"messages": messages, "repair_message": text, "contract": contract,
+            "repair_reason": "truncated" if truncated else "check_failed",
             "settings": {"kind": record["endpoint"]["kind"], "base_url": record["endpoint"]["base_url"],
                          "model": record["model"], "provider": record["provider"], "task": record["task"]}}
 
@@ -101,7 +110,7 @@ def repair_plan(record: dict) -> dict:
 def prepare_repair(run: runs.Run, number: int, parent: dict,
                    key_for: Callable[[str, str], str | None]) -> PreparedAttempt:
     """The next attempt of the parent's step, from the parent's captured settings (9.2). The key is resolved
-    now, for the captured endpoint."""
+    now, for the captured endpoint. No setting is changed for a repair."""
     plan = repair_plan(parent)
     s = plan["settings"]
     key = key_for(s["kind"], s["base_url"])
@@ -111,13 +120,24 @@ def prepare_repair(run: runs.Run, number: int, parent: dict,
     task = parse_task(s["task"])
     arguments = model_call.task_arguments(task, snapshot.kind, snapshot.provider)
     return PreparedAttempt(run, number, parent, snapshot, task, arguments, list(parent["input_messages"]),
-                           plan["messages"], plan["contract"])
+                           plan["messages"], plan["contract"], step_id=parent["step_id"],
+                           role=parent.get("role"), fills=(), repair_reason=plan["repair_reason"])
+
+
+def prepare_block_first(run: runs.Run, number: int, *, snapshot: RequestSnapshot, task: TaskSettings,
+                        arguments: dict, messages: list, contract: ContractCopy, role: str,
+                        fills: list) -> PreparedAttempt:
+    """The first attempt of a block's model step (11.2): the run's step ID, the role's snapshot, the block's
+    task settings mapped for the role's backend, and the filled messages as both `input_messages` and
+    `messages_sent`. The number was reserved by `AttemptStore.reserve_attempt`."""
+    return PreparedAttempt(run, number, None, snapshot, task, arguments, list(messages), list(messages), contract,
+                           step_id=run.step_id, role=role, fills=tuple(fills), repair_reason=None)
 
 
 # --- the record ---------------------------------------------------------------------------------------------
 def _new_record(p: PreparedAttempt, aid: str) -> dict:
     run = p.run
-    return {"record_version": RECORD_VERSION, "id": aid, "run_id": run.run_id, "step_id": runs.STEP_ID,
+    return {"record_version": RECORD_VERSION, "id": aid, "run_id": run.run_id, "step_id": p.step_id,
             "attempt": p.number, "parent_id": p.parent["id"] if p.parent else None, "source": run.source,
             "accepted_at": runs.utc_now(),
             "profile": {"name": p.snapshot.profile_name, "modified": p.snapshot.profile_modified},
@@ -126,6 +146,7 @@ def _new_record(p: PreparedAttempt, aid: str) -> dict:
             "task": p.task.request_shape(),
             "input_messages": p.input_messages, "messages_sent": p.messages_sent,
             "contract": p.contract.view() if p.contract else None,
+            "role": p.role, "fills": [dict(f) for f in p.fills], "repair_reason": p.repair_reason,
             "save_run": run.save_runs, "agentwiz_version": __version__,
             "modelspell_version": modelspell.__version__}
 
@@ -144,7 +165,6 @@ def _error_fields(exc: BaseException, p: PreparedAttempt) -> dict:
             out["description"] = f"{text} {hint}."
             out["hint"] = "openrouter_no_provider"
         return out
-    from .ui.server import report_internal
     report_internal("/api/complete", exc)
     return {"class": "InternalError", "status": None, "description": f"InternalError: {type(exc).__name__}"}
 
@@ -152,7 +172,16 @@ def _error_fields(exc: BaseException, p: PreparedAttempt) -> dict:
 # --- run_attempt -------------------------------------------------------------------------------------------
 def run_attempt(store: runs.AttemptStore, prepared: PreparedAttempt, callbacks: Callbacks = Callbacks(),
                 sink: history.Writer | None = None) -> dict:
-    """Section 8.4. Returns the committed record."""
+    """Section 8.4. Returns the committed record. The 0.1.3 entry point, now a wrapper (0.1.4, 9.3)."""
+    return run_attempt_with_value(store, prepared, callbacks, sink)[0]
+
+
+def run_attempt_with_value(store: runs.AttemptStore, prepared: PreparedAttempt, callbacks: Callbacks = Callbacks(),
+                           sink: history.Writer | None = None) -> tuple[dict, object]:
+    """Section 8.4, returning (the committed record, the checked value). The value is what the one check
+    that decided the attempt parsed (`checks.check_answer_value`): `checks.NO_VALUE` unless the check ran.
+    It never enters the record, so records stay plain JSON; a caller uses it only for an attempt that ended
+    `complete` with check `pass` (0.1.4, 9.3, 11.2)."""
     run, p = prepared.run, prepared
     aid = runs.attempt_id(run.run_id, p.number)
     base = _new_record(p, aid)
@@ -182,11 +211,10 @@ def run_attempt(store: runs.AttemptStore, prepared: PreparedAttempt, callbacks: 
     try:
         try:
             if callbacks.started is not None:
-                callbacks.started({"run_id": run.run_id, "step_id": runs.STEP_ID, "attempt": p.number,
+                callbacks.started({"run_id": run.run_id, "step_id": p.step_id, "attempt": p.number,
                                    "attempt_id": aid})
         except Exception as exc:  # noqa: BLE001 - PageGone, or a write that failed or timed out
             if not isinstance(exc, PageGone):
-                from .ui.server import report_internal
                 report_internal("/api/complete", exc)
             started_failed = True
         if not started_failed:
@@ -221,26 +249,25 @@ def run_attempt(store: runs.AttemptStore, prepared: PreparedAttempt, callbacks: 
         if cancelled_exc.partial is not None:
             partial = result_to_dict(cancelled_exc.partial)
         if end.cancelled:
-            cancel_reason, stop_mode = "user_stop", "immediate"
+            cancel_reason, stop_mode = end.reason or runs.USER_STOP, "immediate"
         else:
             cancel_reason = "page_closed"
     elif failure is not None or crash is not None:
         error = _error_fields(failure if failure is not None else crash, p)
         if end.cancelled:                                                    # rule 3
-            outcome, cancel_reason, stop_mode = "stopped", "user_stop", "immediate"
+            outcome, cancel_reason, stop_mode = "stopped", end.reason or runs.USER_STOP, "immediate"
         else:                                                                # rule 4
             outcome = "error"
     else:  # cannot happen: the call returned nothing and raised nothing
         outcome, error = "error", {"class": "InternalError", "status": None,
                                    "description": "InternalError: no outcome"}
 
-    check, skipped = None, None
+    check, skipped, value = None, None, checks.NO_VALUE
     if p.contract is not None:
         if outcome in ("complete", "truncated"):
             try:
-                check = checks.check_answer(p.contract.parsed, result.text)
+                check, value = checks.check_answer_value(p.contract.parsed, result.text)
             except Exception as exc:  # noqa: BLE001 - never read as a pass
-                from .ui.server import report_internal
                 report_internal("checks", exc)
                 check = {"overall": "contract_error", "checks": [],
                          "issues": [{"location": "answer", "message": "the checks failed internally",
@@ -269,10 +296,9 @@ def run_attempt(store: runs.AttemptStore, prepared: PreparedAttempt, callbacks: 
         try:
             saved = sink.write_attempt(run, record)
         except Exception as exc:  # noqa: BLE001 - settle exactly once, whatever happened
-            from .ui.server import report_internal
             report_internal("history", exc)
             saved = {"save_status": "failed", "reason": "the run file could not be written (internal error)"}
         store.settle_save(aid, saved["save_status"], **{k: v for k, v in saved.items() if k != "save_status"})
     if crash is not None and not isinstance(crash, Exception):
         raise crash
-    return record
+    return record, value

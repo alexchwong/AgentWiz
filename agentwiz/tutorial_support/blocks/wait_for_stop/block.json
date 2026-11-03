@@ -1,0 +1,8 @@
+{
+  "format_version": 1,
+  "name": "wait_for_stop",
+  "description": "A script that waits until it is stopped, to show Stop ending a script.",
+  "inputs": {},
+  "outputs": {"done": {"contract": {"format": "text"}}},
+  "steps": [{"id": "wait", "kind": "script", "file": "scripts/wait.py", "timeout_s": 600}]
+}

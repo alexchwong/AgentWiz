@@ -128,7 +128,7 @@ def test_a_failing_check_is_contract_error_never_a_pass(server, monkeypatch, cap
     def broken(contract, text):
         raise RuntimeError("DETAIL")
 
-    monkeypatch.setattr(checks, "check_answer", broken)
+    monkeypatch.setattr(checks, "check_answer_value", broken)
     record = model_step.run_attempt(store, prepared)
     assert record["outcome"] == "complete" and record["check"]["overall"] == "contract_error"
     assert record["check"]["issues"][0]["message"] == "the checks failed internally"

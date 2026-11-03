@@ -7,12 +7,29 @@ You choose a model backend (LM Studio, OpenRouter, or any OpenAI-compatible serv
 llama-server), type an optional system prompt and an input, and watch the reasoning and the answer
 stream back, followed by token usage, cost and a clear outcome.
 
-What 0.1.3 does:
+What 0.1.4 does:
 
-- **Six tabs, one function each.** **Chat** sends a request; **Documents** previews a text file;
+- **Blocks.** A block is a saved single step, a folder in the workspace with a `block.json` and,
+  for a model step, prompt files, or for a script step, a Python file. A step is one of three kinds:
+  a **model** call, an **MCP tool** call or a **script**. The **Blocks** tab lists your blocks,
+  shows their files exactly, builds an input form, runs one, and shows a trace.
+- **Roles.** A role such as `fast` names a saved profile; a model step chooses its model by role.
+  The **Roles** dialog in the header edits the map.
+- **Contracts on both sides.** Every input and output of a block has a contract. Inputs are checked
+  before anything runs; an output is accepted only if its contract passes.
+- **Automatic repair.** A model step whose answer fails its check is asked again, with the checks'
+  findings, up to a limit you set; a cut-off answer is never accepted.
+- **Runs that outlive the page.** A block run has time and token budgets, keeps going if the page
+  closes, and can be found again and stopped from the Blocks tab.
+- **Eight tutorial topics**, each showing the version that last changed it.
+
+Carried forward from 0.1.3:
+
+- **Seven tabs, one function each.** **Chat** sends a request; **Documents** previews a text file;
   **MCP tools** calls a tool on a local MCP server; **Contracts** saves and tests output contracts;
   **Checked request** sends a request and checks the answer against a contract; **History** shows
-  saved runs. Model settings and MCP servers are dialogs in the header, shared by every tab.
+  saved runs; **Blocks** runs a saved block. Model settings, MCP servers and roles are dialogs in
+  the header, shared by every tab.
 - **Contracts and checks.** A contract says what an answer should look like: text or JSON, content
   checks, and optionally a JSON Schema. Checks are deterministic and keep every number exact.
 - **Checked requests and repair.** A failed answer can be sent back to the model with the checks'
@@ -123,19 +140,20 @@ The page is a row of tabs, one per function. Each works without visiting any oth
 | **Contracts** | `#contracts` | Save text or JSON contracts; check pasted text against one, with no model. |
 | **Checked request** | `#checked-request` | Send a request, check the answer against a contract, preview and send a repair. |
 | **History** | `#history` | Open saved runs read-only; copy any part; delete them. |
+| **Blocks** | `#blocks` | List the workspace's blocks, read their files, fill the inputs, run, Stop, read the trace. |
 
 - **The address holds the tab.** Open `http://127.0.0.1:<port>/?t=<token>#contracts` and a reload
   stays there. An unknown fragment selects Chat. The arrow keys move between tabs; Home and End go
   to the first and last.
-- **Shared configuration lives in the header.** **Model settings** (with profiles) and **MCP
-  servers** are dialogs; so is the **Save runs** switch. Contracts, once saved, are shared by name.
+- **Shared configuration lives in the header.** **Model settings** (with profiles), **MCP
+  servers** and **Roles** are dialogs; so is the **Save runs** switch. Contracts, once saved, are shared by name.
 - **One request per tab.** Chat and Checked request can each have a model request running at once,
-  MCP tools one tool call, Documents one upload. AgentWiz as a whole still runs at most 8 model
+  MCP tools one tool call, Blocks one block run, Documents one upload. AgentWiz as a whole still runs at most 8 model
   requests and 8 tool operations.
 - **Hidden tabs keep running.** Switching tabs hides a panel without stopping what it does; a tab
   with work in progress shows a marker, and the result is there when you come back.
-- **Ctrl/Cmd+Enter** acts on the visible tab: Send on Chat and Checked request, Run on MCP tools,
-  Check on Contracts.
+- **Ctrl/Cmd+Enter** acts on the visible tab: Send on Chat and Checked request, Run on MCP tools and
+  Blocks, Check on Contracts.
 - **Copy.** Every output panel has a **Copy** button. For documents and tool results it copies the
   preview exactly, provenance line included, so a pasted result still says where it came from. If
   the browser refuses clipboard access, the text is selected and the page says to press Ctrl+C
@@ -476,6 +494,180 @@ check, and the first 20 issues.
   one text. Repair still works, but the roles are lost.
 - A repair counts toward the limit of 8 model requests in progress.
 
+## Blocks
+
+A block is a folder directly under `<workspace>/blocks/`; its name is the folder name and the `name` in
+its `block.json`. AgentWiz **reads** block files and **never writes them**: edit them with any editor,
+then press **Reload** in the Blocks tab (the tab also notices an edit when you open a block or run it).
+
+```
+<workspace>/blocks/extract_fields/
+    block.json
+    prompts/system.md
+    prompts/user.md
+    scripts/clean.py        (script steps only)
+```
+
+`block.json` (format version 1). Every key not listed here is refused, with its location, so a
+mistyped key never silently does nothing.
+
+| Key | Meaning |
+| --- | --- |
+| `format_version` | `1`. A greater number means the block was written for a newer AgentWiz. |
+| `name` | The folder name (1 to 64 letters, digits, `.`, `_`, `-`). |
+| `description` | Optional text shown in the list. |
+| `inputs` | Object: input name to `{"contract": ..., "description": ...}`. The contract is an inline contract object or the name of a saved contract. Names follow `[A-Za-z_][A-Za-z0-9_]{0,63}`. May be empty. |
+| `outputs` | Same shape, at least one. |
+| `steps` | A list of **exactly one** step. |
+| `budget` | `{"max_seconds": 1..86400 (default 1800), "max_model_tokens": integer >= 1 or absent}`. |
+
+A model step:
+
+```json
+{"id": "extract", "kind": "model", "role": "fast",
+ "system": {"file": "prompts/system.md"},
+ "prompt": {"file": "prompts/user.md"},
+ "task": {"temperature": 0, "max_tokens": 1024},
+ "output": "fields",
+ "repair": {"max_repairs": 2}}
+```
+
+`system` (optional) and `prompt` are `{"file": "prompts/..."}` or `{"text": "..."}`. `task` takes the
+same settings as a request panel. `output` names the one declared output. A model or tool block
+declares exactly one output.
+
+A tool step calls a tool on a server from the MCP servers dialog:
+
+```json
+{"id": "lookup", "kind": "tool", "server": "docs", "tool": "lookup",
+ "arguments": {"id": "{{inputs.id}}", "label": "n={{inputs.id}}"}, "output": "result"}
+```
+
+A script step runs a Python file (see **Script steps**):
+
+```json
+{"id": "clean", "kind": "script", "file": "scripts/clean.py", "timeout_s": 60}
+```
+
+- **File references** are relative paths inside the block folder (`prompts/` for prompts, `scripts/`
+  and ending in `.py` for scripts). A symbolic link, a missing file or an oversized one (4 MiB; 1 MiB
+  for `block.json`) is a problem. Only referenced files matter; helper files beside them are ignored.
+- **The Blocks tab** lists each block with its step kind and revision, or its problem (file, code and
+  located issues). A block with a problem can be opened and read, but not run. Opening a block shows
+  `block.json` and each referenced file as exact text with its SHA-256 and a **Copy** button, and the
+  contracts it uses as exact text with their names and revisions.
+- **The input form** comes from the input contracts: a text area for a `text` input; for a `json`
+  input, a generated form when its schema is a simple object schema (numbers are kept exactly as you
+  type them), otherwise a JSON editor. Values travel as text.
+- **Revisions.** Each block has a revision that changes when its files, or a saved contract it names,
+  change. The page runs a block only at the revision it showed. If the block changed since, the run is
+  refused (`stale`), the tab reloads the block and keeps the input texts whose names still exist, and
+  nothing is sent. Run again.
+- **The trace** shows the run's state and outcome, the step, each attempt with its outcome, check and
+  repair reason, the fills with their provenance, the tool call or script operation, truncated
+  attempts and the token cap, reported usage against the allowance, the input and output check
+  results, and the outputs, each with a **Copy** button.
+- **History.** Saved block runs appear in the History tab with `run.json`, each attempt and
+  `result.json`. A block run is never loaded back into the Blocks tab.
+
+## Roles
+
+`<workspace>/roles.json` maps a role name to a profile name, for example `fast` to a profile you saved
+for a small local model. A model step names a role, so the same block can run on another model by
+changing the map. Open the **Roles** dialog in the header to add, change or remove roles and Save; a
+role whose profile no longer exists, or whose profile has no model, is shown as unresolved with the
+reason, and a block that uses it is refused before any request. **Chat and Checked request keep
+using the active profile**; roles are only for blocks. A role's profile is read when the run is
+prepared, so a profile you edit takes effect on the next run.
+
+## Templates
+
+A model step's `system` and `prompt`, and every string inside a tool step's `arguments`, may contain
+placeholders written exactly as `{{inputs.name}}` or with a dotted path into a JSON input,
+`{{inputs.report.title}}`, with no spaces.
+
+- In **text**, a string is inserted as it is and any other value as its exact JSON text.
+- In **tool arguments**, a string that is exactly one placeholder is replaced by the value itself with
+  its own JSON type: a number stays a number, digit for digit, and an object stays an object. Text
+  around a placeholder makes it a text fill.
+- A missing key, or a path into something that is not an object, rejects the run before anything is
+  sent; the issue names the placeholder, never the value.
+- Any other `{{ ... }}`, such as braces in an example or in JSON, is left alone. A malformed
+  placeholder (spaces, `{{inputs.}}`, an index) or a `{{steps...}}` placeholder is refused when the
+  block is loaded.
+- The trace lists every fill with its location, placeholder, source and the SHA-256 of what was
+  inserted. There is no placeholder that renders a contract or schema.
+
+## Contracts in blocks
+
+- **A contract is never sent to the model.** A block's prompt must itself state the required output,
+  preferably as one short instruction and one example (for a router: say which words are allowed and
+  show one). The contract only decides whether the answer is accepted.
+- **How answers are read.** In strict mode the whole trimmed answer is parsed. Otherwise a single
+  fenced code block is used, with any prose around it ignored, or else the whole answer.
+- **The truncation rule.** A block never accepts a cut-off answer, even one whose check passes: a
+  truncated attempt is repaired (with a message saying it was cut off) or, if repair is exhausted,
+  fails the step. The step result shows the truncated attempts and the cap that applied, so you can
+  raise `task.max_tokens`.
+- **Inputs have contracts too.** Each input's text is parsed and checked before the run is admitted.
+  A failure rejects the run (outcome **rejected**), takes no slot, and names the input and the rule.
+  A JSON input is parsed whole: a fenced block in an input field is a parse error.
+
+## Automatic repair
+
+`repair.max_repairs` on a model step counts model calls **after the first**: 0 to 5, default 2; 0
+switches repair off. When an attempt completes but fails its check, or is cut off, the next call
+sends the first request, the failed answer and a message listing the findings (or saying the answer
+was cut off). Only a **complete** answer whose check **passes** is accepted. No setting changes on
+repair and the token cap is never raised. No repair is attempted after a stop, a time or token
+budget stop, a model error, an empty answer, an incomplete check or a contract error; the trace says
+which applied. Each repair is a full request, which on a local model without prompt caching is a full
+prompt evaluation.
+
+## Script steps
+
+A script step runs one of your Python files under `scripts/`. The block's inputs arrive on standard
+input as one JSON object; the script prints one JSON object on standard output whose keys are the
+block's output names (every declared output must be present).
+
+- The script runs with an allow-listed environment (`PATH`, `HOME`, `LANG`, `TMPDIR`), so it holds no
+  credentials, in its own process group, with a time limit (`timeout_s`, default 60, at most 3,600).
+  Its working folder is a scratch folder; with Save runs on it is kept as `scratch/<step id>/` in the
+  run's folder.
+- **Stop** (and the time budget) sends the process group SIGTERM, then SIGKILL after 2 seconds.
+- AgentWiz hashes the file when the block loads and checks the hash again just before Python opens
+  it; a file that changed in between is not run. An edit in that last instant is not detected.
+- Output is limited (32 MiB; the last 1 MiB of standard error is kept).
+- **A script is not sandboxed.** It runs as you, with your access to files and the network, and can
+  read any file you can, including files that hold keys. Run only scripts you wrote or read.
+- Script steps need POSIX process groups: Linux, macOS and WSL2. Native Windows is not supported.
+
+## Runs and budgets
+
+Pressing **Run** checks the inputs, then admits the run, which reserves what it needs up front: one
+model request, one MCP worker or one script process. If the budget for that is used up, the request
+gets a 503 `busy` that names it; nothing queues.
+
+- **Outcomes.** `complete`, `rejected` (inputs, a fill failure, an unresolved role or server: nothing
+  ran), `failed`, `stopped`, `budget_exceeded` and `unknown` (a tool call that may have run).
+- **`max_seconds`** is a time budget for the whole run. When it expires the run is cancelled and ends
+  `budget_exceeded`; it is not an exact wall-clock ceiling (a script's teardown can add up to two
+  escalation intervals, and a blocking local operation finishes first).
+- **`max_model_tokens`** is a **soft allowance of reported usage**, checked before each model call.
+  One attempt can take a run past it; the overshoot is shown ("over by N"), and attempts whose usage
+  the backend did not report are listed, never estimated.
+- **`result.json`.** Every run ends with a result: outcome, inputs and input checks, the captured
+  contracts, outputs (only for `complete`), the step result, budget and usage, versions. With Save
+  runs on it is written to the run's folder; otherwise the latest 100 results (256 MiB) are held in
+  memory.
+- **The page is optional.** A block run continues if the page closes or loses its connection, until
+  it ends or its time budget does. When the Blocks tab loads, running block runs are listed and can
+  be followed (the tab then polls every 2 seconds) or stopped. Reattachment works within the running
+  server only: runs end when AgentWiz exits normally, and an abrupt kill (SIGKILL, a crash) leaves
+  no record and can leave a script running.
+- **On exit,** Ctrl-C or SIGTERM stops running blocks, ends script groups and waits for writers to
+  finish; a second signal exits at once without finishing, printing nothing.
+
 ## Stop
 
 **Stop** (on Chat, Checked request and MCP tools) asks AgentWiz's server to end the request. For a
@@ -493,6 +685,11 @@ the page keeps showing the text that had arrived.
 - **If Stop arrives just after the answer completes**, the answer is kept, the page says "Stop
   arrived after the answer finished", and the run takes no repairs (send again).
 - **A request that is stopped, or whose page is closed**, is still recorded, with its partial text.
+- **Stop on the Blocks tab** ends any step of a block run: a model request as above; a script by its
+  process group (SIGTERM, then SIGKILL); a tool call by abandoning it, which closes its connection
+  and, on servers that use the earlier handshake, sends a cancellation notice. **A stopped tool call
+  may still have run**, so its outcome is shown as unknown. An answer already accepted by the time
+  Stop arrives stands.
 
 ## Run history
 
@@ -596,13 +793,20 @@ Click **Tutorial** in the header to open an isolated workbench with local script
 auto-filled inputs and a persistent tips box. No API keys, models or terminal setup are needed.
 The tutorial works in the installed application too.
 
-Five short feature introductions show how to:
+Eight short feature introductions show how to (each is annotated with the AgentWiz version that last
+changed what it shows):
 
-- **Chat:** send a message and reuse an answer.
-- **Use a document:** preview an example and copy it into a conversation.
-- **Call a tool:** run a prepared local tool and use its result.
-- **Define a contract:** save reusable response requirements.
-- **Repair a response:** preview and send a follow-up using contract feedback.
+- **Chat** (updated in 0.1.3): send a message and reuse an answer.
+- **Use a document** (updated in 0.1.3): preview an example and copy it into a conversation.
+- **Call a tool** (updated in 0.1.3): run a prepared local tool and use its result.
+- **Define a contract** (updated in 0.1.3): save reusable response requirements.
+- **Repair a response** (updated in 0.1.3): preview and send a follow-up using contract feedback.
+- **Run a model block** (updated in 0.1.4): see the role `fast` mapped to a profile, then run a block
+  whose first answer fails its contract and whose repair passes.
+- **Run a tool block** (updated in 0.1.4): run a block that sends two exact numbers to a tool and
+  gets them back digit for digit.
+- **Run and stop a script block** (updated in 0.1.4): count words with a script, then start a script
+  that waits and Stop it.
 
 These are learning workflows, not correctness checks or owner assignments. Move freely with
 Next, Back, Reset step or the feature selector. No acknowledgement or successful outcome is
@@ -678,6 +882,15 @@ Stopping the original AgentWiz process also closes its tutorial.
   AgentWiz; their reasoning text is still displayed. On LM Studio's native route (reasoning "off"),
   truncation is modelSpell's estimate. Stop, contracts and repair on LM Studio and llama-server are
   checked by the automated tests only, not against a live server, until 0.2.0.
+- **Blocks (0.1.4).** One step per block: no wiring, routing or nesting yet. Block files are read,
+  never written, by AgentWiz. Scripts are not sandboxed and need POSIX process groups; a script that
+  starts its own session escapes group termination. The token budget is a soft, reported-usage
+  allowance; time budgets are not an exact ceiling. Block runs continue after the page closes, up to
+  their time budget, holding their slots; they do not survive a restart. Results are held for 100
+  runs and 256 MiB; older ones are available from History only if saving was on. A stopped or
+  timed-out tool call may still have run. The parser stays strict, and the truncation rule fails
+  steps whose check passed. Graceful exit can wait for a script group that will not die; a second
+  Ctrl-C exits immediately and skips cleanup. The tutorial doubles process budgets while it is open.
 - **The page** is checked in a headless Chromium by the developer tests; other browsers are covered
   only by the tour above.
 - **WSL2** is not checked by the automated tests.

@@ -22,6 +22,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
+from .errors import ShuttingDown, report_internal
 from .mcp_client import (Abandoned, MCPClient, MCPError, OpContext, Session, Snapshot, classify, reason_text)
 
 WORKER_LIMIT = 8
@@ -42,8 +43,35 @@ class Busy(Exception):
         super().__init__(f"{WORKER_LIMIT} tool operations are still running or stopping; try again shortly")
 
 
+class Closed(ShuttingDown):
+    """Shutdown has begun: no operation or reservation is accepted any more (0.1.4, 10.10)."""
+
+
 class NoSuchOperation(Exception):
     pass
+
+
+class Reservation:
+    """A worker slot counted before any work starts (0.1.4, 10.3), so a block run can be admitted knowing its
+    tool call will have a worker. It has one owner at a time. Exactly one transition leaves `reserved`,
+    decided under the reservation's own lock: `transferred` (`Ops.start(..., reservation=r)` moved the slot to
+    the worker it created, whose teardown frees it) or `released` (`release()` gave back an unused slot). A second
+    transition does nothing. Lock chain C4: reservation lock, then the `Ops` internal lock."""
+
+    def __init__(self, ops: "Ops"):
+        self._ops = ops
+        self._lock = threading.Lock()
+        self.state = "reserved"          # "reserved" | "transferred" | "released"
+
+    def release(self) -> bool:
+        """Give back the slot if it was never used. True when this call freed it."""
+        with self._lock:
+            if self.state != "reserved":
+                return False
+            self.state = "released"
+            with self._ops._lock:
+                self._ops.workers -= 1
+            return True
 
 
 class Operation:
@@ -150,6 +178,7 @@ class Ops:
         self._lock = threading.Lock()
         self.workers = 0
         self.maintenance = 0
+        self.closed = False              # set by cancel_all(): shutdown has begun (0.1.4, 10.10)
         self._ops: dict[str, Operation] = {}
         self._ended: collections.deque[Operation] = collections.deque()
 
@@ -159,16 +188,58 @@ class Ops:
                     "maintenance_limit": MAINTENANCE_LIMIT}
 
     # --- workers ----------------------------------------------------------------------------------
-    def start(self, kind: str, snap: Snapshot, work: Callable[[OpContext], Any]) -> Operation:
-        deadline = snap.call_deadline_s if kind == "call" else snap.discovery_deadline_s
-        op = Operation(self, kind, snap, deadline)
+    def reserve(self) -> Reservation | None:
+        """Count a worker slot without starting a thread. None when all WORKER_LIMIT slots are taken (the caller
+        refuses with 503 and nothing starts); `Closed` once shutdown has begun."""
         with self._lock:
             self._expire_locked()
+            if self.closed:
+                raise Closed()
             if self.workers >= WORKER_LIMIT:
-                raise Busy()
+                return None
             self.workers += 1
-            self._ops[op.id] = op
-        threading.Thread(target=self._run, args=(op, work), daemon=True, name=f"mcp-{kind}").start()
+        return Reservation(self)
+
+    def start(self, kind: str, snap: Snapshot, work: Callable[[OpContext], Any],
+              reservation: Reservation | None = None) -> Operation:
+        """Start a worker. With `reservation`, the slot already counted moves to the worker (state `transferred`;
+        from then on only the worker's teardown frees it); without one, a slot is taken here or `Busy` is raised.
+        `Closed` once shutdown has begun. If the thread cannot be started the transition is rolled back: the
+        reservation is `reserved` again and stays its owner's to release."""
+        deadline = snap.call_deadline_s if kind == "call" else snap.discovery_deadline_s
+        op = Operation(self, kind, snap, deadline)
+        if reservation is None:
+            with self._lock:
+                self._expire_locked()
+                if self.closed:
+                    raise Closed()
+                if self.workers >= WORKER_LIMIT:
+                    raise Busy()
+                self.workers += 1
+                self._ops[op.id] = op
+            try:
+                threading.Thread(target=self._run, args=(op, work), daemon=True, name=f"mcp-{kind}").start()
+            except BaseException:
+                with self._lock:
+                    self.workers -= 1
+                    self._ops.pop(op.id, None)
+                raise
+            return op
+        with reservation._lock:                              # C2: ... reservation lock -> Ops lock
+            if reservation.state != "reserved":
+                raise ValueError("the reservation has already been used")
+            with self._lock:
+                if self.closed:
+                    raise Closed()
+                self._ops[op.id] = op
+            reservation.state = "transferred"
+            try:
+                threading.Thread(target=self._run, args=(op, work), daemon=True, name=f"mcp-{kind}").start()
+            except BaseException:
+                reservation.state = "reserved"               # rolled back: still the caller's to release
+                with self._lock:
+                    self._ops.pop(op.id, None)
+                raise
         return op
 
     def _run(self, op: Operation, work: Callable[[OpContext], Any]) -> None:
@@ -182,7 +253,6 @@ class Ops:
             except MCPError as exc:
                 committed = {"outcome": exc.outcome, "reason": exc.reason, "error": exc}
             except Exception as exc:  # noqa: BLE001 - reported by class only; never resent
-                from .ui.server import report_internal
                 report_internal("mcp worker", exc)
                 outcome = "error" if op.kind == "discovery" else ("unknown" if op.ctx.call_gate_passed else "rejected")
                 committed = {"outcome": outcome, "reason": "malformed",
@@ -224,9 +294,17 @@ class Ops:
         with self._lock:
             return self.workers
 
-    def cancel_all(self) -> None:
-        """Abandon outstanding work when a disposable tutorial instance closes."""
+    def close(self) -> None:
+        """Refuse every later `reserve` and `start` (shutdown's admission gate for MCP, 10.10)."""
         with self._lock:
+            self.closed = True
+
+    def cancel_all(self) -> None:
+        """Abandon outstanding work at shutdown (a closing tutorial instance, or the process). It sets `closed`
+        and takes its snapshot under the same internal lock `start` uses to register, so an operation is either
+        registered before the snapshot (and abandoned) or refused (0.1.4, 10.10)."""
+        with self._lock:
+            self.closed = True
             ops = list(self._ops.values())
         for op in ops:
             op.abandon("stopped")

@@ -1,0 +1,8 @@
+{
+  "format_version": 1,
+  "name": "word_count",
+  "description": "Count the words in a text with a script.",
+  "inputs": {"text": {"contract": {"format": "text"}}},
+  "outputs": {"words": {"contract": {"format": "json"}}},
+  "steps": [{"id": "count", "kind": "script", "file": "scripts/count_words.py", "timeout_s": 30}]
+}

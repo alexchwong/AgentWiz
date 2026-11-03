@@ -94,6 +94,7 @@
   <span id="switch-msg" class="note err-text hidden" data-test="header-switch-msg"></span>
   <button id="open-settings" data-test="header-model-settings">Model settings</button>
   <button id="open-servers" data-test="header-mcp-servers">MCP servers</button>
+  <button id="open-roles" data-test="header-roles">Roles</button>
   <button id="open-tutorial" data-test="header-tutorial">Tutorial</button>
 </header>
 <aside id="tutorial-box" class="hidden" data-test="tutorial-box" aria-label="Tutorial guidance">
@@ -121,6 +122,7 @@
   <button role="tab" id="tab-contracts" data-test="tab-contracts" aria-controls="panel-contracts" aria-selected="false" tabindex="-1" data-state="idle" data-frag="contracts">Contracts<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-checked-request" data-test="tab-checked-request" aria-controls="panel-checked-request" aria-selected="false" tabindex="-1" data-state="idle" data-frag="checked-request">Checked request<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-history" data-test="tab-history" aria-controls="panel-history" aria-selected="false" tabindex="-1" data-state="idle" data-frag="history">History<span class="mark" aria-hidden="true">●</span></button>
+  <button role="tab" id="tab-blocks" data-test="tab-blocks" aria-controls="panel-blocks" aria-selected="false" tabindex="-1" data-state="idle" data-frag="blocks">Blocks<span class="mark" aria-hidden="true">●</span></button>
 </div>
 <section role="tabpanel" id="panel-chat" data-test="panel-chat" aria-labelledby="tab-chat" hidden></section>
 <section role="tabpanel" id="panel-documents" data-test="panel-documents" aria-labelledby="tab-documents" hidden></section>
@@ -128,6 +130,7 @@
 <section role="tabpanel" id="panel-contracts" data-test="panel-contracts" aria-labelledby="tab-contracts" hidden></section>
 <section role="tabpanel" id="panel-checked-request" data-test="panel-checked-request" aria-labelledby="tab-checked-request" hidden></section>
 <section role="tabpanel" id="panel-history" data-test="panel-history" aria-labelledby="tab-history" hidden></section>
+<section role="tabpanel" id="panel-blocks" data-test="panel-blocks" aria-labelledby="tab-blocks" data-state="idle" hidden></section>
 
 <dialog id="servers-dialog">
   <h3 style="margin:4px 0">MCP servers</h3>
@@ -138,6 +141,19 @@
     <button type="button" id="add-server">Add</button>
     <button type="button" id="close-servers">Close</button>
     <button type="button" id="save-servers" class="primary">Save</button>
+  </div>
+</dialog>
+
+<dialog id="roles-dialog" data-test="roles-dialog" data-state="idle">
+  <h3 style="margin:4px 0">Roles</h3>
+  <p class="note">A role names a profile. Blocks use roles, so a block can be moved between models by changing this map.</p>
+  <p class="note" id="roles-path" data-test="roles-path"></p>
+  <div id="roles-list"></div>
+  <p id="roles-msg" class="note" data-test="roles-msg"></p>
+  <div class="row" style="justify-content:flex-end">
+    <button type="button" id="add-role" data-test="roles-add">Add role</button>
+    <button type="button" id="close-roles" data-test="roles-close">Close</button>
+    <button type="button" id="save-roles" class="primary" data-test="roles-save">Save</button>
   </div>
 </dialog>
 
@@ -189,7 +205,7 @@ const LABELS = { complete: "Complete", empty: "Empty answer", reasoning_only: "R
                  stopped: "Stopped", error: "Error" };
 const DISCLOSURE = "Saved as given, except that credentials AgentWiz has held, if at least 8 characters long, are replaced with ***. " +
   "Shorter credentials are not replaced. Text you paste into a request, including copied documents and tool results, is saved with it.";
-const FRAGS = ["chat", "documents", "mcp-tools", "contracts", "checked-request", "history"];
+const FRAGS = ["chat", "documents", "mcp-tools", "contracts", "checked-request", "history", "blocks"];
 const POLL_MS = 2000;
 let state = {}, clearKey = false;
 const modelContexts = {};       // model id -> context length, from the dialog's last Load models
@@ -415,7 +431,10 @@ function selectTab(frag, opts = {}) {
   if (TABS[frag] && TABS[frag].onShow) TABS[frag].onShow();
 }
 
-function setTabRunning(frag, running) { $("tab-" + frag).dataset.state = running ? "running" : "idle"; }
+function setTabRunning(frag, running) {
+  const value = running ? "running" : "idle";
+  $("tab-" + frag).dataset.state = value; $("panel-" + frag).dataset.state = value;
+}
 
 $("tablist").addEventListener("keydown", (e) => {
   const i = FRAGS.indexOf(activeFrag);
@@ -895,6 +914,7 @@ function makeRequestTab(frag, source) {
     for (const r of rows) {
       const li = h("li", { "data-test": "checked-attempt", "data-attempt-id": r.id,
         text: `${r.attempt}. ${r.outcome ? (LABELS[r.outcome] || r.outcome) : "running"} · check: ${r.check || "not checked"}${r.save && r.save !== "not_requested" ? " · save: " + r.save : ""}` });
+      li.dataset.repairReason = (r.record && r.record.repair_reason) || "";
       if (r.outcome) li.dataset.outcome = r.outcome;
       if (r.check) li.dataset.check = r.check;
       if (r.save) li.dataset.save = r.save;
@@ -1826,6 +1846,7 @@ $("save-servers").onclick = async () => {
     detail.dataset.runId = openId;
     if (run) detail.append(section("history", "run", "run.json", JSON.stringify(run, null, 2), "exact"));
     for (const p of r.problems || []) detail.append(h("div", { class: "warn-text", text: `${p.file}: ${p.message}` }));
+    if (r.result) detail.append(section("history", "result", "result.json", JSON.stringify(r.result, null, 2), "exact"));
     for (const a of r.attempts || []) {
       const res = a.result || a.partial || {};
       detail.append(h("fieldset", { "data-test": "history-attempt", "data-attempt-id": a.id },
@@ -1848,7 +1869,7 @@ $("save-servers").onclick = async () => {
     if (!r.runs.length) listEl.append(h("li", { class: "muted", text: "No saved runs." }));
     for (const row of r.runs) {
       const li = h("li", { class: "pick" + (row.run_id === openId ? " current" : ""), "data-test": "history-row", "data-run-id": row.run_id },
-        `${row.created_at || row.folder} · ${row.source || "?"} · ${row.attempts} ${row.attempts === 1 ? "attempt" : "attempts"} · ${row.outcome ? (LABELS[row.outcome] || row.outcome) : "no attempt saved"} · check: ${row.check || "none"}${row.problem ? " · PROBLEM: " + row.problem.message : ""}`);
+        `${row.created_at || row.folder} · ${row.source || "?"}${row.block ? " " + row.block : ""} · ${row.attempts} ${row.attempts === 1 ? "attempt" : "attempts"} · ${row.outcome ? (LABELS[row.outcome] || row.outcome) : "no attempt saved"} · check: ${row.check || "none"}${row.problem ? " · PROBLEM: " + row.problem.message : ""}`);
       li.onclick = () => openRun(row.run_id);
       listEl.append(li);
     }
@@ -1879,55 +1900,590 @@ $("save-servers").onclick = async () => {
   };
 })();
 
-// Tutorial is an explicit preparation layer, not a bridge between the tabs' working data.
-const tutorialSteps = [
-  ["Chat", "chat", "Send the filled message to start a conversation. Copy beside the answer lets you reuse it. Stop is available while a response is running."],
-  ["Use a document", "documents", "Use example document to open a preview. Copy includes provenance; paste it into Chat to discuss the document."],
-  ["Call a tool", "mcp-tools", "A local echo tool and its arguments are ready. Run calls it; Copy lets you use its result in a conversation."],
-  ["Define a contract", "contracts", "A contract describes the response you want. Save the filled example to learn where reusable requirements live; Check can apply it to text."],
-  ["Repair a response", "checked-request", "Send asks for structured data using the selected contract. Preview repair shows a follow-up request; Send repair continues the same run with feedback."],
-];
-let tutorialInfo = null, tutorialIndex = 0, tutorialBusy = false;
-const tutorialRoute = () => tutorialSteps.map((_, i) => i);
+// --- Blocks (techspec 0.1.4, Section 13.1) -------------------------------------------------------------------------
+// Runs one saved single-step block. Input values travel as text; the server describes the forms, so a schema's
+// numbers never pass through this page's JavaScript (P14).
+const BLOCK_STALE = "The block changed (its files or a contract it names). It has been reloaded; your input texts were kept where the input still exists. Check them and run again.";
+const BLOCK_OUTCOMES = { complete: "Complete", rejected: "Rejected before any work", failed: "Failed", stopped: "Stopped",
+  budget_exceeded: "Budget exceeded", unknown: "Unknown (a tool call may have run)" };
+
+(function blocksTab() {
+  const panel = $("panel-blocks");
+  let listing = null, detail = null, selected = null, loadingDetail = 0, selecting = 0;
+  let runCtl = null, runId = null, pendingStop = false, polling = false, finalSeen = false, stopRequested = false;
+  let rows = [];                                   // the trace's attempts: {id, attempt, outcome, check, repair_reason}
+  const inputs = new Map();                         // input name -> {get(): text|null, set(text), el}
+
+  const listEl = h("ul", { class: "list", "data-test": "blocks-list" });
+  const countEl = h("span", { class: "note", "data-test": "blocks-count" });
+  const pathEl = h("span", { class: "note", "data-test": "blocks-path" });
+  const reload = h("button", { type: "button", "data-test": "blocks-reload", text: "Reload" });
+  const activeEl = h("div", { class: "note", "data-test": "blocks-active" });
+  const defEl = h("div", { "data-test": "blocks-definition" });
+  const formEl = h("div", { class: "fields", "data-test": "blocks-form" });
+  const runBtn = h("button", { class: "primary", type: "button", disabled: true, "data-test": "blocks-run", text: "Run" });
+  const stopBtn = h("button", { type: "button", disabled: true, "data-test": "blocks-stop", text: "Stop" });
+  const status = h("span", { class: "note", "data-test": "blocks-status", "data-state": "idle" });
+  const noteEl = h("div", { class: "note", "data-test": "blocks-note" });
+  const traceEl = h("div", { "data-test": "blocks-trace", "data-attempts": "0", "data-truncated": "0" });
+  const attemptsEl = h("ul", { class: "list", "data-test": "blocks-attempts" });
+  const usageEl = h("div", { class: "note", "data-test": "blocks-usage" });
+  const stepEl = h("div", { class: "note", "data-test": "blocks-step" });
+  const detailsEl = h("div", { "data-test": "blocks-details" });
+  const outputsEl = h("div", { "data-test": "blocks-outputs" });
+  panel.append(h("p", { class: "panel-intro", text: "Blocks: run a saved single-step block (a model, tool or script step) from the workspace's blocks folder, and see exactly what it did." }),
+    h("div", { class: "row" }, reload, countEl), pathEl, listEl, activeEl, defEl,
+    h("h4", { text: "Inputs" }), formEl,
+    h("div", { class: "row" }, runBtn, stopBtn, status), noteEl, traceEl, outputsEl, detailsEl);
+  traceEl.append(stepEl, attemptsEl, usageEl);
+
+  const say = (state_, text, outcome, save) => {
+    status.dataset.state = state_; status.textContent = text || "";
+    if (outcome) status.dataset.outcome = outcome; else delete status.dataset.outcome;
+    if (save) status.dataset.save = save; else if (state_ !== "done") delete status.dataset.save;
+    if (runId) status.dataset.runId = runId; else delete status.dataset.runId;
+  };
+  const busy = () => !!runCtl || polling;
+  const usable = () => !!detail && !detail.problem && selected === detail.name;
+
+  function controls() {
+    runBtn.disabled = busy() || !usable();
+    stopBtn.disabled = !busy() || finalSeen || stopRequested && !runId;
+    setTabRunning("blocks", busy());
+  }
+
+  // --- the list ---------------------------------------------------------------------------------------------
+  function problemText(p) { return p ? `${p.file}: ${p.code}${p.issues && p.issues.length ? " · " + p.issues[0].location + ": " + p.issues[0].message : ""}` : ""; }
+
+  function renderList() {
+    listEl.replaceChildren();
+    if (!listing) return;
+    countEl.textContent = listing.total > listing.shown ? `${listing.shown} of ${listing.total} shown` : `${listing.total} ${listing.total === 1 ? "block" : "blocks"}`;
+    countEl.dataset.shown = String(listing.shown); countEl.dataset.total = String(listing.total);
+    pathEl.textContent = "Blocks folder: " + (listing.path || "");
+    if (!listing.blocks.length) listEl.append(h("li", { class: "muted", text: "No blocks. Put a block folder (block.json and its files) in the folder above, then Reload." }));
+    for (const b of listing.blocks) {
+      const li = h("li", { class: "pick" + (b.name === selected ? " current" : ""), "data-test": "blocks-row", "data-block": b.name,
+        "data-problem": b.problem ? b.problem.code : "",
+        text: b.problem ? `${b.name} · PROBLEM: ${problemText(b.problem)}`
+          : `${b.name} · ${b.kind || "?"} step · revision ${b.revision}${b.description ? " · " + b.description : ""}` });
+      li.onclick = () => select(b.name);
+      listEl.append(li);
+    }
+    renderActive();
+  }
+
+  function renderActive() {
+    activeEl.replaceChildren();
+    const runs = (listing && listing.active_runs) || [];
+    activeEl.dataset.count = String(runs.length);
+    if (!runs.length) return;
+    activeEl.append(h("div", { text: "Block runs still running:" }));
+    for (const r of runs) {
+      const attach = h("button", { type: "button", "data-test": "blocks-reattach", text: "Follow", disabled: busy() });
+      attach.onclick = () => follow(r.run_id, r.block);
+      const stop = h("button", { type: "button", "data-test": "blocks-active-stop", text: "Stop" });
+      stop.onclick = async () => {
+        try { await api("/api/blocks/stop", { run_id: r.run_id }); noteEl.textContent = `Stopping run ${r.run_id}…`; }
+        catch (e) { noteEl.textContent = e.message; }
+      };
+      activeEl.append(h("div", { class: "row", "data-test": "blocks-active-run", "data-run-id": r.run_id },
+        `${r.block || "?"} · ${r.run_id} · started ${r.started_at}`, attach, stop));
+    }
+  }
+
+  async function loadListing(forceReload) {
+    try {
+      listing = await api("/api/blocks" + (forceReload ? "?reload=1" : ""));
+      renderList();
+      if (selected && !listing.blocks.some((b) => b.name === selected)) { selected = null; detail = null; defEl.replaceChildren(); formEl.replaceChildren(); inputs.clear(); }
+      controls();
+    } catch (e) { noteEl.textContent = e.message; }
+  }
+
+  // --- the definition and the inputs ----------------------------------------------------------------------------
+  function fileBlock(f) {
+    const pre = h("pre", { class: "exact", text: f.text === null ? `(unavailable: ${f.unavailable})` : f.text });
+    return h("div", { "data-test": "blocks-file", "data-path": f.path },
+      h("div", { class: "panelhead" }, h("label", { text: `${f.path}${f.sha256 ? " · sha256 " + f.sha256 : ""}` }),
+        f.text === null ? null : copyControl("blocks-copy-file", () => f.text, () => pre)), pre);
+  }
+
+  function renderDefinition() {
+    defEl.replaceChildren();
+    if (!detail) return;
+    defEl.append(h("h4", { text: `${detail.name} · revision ${detail.revision}${detail.description ? " · " + detail.description : ""}` }));
+    if (detail.problem) {
+      defEl.append(h("div", { class: "warn-text", "data-test": "blocks-problem", text: "This block cannot be run: " + problemText(detail.problem) }));
+      const list = h("ul", { "data-test": "blocks-problem-issues" });
+      for (const i of detail.problem.issues || []) list.append(h("li", { text: `${i.location}: ${i.message}` }));
+      if (detail.problem.total > (detail.problem.issues || []).length) list.append(h("li", { class: "muted", text: `… and ${detail.problem.total - detail.problem.issues.length} more` }));
+      defEl.append(list);
+    }
+    if (detail.step) defEl.append(h("div", { class: "note", "data-test": "blocks-step-def" },
+      `Step ${detail.step.id}: ${detail.step.kind}` + (detail.step.role ? ` · role ${detail.step.role}` : "") +
+      (detail.step.server ? ` · ${detail.step.server}.${detail.step.tool}` : "") + (detail.step.file ? ` · script ${detail.step.file}` : "")));
+    if (detail.budget) defEl.append(h("div", { class: "note", "data-test": "blocks-budget",
+      text: `Budget: ${detail.budget.max_seconds} s` + (detail.budget.max_model_tokens === null ? "" : `, about ${detail.budget.max_model_tokens} model tokens (a soft allowance)`) }));
+    for (const n of detail.notes || []) defEl.append(h("div", { class: "note", text: n }));
+    const files = h("details", { open: true }, h("summary", { text: "Files (exact text)" }));
+    for (const f of detail.files) files.append(fileBlock(f));
+    defEl.append(files);
+    const contractsBox = h("details", {}, h("summary", { text: "Contracts (exact text)" }));
+    for (const section of ["inputs", "outputs"])
+      for (const [name, c] of Object.entries(detail.contracts[section] || {})) {
+        const pre = h("pre", { class: "exact", text: c.text });
+        contractsBox.append(h("div", { "data-test": "blocks-contract", "data-section": section, "data-name": name },
+          h("div", { class: "panelhead" }, h("label", { text: `${section === "inputs" ? "input" : "output"} ${name} · ${c.name ? "saved contract " + c.name + " revision " + c.revision : "inline"}` }),
+            copyControl("blocks-copy-contract", () => c.text, () => pre)), pre));
+      }
+    defEl.append(contractsBox);
+  }
+
+  function textControl(d, raw) {
+    const el = h("textarea", { rows: 4, spellcheck: "false", "data-test": "blocks-input", "data-input": d.name, "data-mode": "raw" });
+    return { el, get: () => el.value, set: (t) => { el.value = t; } };
+  }
+
+  function formControl(d) {
+    const box = h("div", { class: "fields", "data-test": "blocks-input", "data-input": d.name, "data-mode": "form" });
+    const raw = h("textarea", { rows: 5, spellcheck: "false", class: "hidden", "data-test": "blocks-input-raw", "data-input": d.name });
+    const edit = h("button", { type: "button", "data-test": "blocks-edit-json", "data-input": d.name, text: "Edit as JSON" });
+    const wrap = h("div", {}, box, raw, edit);
+    let rawMode = false;
+    for (const f of d.form.fields) {
+      let input;
+      if (f.enum || f.type === "boolean") {
+        input = document.createElement("select");
+        if (!f.required) input.add(new Option("(unset)", ""));
+        const values = f.enum || ["true", "false"];
+        for (const v of values) input.add(new Option(v, v));
+        if (f.default !== null && f.default !== undefined) input.value = String(f.default);
+        else input.value = f.required ? values[0] : "";
+      } else {
+        input = document.createElement("input");
+        if (f.default !== null && f.default !== undefined) input.value = String(f.default);
+      }
+      input.dataset.name = f.name;
+      input.setAttribute("data-test", `blocks-field-${d.name}-${f.name}`);
+      const cell = h("div", {}, h("label", { text: (f.title || f.name) + (f.required ? " *" : "") }), input);
+      if (f.description) cell.append(h("span", { class: "note", text: f.description }));
+      box.append(cell);
+    }
+    function build() {
+      const parts = [], errors = [];
+      for (const f of d.form.fields) {
+        const input = box.querySelector(`[data-name="${CSS.escape(f.name)}"]`);
+        input.classList.remove("invalid");
+        const v = input.value;
+        if (v === "" || (f.type !== "string" && v.trim() === "")) {
+          if (f.required) { input.classList.add("invalid"); errors.push(f.name); }
+          continue;
+        }
+        let text;
+        if (f.type === "string") text = JSON.stringify(v);
+        else if (f.type === "boolean") text = v === "true" ? "true" : "false";
+        else {
+          const s = v.trim();
+          if (!(f.type === "integer" ? INTEGER_RE : NUMBER_RE).test(s)) { input.classList.add("invalid"); errors.push(f.name); continue; }
+          text = s;                                // numbers stay exactly as typed
+        }
+        parts.push(`${JSON.stringify(f.name)}:${text}`);
+      }
+      return errors.length ? { errors } : { text: "{" + parts.join(",") + "}" };
+    }
+    const toRaw = (text) => { rawMode = true; raw.value = text; raw.classList.remove("hidden"); box.classList.add("hidden"); edit.disabled = true; box.dataset.mode = "raw"; };
+    edit.onclick = () => { const b = build(); toRaw(b.text || "{}"); };
+    return { el: wrap, get: () => { if (rawMode) return raw.value; const b = build(); return b.text === undefined ? null : b.text; },
+      set: (t) => toRaw(t), errors: () => (rawMode ? [] : build().errors || []) };
+  }
+
+  function renderForm(keep = {}) {
+    formEl.replaceChildren(); inputs.clear();
+    if (!detail || !detail.inputs.length) { if (detail) formEl.append(h("div", { class: "muted", text: "This block has no inputs." })); return; }
+    for (const d of detail.inputs) {
+      const control = d.form ? formControl(d) : textControl(d);
+      inputs.set(d.name, control);
+      const cell = h("div", { "data-test": "blocks-input-cell", "data-input-cell": d.name },
+        h("label", { text: `${d.name} (${d.format || "?"})${d.description ? " · " + d.description : ""}` }), control.el);
+      for (const n of d.form_notes || []) cell.append(h("div", { class: "note", text: n }));
+      formEl.append(cell);
+      if (Object.prototype.hasOwnProperty.call(keep, d.name)) control.set(keep[d.name]);
+    }
+  }
+
+  function currentTexts() {
+    const out = {};
+    for (const [name, c] of inputs) { const t = c.get(); if (t !== null) out[name] = t; }
+    return out;
+  }
+
+  async function select(name, keep = {}) {
+    selected = name;
+    const ticket = ++loadingDetail;
+    selecting++;
+    try {
+      const d = await api("/api/blocks/" + encodeURIComponent(name));
+      if (ticket !== loadingDetail) return;
+      detail = d;
+      renderDefinition(); renderForm(keep); renderList();
+    } catch (e) {
+      if (ticket !== loadingDetail) return;
+      detail = null; selected = null; defEl.replaceChildren(); formEl.replaceChildren(); inputs.clear();
+      noteEl.textContent = e.message;
+      await loadListing(false);
+    } finally { selecting--; }
+    controls();
+  }
+
+  // --- the trace --------------------------------------------------------------------------------------------------
+  function clearRun() {
+    rows = []; finalSeen = false; stopRequested = false; pendingStop = false;
+    attemptsEl.replaceChildren(); usageEl.textContent = ""; stepEl.textContent = ""; noteEl.textContent = "";
+    detailsEl.replaceChildren(); outputsEl.replaceChildren();
+    traceEl.dataset.attempts = "0"; traceEl.dataset.truncated = "0";
+  }
+
+  function renderRows() {
+    attemptsEl.replaceChildren();
+    for (const r of rows) {
+      const li = h("li", { "data-test": "blocks-attempt", "data-attempt": String(r.attempt), "data-check": r.check || "",
+        "data-outcome": r.outcome || "", "data-repair-reason": r.repair_reason || "",
+        text: `${r.attempt}. ${r.outcome ? (LABELS[r.outcome] || r.outcome) : "running"} · check: ${r.check || "not checked"}${r.repair_reason ? " · repair (" + r.repair_reason + ")" : ""}` });
+      attemptsEl.append(li);
+    }
+    traceEl.dataset.attempts = String(rows.length);
+  }
+
+  function upsert(attempt, patch) {
+    let row = rows.find((r) => r.attempt === attempt);
+    if (!row) { row = { attempt }; rows.push(row); rows.sort((a, b) => a.attempt - b.attempt); }
+    Object.assign(row, patch);
+    renderRows();
+  }
+
+  function attemptNumber(id) { return Number(id.slice(id.lastIndexOf("-") + 1)); }
+
+  function showOperation(kind, op, running) {
+    for (const old of detailsEl.querySelectorAll('[data-test="blocks-operation"]')) old.remove();
+    const text = op ? JSON.stringify(op, null, 2) : "";
+    const box = h("div", { "data-test": "blocks-operation", "data-kind": kind, "data-outcome": op ? op.outcome : (running ? "running" : "") });
+    if (op) {
+      const p = outPanel("blocks", "operation-record", `${kind === "tool" ? "Tool call" : "Script"}: ${op.outcome}`);
+      p.pre.textContent = text; box.append(p.el);
+    } else box.append(h("div", { class: "note", text: kind === "tool" ? "Tool call running…" : "Script running…" }));
+    detailsEl.append(box);
+  }
+
+  function usageText(u) {
+    if (!u) return "";
+    let t = `Reported usage: ${u.reported_tokens} tokens`;
+    if (u.limit !== null && u.limit !== undefined) t += ` of a soft allowance of ${u.limit}`;
+    if (u.over_by) t += ` (over by ${u.over_by})`;
+    if (u.unreported_attempts && u.unreported_attempts.length) t += `; no usage reported for attempt${u.unreported_attempts.length === 1 ? "" : "s"} ${u.unreported_attempts.join(", ")}`;
+    return t;
+  }
+
+  function renderFinal(result, saveStatus) {
+    finalSeen = true;
+    const step = (result.steps || [])[0] || null;
+    if (step) {
+      stepEl.textContent = `Step ${step.step_id}: ${step.kind}` + (step.role ? ` · role ${step.role} (profile ${step.profile || "?"}, model ${step.model || "?"})` : "")
+        + ` · ${step.outcome}${step.failure ? " (" + step.failure + ")" : ""}`;
+      if (step.kind === "model") {
+        const known = new Set(rows.map((r) => r.attempt));
+        for (const id of step.attempts || []) if (!known.has(attemptNumber(id))) rows.push({ attempt: attemptNumber(id) });
+        rows.sort((a, b) => a.attempt - b.attempt);
+        renderRows();
+        traceEl.dataset.truncated = String(step.truncated_attempts || 0);
+        if (step.truncated_attempts) stepEl.textContent += ` · ${step.truncated_attempts} truncated (cap ${step.max_tokens === null ? "backend default" : step.max_tokens})`;
+      }
+      if (step.operation) showOperation(step.kind, step.operation, false);
+      if (step.fills && step.fills.length) {
+        const p = outPanel("blocks", "fills", "Fills (where each inserted value came from)");
+        p.pre.textContent = JSON.stringify(step.fills, null, 2); detailsEl.append(p.el);
+      }
+    }
+    usageEl.textContent = usageText(result.usage);
+    const checks = Object.entries(result.input_checks || {}).map(([n, c]) => `input ${n}\n${checkText(c)}`)
+      .concat(Object.entries((step && step.output_checks) || {}).map(([n, c]) => `output ${n}\n${checkText(c)}`));
+    if (checks.length) { const p = outPanel("blocks", "checks", "Check results"); p.pre.textContent = checks.join("\n\n"); detailsEl.append(p.el); }
+    if ((result.issues || []).length) {
+      const p = outPanel("blocks", "issues", "Issues");
+      p.pre.textContent = result.issues.map((i) => `${i.location}: ${i.message}`).join("\n"); detailsEl.append(p.el);
+    }
+    outputsEl.replaceChildren();
+    for (const [name, out] of Object.entries(result.outputs || {})) {
+      const pre = h("pre", { class: "exact", "data-test": "blocks-output", "data-output": name, text: out.text });
+      const copy = copyControl("blocks-copy-output", () => out.text, () => pre);
+      copy.querySelector("button").dataset.output = name;
+      outputsEl.append(h("div", {}, h("div", { class: "panelhead" }, h("label", { text: `Output ${name} (${out.format})` }), copy), pre));
+    }
+    const full = outPanel("blocks", "result", "result.json");
+    full.pre.textContent = JSON.stringify(result, null, 2); detailsEl.append(full.el);
+    say("done", `${BLOCK_OUTCOMES[result.outcome] || result.outcome}`, result.outcome, saveStatus);
+    if (saveStatus) status.dataset.save = saveStatus;
+    controls();
+  }
+
+  // --- running ----------------------------------------------------------------------------------------------------
+  function onEvent(ev) {
+    if (ev.type === "started") {
+      runId = ev.run_id; status.dataset.runId = runId;
+      if (!stopRequested) say("running", `Running ${ev.block} (${ev.kind} step)…`);
+      stepEl.textContent = `Step ${ev.step_id}: ${ev.kind}`;
+      if (pendingStop) sendStop();
+    } else if (ev.type === "attempt") {
+      upsert(ev.attempt, { id: ev.attempt_id, outcome: ev.outcome, check: ev.check, repair_reason: ev.repair_reason });
+    } else if (ev.type === "operation") {
+      showOperation(ev.kind, null, true);
+    } else if (ev.type === "final") {
+      renderFinal(ev.result, ev.save_status);
+    } else if (ev.type === "save") {
+      status.dataset.save = ev.save_status;
+    }
+  }
+
+  async function sendStop() {
+    pendingStop = false;
+    try { await api("/api/blocks/stop", { run_id: runId }); }
+    catch (e) { noteEl.textContent = "Stop failed: " + e.message; }
+  }
+
+  function doStop() {
+    if (!busy() || finalSeen) return;
+    stopRequested = true;
+    say("stopping", "Stopping…");
+    if (runId === null) { pendingStop = true; controls(); return; }
+    sendStop(); controls();
+  }
+
+  async function run() {
+    if (busy() || !usable()) return;
+    const texts = {};
+    for (const [name, c] of inputs) {
+      const t = c.get();
+      if (t === null) { noteEl.textContent = `Correct the marked fields of ${name}.`; return; }
+      texts[name] = t;
+    }
+    const payload = JSON.stringify({ name: detail.name, revision: detail.revision, inputs: texts });
+    if (state.limits && new TextEncoder().encode(payload).length > state.limits.request_bytes) {
+      noteEl.textContent = "The inputs are larger than a request may be."; return;
+    }
+    clearRun();
+    runId = null;
+    runCtl = new AbortController();
+    say("running", "Starting…");
+    controls();
+    let outcomeSeen = false;
+    try {
+      const r = await fetch("/api/blocks/run", { method: "POST", signal: runCtl.signal,
+        headers: { "X-Session-Token": TOKEN, "Content-Type": "application/json" }, body: payload });
+      if (!r.ok) {
+        let j = {}; try { j = await r.json(); } catch (e) { /* keep the status */ }
+        outcomeSeen = true;
+        if (r.status === 409 && j.code === "stale_revision") {
+          const keep = currentTexts();
+          await select(detail.name, keep);
+          await loadListing(false);
+          say("stale", BLOCK_STALE);
+        } else {
+          say("idle", j.error || `${r.status} ${r.statusText}`);
+          if (r.status === 409) { await loadListing(true); if (selected) await select(selected, currentTexts()); }
+        }
+        return;
+      }
+      const how = await readLines(r, (ev) => { onEvent(ev); });
+      outcomeSeen = finalSeen;
+      if (!finalSeen && how !== "stopped") startPolling();
+      else if (finalSeen && status.dataset.save === "pending") startPolling();
+    } catch (e) {
+      if (!finalSeen && runId) startPolling();
+    } finally {
+      runCtl = null;
+      if (!finalSeen && !polling && !outcomeSeen && status.dataset.state !== "idle" && status.dataset.state !== "stale")
+        say("done", "The connection ended before a final result was received.", "unknown");
+      controls();
+      loadListing(false);
+    }
+  }
+
+  // --- polling and reattaching (10.9) ---------------------------------------------------------------------------
+  function startPolling() {
+    if (polling || runId === null) return;
+    polling = true; controls();
+    if (!finalSeen) say("polling", "Connection lost; asking AgentWiz for the outcome…");
+    let failures = 0;
+    const tick = async () => {
+      if (!polling) return;
+      let res;
+      try { res = await apiText(`/api/block_runs/${runId}`); } catch (e) { res = null; }
+      if (!res || (!res.ok && res.status !== 410)) {
+        if (++failures >= 15) { polling = false; if (!finalSeen) say("done", "Outcome unknown: AgentWiz could not be reached.", "unknown"); controls(); return; }
+      } else if (res.status === 410) {
+        polling = false;
+        if (!finalSeen) say("done", "This outcome is no longer held.", "unknown");
+        controls(); return;
+      } else if (res.json && res.json.state === "running") {
+        failures = 0;
+        for (const a of res.json.attempts || []) upsert(a.attempt, { id: a.id, outcome: a.outcome, check: a.check });
+        if (res.json.stop_requested_at && status.dataset.state !== "stopping") say("stopping", "Stopping…");
+        else if (status.dataset.state === "polling" || status.dataset.state === "idle") say("polling", "Run in progress; following it…");
+      } else if (res.json && res.json.state === "ended") {
+        failures = 0;
+        if (!finalSeen) renderFinal(res.json.result, res.json.save_status);
+        else if (res.json.save_status) status.dataset.save = res.json.save_status;
+        if (res.json.save_status !== "pending") { polling = false; controls(); return; }
+      }
+      setTimeout(tick, POLL_MS);
+    };
+    tick();
+  }
+
+  function follow(id, blockName) {
+    if (busy()) return;
+    clearRun();
+    runId = id;
+    say("polling", `Following ${blockName || "block"} run ${id}…`);
+    startPolling();
+  }
+
+  runBtn.onclick = run;
+  stopBtn.onclick = doStop;
+  reload.onclick = async () => {
+    const keep = currentTexts();
+    await loadListing(true);
+    if (selected) await select(selected, keep);
+  };
+
+  TABS.blocks = {
+    // Showing the tab never starts a second load of a block that is being loaded (a newer, keep-less load would
+    // discard the texts the first one was asked to fill in).
+    async onShow() { await loadListing(false); if (selected && !detail && !selecting) await select(selected); },
+    onState() { controls(); },
+    submit: run,
+    // The tutorial: choose a block and fill its inputs.
+    async tutorialPrepare(name, texts) {
+      if (busy()) throw new Error("Stop the running block first.");
+      await loadListing(true);
+      await select(name, texts || {});
+    },
+  };
+  controls();
+})();
+
+// --- the Roles dialog (techspec 0.1.4, Section 13.2) -------------------------------------------------------------
+const ROLES_STALE = "The roles were saved elsewhere. The dialog now shows the saved roles; check them and save again.";
+function rolesInfo() { return state.roles || { map: {}, revision: 0, read_only: true, path: "", problem: null, unresolved: [] }; }
+
+function roleRow(name, profile) {
+  const info = rolesInfo(), ro = info.read_only;
+  const unresolved = (info.unresolved || []).find((u) => u.role === name);
+  const row = h("fieldset", { class: "server-row", "data-test": "roles-row", "data-role": name, "data-unresolved": unresolved ? "true" : "" });
+  const nameInput = h("input", { "data-key": "role", placeholder: "role name", value: name, disabled: ro });
+  const select = h("select", { "data-key": "profile", disabled: ro });
+  const names = profilesInfo().names || [];
+  if (profile && !names.includes(profile)) select.add(new Option(`${profile} (missing)`, profile));
+  for (const n of names) select.add(new Option(n, n));
+  select.value = profile || (names[0] || "");
+  const remove = h("button", { type: "button", "data-test": "roles-remove", text: "Remove", disabled: ro });
+  remove.onclick = () => row.remove();
+  row.append(h("div", { class: "fields" }, h("div", {}, h("label", { text: "Role" }), nameInput), h("div", {}, h("label", { text: "Profile" }), select)),
+    h("div", { class: "row" }, remove));
+  if (unresolved) row.append(h("div", { class: "warn-text", "data-test": "roles-reason", text: unresolved.reason }));
+  return row;
+}
+
+function fillRoles(message) {
+  const info = rolesInfo(), list = $("roles-list");
+  list.replaceChildren();
+  for (const [role, profile] of Object.entries(info.map || {})) list.append(roleRow(role, profile));
+  $("roles-path").textContent = `File: ${info.path || ""} · revision ${info.revision}`;
+  $("add-role").disabled = info.read_only; $("save-roles").disabled = info.read_only;
+  const reason = info.read_only ? "Roles are read-only: " + (info.problem ? `${info.problem.file}: ${info.problem.message}` : "the workspace is read-only") : "";
+  $("roles-msg").textContent = message || reason;
+}
+
+$("open-roles").onclick = () => { $("roles-dialog").dataset.state = "idle"; fillRoles(); $("roles-dialog").showModal(); };
+$("close-roles").onclick = () => $("roles-dialog").close();
+$("add-role").onclick = () => $("roles-list").append(roleRow("", ""));
+$("save-roles").onclick = async () => {
+  const map = {}, dlg = $("roles-dialog");
+  for (const row of $("roles-list").querySelectorAll('[data-test="roles-row"]')) {
+    const role = row.querySelector('[data-key="role"]').value.trim();
+    const profile = row.querySelector('[data-key="profile"]').value;
+    if (!NAME_RE.test(role)) { dlg.dataset.state = "error"; $("roles-msg").textContent = "Each role needs a name: 1 to 64 letters, digits, '.', '_' or '-'."; return; }
+    if (Object.prototype.hasOwnProperty.call(map, role)) { dlg.dataset.state = "error"; $("roles-msg").textContent = `The role ${role} appears twice.`; return; }
+    if (!profile) { dlg.dataset.state = "error"; $("roles-msg").textContent = `Choose a profile for ${role}.`; return; }
+    map[role] = profile;
+  }
+  try {
+    state = await api("/api/roles/save", { roles: map, revision: rolesInfo().revision });
+    renderState(); fillRoles("Saved."); dlg.dataset.state = "saved";
+  } catch (e) {
+    try { await refreshState(); } catch (e2) { /* keep */ }
+    if (e.code === "stale_revision") { fillRoles(ROLES_STALE); dlg.dataset.state = "stale"; }
+    else { dlg.dataset.state = "error"; $("roles-msg").textContent = e.message; }
+  }
+};
+
+// Tutorial is an explicit preparation layer, not a bridge between the tabs' working data. The topics, their order,
+// tips, annotations and preparation come from the server's registry (tutorial_topics.py); this page keeps no list.
+let tutorialInfo = null, tutorialTopic = null, tutorialBusy = false;
+const tutorialTopics = () => (tutorialInfo && tutorialInfo.topics) || [];
 const tutorialEl = (name) => document.querySelector(`[data-test="${name}"]`);
 function tutorialStatus(text, state_ = "ready") {
   $("tutorial-status").textContent = text; $("tutorial-status").dataset.state = state_;
 }
-function tutorialAction(text, action) {
-  const button = h("button", { type: "button", text });
+function tutorialAction(text, id, action) {
+  const button = h("button", { type: "button", "data-test": "tutorial-action", "data-action": id, text });
   button.onclick = async () => { try { await action(); } catch (e) { tutorialStatus(e.message, "error"); } };
   $("tutorial-actions").append(button);
 }
-async function tutorialPrepare(index) {
+// The actions a topic may offer, by the IDs the registry uses.
+const TUTORIAL_ACTIONS = {
+  "example-document": () => TABS.documents.tutorialExample(),
+  "show-role": async () => {
+    $("open-roles").click();
+    await new Promise((resolve) => { const d = $("roles-dialog"); const done = () => { d.removeEventListener("close", done); resolve(); }; d.addEventListener("close", done); });
+  },
+  "wait-script": async (topic) => { await TABS.blocks.tutorialPrepare("wait_for_stop", {}); tutorialTarget("blocks-run"); },
+};
+function tutorialTarget(name) {
+  for (const el of document.querySelectorAll(".tutorial-target")) el.classList.remove("tutorial-target");
+  if (name && tutorialEl(name)) tutorialEl(name).classList.add("tutorial-target");
+}
+async function tutorialPrepare(id) {
   if (tutorialBusy) return;
   tutorialBusy = true;
   tutorialStatus("Preparing example…", "loading");
   try {
     if (document.querySelector('[role="tab"][data-state="running"]')) throw new Error("Stop the running operation before changing steps.");
-    const info = await api("/api/tutorial/step", { step: index });
+    const info = await api("/api/tutorial/step", { topic: id });
     if (info.busy) throw new Error("Stop the running request first.");
-    tutorialInfo = info; tutorialIndex = index;
+    tutorialInfo = info;
     for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
     await refreshState();
-    const [title, tab, tip] = tutorialSteps[index];
-    selectTab(tab);
-    $("tutorial-box").dataset.step = String(index);
-    const route = tutorialRoute();
-    $("tutorial-title").textContent = `Tutorial · ${route.indexOf(index) + 1}/${route.length} — ${title}`;
-    $("tutorial-tip").textContent = tip;
+    const topic = tutorialTopics().find((t) => t.id === id);
+    tutorialTopic = id;
+    selectTab(topic.tab);
+    const box = $("tutorial-box");
+    box.dataset.topic = topic.id; box.dataset.updatedIn = topic.updated_in;
+    const position = tutorialTopics().findIndex((t) => t.id === id);
+    $("tutorial-title").textContent = `Tutorial · ${position + 1}/${tutorialTopics().length} — ${topic.title} · ${topic.updated_in}`;
+    $("tutorial-tip").textContent = topic.tip;
     $("tutorial-next").disabled = false;
-    $("tutorial-back").disabled = index === route[0];
-    $("tutorial-jump").value = String(index);
+    $("tutorial-back").disabled = position === 0;
+    $("tutorial-jump").value = id;
     $("tutorial-actions").replaceChildren();
-    for (const el of document.querySelectorAll(".tutorial-target")) el.classList.remove("tutorial-target");
-    if (tab === "chat" || tab === "checked-request") {
-      TABS[tab].tutorialPrepare(tab === "chat" ? "Hello! Please give a short tutorial response." : "Extract the id and ratio as JSON.");
+    tutorialTarget(null);
+    const hook = topic.page.hook;
+    if (hook) {
+      const [tab, method] = hook.split(".");
+      await TABS[tab][method](...topic.page.args);
     }
-    if (index === 1) tutorialAction("Use example document", () => TABS.documents.tutorialExample());
-    if (index === 2) await TABS["mcp-tools"].tutorialPrepare("tutorial", "echo");
-    if (index === 3) await TABS.contracts.tutorialPrepare(info.contract, '{"id":1,"ratio":0.5}');
-    const target = {0: "chat-send", 2: "mcp-run", 3: "contracts-save", 4: "checked-send"}[index];
-    if (target && tutorialEl(target)) tutorialEl(target).classList.add("tutorial-target");
+    for (const a of topic.page.actions || []) tutorialAction(a.label, a.id, () => TUTORIAL_ACTIONS[a.id](topic));
+    tutorialTarget(topic.target);
     tutorialStatus("Example ready. Explore at your own pace; Next is available without completing any task.");
   } catch (e) { tutorialStatus(e.message, "error"); }
   finally { tutorialBusy = false; }
@@ -1936,16 +2492,17 @@ $("open-tutorial").onclick = async () => {
   $("tutorial-box").classList.remove("hidden");
   tutorialStatus("Preparing isolated tutorial…", "loading");
   try { const r = await api("/api/tutorial/start", {}); location.assign(r.url); }
-  catch (e) { tutorialStatus(e.message, "error"); }
+  catch (e) { tutorialStatus(e.message, "error"); $("tutorial-box").classList.add("hidden"); }
 };
-$("tutorial-back").onclick = () => { const r = tutorialRoute(); tutorialPrepare(r[Math.max(0, r.indexOf(tutorialIndex) - 1)]); };
-$("tutorial-reset").onclick = () => tutorialPrepare(tutorialIndex);
+const tutorialIndex = () => tutorialTopics().findIndex((t) => t.id === tutorialTopic);
+$("tutorial-back").onclick = () => { const i = tutorialIndex(); if (i > 0) tutorialPrepare(tutorialTopics()[i - 1].id); };
+$("tutorial-reset").onclick = () => tutorialPrepare(tutorialTopic);
 $("tutorial-skip").onclick = () => tutorialAdvance();
 $("tutorial-next").onclick = () => tutorialAdvance();
 async function tutorialAdvance() {
   try {
-    const route = tutorialRoute(), pos = route.indexOf(tutorialIndex);
-    if (pos < route.length - 1) return await tutorialPrepare(route[pos + 1]);
+    const i = tutorialIndex(), topics = tutorialTopics();
+    if (i < topics.length - 1) return await tutorialPrepare(topics[i + 1].id);
     tutorialStatus("End of the learning examples. Revisit any topic or Exit to your normal workspace. This tutorial is not a release checklist.", "finished");
   } catch (e) { tutorialStatus(e.message, "error"); }
 }
@@ -1953,10 +2510,10 @@ $("tutorial-exit").onclick = async () => {
   try { const r = await api("/api/tutorial/exit", {}); location.assign(r.url); }
   catch (e) { tutorialStatus(e.message, "error"); }
 };
-$("tutorial-jump").onchange = () => tutorialPrepare(Number($("tutorial-jump").value));
+$("tutorial-jump").onchange = () => tutorialPrepare($("tutorial-jump").value);
 function tutorialRouteOptions() {
   $("tutorial-jump").replaceChildren();
-  tutorialRoute().forEach((i) => $("tutorial-jump").add(new Option(`${i + 1}. ${tutorialSteps[i][0]}`, String(i))));
+  for (const t of tutorialTopics()) $("tutorial-jump").add(new Option(`${t.title} · ${t.updated_in}`, t.id));
 }
 document.addEventListener("click", (event) => {
   if (!tutorialInfo || tutorialBusy || event.target.closest("#tutorial-box")) return;
@@ -1971,7 +2528,7 @@ const tutorialObserver = new MutationObserver((changes) => {
   if (change) {
     const el = change.target;
     const value = el.dataset.outcome || el.dataset.state || el.dataset.check || "updated";
-    const next = tutorialIndex === 4 && el.dataset.state === "done" ?
+    const next = tutorialTopic === "repair" && el.dataset.state === "done" ?
       "Preview repair explains how to continue with a revised response." : "Explore the result or choose another feature.";
     tutorialStatus(`Detected: ${value}. ${next}`);
   }
@@ -1984,7 +2541,7 @@ async function tutorialInit() {
   $("open-tutorial").classList.add("hidden");
   $("tutorial-box").classList.remove("hidden");
   tutorialRouteOptions();
-  await tutorialPrepare(info.step);
+  await tutorialPrepare(info.topic);
   setInterval(() => api("/api/tutorial").catch(() => tutorialStatus("Tutorial disconnected. Return to the original AgentWiz page to start again.", "error")), 60000);
 }
 

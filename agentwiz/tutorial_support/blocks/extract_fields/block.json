@@ -1,0 +1,17 @@
+{
+  "format_version": 1,
+  "name": "extract_fields",
+  "description": "Pull the id and ratio out of a short report.",
+  "inputs": {"report": {"contract": {"format": "text", "checks": [{"type": "length", "min": 1, "max": null}]},
+                        "description": "A sentence that mentions an id and a ratio."}},
+  "outputs": {"fields": {"contract": "fields"}},
+  "steps": [
+    {"id": "extract", "kind": "model", "role": "fast",
+     "system": {"file": "prompts/system.md"},
+     "prompt": {"file": "prompts/user.md"},
+     "task": {"temperature": 0, "max_tokens": 256},
+     "output": "fields",
+     "repair": {"max_repairs": 2}}
+  ],
+  "budget": {"max_seconds": 120}
+}

@@ -502,6 +502,7 @@ def schema_issues(schema: Any) -> list[dict]:
 # --- reading an answer (7.2) ------------------------------------------------------------------------
 _OPEN_FENCE = re.compile(r"( {0,3})(`{3,}|~{3,})(.*)\Z")
 _UNPARSED = object()
+NO_VALUE = _UNPARSED     # check_answer_value: "no value was produced" (a parsed JSON null is a value)
 
 
 def fenced_blocks(text: str) -> list[dict]:
@@ -834,14 +835,38 @@ def _run(contract: Contract, text: str, parsed: Any, parse_result: str | None,
     return _assemble(entries, issues, notes, contract_error)
 
 
-def check_answer(contract: Contract, answer: str) -> dict:
-    """Check a model's answer text against a contract (7.2, then 7.5)."""
+def check_unparsed_input(contract: Contract, text: str, exc: BaseException) -> dict:
+    """The check result of a JSON input whose text did not parse (0.1.4, 9.1): the same shape as an answer's, with
+    the `parse` check failed (`not_run` for a number that cannot be kept exactly) and every other check `not_run`,
+    because they need the value. `exc` is the decoder's JSONSyntax or ExactLimit."""
+    if isinstance(exc, JSONSyntax):
+        result, issue = "fail", _line_issue("parse", exc.line, exc.column, "the input is not valid JSON")
+    else:
+        message = f"{exc}, so the input cannot be checked exactly"
+        line = getattr(exc, "line", None)
+        issue = (_answer_issue("parse", message) if line is None
+                 else _line_issue("parse", line, exc.column, message))
+        result = "not_run"
+    return _run(contract, text, _UNPARSED, result, [issue], [])
+
+
+def check_answer_value(contract: Contract, answer: str) -> tuple[dict, Any]:
+    """Like check_answer, but also returns the value the answer provides (0.1.4, 9.3): the answer text for a
+    text contract; for a JSON contract whose `parse` passed, the parsed value (the single fenced block, or the
+    whole trimmed answer); otherwise NO_VALUE. The value is only a candidate: whether it may be used is the
+    caller's decision (a block accepts it only from an attempt that ended complete with check pass)."""
     if not isinstance(answer, str):
         raise TypeError("an answer is text")
     if contract.format == "text":
-        return _run(contract, answer, _UNPARSED, None, [], [])
+        return _run(contract, answer, _UNPARSED, None, [], []), answer
     result, value, issues, notes = _parse_answer(contract, answer)
-    return _run(contract, answer, value, result, issues, notes)
+    checked = _run(contract, answer, value, result, issues, notes)
+    return checked, (value if result == "pass" else NO_VALUE)
+
+
+def check_answer(contract: Contract, answer: str) -> dict:
+    """Check a model's answer text against a contract (7.2, then 7.5)."""
+    return check_answer_value(contract, answer)[0]
 
 
 def check_value(contract: Contract, value: Any) -> dict:
@@ -856,8 +881,10 @@ def check_value(contract: Contract, value: Any) -> dict:
 
 
 # --- the repair message (9.3) ---------------------------------------------------------------------------
-def repair_message(contract: Contract, result: dict) -> str:
-    """The fixed template shown in the repair preview and sent as the repair's user message."""
+def repair_message(contract: Contract, result: dict, *, truncated: bool = False) -> str:
+    """The fixed template shown in the repair preview and sent as the repair's user message.
+    With `truncated` true (0.1.4, 12.1) the message says the answer was cut off at the output length limit;
+    a passing truncated answer has no issues, so no problems paragraph is written."""
     count = result["issue_count"]
     listed = result["issues"][:ISSUES_SHOWN]
     suffix = f"; the first {ISSUES_SHOWN} are listed" if count > ISSUES_SHOWN else ""
@@ -867,6 +894,14 @@ def repair_message(contract: Contract, result: dict) -> str:
         instruction = "as JSON only, with no other text"
     else:
         instruction = "as JSON, either alone or in a single fenced code block"
+    if truncated:
+        lines = ["The previous answer was cut off at the output length limit, so it is incomplete."]
+        if count > 0:
+            lines.extend(["", f"Problems found ({count} in total{suffix}):"])
+            lines.extend(f"- {issue['location']}: {issue['message']}" for issue in listed)
+        lines.extend(["", f"Reply again with the complete required output, {instruction}, and nothing else. "
+                          "It must fit within the same length limit."])
+        return "\n".join(lines)
     lines = ["The previous answer did not satisfy the required output contract.", "",
              f"Problems found ({count} in total{suffix}):"]
     lines.extend(f"- {issue['location']}: {issue['message']}" for issue in listed)

@@ -18,13 +18,15 @@ from typing import Any, Callable
 
 import modelspell
 
+from .errors import report_internal
 from . import __version__, jsonio, runs
 from .workspace import write_atomic_bytes
 
 DIRECTORY = "runs"
 LIST_LIMIT = 200
 FOLDER_RE = re.compile(r"[0-9]{8}-[0-9]{6}-([0-9a-f]{12})\Z")
-ATTEMPT_FILE_RE = re.compile(r"request-([1-9][0-9]{0,5})\.json\Z")
+ATTEMPT_FILE_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]{0,63})-([1-9][0-9]{0,5})\.json\Z")
+RESULT_FILE = "result.json"
 MIN_CREDENTIAL = 8
 RECORD_VERSION = 1
 
@@ -122,9 +124,13 @@ class Writer:
             os.mkdir(folder, 0o700)
             os.chmod(folder, 0o700)
             payload = {"record_version": RECORD_VERSION, "run_id": run.run_id, "source": run.source,
-                       "created_at": run.created_at, "steps": [runs.STEP_ID], "inputs": run.inputs,
-                       "contract": run.contract, "agentwiz_version": __version__,
-                       "modelspell_version": modelspell.__version__}
+                       "created_at": run.created_at, "steps": [run.step_id]}
+            if run.kind == "block":
+                payload.update(block=run.block, input_texts=run.input_texts, inputs=run.inputs,
+                               budget=run.budget, contract=None, contracts=run.contracts)
+            else:
+                payload.update(inputs=run.inputs, contract=run.contract)
+            payload.update(agentwiz_version=__version__, modelspell_version=modelspell.__version__)
             redacted, changed = redact(payload, self.credentials())
             redacted["redacted"] = changed
             write_atomic_bytes(folder, "run.json", jsonio.encode_record_file(redacted))
@@ -158,10 +164,37 @@ class Writer:
         except OSError as exc:
             return {"save_status": "failed", "reason": f"could not write {name} ({_strerror(exc)})"}
         except (TypeError, ValueError) as exc:  # a record AgentWiz could not encode
-            from .ui.server import report_internal
             report_internal("history", exc)
             return {"save_status": "failed", "reason": f"could not write {name} (the record could not be encoded)"}
         return {"save_status": "saved", "file": f"{DIRECTORY}/{folder.name}/{name}"}
+
+    def write_result(self, run: runs.Run, result: dict) -> dict:
+        """Write a block run's `result.json`, once (10.8), with the failure handling of `write_attempt`. Returns
+        {"save_status": "saved", "file": ...} or {"save_status": "failed", "reason": ...}."""
+        state = self.store.history_state(run)
+        if state == runs.HISTORY_DELETED:
+            return {"save_status": "failed", "reason": "the run's history was deleted"}
+        if state == runs.HISTORY_INCOMPLETE:
+            return {"save_status": "failed",
+                    "reason": "the run's history is incomplete after a failed deletion"}
+        if run.history_problem is not None or run.folder is None:
+            return {"save_status": "failed", "reason": run.history_problem or "the run folder was not created"}
+        before_write()
+        folder = run.folder
+        if not folder.is_dir():
+            return {"save_status": "failed", "reason": "the run's folder no longer exists"}
+        try:
+            payload, changed = redact(result, self.credentials())
+            payload = dict(payload)
+            payload["redacted"] = changed
+            write_atomic_bytes(folder, RESULT_FILE, jsonio.encode_record_file(payload))
+        except OSError as exc:
+            return {"save_status": "failed", "reason": f"could not write {RESULT_FILE} ({_strerror(exc)})"}
+        except (TypeError, ValueError) as exc:
+            report_internal("history", exc)
+            return {"save_status": "failed",
+                    "reason": f"could not write {RESULT_FILE} (the result could not be encoded)"}
+        return {"save_status": "saved", "file": f"{DIRECTORY}/{folder.name}/{RESULT_FILE}"}
 
     # --- reading (10.5) -----------------------------------------------------------------------------------
     def _entries(self) -> list[tuple[str, str, bool]]:
@@ -200,19 +233,30 @@ class Writer:
         for name, run_id, _ in entries[:LIST_LIMIT]:
             folder = self.path / name
             row: dict = {"run_id": run_id, "folder": name, "created_at": None, "source": None, "attempts": 0,
-                         "outcome": None, "check": None, "problem": None}
+                         "outcome": None, "check": None, "block": None, "problem": None}
             try:
                 meta = self._read(folder / "run.json")
                 row["created_at"], row["source"] = meta.get("created_at"), meta.get("source")
+                block = meta.get("block")
+                row["block"] = block.get("name") if isinstance(block, dict) else None
             except (OSError, ValueError) as exc:
                 row["problem"] = self._problem(str(folder / "run.json"), exc)
-            numbers = self._attempt_numbers(folder)
+            numbers = self._attempt_files(folder)
             row["attempts"] = len(numbers)
+            try:
+                row["outcome"] = self._read(folder / RESULT_FILE).get("outcome")
+            except (OSError, ValueError):
+                if numbers:
+                    try:
+                        step, number = numbers[-1]
+                        latest = self._read(folder / f"{step}-{number}.json")
+                        row["outcome"] = latest.get("outcome")
+                    except (OSError, ValueError):
+                        pass
             if numbers:
                 try:
-                    latest = self._read(folder / f"{runs.STEP_ID}-{numbers[-1]}.json")
-                    row["outcome"] = latest.get("outcome")
-                    check = latest.get("check")
+                    step, number = numbers[-1]
+                    check = self._read(folder / f"{step}-{number}.json").get("check")
                     row["check"] = check.get("overall") if isinstance(check, dict) else None
                 except (OSError, ValueError):
                     pass
@@ -220,12 +264,14 @@ class Writer:
         return {"runs": shown, "total": len(entries), "shown": len(shown)}
 
     @staticmethod
-    def _attempt_numbers(folder: Path) -> list[int]:
+    def _attempt_files(folder: Path) -> list[tuple[str, int]]:
+        """(step id, attempt number) of every attempt file, ordered by step then attempt (10.8). `result.json`,
+        `run.json` and the scratch folder are not attempt files and are never listed."""
         try:
             names = os.listdir(folder)
         except OSError:
             return []
-        return sorted(int(m.group(1)) for n in names if (m := ATTEMPT_FILE_RE.match(n)))
+        return sorted((m.group(1), int(m.group(2))) for n in names if (m := ATTEMPT_FILE_RE.match(n)))
 
     def read_run(self, run_id: str) -> dict:
         for name, found_id, link in self._entries():
@@ -240,13 +286,20 @@ class Writer:
         except (OSError, ValueError) as exc:
             problems.append(self._problem(str(folder / "run.json"), exc))
         attempts = []
-        for number in self._attempt_numbers(folder):
-            file = folder / f"{runs.STEP_ID}-{number}.json"
+        for step, number in self._attempt_files(folder):
+            file = folder / f"{step}-{number}.json"
             try:
                 attempts.append(self._read(file))
             except (OSError, ValueError) as exc:
                 problems.append(self._problem(str(file), exc))
-        return {"run": run, "attempts": attempts, "problems": problems}
+        result = None
+        is_block = isinstance(run, dict) and run.get("source") == "block"
+        if is_block:
+            try:
+                result = self._read(folder / RESULT_FILE)
+            except (OSError, ValueError) as exc:
+                problems.append(self._problem(str(folder / RESULT_FILE), exc))
+        return {"run": run, "attempts": attempts, "result": result, "problems": problems}
 
     # --- deleting (10.5) ----------------------------------------------------------------------------------
     def delete_run(self, run_id: str, *, read_only: bool) -> None:
@@ -271,7 +324,6 @@ class Writer:
             except RemoveError as exc:
                 changed, text = exc.changed, str(exc)
             except Exception as exc:  # noqa: BLE001 - unchanged is never assumed
-                from .ui.server import report_internal
                 report_internal("history delete", exc)
                 changed, text = True, type(exc).__name__
         finally:

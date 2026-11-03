@@ -323,3 +323,26 @@ def test_deletion_reservation_and_settlement():
     store.reserve_delete(run.run_id)
     store.settle_delete(run, ok=True, changed=True)
     assert store.history_state(run) == runs.HISTORY_DELETED
+
+
+# 107 (0.1.4) ------------------------------------------------------------------------------------
+def test_token_reason():
+    token = runs.CancelToken()
+    assert token.reason is None
+    calls = []
+    token.on_cancel(lambda: calls.append("a"))
+    token.on_cancel(lambda: calls.append("b"))
+    assert token.cancel(runs.BUDGET_EXCEEDED) is True
+    assert token.reason == runs.BUDGET_EXCEEDED and calls == ["a", "b"]
+    assert token.cancel() is False and token.cancel(runs.USER_STOP) is False       # the first reason is kept
+    assert token.reason == runs.BUDGET_EXCEEDED and calls == ["a", "b"]            # each action ran once
+
+    plain = runs.CancelToken()
+    assert plain.cancel() is True and plain.reason == runs.USER_STOP == "user_stop"
+    assert plain.cancel(runs.BUDGET_EXCEEDED) is False and plain.reason == runs.USER_STOP
+
+    late = runs.CancelToken()
+    late.cancel(runs.BUDGET_EXCEEDED)
+    seen = []
+    late.on_cancel(lambda: seen.append(late.reason))                               # an action added after the fact
+    assert seen == [runs.BUDGET_EXCEEDED]

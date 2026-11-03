@@ -379,6 +379,35 @@ def get_state(ui) -> dict:
     return request(ui, "/api/state")
 
 
+def save_profile(ui, name, revision=None, **settings) -> dict:
+    """POST /api/profiles/save with the current configuration revision unless one is given."""
+    rev = get_state(ui)["revision"] if revision is None else revision
+    return request(ui, "/api/profiles/save", {"name": name, "revision": rev, **settings})
+
+
+def save_roles(ui, roles, revision=None) -> dict:
+    """POST /api/roles/save with the current roles revision unless one is given."""
+    rev = get_state(ui)["roles"]["revision"] if revision is None else revision
+    return request(ui, "/api/roles/save", {"roles": roles, "revision": rev})
+
+
+def write_block(ui_or_path, name, block, files=None) -> Path:
+    """Write `blocks/<name>/block.json` (exact encoding, so numbers survive) and the given files
+    ({relative path: text}) into a workspace. `ui_or_path` is a running server or a workspace folder.
+    `block` is a dict, or text written as it is (to test damaged files)."""
+    from agentwiz import jsonio
+    root = getattr(getattr(ui_or_path, "workspace", None), "path", ui_or_path)
+    folder = Path(root) / "blocks" / name
+    folder.mkdir(parents=True, exist_ok=True)
+    text = block if isinstance(block, str) else jsonio.encode_exact(block, indent=2)
+    (folder / "block.json").write_bytes(text.encode("utf-8"))
+    for rel, content in (files or {}).items():
+        target = folder / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content.encode("utf-8") if isinstance(content, str) else content)
+    return folder
+
+
 def configure(ui, backend, kind="openai_compat", **fields) -> dict:
     body = {"kind": kind, "base_url": backend.url + "/v1", "model": "m", **fields}
     body.setdefault("revision", get_state(ui)["revision"])
@@ -950,3 +979,102 @@ def contract_files(ui) -> Path:
 def contract_item(ui, name) -> dict:
     """The named contract's entry in /api/state, or None."""
     return next((c for c in get_state(ui)["contracts"]["items"] if c["name"] == name), None)
+
+
+# --- block runs (techspec 0.1.4, 20.1) ------------------------------------------------------------------------------
+def block_revision(ui, name) -> int:
+    rows = {r["name"]: r for r in request(ui, "/api/blocks")["blocks"]}
+    return rows[name]["revision"]
+
+
+def run_block(ui, name, inputs, revision=None, raw=False, timeout=30.0):
+    """POST /api/blocks/run at the block's current revision unless one is given. Returns the stream's events (or
+    the open response with raw=True, for tests that act while it runs)."""
+    rev = block_revision(ui, name) if revision is None else revision
+    resp = request(ui, "/api/blocks/run", {"name": name, "revision": rev, "inputs": inputs}, raw=True,
+                   timeout=timeout)
+    return resp if raw else events(resp, ui)
+
+
+def result_of(evs: list[dict]) -> dict:
+    """The block run's committed result from its `final` event."""
+    return final_of(evs)["result"]
+
+
+def stop_block(ui, run_id):
+    return request(ui, "/api/blocks/stop", {"run_id": run_id})
+
+
+def poll_block(ui, run_id):
+    return request(ui, f"/api/block_runs/{run_id}")
+
+
+class FakeTimer:
+    def __init__(self, seconds, callback):
+        self.seconds, self.callback = seconds, callback
+        self.cancelled = False
+        self.fired = False
+
+    def cancel(self):
+        self.cancelled = True
+
+    def fire(self):
+        self.fired = True
+        self.callback()
+
+
+class TimerHub:
+    def __init__(self):
+        self.timers: list[FakeTimer] = []
+        self.lock = threading.Lock()
+
+    def make(self, seconds, callback):
+        timer = FakeTimer(seconds, callback)
+        with self.lock:
+            self.timers.append(timer)
+        return timer
+
+    def live(self) -> list[FakeTimer]:
+        with self.lock:
+            return [t for t in self.timers if not t.cancelled and not t.fired]
+
+    def fire(self, seconds=None, index=0):
+        """Fire the `index`-th live timer, optionally only among those made with `seconds`."""
+        assert wait_until(lambda: [t for t in self.live() if seconds is None or t.seconds == seconds]), \
+            "no such timer was made"
+        timers = [t for t in self.live() if seconds is None or t.seconds == seconds]
+        timers[index].fire()
+
+
+@pytest.fixture
+def fire_timers(monkeypatch):
+    """Replace runner.make_timer so tests fire timers on demand instead of waiting for time (20.1)."""
+    from agentwiz import runner
+    hub = TimerHub()
+    monkeypatch.setattr(runner, "make_timer", hub.make)
+    return hub
+
+
+@pytest.fixture
+def spawned(monkeypatch):
+    """The process groups of every script started, learnt through script_step.after_spawn (11.4)."""
+    from agentwiz import script_step
+    groups: list[int] = []
+    original = script_step.after_spawn
+
+    def record(pgid):
+        groups.append(pgid)
+        original(pgid)
+
+    monkeypatch.setattr(script_step, "after_spawn", record)
+    return groups
+
+
+def group_gone(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    return False

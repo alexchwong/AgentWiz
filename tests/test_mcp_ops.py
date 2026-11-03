@@ -584,3 +584,100 @@ def test_mcp_library(make_ui, tmp_path, make_fake_mcp):
     state = mcp_state(first)
     assert state["read_only"] is False and sorted(state["servers"]) == ["s", "t", "u"]
     assert (library / ".servers.lock").is_file()
+
+
+# 106 (0.1.4) ------------------------------------------------------------------------------------
+class _NoClient:
+    """Just enough of MCPClient for Ops when no network is involved."""
+    schedule_delete = None
+
+    def release_all(self, ctx):
+        pass
+
+    def reserve_notice(self, session):
+        pass
+
+
+def _ops():
+    return mcp_ops.Ops(_NoClient())
+
+
+def _snap():
+    return mcp_client.Snapshot("s", "http://127.0.0.1:9/mcp")
+
+
+def test_mcp_reservation():
+    ops = _ops()
+    reservations = [ops.reserve() for _ in range(mcp_ops.WORKER_LIMIT)]
+    assert all(r is not None and r.state == "reserved" for r in reservations)
+    assert ops.workers == mcp_ops.WORKER_LIMIT
+    assert ops.reserve() is None                                     # counts toward the limit
+    with pytest.raises(mcp_ops.Busy):                               # as the MCP tools tab sees it
+        ops.start("call", _snap(), lambda ctx: None)
+    assert reservations[0].release() is True and ops.workers == mcp_ops.WORKER_LIMIT - 1
+    assert reservations[0].release() is False and ops.workers == mcp_ops.WORKER_LIMIT - 1   # exactly once
+    assert reservations[0].state == "released"
+
+    gate = threading.Event()
+    op = ops.start("call", _snap(), lambda ctx: gate.wait(10) and "done", reservation=reservations[1])
+    assert reservations[1].state == "transferred"
+    assert ops.workers == mcp_ops.WORKER_LIMIT - 1                   # not counted twice
+    assert reservations[1].release() is False                        # a transferred slot is the worker's
+    assert ops.workers == mcp_ops.WORKER_LIMIT - 1
+    with pytest.raises(ValueError):
+        ops.start("call", _snap(), lambda ctx: None, reservation=reservations[1])   # one transition only
+    gate.set()
+    assert wait_until(lambda: ops.workers == mcp_ops.WORKER_LIMIT - 2)
+    for r in reservations[2:]:
+        assert r.release() is True
+    assert ops.workers == 0
+
+
+def test_mcp_abandoned_worker_keeps_its_slot_until_it_exits():
+    ops = _ops()
+    reservation = ops.reserve()
+    gate, entered = threading.Event(), threading.Event()
+
+    def work(ctx):
+        entered.set()
+        gate.wait(10)
+
+    op = ops.start("call", _snap(), work, reservation=reservation)
+    assert entered.wait(5)
+    assert op.abandon("stopped") in ("abandoned", "late")
+    assert ops.workers == 1                                          # abandoned, thread still alive
+    assert reservation.release() is False and ops.workers == 1
+    gate.set()
+    assert wait_until(lambda: ops.workers == 0)                      # freed when the thread exits
+
+
+def test_mcp_start_rolls_the_reservation_back_when_the_thread_cannot_start(monkeypatch):
+    ops = _ops()
+    reservation = ops.reserve()
+
+    class Broken:
+        def __init__(self, *a, **k):
+            pass
+
+        def start(self):
+            raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(mcp_ops.threading, "Thread", Broken)
+    with pytest.raises(RuntimeError):
+        ops.start("call", _snap(), lambda ctx: None, reservation=reservation)
+    assert reservation.state == "reserved" and ops.workers == 1
+    assert reservation.release() is True and ops.workers == 0
+
+
+def test_mcp_shutdown_refuses_reserving_and_starting():
+    ops = _ops()
+    reservation = ops.reserve()
+    ops.cancel_all()
+    assert ops.closed is True
+    with pytest.raises(mcp_ops.Closed):
+        ops.reserve()
+    with pytest.raises(mcp_ops.Closed):
+        ops.start("call", _snap(), lambda ctx: None)
+    with pytest.raises(mcp_ops.Closed):
+        ops.start("call", _snap(), lambda ctx: None, reservation=reservation)
+    assert reservation.state == "reserved" and reservation.release() is True

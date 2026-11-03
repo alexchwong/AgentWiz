@@ -25,12 +25,16 @@ from typing import Callable
 
 import modelspell
 
+from .errors import ShuttingDown, report_internal
 from . import jsonio
 
 RECORD_LIMIT = 100
 RECORD_BYTES = 268_435_456
 SUMMARY_LIMIT = 1000
+RESULT_LIMIT = 100               # block-run results held for polling (0.1.4, 10.2)
+RESULT_BYTES = 268_435_456
 STEP_ID = "request"
+USER_STOP, BUDGET_EXCEEDED = "user_stop", "budget_exceeded"     # a token's reasons (0.1.4, 10.4)
 ATTEMPT_ID_RE = re.compile(r"[0-9a-f]{12}-[1-9][0-9]{0,5}\Z")
 RUN_ID_RE = re.compile(r"[0-9a-f]{12}\Z")
 
@@ -64,6 +68,7 @@ class CancelToken:
         self._lock = threading.Lock()
         self._cancelled = False
         self._at: str | None = None
+        self._reason: str | None = None
         self._actions: list[Callable[[], None]] = []
 
     @property
@@ -76,9 +81,16 @@ class CancelToken:
         with self._lock:
             return self._at
 
-    def cancel(self) -> bool:
-        """True for the call that cancelled the token; False if it was already cancelled."""
-        actions = self._publish()
+    @property
+    def reason(self) -> str | None:
+        """Why the token was cancelled: the reason of the first cancellation, `None` until cancelled (0.1.4)."""
+        with self._lock:
+            return self._reason
+
+    def cancel(self, reason: str = USER_STOP) -> bool:
+        """True for the call that cancelled the token; False if it was already cancelled. The first
+        cancellation's `reason` is kept (`user_stop` or `budget_exceeded`)."""
+        actions = self._publish(reason)
         if actions is None:
             return False
         self._dispatch(actions)
@@ -93,13 +105,14 @@ class CancelToken:
                 return
         self._run_action(action)
 
-    def _publish(self) -> list[Callable[[], None]] | None:
+    def _publish(self, reason: str = USER_STOP) -> list[Callable[[], None]] | None:
         """Mark the token cancelled and take its actions, without running them. None if already cancelled."""
         with self._lock:
             if self._cancelled:
                 return None
             self._cancelled = True
             self._at = utc_now()
+            self._reason = reason
             actions, self._actions = self._actions, []
             return actions
 
@@ -112,7 +125,6 @@ class CancelToken:
         try:
             action()
         except Exception as exc:  # noqa: BLE001 - the others must still run; class name only is reported
-            from .ui.server import report_internal
             report_internal("stop action", exc)
 
 
@@ -139,6 +151,30 @@ class Run:
     held: set = field(default_factory=set)      # attempt numbers whose full records are held
     history_state: str = HISTORY_INTACT
     prior_history_state: str | None = None      # captured at a deletion's reservation (R5-10)
+    # --- 0.1.4 (10.2). Page runs keep the defaults. Block runs: `inputs` holds value views.
+    kind: str = "page"             # "page" | "block"
+    step_id: str = STEP_ID
+    block: dict | None = None      # {"name", "revision", "files"}
+    input_texts: dict | None = None
+    contracts: dict | None = None  # {"inputs": {...}, "outputs": {...}} as persisted copies
+    budget: dict | None = None
+    started_at: str | None = None
+    slot: object = None            # the run's execution reservation, owned and released by the runner
+    ended: bool = False            # block runs: the end point has been reached
+    committed: bool = False        # block runs: the result is committed
+    stop_requested_at: str | None = None
+    result: dict | None = None     # block runs: the committed result while it is held
+    result_save_status: str | None = None
+    result_save_detail: dict = field(default_factory=dict)
+    protections: int = 0           # script cleanup owners protecting the run's folder
+
+
+class Closed(ShuttingDown):
+    """Shutdown has begun: no run or attempt is admitted any more (0.1.4, 10.10)."""
+
+
+class RunStopped(Exception):
+    """`reserve_attempt` refused: the run's token is cancelled, or shutdown has begun."""
 
 
 class RepairRefused(Exception):
@@ -181,6 +217,7 @@ class _Attempt:
 class EndPoint:
     cancelled: bool
     stop_requested_at: str | None
+    reason: str | None = None         # the token's first cancellation reason (0.1.4), None when not cancelled
 
 
 def _summarise(att: _Attempt, record: dict) -> dict:
@@ -199,6 +236,9 @@ class AttemptStore:
         self._records: OrderedDict[str, int] = OrderedDict()   # committed, held records -> encoded size
         self._record_bytes = 0
         self._settled: OrderedDict[str, None] = OrderedDict()  # settled committed attempts, oldest first
+        self._results: OrderedDict[str, int] = OrderedDict()   # held block-run results -> encoded size
+        self._result_bytes = 0
+        self.closed = False                                    # shutdown has begun (0.1.4, 10.10)
 
     # --- views for tests and the state body -------------------------------------------------------------
     def running_count(self) -> int:
@@ -206,11 +246,33 @@ class AttemptStore:
             return sum(1 for a in self._attempts.values() if a.state == "running")
 
     def stop_all(self) -> None:
-        """Cancel active attempts when a disposable tutorial instance closes."""
+        """Cancel active attempts and active block runs (shutdown, a closing tutorial instance)."""
         with self._lock:
-            ids = [a.id for a in self._attempts.values() if a.state == "running"]
+            ids = [a.id for a in self._attempts.values() if a.state == "running" and a.run.kind == "page"]
+            block_ids = [r.run_id for r in self._runs.values() if r.kind == "block" and not r.ended]
         for id_ in ids:
             self.stop(id_)
+        for run_id in block_ids:
+            try:
+                self.stop_run(run_id, USER_STOP)
+            except NoSuchRunInMemory:
+                pass
+
+    def close(self) -> tuple[list[str], list[str]]:
+        """Refuse every later admission (`new_run`, `new_block_run`, `admit_repair`, `reserve_attempt`) and list
+        what is active now: (running page attempt IDs, active block run IDs). One decision under the lock, so no
+        admission can slip between the flag and the listing."""
+        with self._lock:
+            self.closed = True
+            attempts = [a.id for a in self._attempts.values() if a.state == "running" and a.run.kind == "page"]
+            block_runs = [r.run_id for r in self._runs.values() if r.kind == "block" and not r.ended]
+            return attempts, block_runs
+
+    def active_block_runs(self) -> list[dict]:
+        """`[{"run_id", "block", "started_at"}]` for block runs that have not reached their end point."""
+        with self._lock:
+            return [{"run_id": r.run_id, "block": (r.block or {}).get("name"), "started_at": r.started_at}
+                    for r in self._runs.values() if r.kind == "block" and not r.ended]
 
     def run_view(self, run_id: str) -> dict | None:
         """The run's metadata as a plain dictionary (what the store keeps, never a record), or None."""
@@ -231,9 +293,39 @@ class AttemptStore:
                   handle=modelspell.CancelHandle())
         run.token.on_cancel(run.handle.cancel)
         with self._lock:
+            if self.closed:
+                raise Closed()
             run.next_attempt, run.running = 2, 1
             self._runs[run.run_id] = run
         return run
+
+    def new_block_run(self, *, save_runs: bool, block: dict, inputs: dict, input_texts: dict, contracts: dict,
+                      budget: dict, step_id: str, slot: object = None) -> Run:
+        """A new block run with no attempt reserved (10.2). `slot` is the run's execution reservation, or None
+        for a run rejected by its input checks, which owns none. Raises Closed once shutdown has begun."""
+        now = utc_now()
+        run = Run(run_id=secrets.token_hex(6), source="block", save_runs=save_runs, created_at=now, inputs=inputs,
+                  contract=None, token=CancelToken(), handle=modelspell.CancelHandle(), kind="block",
+                  step_id=step_id, block=block, input_texts=input_texts, contracts=contracts, budget=budget,
+                  started_at=now, slot=slot)
+        run.token.on_cancel(run.handle.cancel)
+        with self._lock:
+            if self.closed:
+                raise Closed()
+            self._runs[run.run_id] = run
+        return run
+
+    def reserve_attempt(self, run: Run) -> int:
+        """The dispatch gate of a block model step (10.7): take the run's next attempt number and mark it
+        running, unless the token is cancelled or shutdown has begun, in which case raise RunStopped. A Stop,
+        the time budget or shutdown and an attempt's admission are one decision under the store's lock."""
+        with self._lock:
+            if self.closed or run.token.cancelled:
+                raise RunStopped()
+            number = run.next_attempt
+            run.next_attempt += 1
+            run.running = number
+            return number
 
     def abandon_run(self, run: Run, number: int) -> None:
         """Give back a reservation that was never started (a refusal after reserving)."""
@@ -250,6 +342,8 @@ class AttemptStore:
         (the preview) nothing is reserved and the number is the one the next repair would take. Raises
         NoSuchAttempt (404), RepairRefused."""
         with self._lock:
+            if self.closed:
+                raise Closed()
             att = self._attempts.get(attempt_id_)
             if att is None:
                 raise NoSuchAttempt()
@@ -259,6 +353,8 @@ class AttemptStore:
             if att.record is None or run.run_id not in self._runs:
                 raise RepairRefused(410, "not_held",
                                     "This attempt is no longer held in memory; send the request again.")
+            if run.kind == "block":
+                raise RepairRefused(409, "not_repairable", "attempts of a block run are repaired automatically")
             if run.token.cancelled:
                 raise RepairRefused(409, "run_stopped", "This run was stopped; send the request again.")
             if run.history_state == HISTORY_DELETING:
@@ -305,12 +401,105 @@ class AttemptStore:
             token._dispatch(actions)
         return "stopping"
 
+    def stop_run(self, run_id: str, reason: str) -> str:
+        """Accept a Stop (or the time budget, or shutdown) for a block run (10.7). 'stopping' or
+        'already_finished'; NoSuchRunInMemory when the run is not held. A user's Stop records `stop_requested_at`
+        once, on the run and on the attempt then running; the time budget records none. Acceptance, the
+        timestamp and the token's publication are one decision under the store's lock (chain C1); the stop
+        actions run after every lock is released."""
+        with self._lock:
+            run = self._runs.get(run_id)
+            if run is None or run.kind != "block":
+                raise NoSuchRunInMemory()
+            if run.ended:
+                return "already_finished"
+            if reason == USER_STOP and run.stop_requested_at is None:
+                now = utc_now()
+                run.stop_requested_at = now
+                for att in self._attempts.values():
+                    if att.run is run and att.state == "running" and att.stop_requested_at is None:
+                        att.stop_requested_at = now
+            token = run.token
+            actions = token._publish(reason)
+        if actions:
+            token._dispatch(actions)
+        return "stopping"
+
+    def block_end_point(self, run: Run) -> EndPoint:
+        """The block run's end point (10.6): marked ended, and the token's state and reason read for the last
+        time, under the store's lock. From then on Stop answers 'already_finished'."""
+        with self._lock:
+            run.ended = True
+            token = run.token
+            return EndPoint(token.cancelled, run.stop_requested_at, token.reason)
+
+    def end_block_run(self, run: Run, result: dict, saving: bool) -> str:
+        """The commit (10.6): hold the frozen result for polling under the retention limits and set its save
+        status ('pending' when saving, else 'not_requested'). Returns the status."""
+        size = len(jsonio.encode(result))
+        with self._lock:
+            run.ended = True
+            run.committed = True
+            run.result_save_status = "pending" if saving else "not_requested"
+            if size <= RESULT_BYTES:
+                run.result = result
+                self._results[run.run_id] = size
+                self._result_bytes += size
+            self._evict_results_locked()
+            self._prune_run_locked(run)
+            return run.result_save_status
+
+    def _evict_results_locked(self) -> None:
+        while self._results and (len(self._results) > RESULT_LIMIT or self._result_bytes > RESULT_BYTES):
+            oldest, size = self._results.popitem(last=False)
+            self._result_bytes -= size
+            run = self._runs.get(oldest)
+            if run is not None:
+                run.result = None
+                self._prune_run_locked(run)
+
+    def settle_result_save(self, run: Run, status: str, **detail) -> None:
+        """pending -> saved or failed, exactly once, for a block run's result.json."""
+        with self._lock:
+            if run.result_save_status != "pending":
+                return
+            run.result_save_status, run.result_save_detail = status, dict(detail)
+            self._prune_run_locked(run)
+
+    def protect_run(self, run: Run) -> None:
+        """A script cleanup owner protects the run's folder from deletion (11.4)."""
+        with self._lock:
+            run.protections += 1
+
+    def unprotect_run(self, run: Run) -> None:
+        with self._lock:
+            run.protections = max(0, run.protections - 1)
+            self._prune_run_locked(run)
+
+    def run_envelope(self, run_id: str) -> dict:
+        """The polling envelope of a block run (10.9). Raises NotHeld (410) when the run, or its result, is no
+        longer held."""
+        with self._lock:
+            run = self._runs.get(run_id)
+            if run is None or run.kind != "block":
+                raise NotHeld()
+            if not run.committed:
+                attempts = [a.summary for a in sorted(self._attempts.values(), key=lambda a: a.number)
+                            if a.run is run and a.summary is not None]
+                return {"state": "running", "stop_requested_at": run.stop_requested_at, "attempts": attempts}
+            if run.result is None:
+                raise NotHeld()
+            out = {"state": "ended", "result": run.result, "save_status": run.result_save_status}
+            out.update(run.result_save_detail)
+            return out
+
     # --- end point and commit (8.5) ------------------------------------------------------------------------
     def end_point(self, attempt_id_: str) -> EndPoint:
         with self._lock:
             att = self._attempts[attempt_id_]
             att.ended = True
-            return EndPoint(att.run.token.cancelled, att.stop_requested_at)
+            token = att.run.token
+            return EndPoint(token.cancelled, att.stop_requested_at, token.reason)
 
     def commit(self, attempt_id_: str, record: dict, saving: bool) -> str:
         """Freeze the record, create its summary, apply retention and set the save status: 'pending' when the
@@ -374,7 +563,10 @@ class AttemptStore:
 
     def _prune_run_locked(self, run: Run) -> None:
         """Release the run's metadata once nothing needs it (8.9)."""
-        if (run.running is None and not run.pending and not run.held
+        if run.kind == "block" and (not run.committed or run.result is not None
+                                    or run.result_save_status == "pending"):
+            return
+        if (run.running is None and not run.pending and not run.held and run.protections == 0
                 and run.history_state != HISTORY_DELETING and self._runs.get(run.run_id) is run):
             del self._runs[run.run_id]
 
@@ -425,7 +617,9 @@ class AttemptStore:
             run = self._runs.get(run_id)
             if run is None:
                 return None
-            if run.running is not None or run.pending or run.history_state == HISTORY_DELETING:
+            if (run.running is not None or run.pending or run.history_state == HISTORY_DELETING
+                    or (run.kind == "block" and (not run.committed or run.result_save_status == "pending"))
+                    or run.protections > 0):
                 raise RunActive()
             run.prior_history_state = run.history_state
             run.history_state = HISTORY_DELETING

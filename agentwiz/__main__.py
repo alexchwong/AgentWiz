@@ -2,17 +2,61 @@
 [--profiles-dir PATH] [--mcp-servers-dir PATH] [--version]
 (techspec 0.1.1, 7.2; 0.1.2, 5.4).
 
-Exit statuses: 0 after Ctrl-C; 1 when the workspace cannot be opened or the port cannot be bound;
-2 for usage errors, including an invalid workspace name; 3 when another AgentWiz process holds the
-workspace. The address is always the first stdout line.
+Exit statuses: 0 after Ctrl-C or SIGTERM once everything has drained; 1 when the workspace cannot be opened or
+the port cannot be bound (or shutdown itself failed); 2 for usage errors, including an invalid workspace name;
+3 when another AgentWiz process holds the workspace; 130 or 143 when a second SIGINT or SIGTERM forced the exit
+(0.1.4, 10.10). The address is always the first stdout line.
 """
 from __future__ import annotations
 
 import argparse
+import os
+import signal
 import sys
 import threading
 import webbrowser
 from pathlib import Path
+
+
+class TerminationRequested(BaseException):
+    """The first SIGTERM: unwinds `serve_forever()` into the shutdown, as Ctrl-C does."""
+
+
+class SignalController:
+    """The one place a signal handler is installed (0.1.4, 10.10). One handler for SIGINT and SIGTERM; its own
+    flag, set by its first statement, decides what it does:
+
+    * the first signal raises, in the main thread, `KeyboardInterrupt` (SIGINT) or `TerminationRequested`
+      (SIGTERM), which unwinds `serve_forever()` into the `finally` that shuts down;
+    * any later signal, in either order, writes nothing and exits at once with `os._exit(130)` or `os._exit(143)`
+      (a notice could block on a full pipe).
+
+    `begin_shutdown()` sets the same flag without a signal, so once shutdown has started any signal forces the
+    exit. `ProcessState.shutdown()` never installs a handler; closing a tutorial child cannot change this policy."""
+
+    def __init__(self) -> None:
+        self.flag = False
+        self.installed = False
+
+    def install(self) -> bool:
+        """Install the handler. Python allows it only in the main thread; elsewhere nothing is installed."""
+        if threading.current_thread() is not threading.main_thread():
+            return False
+        signal.signal(signal.SIGINT, self._handle)
+        signal.signal(signal.SIGTERM, self._handle)
+        self.installed = True
+        return True
+
+    def begin_shutdown(self) -> None:
+        self.flag = True
+
+    def _handle(self, signum: int, frame: object) -> None:
+        later, self.flag = self.flag, True
+        if later:
+            os._exit(130 if signum == signal.SIGINT else 143)
+        if signum == signal.SIGINT:
+            raise KeyboardInterrupt
+        raise TerminationRequested()
 
 
 def _open_browser(url: str) -> None:
@@ -81,37 +125,54 @@ def main(argv: list[str] | None = None) -> None:
         _say(f"cannot open workspace '{args.workspace}' at {where}: {exc}", err=True)
         sys.exit(1)
 
+    controller = SignalController()
+    server = None
     try:
         try:
-            server = UIServer(args.port, workspace=ws, profiles_dir=args.profiles_dir,
-                              mcp_servers_dir=args.mcp_servers_dir)
-        except (OSError, OverflowError) as exc:
-            reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
-            _say(f"cannot listen on 127.0.0.1:{args.port}: {reason}", err=True)
-            sys.exit(1)
+            try:
+                server = UIServer(args.port, workspace=ws, profiles_dir=args.profiles_dir,
+                                  mcp_servers_dir=args.mcp_servers_dir)
+            except (OSError, OverflowError) as exc:
+                reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
+                _say(f"cannot listen on 127.0.0.1:{args.port}: {reason}", err=True)
+                sys.exit(1)
+            controller.install()
 
-        _say(server.url)
-        _say("this machine only; the address carries a one-time session token. Ctrl-C to stop.")
-        _say(f"workspace '{ws.name}' at {ws.path}" + (" (created)" if ws.created else ""))
-        _say(f"MCP servers at {server.state.mcp_library.folder}")
-        problems = server.state.problems
-        for problem in problems:
-            _say(f"warning: {problem.file}: {problem.message}")
-        if problems:
-            _say("repair or restore the file, then restart AgentWiz.")
-        if not args.no_browser:
-            timer = threading.Timer(0.3, _open_browser, args=(server.url,))
-            timer.daemon = True
-            timer.start()
-        try:
-            server.serve_forever()
-        except KeyboardInterrupt:
-            pass
+            _say(server.url)
+            _say("this machine only; the address carries a one-time session token. Ctrl-C to stop.")
+            _say(f"workspace '{ws.name}' at {ws.path}" + (" (created)" if ws.created else ""))
+            _say(f"MCP servers at {server.state.mcp_library.folder}")
+            problems = server.state.problems
+            for problem in problems:
+                _say(f"warning: {problem.file}: {problem.message}")
+            if problems:
+                _say("repair or restore the file, then restart AgentWiz.")
+            if not args.no_browser:
+                timer = threading.Timer(0.3, _open_browser, args=(server.url,))
+                timer.daemon = True
+                timer.start()
+            try:
+                server.serve_forever()
+            except (KeyboardInterrupt, TerminationRequested):
+                pass
+            finally:
+                controller.begin_shutdown()          # every exit path: from here a signal forces the exit
+                server.server_close()                # cancellation, grace and drain (10.10)
         finally:
-            server.server_close()
-    finally:
-        ws.close()
-
+            # Reached by every path, including a first signal that landed between serve_forever() and the inner
+            # finally: the drain happens before the workspace is released. server_close() is idempotent.
+            controller.begin_shutdown()
+            left: list[str] = []
+            if server is not None:
+                try:
+                    left = server.server_close()
+                except BaseException as exc:  # noqa: BLE001 - threads may still be writing: do not close the workspace
+                    _say(f"shutdown failed ({type(exc).__name__})", err=True)
+                    os._exit(1)
+            if not left:
+                ws.close()
+    except (KeyboardInterrupt, TerminationRequested):
+        pass
 
 if __name__ == "__main__":
     main()
