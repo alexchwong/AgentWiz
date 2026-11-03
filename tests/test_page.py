@@ -106,7 +106,7 @@ def test_page_tabs(ui, open_page):
         has(page, f"tab-{fragment}", "aria-selected", "true")        # a reload keeps the tab
     for fragment in ("", "nonsense", "history/extra"):
         page = open_page(ui, fragment)
-        has(page, "tab-chat", "aria-selected", "true")                # unknown or empty selects Chat
+        has(page, "tab-workshop", "aria-selected", "true")
     page = open_page(ui, "chat")
     tid(page, "tab-chat").focus()
     page.keyboard.press("ArrowRight")
@@ -116,7 +116,7 @@ def test_page_tabs(ui, open_page):
     page.keyboard.press("ArrowLeft")
     has(page, "tab-documents", "aria-selected", "true")
     page.keyboard.press("End")
-    has(page, "tab-blocks", "aria-selected", "true")                 # Blocks is the seventh and last tab
+    has(page, "tab-checked-request", "aria-selected", "true")
     page.keyboard.press("Home")
     has(page, "tab-chat", "aria-selected", "true")
     assert page.evaluate("location.hash") == "#chat"
@@ -287,7 +287,7 @@ def test_page_hidden_tab_keeps_running(ui, server, open_page):
     has(page, "tab-chat", "data-state", "running")                   # the label shows it while hidden
     server.release.set()
     has(page, "tab-chat", "data-state", "idle")
-    tid(page, "tab-chat").click()
+    tid(page, "ws-workbench").click()
     has(page, "chat-status", "data-outcome", "complete")
     expect(tid(page, "chat-output")).to_have_text("partial")
 
@@ -342,6 +342,7 @@ def test_page_contracts(ui, open_page):
     page = open_page(ui, "contracts")
     tid(page, "contracts-new-json").click()
     tid(page, "contracts-name").fill("fields_v1")
+    tid(page, "contracts-advanced").click()
     tid(page, "contracts-editor").fill(JSON_CONTRACT_NO_SCHEMA)
     tid(page, "contracts-save").click()
     has(page, "contracts-editor", "data-state", "saved")
@@ -399,6 +400,8 @@ def test_page_history(ui, server, open_page):
     server.reply(answer("saved answer"))
     configure(ui, server)
     page = open_page(ui, "chat")
+    if not tid(page, "header-save-runs").is_visible():
+        tid(page, "ws-settings").click()
     tid(page, "header-save-runs").check()
     expect(tid(page, "header-saving")).to_be_visible()
     say(page, "chat", "keep this")
@@ -440,6 +443,10 @@ def test_page_raises_no_script_errors(ui, open_page, context):
                                   p.on("console", lambda m: problems.append(m.text) if m.type == "error" else None)))
     page = open_page(ui, "chat")
     for fragment in FRAGS:
+        if fragment == "blocks":
+            tid(page, "tab-workshop").click()
+        elif fragment != "history":
+            tid(page, "ws-workbench").click()
         tid(page, f"tab-{fragment}").click()
         has(page, f"tab-{fragment}", "aria-selected", "true")
     tid(page, "tab-history").click()
@@ -506,10 +513,11 @@ def test_page_blocks(ui, server, open_page):
     has(page, "tab-blocks", "data-state", "running")
     has(page, "blocks-status", "data-state", "running")
     expect(tid(page, "blocks-run")).to_be_disabled()
-    tid(page, "tab-chat").click()
+    tid(page, "ws-workbench").click()
     has(page, "tab-blocks", "data-state", "running")
     has(page, "panel-blocks", "data-state", "running")
     server.release.set()
+    tid(page, "tab-workshop").click()
     tid(page, "tab-blocks").click()
     has(page, "blocks-status", "data-state", "done")
     has(page, "tab-blocks", "data-state", "idle")
@@ -522,6 +530,7 @@ def test_page_blocks_stop_and_reattach(ui, server, open_page, spawned):
     pick(page, "sc")
     input_of(page, "a").fill("go")
     tid(page, "blocks-run").click()
+    tid(tid(page,"ws-dialog"),"ws-use-selection").click()
     assert wait_until(lambda: spawned)
     has(page, "blocks-status", "data-state", "running")
     has(page, "blocks-operation", "data-kind", "script")
@@ -587,6 +596,8 @@ def test_page_blocks_stale_and_problem(ui, server, open_page):
 def test_page_roles(ui, server, open_page):
     save_profile(ui, "p", model="m", kind="openai_compat", base_url=server.url + "/v1", provider="")
     page = open_page(ui, "chat")
+    if not tid(page, "header-roles").is_visible():
+        tid(page, "ws-settings").click()
     tid(page, "header-roles").click()
     has(page, "roles-dialog", "data-state", "idle")
     tid(page, "roles-add").click()
@@ -596,6 +607,8 @@ def test_page_roles(ui, server, open_page):
     has(page, "roles-dialog", "data-state", "saved")
     assert get_state(ui)["roles"]["map"] == {"fast": "p"}
     page = open_page(ui, "chat")                                                    # reload: the mapping is shown
+    if not tid(page, "header-roles").is_visible():
+        tid(page, "ws-settings").click()
     tid(page, "header-roles").click()
     row = page.locator('[data-test="roles-row"][data-role="fast"]')
     expect(row).to_have_count(1)
@@ -609,5 +622,141 @@ def test_page_roles(ui, server, open_page):
     # the profile is deleted: its roles are unresolved
     request(ui, "/api/profiles/delete", {"name": "p", "revision": get_state(ui)["revision"]})
     page = open_page(ui, "chat")
+    if not tid(page, "header-roles").is_visible():
+        tid(page, "ws-settings").click()
     tid(page, "header-roles").click()
     assert [r.get_attribute("data-unresolved") for r in page.locator('[data-test="roles-row"]').all()] == ["true", "true"]
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_workshop_design_save_compare_and_review(ui, open_page, width):
+    if width==1280:
+        from conftest import switch_history
+        switch_history(ui,True)
+    page = open_page(ui)
+    page.set_viewport_size({"width":width,"height":850})
+    tid(page,"ws-new-block").click()
+    dialog=tid(page,"ws-dialog")
+    tid(dialog,"ws-field-block-key").fill("counter")
+    tid(dialog,"ws-choice-start-with").select_option("count_text")
+    tid(dialog,"ws-create-draft").click()
+    tid(page,"ws-save-revision").click()
+    tid(dialog,"ws-confirm").click()
+    has(page,"ws-status","data-state","saved")
+    tid(page,"ws-test").click()
+    tid(page,"ws-field-text").fill("one two")
+    tid(page,"ws-run-test").click()
+    tid(dialog,"ws-confirm").click()
+    expect(tid(page,"ws-output")).to_have_text("2")
+    tid(page,"ws-mark-correct").click()
+    has(page,"ws-trial","data-correctness","correct")
+    tid(page,"ws-save-as-example").click()
+    tid(dialog,"ws-field-example-label").fill("Two words")
+    tid(dialog,"ws-save").click()
+    tid(page,"ws-compare").click()
+    page.locator('[data-test="ws-example-choice"][data-example$="-1"]').uncheck()
+    page.locator('[data-test="ws-example-choice"][data-example$="-2"]').uncheck()
+    tid(page,"ws-compare-versions").click()
+    tid(dialog,"ws-confirm").click()
+    expect(tid(page,"ws-output")).to_have_count(2)
+    page.reload()
+    expect(tid(page,"ws-compare")).to_have_attribute("aria-pressed","true")
+    if width==1280:
+        tid(page,"ws-recent-runs-and-comparisons").click()
+        record=page.locator('[data-test="ws-comparison-record"][data-arms="2"]')
+        tid(record,"ws-open-comparison").click()
+        expect(tid(page,"ws-output")).to_have_count(2)
+        tid(page,"ws-recent-runs-and-comparisons").click()
+        tid(record,"ws-delete-comparison").click()
+        expect(record).to_have_count(0)
+        tid(tid(page,"ws-dialog"),"ws-close").click()
+        assert len(request(ui,"/api/runs")["runs"])==3
+
+
+def test_workshop_extractor_revision_journey(ui, server, open_page):
+    setup_model(ui,server)
+    old=json.dumps({"product":"notebooks","quantity":300})
+    revised=json.dumps({"product":"notebooks"})
+    server.reply(answer(old),answer(old),answer(revised))
+    page=open_page(ui)
+    dialog=tid(page,"ws-dialog")
+    tid(page,"ws-new-block").click()
+    tid(dialog,"ws-field-block-key").fill("shop_extract")
+    tid(dialog,"ws-choice-start-with").select_option("extract_fields")
+    tid(dialog,"ws-create-draft").click()
+    original=tid(page,"ws-field-instructions").input_value()
+    tid(page,"ws-save-revision").click()
+    tid(dialog,"ws-confirm").click()
+    has(page,"ws-status","data-state","saved")
+    tid(page,"ws-test").click()
+    tid(page,"ws-save-example-collection").click()
+    tid(page,"ws-choice-example").select_option("extract_fields-2")
+    tid(page,"ws-run-test").click()
+    tid(dialog,"ws-confirm").click()
+    has(page,"ws-trial","data-correctness","incorrect")
+    tid(page,"ws-design").click()
+    instruction="Omit quantity when absent. Read {{inputs.text}}"
+    tid(page,"ws-field-instructions").fill(instruction)
+    tid(page,"ws-test").click()
+    tid(page,"ws-preview-instructions").click()
+    expect(dialog).to_contain_text("Omit quantity when absent. Read send some blue notebooks")
+    tid(dialog,"ws-close").click()
+    tid(page,"ws-design").click()
+    tid(page,"ws-save-revision").click()
+    tid(dialog,"ws-confirm").click()
+    has(page,"ws-status","data-state","saved")
+    tid(page,"ws-compare").click()
+    tid(page,"ws-choice-baseline-revision").select_option(index=1)
+    page.locator('[data-test="ws-example-choice"][data-example$="-1"]').uncheck()
+    tid(page,"ws-compare-versions").click()
+    tid(dialog,"ws-confirm").click()
+    expect(tid(page,"ws-trial").nth(1)).to_have_attribute("data-correctness","correct")
+    expect(tid(page,"ws-trial").nth(0)).to_have_attribute("data-correctness","incorrect")
+    tid(page,"ws-design").click()
+    tid(page,"ws-revision-actions").click()
+    tid(dialog,"ws-choice-revision").select_option(index=1)
+    tid(dialog,"ws-restore-to-draft").click()
+    expect(tid(page,"ws-field-instructions")).to_have_value(original)
+    assert len(server.requests)==3
+
+
+@pytest.mark.needs_checks
+def test_workshop_structured_inputs_keep_exact_literals_across_views_and_reload(ui, open_page):
+    """The shared field form must not coerce long numbers or merge absence/null/empty values."""
+    from test_workshop import send, plan_save
+    p=send(ui,'preview',starter='select_fields',key='exact_form')
+    draft=send(ui,'preview',draft=p['draft'],edit={'kind':'starter_parameters','parameters':{
+        'mappings':[{'source_path':['data'],'destination':'payload','required':True}]}})['draft']
+    definition=jsonio.decode_exact(draft['definition_text'])
+    schema={'type':'object','properties':{'n':{'type':'integer'},'d':{'type':'number'},
+        'yes':{'type':'boolean'},'nil':{'type':['string','null']},'empty':{'type':'string'},
+        'missing':{'type':'string'}},'required':['n','d','yes','nil','empty'],'additionalProperties':False}
+    definition['inputs']={'data':{'contract':{'format':'json','schema':schema}}}
+    draft['definition_text']=jsonio.encode_exact(definition)
+    plan_save(ui,draft)
+    from test_workshop import http_method
+    http_method(ui,'blocks/exact_form/examples','PUT',{'expected_revision':None,'examples':[
+        {'id':'obsolete','version':1,'label':'Old shape','inputs':{'data':'{"n":1,"d":1,"yes":false,"nil":null,"empty":"","old":9007199254740993}'},
+         'expectation':{'kind':'review','criterion':'Review'},'origin':'manual','verified':False}]})
+    page=open_page(ui,'workshop/exact_form/test')
+    tid(page,'ws-choice-example').select_option('obsolete')
+    expect(tid(page,'ws-unmapped-fields')).to_have_count(1)
+    tid(page,'ws-remove-unmapped-fields').click()
+    expect(tid(page,'ws-unmapped-fields')).to_have_count(0)
+    def node(path):
+        return page.locator('[data-test="ws-input-node"][data-port="data"][data-path="'+path+'"]')
+    tid(node('n'),'ws-field-value').fill('9007199254740993')
+    tid(node('d'),'ws-field-value').fill('0.12345678901234567890123456789')
+    tid(node('yes'),'ws-choice-value').select_option('false')
+    tid(node('nil'),'ws-choice-nil').select_option('null')
+    tid(node('missing'),'ws-choice-missing').select_option('omit')
+    tid(page,'ws-design').click()
+    tid(page,'ws-test').click()
+    expect(tid(node('n'),'ws-field-value')).to_have_value('9007199254740993')
+    tid(page,'ws-run-test').click()
+    tid(tid(page,'ws-dialog'),'ws-confirm').click()
+    expected=jsonio.decode_exact('{"payload":{"n":9007199254740993,"d":0.12345678901234567890123456789,"yes":false,"nil":null,"empty":""}}')
+    assert jsonio.decode_exact(tid(page,'ws-output').text_content())==expected
+    page.reload()
+    expect(tid(page,'ws-trial')).to_have_attribute('data-outcome','complete')
+    assert jsonio.decode_exact(tid(page,'ws-output').text_content())==expected

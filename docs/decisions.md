@@ -198,3 +198,36 @@ groups. (For 0.1.0 to 0.2.1 the same check, specification 0.1.2 Section 3.2, fou
 
 The 0.1.0 procedure created `main` by merging `devel`, so the release workflow could not
 publish an unfinished scaffold. This is historical context, not a current branch-creation task.
+
+### 3 November 2026 — 0.2.0 implementation reference
+
+The owner authorized the Sol/headless phase of technical specification v4 and
+its final review. That reference takes precedence over plan v14, with 0.1.4 as
+the implemented baseline. The scoped read-only-block and independent-tab policies
+are superseded for Workshop authoring. Independent Workbench utilities retain
+clipboard transfer. No change to .clinerules is authorized.
+
+The final review adds durable per-trial dispatch intent before external effects
+and refusal of comparison deletion while a coordinator can still write it.
+These requirements are implemented in the headless coordinator and exercised through
+the HTTP integration checks. The owner requests a ZIP of changed files and an explicit deletion
+list, without GitHub commits or publication.
+
+
+### 4 November 2026 — Phase 2 integration
+
+The owner authorized Phase 2 to completion and requested a cumulative changed-files
+ZIP and root `0.2.0 handover.md`, with no GitHub commit; the owner later asked for that
+note and `HANDOVER.md` to be merged into the single `HANDOVER.md`. The presentation now uses
+the existing headless plans/tickets rather than duplicating admission policy. The
+legacy inspector remains a compatibility view within Workshop; its browser Start
+uses the same ticketed coordinator. Public legacy endpoints remain compatible.
+
+UI integration identified root support replacement freshness as a backend defect.
+Draft-only selected-source digests are now rechecked under the publisher reservation,
+including immediately before publication. The focused HTTP support-version regression
+also changes a selected working file after preview and checks refusal without a new head.
+Persisted coordinator records use the strict record reader for runtime timings;
+authored values stay in exact source strings. Machine expectation judgement is kept
+when a human rating overrides reported correctness. No dependency, parser acceptance
+or model transport change was introduced.

@@ -23,6 +23,15 @@ from .task_settings import TaskSettingError
 RECORD_VERSION = 1
 
 
+@dataclass
+class FrozenSource:
+    snapshot: Any
+    save_runs: bool
+    provenance: dict
+    owner: Any = None
+
+
+
 # --- hooks tests replace ----------------------------------------------------------------------------------------
 def make_timer(seconds: float, callback) -> threading.Timer:
     """A started daemon timer. Tests replace this to fire timers on demand (Section 20.1)."""
@@ -276,6 +285,7 @@ class _Execution:
 
     def __init__(self, state: Any, loaded: Any, input_texts: Mapping[str, str], checked: InputChecks,
                  observer: _Safe, writer: Any):
+        self.frozen = None
         self.state = state
         self.loaded = loaded
         self.block = loaded.block
@@ -306,7 +316,7 @@ def _create_run(ex: _Execution, executing: bool) -> runs.Run:
         ex.slot, ex.reservation = _admit(state, block.step.kind)
     try:
         run = state.store.new_block_run(
-            save_runs=state.save_runs_now(),
+            save_runs=ex.frozen.save_runs if ex.frozen else state.save_runs_now(),
             block={"name": block.name, "revision": ex.loaded.revision, "files": dict(block.files)},
             inputs=ex.checked.views, input_texts=ex.input_texts, contracts=_contracts_view(block),
             budget=block.budget.view(), step_id=block.step.id, slot=ex.slot)
@@ -356,6 +366,7 @@ def _build_result(ex: _Execution, outcome: str, end: runs.EndPoint) -> dict:
             "input_checks": ex.checked.results, "outputs": outputs, "issues": issues,
             "steps": [ex.step] if ex.step is not None else [],
             "budget": run.budget, "usage": ex.tally.view(),
+            "workshop": ex.frozen.provenance if ex.frozen else {},
             "agentwiz_version": __version__, "modelspell_version": modelspell.__version__}
 
 
@@ -411,7 +422,31 @@ def _execute(ex: _Execution) -> None:
     state, block, run = ex.state, ex.block, ex.run
     values = ex.checked.values
     kind = block.step.kind
-    if kind == "model":
+    if ex.loaded.workshop.get('assets') and ex.frozen is None:
+        from .workshop_assets import validate_generation
+        root = ex.loaded.physical_root
+        validate_generation(root, ex.loaded.workshop)
+    if ex.loaded.workshop.get('origin') in ('llm_generated', 'derived_from_llm'):
+        from .workshop_assets import read, fingerprint
+        source = {p: read(ex.loaded.physical_root, p) for p in [block.step.script_file, *ex.loaded.workshop.get('support', [])]} if kind == 'script' else {}
+        if kind == 'script' and ex.loaded.workshop.get('source_review') != fingerprint(source):
+            ex.preparation = _rejected('source', 'generated source review is required')
+            return
+    if ex.frozen is not None and kind == 'model':
+        class CapturedState:
+            def resolve_role(self, role):
+                return ex.frozen.snapshot
+        ex.preparation = _prepare_model(CapturedState(), block, values)
+    elif ex.frozen is not None and kind == 'tool':
+        current = state.mcp_snapshot_for_block(block.step.server)
+        if current != ex.frozen.snapshot:
+            ex.preparation = _rejected('server', 'captured server configuration changed')
+        else:
+            class CapturedState:
+                def mcp_snapshot_for_block(self, server):
+                    return ex.frozen.snapshot
+            ex.preparation = _prepare_tool(CapturedState(), block, values, ex.reservation)
+    elif kind == "model":
         ex.preparation = _prepare_model(state, block, values)
     elif kind == "tool":
         ex.preparation = _prepare_tool(state, block, values, ex.reservation)
@@ -428,16 +463,18 @@ def _execute(ex: _Execution) -> None:
             make_timer=lambda seconds, callback: make_timer(seconds, callback),
             registry=state.cleanups, writer=ex.writer, release_slot=ex.slot.release,
             protect=lambda: state.store.protect_run(run), unprotect=lambda: state.store.unprotect_run(run),
-            on_started=lambda: ex.observer.operation_started("script"))
+            on_started=lambda: ex.observer.operation_started("script"),
+            capture_owner=ex.frozen.owner if ex.frozen else ex.loaded,
+            no_bytecode=bool(ex.frozen or ex.loaded.workshop))
     ctx = executor.StepContext(
         run=run, block=block, values=values, prepared=ex.preparation.prepared,
         contracts=block.contracts["outputs"], store=state.store, sink=sink, ops=state.mcp_ops,
-        observer=ex.observer, client=state.mcp_client, key_for=state.key_for, script_env=script_env,
+        observer=ex.observer, client=state.mcp_client, key_for=(lambda kind, url: ex.frozen.snapshot.endpoint.api_key) if ex.frozen and kind == 'model' else state.key_for, script_env=script_env,
         script_handle=ex.handle, tally=ex.tally, produced=ex.produced)
     ex.step = executor.execute_step(ctx)
 
 
-def run_block(state: Any, loaded: Any, input_texts: Mapping[str, str], observer: Observer | None = None) -> Finished:
+def run_block(state: Any, loaded: Any, input_texts: Mapping[str, str], observer: Observer | None = None, *, frozen: FrozenSource | None = None) -> Finished:
     """Run a loaded, usable block with the submitted input texts (one per declared input; the caller has checked
     the shape). Raises `Busy` or `ShuttingDown` before any run exists; otherwise returns the ended run."""
     block = loaded.block
@@ -445,6 +482,7 @@ def run_block(state: Any, loaded: Any, input_texts: Mapping[str, str], observer:
     checked = check_inputs(block, input_texts)                       # no slot, no lock (BD-03)
     writer = state.register_writer(f"block run {block.name}")        # refused once shutdown has begun
     ex = _Execution(state, loaded, input_texts, checked, safe, writer)
+    ex.frozen = frozen
     try:
         run = _create_run(ex, executing=checked.passed)
     except BaseException:

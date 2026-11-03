@@ -1,7 +1,7 @@
 # Adapted from modelSpell scripts/smoke_installed.py at commit 1759c6e3c28a637731434a73c46088048583e358
 # (MIT, Copyright (c) 2026 Alex Wong), per AgentWiz techspec 11.2 (0.1.0), 11.1 (0.1.1), 13.1 (0.1.2), 16.1 (0.1.3)
 # and 18.1 (0.1.4).
-"""Smoke check against the installed AgentWiz wheel (steps S1-S14). Run with the environment's
+"""Smoke check against the installed AgentWiz wheel (steps S1-S15). Run with the environment's
 `python -I` from a scratch directory. Every step checks behaviour; none reads a file's contents.
 The launch's default workspace (./workspaces/default) is validated by AgentWiz itself and checked
 through /api/state."""
@@ -281,6 +281,34 @@ try:
               and events[-1]["result"]["outputs"]["words"]["text"] == "9", f"word_count: {events}")
     finally:
         json.loads(child_api("/api/tutorial/exit", {}).read())
+
+    # S15: installed Workshop creates and runs a captured starter, including packaged runtime/license.
+    def workshop(path, body=None):
+        payload = None if body is None else {'format_version': 1, **body}
+        return json.loads(api('/api/workshop/' + path, payload).read())
+
+    starters = workshop('starters')
+    check(len(starters['starters']) == 9, 'installed Workshop starter inventory')
+    draft = workshop('preview', {'starter': 'count_text', 'key': 'installed_counter'})['draft']
+    save = {'draft': draft, 'expected_identity': None}
+    plan = workshop('plans', {'action': 'save', 'request': save})
+    saved = workshop('save', {**save, 'expected_plan': plan['expected_plan'],
+        'confirmations': [{'kind': c['kind'], 'digest': c['digest']} for c in plan['required_confirmations']]})
+    check(bool(saved['durable_id']), 'installed Workshop publication')
+    start = {'key': 'installed_counter', 'inputs': {'text': 'one two three'},
+             'ticket': workshop('tickets', {})['ticket']}
+    plan = workshop('plans', {'action': 'test', 'request': start})
+    start.update(expected_plan=plan['expected_plan'], confirmations=[])
+    operation = workshop('test', start)
+    deadline = time.monotonic() + 10
+    batch = workshop('batches/' + operation['batch_id'])
+    while batch['state'] == 'running' and time.monotonic() < deadline:
+        time.sleep(.02)
+        batch = workshop('batches/' + operation['batch_id'])
+    check(batch['state'] == 'complete' and batch['rows'][0]['outputs']['out']['text'] == '3',
+          'installed Workshop frozen script trial')
+    duplicate = workshop('test', start)
+    check(duplicate['operation_id'] == operation['operation_id'], 'installed Workshop duplicate Start')
 
     # S8: a second AgentWiz on the same workspace is refused with exit status 3
     second = subprocess.run([str(exe), "--no-browser"], capture_output=True, text=True, timeout=15)

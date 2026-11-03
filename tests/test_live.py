@@ -151,15 +151,38 @@ def _openrouter(ui, extra=()):
     return model
 
 
-@pytest.mark.parametrize("backend", ["lmstudio", "llamaserver"])
-def test_live_blocked_backends(backend):
-    pytest.skip("blocked until AgentWiz 0.2.0 (D72): Stop and contracts are live-checked on OpenRouter only")
+def _additional_backend(ui, backend):
+    if backend == 'openrouter':
+        return _openrouter(ui)
+    prefix = 'AGENTWIZ_LIVE_' + backend.upper()
+    url, model = _env(prefix + '_URL', prefix + '_MODEL')
+    key = os.environ.get(prefix + '_KEY', '').strip()
+    config = {'kind': 'lmstudio' if backend == 'lmstudio' else 'openai_compat',
+              'base_url': url, 'model': model, 'provider': ''}
+    if key:
+        config['api_key'] = key
+    _configure(ui, **config)
+    return model
+
+
+@pytest.mark.parametrize('backend', ['lmstudio', 'llamaserver'])
+def test_live_stop_local(ui, backend):
+    _checked_stop(ui, backend)
+
+
+@pytest.mark.parametrize('backend', ['lmstudio', 'llamaserver'])
+def test_live_checked_request_local(ui, backend):
+    _checked_contract(ui, backend)
 
 
 def test_live_stop_openrouter(ui):
     """Stop, with no deliberate delay, after `started`, on a long prompt. Either `sent` value passes and is
     reported; a normal result first, `already_finished` and a rule-3 record are inconclusive (D51)."""
-    model = _openrouter(ui)
+    _checked_stop(ui, "openrouter")
+
+
+def _checked_stop(ui, backend):
+    model = _additional_backend(ui, backend)
     prompt = ("Summarise the following text in one sentence.\n" + "The quick brown fox jumps over the lazy dog. " * 1800)
     body = {"source": "chat", "prompt": prompt, "system": "", "revision": get_state(ui)["revision"],
             "task": {"max_tokens": 512}}
@@ -175,7 +198,7 @@ def test_live_stop_openrouter(ui):
             record, seconds = event["record"], time.monotonic() - asked
             break
     verdict, report = judge_stop(answer, record, seconds)
-    print(f"\nAgentWiz {agentwiz.__version__} | modelSpell {modelspell.__version__} | backend OpenRouter | "
+    print(f"\nAgentWiz {agentwiz.__version__} | modelSpell {modelspell.__version__} | backend {backend} | "
           f"model {model} | Stop {verdict}: {report}")
     if verdict == "inconclusive":
         pytest.skip(f"inconclusive: {report}")
@@ -190,7 +213,11 @@ CONTRACT = json.dumps({"format": "json", "schema": {"type": "object", "required"
 def test_live_checked_request_openrouter(ui):
     """A JSON contract requiring an object with an `answer` string; send, then up to two repairs while it
     fails. Fails only on a protocol problem; a model that never passes is reported, not failed."""
-    model = _openrouter(ui)
+    _checked_contract(ui, "openrouter")
+
+
+def _checked_contract(ui, backend):
+    model = _additional_backend(ui, backend)
     saved = save_contract(ui, "live_answer", CONTRACT)["contract"]
     prompt = 'Reply with a JSON object with one key, "answer", whose value is the word pong. Nothing else.'
     evs = events(_call(ui, "/api/complete", {
@@ -206,5 +233,5 @@ def test_live_checked_request_openrouter(ui):
         if not check or check["overall"] != "fail" or record["attempt"] == 3:
             break
         record = final_of(events(_call(ui, "/api/repair", {"attempt_id": record["id"]}, raw=True)))["record"]
-    print(f"\nAgentWiz {agentwiz.__version__} | modelSpell {modelspell.__version__} | backend OpenRouter | "
+    print(f"\nAgentWiz {agentwiz.__version__} | modelSpell {modelspell.__version__} | backend {backend} | "
           f"model {model}\n  " + "\n  ".join(lines))

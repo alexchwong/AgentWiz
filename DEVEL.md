@@ -35,8 +35,9 @@ Do not add repository-document-content tests to enforce this organization (T2).
 
 For work in an area, read the relevant sections of [the architecture reference](docs/architecture.md) and preserve their
 behavior contracts, including field/protocol/format and lifecycle details. Relocation is not
-permission to weaken a requirement. Follow the agreed specification; the 0.1.4 build reference
-is *AgentWiz 0.1.4 — Technical Specification*, version 5, ahead of release plan version 13.
+permission to weaken a requirement. Follow the agreed specification; the 0.2.0 build reference
+is *AgentWiz 0.2.0 technical specification*, version 4, together with its final review,
+ahead of plan v14. Treat 0.1.4 as the implemented baseline.
 Consult [the decision history](docs/decisions.md) for inherited specification precedence and superseded directions,
 and `HANDOVER.md` for build departures. Raise conflicts rather than silently choosing a departure.
 
@@ -161,11 +162,11 @@ hints; do not use 3.11-only modules/APIs (`tomllib`, `datetime.UTC`, exception g
 ## UI and tutorial rules
 
 1. Each tab demonstrates one function from start to finish and works without visiting any other tab.
-2. A release's new function gets a new tab. Changes to an existing tab only extend that tab's own function.
-3. Tabs never pass data to each other in 0.1.x. The clipboard is the only bridge.
+2. Workshop authoring actions belong inside Design, Test and Compare. Group independent utilities in Workbench.
+3. Explicitly selected Workshop drafts, examples and results may move within Workshop. Independent Workbench utilities use the clipboard.
 4. Configuration is not a function. Model profiles, MCP servers and roles are header dialogs shared by every tab. Saved definitions (contracts, blocks) are shared the same way.
 5. At most seven top-level tabs. The eighth means grouping into nested tabs, at most two levels deep.
-6. Integration in 0.2.x arrives as new tabs; existing tabs stay as a workbench.
+6. Use Workshop, Workbench and History with at most two navigation levels.
 7. Every output panel has a Copy button.
 8. Page checks find elements by `data-test` attributes and assert values and states, never wording or layout.
 

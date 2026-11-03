@@ -7,49 +7,19 @@ You choose a model backend (LM Studio, OpenRouter, or any OpenAI-compatible serv
 llama-server), type an optional system prompt and an input, and watch the reasoning and the answer
 stream back, followed by token usage, cost and a clear outcome.
 
-What 0.1.4 does:
+What 0.2.0 adds:
 
-- **Blocks.** A block is a saved single step, a folder in the workspace with a `block.json` and,
-  for a model step, prompt files, or for a script step, a Python file. A step is one of three kinds:
-  a **model** call, an **MCP tool** call or a **script**. The **Blocks** tab lists your blocks,
-  shows their files exactly, builds an input form, runs one, and shows a trace.
-- **Roles.** A role such as `fast` names a saved profile; a model step chooses its model by role.
-  The **Roles** dialog in the header edits the map.
-- **Contracts on both sides.** Every input and output of a block has a contract. Inputs are checked
-  before anything runs; an output is accepted only if its contract passes.
-- **Automatic repair.** A model step whose answer fails its check is asked again, with the checks'
-  findings, up to a limit you set; a cut-off answer is never accepted.
-- **Runs that outlive the page.** A block run has time and token budgets, keeps going if the page
-  closes, and can be found again and stopped from the Blocks tab.
-- **Eight tutorial topics**, each showing the version that last changed it.
+- **Workshop:** create, understand, save, test and compare one model, tool or Python block at a time.
+- **Nine starters** and blank blocks, exact structured fields, prompt preview and editable standard descriptions.
+- **Saved revisions:** display names, duplicate, restore, explicit legacy conversion and newest-20 retention.
+- **Examples and correctness:** exact outputs, field assertions or human review, independently of contract acceptance.
+- **Five assistance actions:** create, improve, describe, suggest examples and explain a failure. Review proposals before Apply.
+- **Workbench:** Chat, Documents, MCP tools, Contracts and Checked request remain independent utilities.
+- **History:** saved runs, checks, attempts and source attribution, with saving off by default.
+- **Fourteen tutorial topics** using isolated local services, with no API keys or live model required.
 
-Carried forward from 0.1.3:
-
-- **Seven tabs, one function each.** **Chat** sends a request; **Documents** previews a text file;
-  **MCP tools** calls a tool on a local MCP server; **Contracts** saves and tests output contracts;
-  **Checked request** sends a request and checks the answer against a contract; **History** shows
-  saved runs; **Blocks** runs a saved block. Model settings, MCP servers and roles are dialogs in
-  the header, shared by every tab.
-- **Contracts and checks.** A contract says what an answer should look like: text or JSON, content
-  checks, and optionally a JSON Schema. Checks are deterministic and keep every number exact.
-- **Checked requests and repair.** A failed answer can be sent back to the model with the checks'
-  findings, as the next attempt of the same run. You see exactly what will be sent first.
-- **Stop works before the first token.** The server ends a request at any stage, within about a
-  second, and reports whether the request may have reached the backend.
-- **Run history, off by default.** When you turn **Save runs** on, each run is written to a folder in
-  the workspace, with the credentials AgentWiz has held replaced by `***`.
-- **Copy replaces Insert.** Every output has a **Copy** button. Nothing is inserted into a request for
-  you; the clipboard is the only way between tabs.
-- **Task settings belong to the request.** Reasoning level, temperature, max tokens and eight
-  advanced sampling settings are set in each request panel, and one set can be saved per workspace.
-- **Model settings can be saved as named profiles** in a workspace folder. Profiles, the saved task
-  settings, the list of MCP servers and the contracts are saved; nothing else is, unless you turn on
-  run history.
-- **Settings are shared by all tabs of one AgentWiz process.** If another browser tab changes them,
-  a page that is still showing the old settings is asked to check them before sending, so a request
-  never goes to a backend the page is not showing.
-- **API keys and MCP tokens stay in memory.** They are never shown again, never written to disk
-  (profiles and saved runs included) and are lost when AgentWiz stops.
+Model profiles, roles and MCP servers are shared settings. Credentials stay in process memory.
+Scripts run with your filesystem and network access. AgentWiz uses the pinned modelSpell 0.3.0 public API.
 
 ## Install
 
@@ -61,7 +31,7 @@ curl -fsSL https://github.com/alexchwong/AgentWiz/releases/latest/download/insta
 
 The script creates `.venv` in the current directory, checks the newest release wheel against the
 sha256 GitHub publishes, installs it, and prints how to launch. Pin a release with
-`… | bash -s -- --version 0.1.3`; download the script first if you want to read it before running it.
+`… | bash -s -- --version 0.2.0`; download the script first if you want to read it before running it.
 Add `--with-checks` (`… | bash -s -- --with-checks`) to install the optional JSON Schema checks.
 
 Working from a clone? See DEVEL.md for the developer setup.
@@ -72,7 +42,7 @@ then run:
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install ./agentwiz-0.1.3-py3-none-any.whl
+python -m pip install ./agentwiz-0.2.0-py3-none-any.whl
 ```
 
 For checksum verification, use `python -m pip install` with the wheel URL and `#sha256=…` fragment
@@ -81,7 +51,7 @@ pinned by URL and checksum.
 
 **JSON Schema checks are optional.** Contracts with a `schema` need the extra
 `AgentWiz[checks]` (it installs `jsonschema` 4.26 or later, below 5): add `--with-checks` to
-`install.sh`, or run `python -m pip install './agentwiz-0.1.3-py3-none-any.whl[checks]'`. Without it
+`install.sh`, or run `python -m pip install './agentwiz-0.2.0-py3-none-any.whl[checks]'`. Without it
 everything else works; a contract with a schema cannot be saved, and a schema in a contract file
 is reported as not run, so the answer never passes on it (see **Contracts**). The extra brings
 `rpds-py`, a compiled package; a platform without a published wheel needs a Rust toolchain to
@@ -128,40 +98,83 @@ starting with a letter or digit.
   be visible from another machine. Under WSL2, workspaces on `/mnt/c` (the Windows drive) have not
   been tested; prefer a folder in WSL2's own filesystem, such as `~/agentwiz`.
 
-## The workbench
+## Navigation
 
-The page is a row of tabs, one per function. Each works without visiting any other.
+**Workshop** is the default. Its saved-block selector is alongside Design, Test and Compare on desktop,
+and above them on narrow screens. **Workbench** groups the five independent utilities below. **History**
+opens saved runs. Settings in the header groups model profiles, roles, MCP servers and Save runs.
 
-| Tab | Address | What it does |
+| Location | Address | Purpose |
 | --- | --- | --- |
-| **Chat** | `#chat` | Send a system prompt and an input to the model; reasoning and answer stream in. |
-| **Documents** | `#documents` | Read a `.txt`, `.md`, `.csv` or `.json` file and preview it; copy it. |
-| **MCP tools** | `#mcp-tools` | Call a tool on a local MCP server and copy the result. |
-| **Contracts** | `#contracts` | Save text or JSON contracts; check pasted text against one, with no model. |
-| **Checked request** | `#checked-request` | Send a request, check the answer against a contract, preview and send a repair. |
-| **History** | `#history` | Open saved runs read-only; copy any part; delete them. |
-| **Blocks** | `#blocks` | List the workspace's blocks, read their files, fill the inputs, run, Stop, read the trace. |
+| Workshop | `#workshop/<key>/<design\|test\|compare>` | Author and evaluate one block. |
+| Workbench: Chat | `#chat` | Send a system prompt and input; see reasoning and answer stream in. |
+| Workbench: Documents | `#documents` | Preview a text document and copy it. |
+| Workbench: MCP tools | `#mcp-tools` | Discover and call tools, with labelled arguments or an explicit advanced editor. |
+| Workbench: Contracts | `#contracts` | Edit supported structured fields or exact source and check pasted text. |
+| Workbench: Checked request | `#checked-request` | Check an answer and explicitly send a repair. |
+| History | `#history` | Read saved runs and attempts, copy evidence or delete a run. |
 
-- **The address holds the tab.** Open `http://127.0.0.1:<port>/?t=<token>#contracts` and a reload
-  stays there. An unknown fragment selects Chat. The arrow keys move between tabs; Home and End go
-  to the first and last.
-- **Shared configuration lives in the header.** **Model settings** (with profiles), **MCP
-  servers** and **Roles** are dialogs; so is the **Save runs** switch. Contracts, once saved, are shared by name.
-- **One request per tab.** Chat and Checked request can each have a model request running at once,
-  MCP tools one tool call, Blocks one block run, Documents one upload. AgentWiz as a whole still runs at most 8 model
-  requests and 8 tool operations.
-- **Hidden tabs keep running.** Switching tabs hides a panel without stopping what it does; a tab
-  with work in progress shows a marker, and the result is there when you come back.
-- **Ctrl/Cmd+Enter** acts on the visible tab: Send on Chat and Checked request, Run on MCP tools and
-  Blocks, Check on Contracts.
-- **Copy.** Every output panel has a **Copy** button. For documents and tool results it copies the
-  preview exactly, provenance line included, so a pasted result still says where it came from. If
-  the browser refuses clipboard access, the text is selected and the page says to press Ctrl+C
-  (Cmd+C on a Mac).
-- **Inputs are not kept across a reload.** What you typed in a tab is lost when the page reloads.
-- **A tab that is out of date.** If settings, task settings, the MCP server list, a contract or the
-  Save runs switch were changed elsewhere, the tab that tried to use them reloads, keeps what you
-  typed, says so, and sends nothing. Send again.
+A reload preserves validated navigation identifiers. Unknown fragments open Workshop. Keyboard arrows,
+Home and End move between tabs. Ctrl/Cmd+Enter submits the active Workbench function. Output panels have
+Copy; independent Workbench utilities exchange content through the clipboard. Hidden requests keep running.
+
+Typed inputs and unsaved drafts are held in page memory. A dirty draft survives Design/Test/Compare
+switches; replacing it offers Save, Discard or Stay. Reload can lose it, with a browser unload warning
+where supported. Saved definitions and examples survive restart; session-only results do not.
+
+**Open workspace** lists workspace names and generates a shell-quoted launch command with absolute
+storage roots. Paste it into a terminal to start a separate process; save a dirty draft first if needed.
+Only one process can own a workspace.
+
+## Block Workshop
+
+Choose **New block**, a starter or blank model/tool/script and a stable block key. Set its display name,
+purpose, inputs, behaviour and outputs in Design. A model role resolves to a profile; a tool binds to a
+server and discovered tool. Insert input controls use the existing `{{inputs.name}}` template syntax.
+More settings contains system instructions, sampling, reasoning, output cap, budgets and repair bounds.
+Test's **Preview instructions** shows the actual filled prompt or arguments for the supplied inputs.
+
+Structured fields distinguish missing, null, false, zero and empty text. Numeric values travel as exact
+source text. Unsupported schema structures use the labelled contract-source editor; unknown rules are
+preserved. A shared contract can be copied inline for a block-specific edit. Deliberate shared edits
+remain in Workbench Contracts and show dependent blocks. Schema-backed validation and assistance require
+`AgentWiz[checks]`; install that extra outside the UI and restart. Text-only work remains available.
+
+**Save revision** previews the effective action and its required acknowledgements. Opening a legacy v1
+block never converts it. Its first Save captures the original and edited definitions in a managed v2
+head. Only the newest 20 revisions are retained, including that original. The Save plan names revisions
+being pruned. Duplicate keeps the original key intact and offers explicit copying of examples. Restore
+loads a retained definition into a draft; a deliberate Save creates a new revision, without rerunning it.
+Renaming the display name also requires Save; the stable key remains in Details.
+
+Python starters expose validated parameters and captured runtime identity. Actual source/support edits
+become custom Python and disable those parameter controls. Update support files retains captured copies
+or previews root replacements/additions/removals. Root files selected for replacement are rechecked at
+publication. Old revisions keep their captured helpers and data. Scripts are not sandboxed; source
+review does not establish safety, and undeclared dependencies or absolute-path assumptions cannot be inferred.
+
+Test accepts new input or a saved example. Save examples separately from blocks and run history. Expectations
+can compare exact named outputs, assert explicit field paths or ask for human review. Verify an expectation
+before using it for automatic correctness. Editing an example invalidates prior verification. An accepted,
+well-typed result may still be incorrect. Human ratings bind the exact result and never transfer to a rerun.
+
+Compare selects a saved baseline and either a saved candidate or the current draft, using the same ordered
+examples. Review source differences, destinations, trial/repair bounds, effects and saving before Start.
+Trials alternate arm order between examples. Results show execution, checks and correctness separately,
+with paired answers, trace, denominators, reported usage and timing coverage. Unknown usage is not zero;
+with no correct result, time per correct result is undefined. Backend internals and cold starts can vary.
+
+Save runs is off by default and is captured once at Start. Saving off retains active/latest session evidence
+until process restart. Saving on writes comparison evidence and child histories; these can be opened from
+Recent runs and comparisons and deleted independently. Stop cancels the current child and remaining trials.
+Reload reattaches to retained work by ID without dispatching it again. Real tool/script calls may change
+external state, and an unknown tool outcome is never automatically retried.
+
+Assist offers five independent actions. Choose the action, role, task, stage or Improve sections, then review
+the destination, settings and selected context before sending. Apply changes only the matching draft or
+unsaved example suggestions. Discard sends nothing further. Generated custom Python is displayed for source
+acknowledgement. A stale or expired proposal requires a deliberate new request. Assistance never publishes
+a block or executes its proposal automatically.
 
 ## Settings
 
@@ -497,8 +510,10 @@ check, and the first 20 issues.
 ## Blocks
 
 A block is a folder directly under `<workspace>/blocks/`; its name is the folder name and the `name` in
-its `block.json`. AgentWiz **reads** block files and **never writes them**: edit them with any editor,
-then press **Reload** in the Blocks tab (the tab also notices an edit when you open a block or run it).
+its `block.json`. Legacy format-1 folders can still be edited externally and run in place. The saved-block inspector
+inside Workshop retains Reload and the original run/Stop/trace controls. Workshop Save creates the
+managed format-2 head described above; use Workshop to edit managed revisions rather than changing
+their immutable captured assets.
 
 ```
 <workspace>/blocks/extract_fields/
@@ -793,7 +808,7 @@ Click **Tutorial** in the header to open an isolated workbench with local script
 auto-filled inputs and a persistent tips box. No API keys, models or terminal setup are needed.
 The tutorial works in the installed application too.
 
-Eight short feature introductions show how to (each is annotated with the AgentWiz version that last
+Fourteen short feature introductions show how to (each is annotated with the AgentWiz version that last
 changed what it shows):
 
 - **Chat** (updated in 0.1.3): send a message and reuse an answer.
@@ -801,12 +816,16 @@ changed what it shows):
 - **Call a tool** (updated in 0.1.3): run a prepared local tool and use its result.
 - **Define a contract** (updated in 0.1.3): save reusable response requirements.
 - **Repair a response** (updated in 0.1.3): preview and send a follow-up using contract feedback.
-- **Run a model block** (updated in 0.1.4): see the role `fast` mapped to a profile, then run a block
+- **Run a model block** (updated in 0.2.0): see the role `fast` mapped to a profile, then run a block
   whose first answer fails its contract and whose repair passes.
-- **Run a tool block** (updated in 0.1.4): run a block that sends two exact numbers to a tool and
+- **Run a tool block** (updated in 0.2.0): run a block that sends two exact numbers to a tool and
   gets them back digit for digit.
-- **Run and stop a script block** (updated in 0.1.4): count words with a script, then start a script
+- **Run and stop a script block** (updated in 0.2.0): count words with a script, then start a script
   that waits and Stop it.
+
+- **Design a block** (updated in 0.2.0): save a starter, test it and compare revisions with examples.
+- **Create, improve, describe, suggest examples and explain a failure** (five topics, updated in 0.2.0):
+  prepare assistance against the isolated model, inspect a proposal and Apply or Discard it.
 
 These are learning workflows, not correctness checks or owner assignments. Move freely with
 Next, Back, Reset step or the feature selector. No acknowledgement or successful outcome is
@@ -835,8 +854,8 @@ Stopping the original AgentWiz process also closes its tutorial.
   setting quietly ignored. On LM Studio, seed, stop sequences and the presence and frequency
   penalties are never sent; top-k, min-p and repetition penalty need reasoning off.
 - **Settings and keys.** Model settings are shared by all pages of one AgentWiz process; only
-  profiles, the saved task settings, the MCP server list, contracts, the Save runs switch and (if on)
-  saved runs survive a restart. Keys and typed MCP tokens are held in memory only and must be
+  profiles, the saved task settings, the MCP server list, contracts, saved blocks/examples, the Save runs switch
+  and (if on) saved runs/comparisons survive a restart. Keys and typed MCP tokens are held in memory only and must be
   re-entered after a restart.
 - **Inputs are not kept.** Each tab's fields are lost when the page reloads.
 - **Checks are syntactic.** They check format, structure and stated values, not whether an answer is
@@ -881,9 +900,8 @@ Stopping the original AgentWiz process also closes its tutorial.
 - **Backends.** OpenAI-compatible servers (including llama-server) have no reasoning control from
   AgentWiz; their reasoning text is still displayed. On LM Studio's native route (reasoning "off"),
   truncation is modelSpell's estimate. Stop, contracts and repair on LM Studio and llama-server are
-  checked by the automated tests only, not against a live server, until 0.2.0.
-- **Blocks (0.1.4).** One step per block: no wiring, routing or nesting yet. Block files are read,
-  never written, by AgentWiz. Scripts are not sandboxed and need POSIX process groups; a script that
+  covered by optional live checks; results require an available configured backend.
+- **Blocks.** One step per block: no wiring, routing or nesting yet. Workshop writes managed revisions; externally edited v1 blocks remain supported. Scripts are not sandboxed and need POSIX process groups; a script that
   starts its own session escapes group termination. The token budget is a soft, reported-usage
   allowance; time budgets are not an exact ceiling. Block runs continue after the page closes, up to
   their time budget, holding their slots; they do not survive a restart. Results are held for 100

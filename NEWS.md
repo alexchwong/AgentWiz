@@ -1,4 +1,8 @@
 # NEWS
+## 0.2.0
+- Design, test and compare individual blocks in Workshop with saved revisions, examples and correctness reviews.
+- Review bounded assistance proposals before applying them to a draft.
+
 ## 0.1.4
 - Blocks tab: run single-step blocks saved as folders in the workspace, with a generated input form and trace.
 - Block files are JSON, with prompts in Markdown files; AgentWiz reads them and never writes them.

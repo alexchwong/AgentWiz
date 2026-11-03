@@ -30,7 +30,7 @@ import modelspell
 from modelspell import ModelSpellError
 
 from .. import (__version__, attachments, checks, contracts, history, insertion, jsonio, mcp_ops, model_call, model_step,
-                runner, runs, tool_forms, tutorial_topics)
+                runner, runs, tool_forms, tutorial_topics, workshop)
 from .. import workspace as wsmod
 from ..errors import ShuttingDown, report_internal  # noqa: F401  (re-exported; defined in errors.py since 0.1.4)
 from ..mcp_client import MCPError
@@ -303,6 +303,8 @@ class Handler(BaseHTTPRequestHandler):
         """Run a route, mapping every failure to a reply that cannot contain a credential."""
         try:
             fn()
+        except workshop.WorkshopError as exc:
+            self._reply_safely(exc.status, {"error": "Workshop request refused", "code": exc.code, **({"plan": exc.plan} if hasattr(exc, "plan") else {})})
         except _ReadTimeout:
             self.close_connection = True
         except TooLarge as exc:
@@ -400,6 +402,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(403, {"error": "missing or invalid session token"})
         if path == "/":
             return self._send(200, self.server.index, "text/html; charset=utf-8")
+        if path.startswith("/api/workshop/") and not path.startswith("/api/workshop/tickets/"):
+            return self._workshop_get(path[len("/api/workshop/"):])
+        if path.startswith("/api/workshop/tickets/"):
+            return self._send(200, self.server.state.workshop_ticket_status(path[len("/api/workshop/tickets/"):]))
         if path == "/api/state":
             return self._send(200, self._state_body(self.server.state.view()))
         if path == "/api/tutorial":
@@ -430,7 +436,9 @@ class Handler(BaseHTTPRequestHandler):
     def _post(self, path: str) -> None:
         if not self._authorised():
             return self._send(403, {"error": "missing or invalid session token"})
-        routes = {"/api/tutorial/start": self._tutorial_start,
+        if path.startswith("/api/workshop/") and path != "/api/workshop/tickets":
+            return self._workshop_post(path[len("/api/workshop/"):], self._body())
+        routes = {"/api/workshop/tickets": self._workshop_ticket, "/api/tutorial/start": self._tutorial_start,
                   "/api/tutorial/step": self._tutorial_step,
                   "/api/tutorial/exit": self._tutorial_exit,
                   "/api/config": self._config, "/api/models": self._models,
@@ -460,6 +468,129 @@ class Handler(BaseHTTPRequestHandler):
     def _state_body(view: dict) -> dict:
         return {**view, "agentwiz_version": __version__, "modelspell_version": modelspell.__version__,
                 "limits": {"request_bytes": insertion.REQUEST_LIMIT, "upload_bytes": UPLOAD_LIMIT}}
+
+    def _workshop_get(self, path):
+        service = self.server.state.workshop
+        parts = path.split('/')
+        query = parse_qs(urlparse(self.path).query)
+        if path == 'starters':
+            from ..workshop_editor import STARTERS, examples
+            result = {'format_version': 1, 'starters': [{'id': k, 'version': 1, 'examples': examples(k)} for k in STARTERS]}
+        elif path == 'workspace-open':
+            result = service.workspace_open(query)
+        elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'revisions':
+            result = service.assets.revisions(parts[1])
+        elif len(parts) == 4 and parts[0] == 'blocks' and parts[2] == 'revisions':
+            result = service.preview({'key': parts[1], 'revision': parts[3]})
+        elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'examples':
+            result = service.collection(parts[1])
+        elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'support':
+            result = service.support(parts[1])
+        elif len(parts) == 2 and parts[0] in ('batches', 'comparisons'):
+            result = service.batch(parts[1])
+        elif path == 'batches':
+            result = {'active': service.active, 'latest': service.latest}
+        elif path == 'comparisons':
+            result = service.comparisons()
+        else:
+            return self._send(404, {'code': 'missing'})
+        self._send(200, result)
+
+    def _workshop_post(self, path, body):
+        try:
+            return self._workshop_post_checked(path, body)
+        except (KeyError, TypeError, ValueError, checks.ContractError):
+            raise workshop.WorkshopError('invalid', 400) from None
+
+    def _workshop_post_checked(self, path, body):
+        service = self.server.state.workshop
+        if body.get('format_version') != 1 or type(body.get('format_version')) is not int:
+            raise workshop.WorkshopError('invalid', 400)
+        body = {k: v for k, v in body.items() if k != 'format_version'}
+        parts = path.split('/')
+        if path == 'input-value':
+            from ..workshop_editor import input_value
+            result = {'text':jsonio.encode_exact(input_value(body['value']))}
+        elif path == 'render-value':
+            from ..workshop_editor import typed
+            result = typed(jsonio.decode_exact(body['text']))
+        elif path == 'answer-view':
+            from ..workshop_editor import typed
+            _, value = checks.check_answer_value(checks.contract_from_text(body['contract_text']), body['text'])
+            result = {'available': value is not checks.NO_VALUE}
+            if result['available']:
+                result.update(value=typed(value), text=jsonio.encode_exact(value))
+        elif path == 'contract-form':
+            from ..workshop_editor import contract_view
+            result = contract_view(body['source'])
+            result['blank_schema'] = jsonio.decode_exact(body['source']).get('schema') is None
+            if 'field_edit' in body:
+                from ..workshop_editor import edit
+                definition = {'inputs':{'value':{'contract':jsonio.decode_exact(body['source'])}}}
+                draft = {'definition_text':jsonio.encode_exact(definition)}
+                changed = edit(draft, {**body['field_edit'],'kind':'property_form','side':'inputs','port':'value'})
+                raw = jsonio.decode_exact(changed['definition_text'])['inputs']['value']['contract']
+                result = contract_view(jsonio.encode_exact(raw))
+            elif 'description' in body:
+                if result['source_only']:
+                    raise workshop.WorkshopError('source_only', 409)
+                obj = jsonio.decode_exact(body['source'])
+                node = obj['schema']
+                for segment in body['path']:
+                    node = node['items'] if segment == '[]' else node['properties'][segment]
+                node['description'] = body['description']
+                result = contract_view(jsonio.encode_exact(obj))
+        elif path == 'preview':
+            result = service.preview(body)
+        elif path == 'plans':
+            result = service.plan(body.get('action'), body.get('request', {}))
+        elif path == 'save':
+            result = service.save(body)
+        elif path in ('test', 'batches'):
+            result = service.start(path, body)
+        elif path == 'assist':
+            result = service.assist(body)
+        elif path == 'proposals/apply':
+            result = service.apply(body)
+        elif len(parts) == 3 and parts[0] == 'batches' and parts[2] == 'stop':
+            result = service.stop(parts[1])
+        elif len(parts) == 4 and parts[0] == 'blocks' and parts[2:] == ['support', 'preview']:
+            result = service.support_preview(parts[1], body)
+        else:
+            return self._send(404, {'code': 'missing'})
+        self._send(200, result)
+
+    def do_PUT(self):
+        path = urlparse(self.path).path
+        def put():
+            if not self._authorised():
+                return self._send(403, {'error': 'missing or invalid session token'})
+            parts = path.split('/')
+            body = self._body()
+            if body.pop('format_version', None) != 1:
+                raise workshop.WorkshopError('invalid', 400)
+            if len(parts) == 6 and parts[1:3] == ['api', 'workshop'] and parts[3] == 'blocks' and parts[5] == 'examples':
+                return self._send(200, self.server.state.workshop.save_examples(parts[4], body))
+            if len(parts) == 5 and parts[1:4] == ['api', 'workshop', 'reviews']:
+                return self._send(200, self.server.state.workshop.review(parts[4], body))
+            self._send(404, {'code': 'missing'})
+        self._dispatch(path, put)
+
+    def do_DELETE(self):
+        path = urlparse(self.path).path
+        def delete():
+            if not self._authorised():
+                return self._send(403, {'error': 'missing or invalid session token'})
+            parts = path.split('/')
+            if len(parts) == 5 and parts[1:4] == ['api', 'workshop', 'comparisons']:
+                return self._send(200, self.server.state.workshop.delete_comparison(parts[4]))
+            self._send(404, {'code': 'missing'})
+        self._dispatch(path, delete)
+
+    def _workshop_ticket(self, body: dict) -> None:
+        if body != {"format_version": 1} or type(body.get("format_version")) is not int:
+            raise workshop.WorkshopError("invalid", 400)
+        self._send(200, self.server.state.workshop_ticket())
 
     def _tutorial_start(self, body: dict) -> None:
         session = self.server.tutorial_session

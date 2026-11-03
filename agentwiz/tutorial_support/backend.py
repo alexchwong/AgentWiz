@@ -87,6 +87,13 @@ SCRIPTS = {
 }
 
 
+from .workshop import proposal as workshop_proposal
+for action in ('create', 'improve', 'describe', 'suggest_examples', 'explain_failure'):
+    name = 'workshop-' + action
+    MODELS[name] = 'Deterministic Workshop ' + action + ' proposal.'
+    SCRIPTS[name] = lambda action=action: words(workshop_proposal(action)) + [chunk(finish='stop', usage_json=USAGE), DONE]
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
 

@@ -5,8 +5,7 @@
         prompts/<file>.md
         scripts/<file>.py
 
-AgentWiz reads block files and never writes, creates or changes anything under `blocks/` in a user's
-workspace (R6-11). `block.json` is read with the exact reader, so inline contracts keep their numbers digit for
+Workshop publishes versioned assets. This loader reads executable definitions and managed heads. `block.json` is read with the exact reader, so inline contracts keep their numbers digit for
 digit. Every key not listed in Section 8.2 is refused with its location, so a mistyped key never silently does
 nothing (P7). Messages name locations and rules, never values.
 
@@ -25,6 +24,7 @@ import os
 import re
 import stat
 import threading
+import weakref
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -153,8 +153,12 @@ class Loaded:
     sig: tuple
     content: tuple
 
+    workshop: dict = field(default_factory=dict)
+    physical_root: Path | None = None
+
     def list_row(self) -> dict:
-        return {"name": self.name, "revision": self.revision, "description": self.description, "kind": self.kind,
+        return {"name": self.name, "display_name": self.workshop.get('display_name', self.name),
+                "revision": self.revision, "description": self.description, "kind": self.kind,
                 "problem": self.problem.view() if self.problem else None}
 
 
@@ -762,6 +766,7 @@ class BlockStore:
         self._contracts = contract_store
         self._cache: "OrderedDict[str, Loaded]" = OrderedDict()
         self._table: dict[str, _Seen] = {}
+        self.workshop = None
 
     # --- folders ---
     def _folder_state(self, name: str) -> str:
@@ -805,7 +810,26 @@ class BlockStore:
 
     def _load(self, name: str, state: str, seen: _Seen | None) -> Loaded:
         folder = self.path / name
-        if state == "link":
+        release = None
+        metadata = {}
+        if self.workshop is not None and state != "link":
+            try:
+                from .workshop_assets import head, document, validate_generation
+                if head(folder) is not None:
+                    folder, release = self.workshop.pin(name)
+                    metadata = document(folder, 'workshop.json')
+                    validate_generation(folder, metadata)
+                    if metadata.get('format_version') != 1:
+                        from .workshop_assets import fail
+                        fail('newer_format', 409)
+            except Exception:
+                if release:
+                    release()
+                    release = None
+                parsed = _folder_problem(folder, name, "managed revision is unavailable or unsupported")
+            else:
+                parsed = parse_block(folder, name, self._contracts)
+        elif state == "link":
             parsed = _folder_problem(folder, name, "a symbolic link is not followed")
         else:
             parsed = parse_block(folder, name, self._contracts)
@@ -819,7 +843,9 @@ class BlockStore:
         fingerprints = tuple(parsed.fingerprints.get(rel, _fingerprint(folder, rel)) for rel in parsed.paths)
         sig = (fingerprints, self._contract_sig(contract_names))
         loaded = Loaded(name, revision, block, parsed.problem, parsed.description, parsed.kind, parsed.views,
-                        parsed.notes, parsed.paths, contract_names, sig, content)
+                        parsed.notes, parsed.paths, contract_names, sig, content, metadata, folder)
+        if release:
+            weakref.finalize(loaded, release)
         self._table[name] = _Seen(revision, sig, content, parsed.paths, contract_names)
         self._remember(name, loaded)
         return loaded
@@ -838,6 +864,8 @@ class BlockStore:
             self._forget(name)
             return None
         seen = self._table.get(name)
+        if self.workshop is not None:
+            reload = True
         if seen is not None and not reload and state == "dir" and self._signature(name, seen) == seen.sig:
             cached = self._cache.get(name)
             if cached is not None:
@@ -910,6 +938,10 @@ def detail(loaded: Loaded) -> dict:
            "description": loaded.description, "files": [v.view() for v in loaded.views],
            "contracts": {"inputs": {}, "outputs": {}}, "inputs": [], "outputs": [], "step": None, "budget": None,
            "notes": list(loaded.notes)}
+    if loaded.workshop:
+        out['authoring'] = {'display_name': loaded.workshop.get('display_name', loaded.name),
+                            'metadata_version': loaded.workshop.get('format_version'),
+                            'revisions_url': '/api/workshop/blocks/' + loaded.name + '/revisions'}
     block = loaded.block
     if block is not None:
         out["contracts"] = {section: {name: copy_.view() for name, copy_ in block.contracts[section].items()}

@@ -30,7 +30,7 @@ from pathlib import Path
 import modelspell
 from modelspell import Endpoint
 
-from . import blocks, checks, contracts, history, mcp_client, mcp_ops, roles, runs, script_step, writers
+from . import workshop, blocks, checks, contracts, history, mcp_client, mcp_ops, roles, runs, script_step, writers
 from . import mcp_library as ml
 from . import profiles as pf
 from . import task_settings as ts
@@ -237,6 +237,7 @@ class ProcessState:
             self.blocks = blocks.BlockStore(workspace.path, self.contracts)
             self.scripts = RequestBudget(4)
             self.writers = writers.WriterBarrier()
+            self.workshop_operations = workshop.Operations()
             self.cleanups = script_step.Registry()            # cleanup owners and running script steps
             self._deliveries: set = set()                       # objects with interrupt(), under their own lock
             self._deliveries_lock = threading.Lock()
@@ -260,6 +261,8 @@ class ProcessState:
             self._mcp = ml.LibraryFile(None)
             with self.mcp_library.locked():
                 self._refresh_mcp_locked(initial=True)
+            from .workshop_service import Service
+            self.workshop = Service(self)
 
     def _refresh_defaults_locked(self, initial=False):
         signature = pf.fingerprint(self.library.path)
@@ -628,6 +631,12 @@ class ProcessState:
                                    provider=s.provider if s.kind == "openrouter" else "",
                                    profile_name=profile, profile_modified=False)
 
+    def workshop_ticket(self) -> dict:
+        return self.workshop_operations.issue()
+
+    def workshop_ticket_status(self, ticket: object) -> dict:
+        return self.workshop_operations.lookup(ticket)
+
     # --- block definitions (techspec 0.1.4, 8.8) ------------------------------------------------
     def block_listing(self, reload: bool = False) -> dict:
         with self._lock:
@@ -925,6 +934,9 @@ class ProcessState:
             first = not self._shutdown_started
             self._shutdown_started = True
         if first:
+            self.workshop_operations.close()
+            if self.workshop.active:
+                self.workshop.stop(self.workshop.active)
             self.writers.close()                      # 1. close admission, one gate at a time
             self.store.close()
             self.mcp_ops.close()

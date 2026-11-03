@@ -150,6 +150,12 @@ class Tutorial:
             state = self.child.state
             if state.store.running_count() or state.store.active_block_runs() or state.mcp_ops.active_count():
                 return {"busy": True}
+            if topic.id.startswith("assist-"):
+                action = topic.id[len("assist-"):]
+                state.save_profile({"name":"tutorial-assistant","kind":"openai_compat","base_url":self.backend_url,
+                                    "model":"workshop-" + action}, state.view()["revision"])
+                state.select_profile(None, state.view()["revision"])
+                state.save_roles({ROLE:ROLE_PROFILE, "assistant":"tutorial-assistant"},state.view()["roles"]["revision"])
             self.topic = topic.id
             self.last_seen = time.monotonic()
             state.apply_config({"kind": "openai_compat", "base_url": self.backend_url,

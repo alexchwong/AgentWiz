@@ -81,7 +81,9 @@
   #tutorial-box p { margin:6px 0; }
   #tutorial-box input[type="checkbox"] { width:auto; }
   .tutorial-target { outline:3px solid var(--accent); outline-offset:3px; }
-</style>
+.ws-layout input[type=checkbox],dialog input[type=checkbox]{width:auto}#main-nav .mark,.ws-layout aside .mark{display:none}#main-nav [data-state=running] .mark,.ws-layout aside [data-state=running] .mark{display:inline}.ws-facts dd{min-width:0;overflow-wrap:anywhere}
+.ws-table{overflow-x:auto}.ws-table table{border-collapse:collapse;width:100%}.ws-table th,.ws-table td{border:1px solid var(--line);padding:6px;text-align:left}
+#main-nav{display:flex;gap:.5rem;margin:1rem 0}#main-nav [aria-selected=true],#main-nav [aria-pressed=true],.ws-layout [aria-pressed=true]{font-weight:700;border-bottom:3px solid currentColor}.ws-layout{display:grid;grid-template-columns:minmax(10rem,17rem) minmax(0,1fr);gap:1.25rem}.ws-layout aside,.ws-field{display:grid;gap:.35rem;align-content:start}.ws-field{margin:.65rem 0}.ws-layout textarea,dialog textarea{width:100%;min-height:4rem}.ws-port,article{padding:.6rem;border:1px solid var(--line);margin:.5rem 0}.ws-facts{display:grid;grid-template-columns:auto 1fr;gap:.25rem .75rem}.ws-facts dd{margin:0}dialog{max-height:85vh;max-width:min(48rem,92vw);overflow:auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}#tablist[hidden]{display:none}@media(max-width:720px){.ws-layout{grid-template-columns:minmax(0,1fr)}} </style>
 </head>
 <body>
 <header>
@@ -115,6 +117,8 @@
 <div id="header-note" class="note hidden" data-test="header-note"></div>
 <div id="banner" class="hidden" data-test="banner"></div>
 
+<nav id="main-nav" aria-label="Main navigation"><button id="tab-workshop" data-test="tab-workshop" aria-controls="panel-workshop">Workshop</button><button id="ws-workbench" data-test="ws-workbench">Workbench</button></nav>
+<section id="panel-workshop" data-test="panel-workshop" hidden></section>
 <div class="tabs" role="tablist" aria-label="AgentWiz functions" id="tablist">
   <button role="tab" id="tab-chat" data-test="tab-chat" aria-controls="panel-chat" aria-selected="false" tabindex="-1" data-state="idle" data-frag="chat">Chat<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-documents" data-test="tab-documents" aria-controls="panel-documents" aria-selected="false" tabindex="-1" data-state="idle" data-frag="documents">Documents<span class="mark" aria-hidden="true">●</span></button>
@@ -122,7 +126,7 @@
   <button role="tab" id="tab-contracts" data-test="tab-contracts" aria-controls="panel-contracts" aria-selected="false" tabindex="-1" data-state="idle" data-frag="contracts">Contracts<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-checked-request" data-test="tab-checked-request" aria-controls="panel-checked-request" aria-selected="false" tabindex="-1" data-state="idle" data-frag="checked-request">Checked request<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-history" data-test="tab-history" aria-controls="panel-history" aria-selected="false" tabindex="-1" data-state="idle" data-frag="history">History<span class="mark" aria-hidden="true">●</span></button>
-  <button role="tab" id="tab-blocks" data-test="tab-blocks" aria-controls="panel-blocks" aria-selected="false" tabindex="-1" data-state="idle" data-frag="blocks">Blocks<span class="mark" aria-hidden="true">●</span></button>
+  <button role="tab" id="tab-blocks" data-test="tab-blocks" aria-controls="panel-blocks" aria-selected="false" tabindex="-1" data-state="idle" data-frag="blocks">Saved block runs<span class="mark" aria-hidden="true">●</span></button>
 </div>
 <section role="tabpanel" id="panel-chat" data-test="panel-chat" aria-labelledby="tab-chat" hidden></section>
 <section role="tabpanel" id="panel-documents" data-test="panel-documents" aria-labelledby="tab-documents" hidden></section>
@@ -205,7 +209,7 @@ const LABELS = { complete: "Complete", empty: "Empty answer", reasoning_only: "R
                  stopped: "Stopped", error: "Error" };
 const DISCLOSURE = "Saved as given, except that credentials AgentWiz has held, if at least 8 characters long, are replaced with ***. " +
   "Shorter credentials are not replaced. Text you paste into a request, including copied documents and tool results, is saved with it.";
-const FRAGS = ["chat", "documents", "mcp-tools", "contracts", "checked-request", "history", "blocks"];
+const FRAGS = ["workshop","chat", "documents", "mcp-tools", "contracts", "checked-request", "history", "blocks"];
 const POLL_MS = 2000;
 let state = {}, clearKey = false;
 const modelContexts = {};       // model id -> context length, from the dialog's last Load models
@@ -413,11 +417,13 @@ let activeFrag = "chat";
 function fragFromHash() {
   let f = "";
   try { f = decodeURIComponent(location.hash.slice(1)); } catch (e) { /* unknown → Chat */ }
-  return FRAGS.includes(f) ? f : "chat";
+  return FRAGS.includes(f) ? f : "workshop";
 }
 
 function selectTab(frag, opts = {}) {
   activeFrag = frag;
+  $("tablist").hidden = ["workshop","history","blocks"].includes(frag);
+  $("ws-workbench").setAttribute("aria-pressed",String(!["workshop","history","blocks"].includes(frag)));
   for (const f of FRAGS) {
     const button = $("tab-" + f), selected = f === frag;
     button.setAttribute("aria-selected", selected ? "true" : "false");
@@ -437,18 +443,23 @@ function setTabRunning(frag, running) {
 }
 
 $("tablist").addEventListener("keydown", (e) => {
-  const i = FRAGS.indexOf(activeFrag);
+  const available=FRAGS.filter(f=>!["workshop","blocks","history"].includes(f));
+  const i = available.indexOf(activeFrag);
   let next = -1;
-  if (e.key === "ArrowRight") next = (i + 1) % FRAGS.length;
-  else if (e.key === "ArrowLeft") next = (i + FRAGS.length - 1) % FRAGS.length;
-  else if (e.key === "Home") next = 0;
-  else if (e.key === "End") next = FRAGS.length - 1;
+  if (e.key === "ArrowRight") next = (i + 1) % available.length;
+  else if (e.key === "ArrowLeft") next = (i + available.length - 1) % available.length;
+  else if (e.key === "Home") next = available.indexOf("chat");
+  else if (e.key === "End") next = available.length - 1;
   if (next < 0) return;
   e.preventDefault();
-  selectTab(FRAGS[next], { focus: true });
+  selectTab(available[next], { focus: true });
 });
 for (const f of FRAGS) $("tab-" + f).addEventListener("click", () => selectTab(f));
-window.addEventListener("hashchange", () => { const f = fragFromHash(); if (f !== activeFrag) selectTab(f, { hash: false }); });
+window.addEventListener("hashchange", () => {
+  const f = fragFromHash();
+  if(f!==activeFrag)selectTab(f,{hash:false});
+  else if(f==="workshop")TABS.workshop.onShow();
+});
 
 // Ctrl/Cmd+Enter acts on the visible tab only.
 document.addEventListener("keydown", (e) => {
@@ -849,6 +860,7 @@ function makeRequestTab(frag, source) {
   const output = outPanel(prefix, "output", "Output");
   const final = outPanel(prefix, "final", "Final event (exact JSON as received)", "exact");
   const checkResult = checkBox(prefix);
+  const structured=h("div",{"data-test":prefix+"-structured-preview"});
   let active = null, shown = null, rows = [], override = null;
 
   // checked only
@@ -871,7 +883,7 @@ function makeRequestTab(frag, source) {
     h("label", { for: prefix + "-prompt", text: "Input" }), prompt, task.el,
     h("div", { class: "row" }, send, stop, statusEl, attemptEl, sendReason),
     h("div", { class: "grid" }, reasoning.el, output.el),
-    checked ? [checkResult.el, h("label", { text: "Attempts of this run" }), attemptsEl, repairBox, previewOut.el] : null,
+    checked ? [structured,checkResult.el, h("label", { text: "Attempts of this run" }), attemptsEl, repairBox, previewOut.el] : null,
     final.el);
 
   const mark = (name, value) => { if (value === null || value === undefined) delete statusEl.dataset[name]; else statusEl.dataset[name] = value; };
@@ -932,7 +944,7 @@ function makeRequestTab(frag, source) {
 
   function clearDisplay() {
     reasoning.pre.textContent = ""; output.pre.textContent = ""; final.pre.textContent = "";
-    checkResult.clear();
+    checkResult.clear();structured.replaceChildren();
     for (const name of ["outcome", "attemptId", "save", "error"]) delete statusEl.dataset[name];
     attemptEl.textContent = "";
     if (checked) { previewOut.el.classList.add("hidden"); previewOut.pre.textContent = ""; }
@@ -960,6 +972,7 @@ function makeRequestTab(frag, source) {
     if (output.pre.textContent === "") output.pre.textContent = (record.result && record.result.text) || (record.partial && record.partial.text) || "";
     if (reasoning.pre.textContent === "") reasoning.pre.textContent = (record.result && record.result.reasoning) || (record.partial && record.partial.reasoning) || "";
     if (checked) {
+      if (record.contract?.text&&record.result?.text)structured.replaceChildren(h("h4",{text:"Structured answer preview"}),wsStructured(record.result.text,record.contract.text));
       if (record.check) checkResult.show(record.check);
       else checkResult.note(SKIPPED[record.check_skipped] || "Not checked.");
     }
@@ -1467,7 +1480,7 @@ function mcpInfo() { return state.mcp || { servers: {}, read_only: true, revisio
       }
       if (ev.result.structured_text !== null) {
         const p = outPanel("mcp", "result-structured", "Structured content (as sent)");
-        p.pre.textContent = ev.result.structured_text; resultBox.append(p.el);
+        p.pre.textContent = ev.result.structured_text; resultBox.append(wsStructured(ev.result.structured_text),h("details",{},h("summary",{text:"Exact structured source"}),p.el));
       }
       if (ev.result.other_items.length)
         resultBox.append(h("div", { class: "note", text: "Other items: " + ev.result.other_items.map((i) => i.type).join(", ") }));
@@ -1658,12 +1671,24 @@ $("save-servers").onclick = async () => {
     h("label", { text: "Saved contracts" }), listEl,
     h("div", { class: "row" }, newText, newJson),
     h("label", { for: "contracts-name", text: "Name" }), nameInput,
-    h("label", { text: "Contract (JSON text)" }), editor,
+    h("details",{},h("summary",{"data-test":"contracts-advanced",text:"Advanced contract source"}),editor),
     h("div", { class: "row" }, saveBtn, deleteBtn, confirmBtn, cancelBtn, copyControl("contracts-copy-editor", () => editor.value, () => editor)),
     msg, errorsEl,
     h("label", { text: "Check text" }), checkText_,
     h("div", { class: "row" }, checkBtn), result.el);
 
+  const human=h("div",{"data-test":"contracts-fields"});
+  editor.parentElement.before(human);
+  async function showContract(){
+    if(!editor.value)return;
+    try{
+      const view=await wsApi("contract-form",{source:editor.value});human.replaceChildren(wsShowValue({format:view.format,fields:(view.fields||[]).map(r=>({name:r.path.join(".")||"Root",type:r.type,required:r.required})),source_only:view.source_only}));
+      if(view.format==="json"&&(!view.source_only||view.blank_schema))human.append(wsFieldEditor("","contract",view.fields,async edit=>{
+        const result=await wsApi("contract-form",{source:editor.value,field_edit:edit});editor.value=result.source_text;setEditor("idle");await showContract();
+      }));
+    }catch(e){human.textContent=e.message;}
+  }
+  editor.onchange=showContract;
   const items = () => (state.contracts && state.contracts.items) || [];
   const readOnly = () => !!(state.contracts && state.contracts.read_only);
   const setEditor = (s) => { editor.dataset.state = s; };
@@ -1708,7 +1733,7 @@ $("save-servers").onclick = async () => {
     try {
       const c = await api("/api/contracts/" + encodeURIComponent(name));
       current = { name: c.name, revision: c.revision, problem: c.problem };
-      nameInput.value = c.name; editor.value = c.text; setEditor("idle"); errorsEl.replaceChildren();
+      nameInput.value = c.name; editor.value = c.text; showContract(); setEditor("idle"); errorsEl.replaceChildren();
       msg.textContent = c.problem ? `This contract has a problem (${c.problem.message}). It cannot be saved over; repair the file with an editor.` : "";
     } catch (e) { msg.textContent = e.message; }
     renderList(); refreshButtons();
@@ -1717,7 +1742,7 @@ $("save-servers").onclick = async () => {
   function fresh(kind) {
     arming = false; current = null;
     nameInput.value = ""; editor.value = JSON.stringify(TEMPLATES[kind], null, 2) + "\n";
-    setEditor("idle"); msg.textContent = ""; errorsEl.replaceChildren();
+    setEditor("idle"); showContract(); msg.textContent = ""; errorsEl.replaceChildren();
     renderList(); refreshButtons();
   }
 
@@ -1844,9 +1869,9 @@ $("save-servers").onclick = async () => {
     };
     detail.append(h("div", { class: "row" }, h("strong", { text: `Run ${openId}` }), del, confirm_, cancel_, close));
     detail.dataset.runId = openId;
-    if (run) detail.append(section("history", "run", "run.json", JSON.stringify(run, null, 2), "exact"));
+    if (run) detail.append(wsShowValue(run.inputs||{}),h("details",{},h("summary",{text:"Run record"}),section("history","run","run.json",JSON.stringify(run,null,2),"exact")));
     for (const p of r.problems || []) detail.append(h("div", { class: "warn-text", text: `${p.file}: ${p.message}` }));
-    if (r.result) detail.append(section("history", "result", "result.json", JSON.stringify(r.result, null, 2), "exact"));
+    if(r.result)detail.append(wsShowValue({outcome:r.result.outcome,outputs:r.result.outputs}),h("details",{},h("summary",{text:"Result record"}),section("history","result","result.json",JSON.stringify(r.result,null,2),"exact")));
     for (const a of r.attempts || []) {
       const res = a.result || a.partial || {};
       detail.append(h("fieldset", { "data-test": "history-attempt", "data-attempt-id": a.id },
@@ -1855,7 +1880,7 @@ $("save-servers").onclick = async () => {
         section("history", "answer", "Answer", res.text || ""),
         section("history", "reasoning", "Reasoning", res.reasoning || "", "reasoning"),
         section("history", "check", "Check result", a.check ? checkText(a.check) : (a.check_skipped ? (SKIPPED[a.check_skipped] || "Not checked.") : "No contract.")),
-        section("history", "record", "Full record", JSON.stringify(a, null, 2), "exact")));
+        h("details",{},h("summary",{text:"Troubleshooting"}),section("history", "record", "Full record", JSON.stringify(a, null, 2), "exact"))));
     }
   }
 
@@ -1892,6 +1917,7 @@ $("save-servers").onclick = async () => {
   refresh.onclick = load;
   TABS.history = {
     onShow() { msg.textContent = ""; load(); },
+    openRun,
     onState() {
       const hi = historyInfo();
       savingNote.textContent = (hi.save_runs ? "Saving runs is on. " : "Saving runs is off; turn it on in the header. ") + DISCLOSURE;
@@ -2277,28 +2303,44 @@ const BLOCK_OUTCOMES = { complete: "Complete", rejected: "Rejected before any wo
     controls();
     let outcomeSeen = false;
     try {
-      const r = await fetch("/api/blocks/run", { method: "POST", signal: runCtl.signal,
-        headers: { "X-Session-Token": TOKEN, "Content-Type": "application/json" }, body: payload });
-      if (!r.ok) {
-        let j = {}; try { j = await r.json(); } catch (e) { /* keep the status */ }
-        outcomeSeen = true;
-        if (r.status === 409 && j.code === "stale_revision") {
-          const keep = currentTexts();
-          await select(detail.name, keep);
-          await loadListing(false);
-          say("stale", BLOCK_STALE);
-        } else {
-          say("idle", j.error || `${r.status} ${r.statusText}`);
-          if (r.status === 409) { await loadListing(true); if (selected) await select(selected, currentTexts()); }
-        }
-        return;
+      const fresh=await api("/api/blocks/"+encodeURIComponent(detail.name));
+      if(fresh.revision!==detail.revision){
+        const keep=currentTexts();await select(detail.name,keep);await loadListing(false);say("stale",BLOCK_STALE);outcomeSeen=true;return;
       }
-      const how = await readLines(r, (ev) => { onEvent(ev); });
-      outcomeSeen = finalSeen;
-      if (!finalSeen && how !== "stopped") startPolling();
-      else if (finalSeen && status.dataset.save === "pending") startPolling();
+      const body={key:detail.name,inputs:texts};
+      let plan;
+      try{plan=await wsApi("plans",{action:"test",request:body});}
+      catch(e){
+        if(e.code!=="support_required")throw e;
+        const info=await wsApi("blocks/"+encodeURIComponent(detail.name)+"/support"),box=h("div"),files=[];
+        for(const p of info.candidates){const c=h("input",{type:"checkbox"});files.push([p.path,c]);box.append(h("label",{},c,p.path));}
+        if(await wsDialog("Confirm script support files",box,["Use selection","Cancel"])!=="Use selection"){say("idle","Cancelled.");outcomeSeen=true;return;}
+        body.support=files.filter(([,c])=>c.checked).map(([p])=>p);
+        plan=await wsApi("plans",{action:"test",request:body});
+      }
+      if(plan.required_confirmations.length&&await wsDialog("Review run",wsShowValue(plan.required_confirmations),["Confirm","Cancel"])!=="Confirm"){say("idle","Cancelled.");outcomeSeen=true;return;}
+      const ticket=(await wsApi("tickets",{})).ticket;
+      let accepted;try{accepted=await wsApi("test",{...body,ticket,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations.map(({kind,digest})=>({kind,digest}))});}
+      catch(e){accepted=await wsApi("tickets/"+ticket);if(!accepted.operation_id)throw e;}
+      for(;;){
+        const batch=await wsApi("batches/"+accepted.operation_id);
+        const child=batch.active_run||batch.rows[0]?.run_id;
+        if(child&&!runId){onEvent({type:"started",run_id:child,block:detail.name,step_id:detail.step.id,kind:detail.step.kind});if(detail.step.kind!=="model")showOperation(detail.step.kind,null,true);}
+        if(batch.state!=="running"){
+          if(child){
+            const env=await api("/api/block_runs/"+child);
+            for(const step of env.result.steps||[])for(const id of step.attempts||[]){
+              const held=await api("/api/attempts/"+id);const a=held.record||held.summary;
+              if(a)upsert(attemptNumber(id),{id,outcome:a.outcome,check:a.check?.overall||a.check,repair_reason:a.repair_reason});
+            }
+            renderFinal(env.result,env.save_status);
+          }else say("done",batch.reason||batch.state,batch.state);
+          outcomeSeen=true;break;
+        }
+        await new Promise(resolve=>setTimeout(resolve,100));
+      }
     } catch (e) {
-      if (!finalSeen && runId) startPolling();
+      if(runId&&!finalSeen)startPolling();else{say("idle",e.message);outcomeSeen=true;}
     } finally {
       runCtl = null;
       if (!finalSeen && !polling && !outcomeSeen && status.dataset.state !== "idle" && status.dataset.state !== "stale")
@@ -2447,7 +2489,7 @@ const TUTORIAL_ACTIONS = {
     $("open-roles").click();
     await new Promise((resolve) => { const d = $("roles-dialog"); const done = () => { d.removeEventListener("close", done); resolve(); }; d.addEventListener("close", done); });
   },
-  "wait-script": async (topic) => { await TABS.blocks.tutorialPrepare("wait_for_stop", {}); tutorialTarget("blocks-run"); },
+  "wait-script": async (topic) => { await TABS.workshop.tutorialPrepare("wait_for_stop", {}); tutorialTarget("ws-run-test"); },
 };
 function tutorialTarget(name) {
   for (const el of document.querySelectorAll(".tutorial-target")) el.classList.remove("tutorial-target");
@@ -2545,6 +2587,461 @@ async function tutorialInit() {
   setInterval(() => api("/api/tutorial").catch(() => tutorialStatus("Tutorial disconnected. Return to the original AgentWiz page to start again.", "error")), 60000);
 }
 
+// Block Workshop. Drafts and typed inputs stay in page memory. All execution and plans are server-owned.
+const wsPanel = $("panel-workshop");
+const ws = {draft:null, projection:null, dirty:false, view:"design", inputs:{}, examples:[], revision:null, batch:null, proposal:null};
+const wsApi = (path, body) => api("/api/workshop/" + path, body === undefined ? undefined : {format_version:1,...body});
+async function wsPut(path, body) {
+  const response = await fetch("/api/workshop/"+path,{method:"PUT",headers:{"Content-Type":"application/json","X-Session-Token":TOKEN},body:JSON.stringify({format_version:1,...body})});
+  const value = await response.json();
+  if (!response.ok) throw new Error(value.code || value.error);
+  return value;
+}
+const wsNote = h("p",{role:"status","data-test":"ws-status"});
+const wsBody = h("div",{class:"ws-body"});
+const wsList = h("select",{"aria-label":"Saved block","data-test":"ws-list"});
+const wsSearch = h("input",{placeholder:"Search blocks","aria-label":"Search blocks"});
+const wsNav = h("div",{class:"row"});
+const wsHeading = h("h2",{text:"Block Workshop"});
+let wsBlocks=[], wsPoll=0, wsPending=null;
+function wsError(e){wsNote.dataset.state="error";wsNote.dataset.code=e.code||"error";wsNote.textContent=e.message||String(e);if(["stale","proposal_expired"].includes(e.code))wsNote.append(". Your draft is kept. Reload or request assistance again when ready.");}
+function wsButton(label,fn,id){
+  const checks=state?.contracts?.checks;
+  const unavailable=checks?.available===false&&(label==="Assist"||(["Save revision","Run test","Compare versions","Run saved examples"].includes(label)&&ws.projection?.requires_checks));
+  return h("button",{type:"button",disabled:unavailable,title:unavailable?"Install AgentWiz[checks] and restart.":undefined,"data-test":id || "ws-"+label.toLowerCase().replace(/[^a-z0-9]+/g,"-"),text:label,
+    onclick:async e=>{const button=e.currentTarget;button.disabled=true;try{await fn();}catch(error){wsError(error);}finally{button.disabled=false;}}});
+}
+function wsField(parent,label,value="",multi=false){
+  const el=h(multi?"textarea":"input",{"aria-label":label,"data-test":"ws-field-"+label.toLowerCase().replace(/[^a-z0-9]+/g,"-"),value:value??""});
+  parent.append(h("label",{class:"ws-field"},label,el)); return el;
+}
+function wsChoice(parent,label,values,selected){
+  const el=h("select",{"aria-label":label,"data-test":"ws-choice-"+label.toLowerCase().replace(/[^a-z0-9]+/g,"-" )},...values.map(([id,name])=>h("option",{value:id,text:name})));
+  if(selected!=null)el.value=selected;
+  parent.append(h("label",{class:"ws-field"},label,el));return el;
+}
+function wsDirty(){ws.dirty=true;wsHeading.textContent=(ws.draft?.metadata?.display_name||ws.draft?.key||"New block")+" · Unsaved";}
+window.addEventListener("beforeunload",e=>{if(ws.dirty){e.preventDefault();e.returnValue="";}});
+function wsDialog(title,content,choices){
+  return new Promise(resolve=>{
+    const dialog=h("dialog",{"data-test":"ws-dialog"},h("h2",{text:title}),content);
+    const close=v=>{dialog.close();dialog.remove();resolve(v);};
+    dialog.append(h("div",{class:"row"},...choices.map(c=>wsButton(c,()=>close(c)))));
+    dialog.addEventListener("cancel",e=>{e.preventDefault();close(null);});
+    document.body.append(dialog);dialog.showModal();
+  });
+}
+function wsShowValue(value){
+  if(value===null||typeof value!=="object")return h("span",{text:String(value??"Unknown")});
+  if(Array.isArray(value))return h("ol",{},...value.map(v=>h("li",{},wsShowValue(v))));
+  return h("dl",{class:"ws-facts"},...Object.entries(value).flatMap(([k,v])=>[h("dt",{text:k.replaceAll("_"," ")}),h("dd",{},wsShowValue(v))]));
+}
+function wsTyped(node){
+  if(node.type==="object")return h("dl",{class:"ws-facts"},...node.fields.flatMap(f=>[h("dt",{text:f.name}),h("dd",{},wsTyped(f.value))]));
+  if(node.type==="array"){
+    const names=node.items[0]?.type==="object"?node.items[0].fields.map(f=>f.name):[];
+    if(names.length&&node.items.every(item=>item.type==="object"&&item.fields.length===names.length&&item.fields.every((f,i)=>f.name===names[i])))
+      return h("div",{class:"ws-table"},h("table",{},h("thead",{},h("tr",{},...names.map(text=>h("th",{text})))),h("tbody",{},...node.items.map(item=>h("tr",{},...item.fields.map(f=>h("td",{},wsTyped(f.value))))))));
+    return h("ol",{},...node.items.map(item=>h("li",{},wsTyped(item))));
+  }
+  return h("span",{text:node.text});
+}
+function wsStructured(text,contract_text){
+  const box=h("div",{class:"ws-value"});
+  wsApi(contract_text?"answer-view":"render-value",{text,...(contract_text?{contract_text}:{})}).then(v=>box.replaceChildren(wsTyped(contract_text?v.value:v))).catch(()=>box.replaceChildren(h("pre",{text})));
+  return box;
+}
+function wsSource(label,text){return h("details",{},h("summary",{text:label}),h("pre",{text}),copyControl("ws-copy-source",()=>text,null));}
+async function wsFlush(){if(wsPending){const save=wsPending;await save();wsPending=null;}}
+async function wsLeave(){if(!ws.dirty)return true;const choice=await wsDialog("Unsaved changes",h("p",{text:"Save this draft before opening another block?"}),["Save","Discard","Stay"]);if(choice==="Save")return await wsSave();return choice==="Discard";}
+async function wsPlan(action,request){
+  const plan=await wsApi("plans",{action,request});
+  const d=plan.descriptor, disclosure=h("div");
+  for(const c of d.candidates||[]){
+    const dest=c.destination||{},url=dest.base_url||dest.url;let locality=c.kind==="script"?"Local script":"Remote or unknown";
+    if(url){try{locality=["localhost","127.0.0.1","[::1]"].includes(new URL(url).hostname)?"Local endpoint":"Remote endpoint";}catch(e){}}
+    disclosure.append(wsShowValue({destination:c.destination||c.kind,location:locality,effects:c.effects}));if(c.settings)disclosure.append(wsTyped(c.settings));
+  }
+  if(d.candidates?.length===2){const [a,b]=d.candidates;disclosure.append(wsShowValue({definition_changed:a.source_digest!==b.source_digest,baseline:a.source_digest,candidate:b.source_digest}));
+    disclosure.append(wsSource("Compare exact definitions",a.draft.definition_text+"\n\nCandidate\n"+b.draft.definition_text));}
+  disclosure.append(wsShowValue({saving:d.saving,persistence:d.saving?"Saved evidence":"Session only; restart loses results",trials:d.trial_count??1,repairs:d.repair_bounds||[],pruned:d.pruned||[]}));
+  disclosure.append(h("p",{text:"Start makes real model, tool or script calls. Comparison order alternates by example; backend internals and cold starts may differ."}));
+  if(d.assistance)disclosure.append(wsShowValue({action:d.assistance.action,task:d.assistance.task,stage:d.assistance.stage,sections:d.assistance.sections,evidence:d.assistance.evidence}));
+  const reviewed=plan.required_confirmations.some(c=>c.kind==="generated_source"||c.kind==="support_set");
+  for(const draft of [d.draft,...(d.candidates||[]).map(c=>c.draft)].filter(Boolean)){
+    const source=h("details",{open:reviewed},h("summary",{text:"Complete selected source · "+draft.key}));
+    source.append(wsSource("Executable definition",draft.definition_text));
+    for(const [path,encoded] of Object.entries(draft.files||{})){
+      let text=encoded;
+      if(typeof encoded!=="string"){
+        try{text=new TextDecoder("utf-8",{fatal:true}).decode(Uint8Array.from(atob(encoded.text),c=>c.charCodeAt(0)));}
+        catch(e){text="Binary support file · encoded bytes: "+encoded.text;}
+      }
+      source.append(h("h4",{text:path}),h("pre",{text}),copyControl("ws-copy-review-source",()=>text,null));
+    }
+    disclosure.append(source);
+  }
+  if(d.runtime_updated)disclosure.append(h("p",{text:"This edit updates the captured script runtime."}));
+  for(const c of plan.required_confirmations)disclosure.append(h("p",{text:c.detail}));
+  disclosure.append(wsSource("Inspect complete plan",JSON.stringify(d,null,2)));
+  const go=await wsDialog("Review "+action,disclosure,["Confirm","Cancel"]);if(go!=="Confirm")return null;
+  return {...request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations.map(({kind,digest})=>({kind,digest}))};
+}
+async function wsSave(){
+  await wsFlush();if(!ws.draft)return false;
+  const bound=await wsPlan("save",{draft:ws.draft,expected_identity:ws.draft.base_digest??null});if(!bound)return false;
+  const examples=ws.examples;const saved=await wsApi("save",bound);await wsLoad({key:saved.key},false);if(!ws.revision)ws.examples=examples;wsNote.dataset.state="saved";wsNote.textContent="Revision saved";return true;
+}
+async function wsRefresh(){
+  wsBlocks=(await api("/api/blocks")).blocks;wsFilter();
+}
+function wsFilter(){wsList.replaceChildren(new Option("Choose a saved block",""),...wsBlocks.filter(b=>(b.name+" "+b.display_name).toLowerCase().includes(wsSearch.value.toLowerCase())).map(b=>new Option((b.display_name||b.name)+" · "+(b.kind||"unavailable"),b.name)));if(ws.draft&&!wsBlocks.some(b=>b.name===ws.draft.key))wsList.add(new Option((ws.draft.metadata.display_name||ws.draft.key)+" · Unsaved draft",ws.draft.key));wsList.value=ws.draft?.key||"";}
+async function wsLoad(source,dirty){
+  const keep=source.draft&&source.draft.key===ws.draft?.key?{examples:ws.examples,revision:ws.revision,inputs:ws.inputs}:null;
+  let preview;
+  try{preview=await wsApi("preview",source);}catch(e){
+    if(e.code!=="support_required")throw e;
+    const support=await wsApi("blocks/"+encodeURIComponent(source.key)+"/support"),box=h("div"),checks=[];
+    for(const p of support.candidates){const c=h("input",{type:"checkbox"});checks.push([p.path,c]);box.append(h("label",{},c,p.path));}
+    if(await wsDialog("Select script support files",box,["Use selection","Cancel"])!=="Use selection")return;
+    preview=await wsApi("preview",{...source,support:checks.filter(([,c])=>c.checked).map(([p])=>p)});
+  }
+  ws.draft=preview.draft;ws.projection=preview;ws.dirty=dirty;wsPending=null;
+  await wsRefresh();
+  const collection=await wsApi("blocks/"+encodeURIComponent(ws.draft.key)+"/examples");
+  ws.examples=collection.examples;ws.revision=collection.revision;
+  if(keep){ws.examples=keep.examples;ws.revision=keep.revision;}ws.inputs=keep?.inputs||{};if(ws.batch?.plan?.candidates?.[0]?.draft?.key!==ws.draft.key)ws.batch=null;wsRender();
+}
+async function wsSupport(){
+  await wsFlush();const key=ws.draft.key,info=await wsApi("blocks/"+key+"/support"),box=h("div"),replacements=[],removals=[];
+  for(const x of info.candidates){const c=h("input",{type:"checkbox"});replacements.push([x.path,c]);box.append(h("label",{},c," Use root copy · "+x.path));}
+  for(const x of info.captured_details){const c=h("input",{type:"checkbox"});removals.push([x.path,c]);box.append(h("label",{},c," Remove captured "+x.path+" · root "+x.root_copy));}
+  if(await wsDialog("Update support files",box,["Preview","Cancel"])!=="Preview")return;
+  const selection=await wsApi("blocks/"+key+"/support/preview",{draft:ws.draft,replace:replacements.filter(x=>x[1].checked).map(x=>x[0]),remove:removals.filter(x=>x[1].checked).map(x=>x[0])});
+  if(await wsDialog("Review selected support",wsShowValue({files:selection.support,digest:selection.source_digest}),["Apply","Cancel"])==="Apply"){
+    await wsLoad({draft:selection.draft},true);
+  }
+}
+async function wsNew(){
+  if(!await wsLeave())return;
+  const box=h("div"),name=wsField(box,"Block key"),starters=(await wsApi("starters")).starters;
+  const kind=wsChoice(box,"Start with",[...starters.map(s=>[s.id,s.id.replaceAll("_"," ")]),...["model","tool","script"].map(k=>["blank_"+k,"Blank "+k])]);
+  const role=wsField(box,"Model role","fast"),server=wsField(box,"MCP server"),tool=wsField(box,"Tool name");
+  const choice=await wsDialog("Create a block",box,["Create draft","Create with assistance","Cancel"]);if(!["Create draft","Create with assistance"].includes(choice))return;
+  await wsLoad({key:name.value,starter:kind.value,role:role.value||null,server:server.value||null,tool:tool.value||null},true);
+  ws.examples=structuredClone(starters.find(s=>s.id===kind.value)?.examples||[]);ws.view="design";wsRender();if(choice==="Create with assistance")await wsAssist("create");
+}
+async function wsView(view){await wsFlush();ws.view=view;wsRender();}
+function wsRender(){
+  wsBody.replaceChildren();wsNav.replaceChildren();wsPending=null;
+  wsHeading.textContent=(ws.draft?.metadata?.display_name||ws.draft?.key||"Block Workshop")+(ws.dirty?" · Unsaved":"");
+  if(!ws.draft){wsBody.append(h("p",{text:"Choose a saved block or create one to design and test it."}));return;}
+  if(activeFrag==="workshop")history.replaceState(null,"","#workshop/"+encodeURIComponent(ws.draft.key)+"/"+ws.view);
+  for(const view of ["design","test","compare"]){const b=wsButton(view[0].toUpperCase()+view.slice(1),()=>wsView(view));b.setAttribute("aria-pressed",String(ws.view===view));wsNav.append(b);}
+  wsNav.append(wsButton("Save revision",wsSave),wsButton("Assist",wsAssist),wsButton("Revision actions",wsRevisions));
+  if(ws.view==="design")wsDesign();else wsTrials(ws.view==="compare");
+}
+function wsDesign(){
+  const p=ws.projection,form=h("div"),d=p.design||{};
+  wsBody.append(form);
+  const title=wsField(form,"Display name",ws.draft.metadata.display_name||ws.draft.key),purpose=wsField(form,"Purpose",d.purpose,true);
+  const rows={},areas={};
+  for(const side of ["inputs","outputs"]){
+    const area=h("fieldset",{},h("legend",{text:side==="inputs"?"Inputs":"Outputs"}));form.append(area);areas[side]=area;rows[side]=[];
+    function port(name,format,description,source){
+      const line=h("div",{class:"ws-port"}),n=wsField(line,"Field name",name),desc=wsField(line,"Meaning",description);
+      const f=wsChoice(line,"Format",[["text","Text"],["json","Structured value"],["shared","Shared contract"]],format);
+      const adv=h("details",{},h("summary",{text:"Contract source"})),src=wsField(adv,"Exact contract",source||"",true);line.append(adv);
+      f.onchange=()=>{if(f.value!=="shared"){src.value=JSON.stringify({format:f.value});changed();}};
+      const item={original:name,n,desc,f,src};rows[side].push(item);
+      if(format==="shared")line.append(wsButton("Make inline copy",()=>{const c=p.contracts?.[side]?.[name];if(c){src.value=c.source_text;f.value=c.format;changed();}}));
+      line.append(wsButton("Remove",()=>{rows[side]=rows[side].filter(x=>x!==item);line.remove();changed();}));area.append(line);
+    }
+    for(const field of d[side]||[])port(field.name,field.format,field.description,field.source);
+    area.append(wsButton("Add "+side.slice(0,-1),()=>{port("","text","","");changed();}));
+  }
+  const behavior=wsField(form,d.kind==="script"?"Python source":d.kind==="tool"?"Tool name":"Instructions",d.behaviour,true);
+  if(d.kind==="model")for(const input of d.inputs||[])form.append(wsButton("Insert "+input.name,()=>{behavior.setRangeText("{{inputs."+input.name+"}}",behavior.selectionStart,behavior.selectionEnd,"end");changed();}));
+  if(d.kind==="script"){const details=h("details",{},h("summary",{text:"Inspect or edit Python source"}));behavior.parentElement.before(details);details.append(behavior.parentElement);form.append(h("p",{text:p.script_warning}));}
+  const role=wsField(form,d.kind==="tool"?"Server":"Role",d.binding);role.parentElement.hidden=d.kind==="script";
+  if(d.kind==="tool"){
+    form.append(wsButton("Discover tools",async()=>{
+      const discovered=await api("/api/mcp/tools",{server:role.value,revision:mcpInfo().revision}),box=h("div");
+      const tool=wsChoice(box,"Discovered tool",discovered.tools.map(t=>[t.name,t.title||t.name]),behavior.value);
+      if(await wsDialog("Choose a tool",box,["Use tool","Cancel"])==="Use tool"){behavior.value=tool.value;changed();}
+    }));
+  }
+  const more=h("details",{},h("summary",{text:"More settings"}));form.append(more,areas.outputs);
+  const system=wsField(more,"System instructions",d.system,true), sampling={},limits={};
+  for(const [key,label] of [["temperature","Temperature"],["max_tokens","Output token cap"],["reasoning","Reasoning level"]])if(d.kind==="model")sampling[key]=wsField(more,label,d.sampling[key]||"");
+  for(const [key,label] of [["max_seconds","Time budget (seconds)"],["max_model_tokens","Model token budget"]])limits[key]=wsField(more,label,d.limits[key]||"");
+  const sourceSettings=h("details",{},h("summary",{text:"Advanced settings source"}));more.append(sourceSettings);
+  const settings=wsField(sourceSettings,"Task settings source",d.settings,true),budget=wsField(sourceSettings,"Budget source",d.budget,true),repair=wsField(more,"Additional repairs",d.repairs);
+  if(d.kind!=="model"){system.parentElement.hidden=true;repair.parentElement.hidden=true;}
+  if(d.kind==="tool"){const args=wsField(more,"Tool argument mapping",d.arguments||"{}",true);args.oninput=()=>{d.arguments=args.value;};}
+  const advanced=wsSource("Inspect executable definition",ws.draft.definition_text);form.append(advanced);
+  function changed(){wsDirty();wsPending=async()=>{
+    const ports={};for(const side of ["inputs","outputs"])ports[side]=rows[side].map(r=>({original:r.original,name:r.n.value,description:r.desc.value,format:r.f.value,source:r.src.value}));
+    const result=await wsApi("preview",{draft:ws.draft,edit:{kind:"design_form",name:title.value,purpose:purpose.value,ports,arguments:d.arguments,behaviour:behavior.value,binding:role.value,system:system.value,settings:settings.value,sampling:Object.fromEntries(Object.entries(sampling).map(([n,f])=>[n,f.value])),limits:Object.fromEntries(Object.entries(limits).map(([n,f])=>[n,f.value])),budget:budget.value,repairs:repair.value}});
+    ws.projection=result;ws.draft=result.draft;
+  };}
+  form.oninput=changed;form.onchange=changed;
+  for(const side of ["inputs","outputs"])for(const [name,contract] of Object.entries(p.contracts?.[side]||{}))if(contract.format==="json"&&(!contract.source_only||contract.blank_schema))form.append(wsFieldEditor(side,name,contract.fields));
+  if(p.destination)form.append(wsShowValue(p.destination));if(p.setup_issues?.length)form.append(wsShowValue(p.setup_issues));
+  if(p.issues?.length)form.append(wsShowValue(p.issues));
+  form.append(wsButton("Refresh design fields",async()=>{await wsFlush();wsRender();}));
+  if(d.kind==="script"&&ws.draft.base_digest)form.append(wsButton("Update support files",wsSupport));
+  if(p.classification==="starter"){
+    const area=h("fieldset",{},h("legend",{text:"Starter parameters"}));behavior.closest("details").before(area);
+    const m=ws.draft.metadata,params=m.parameters;let read;
+    if(m.starter==="count_text"){
+      const unit=wsChoice(area,"Count unit",[["whitespace_words","Whitespace separated words"],["characters","Characters"]],params.unit);read=()=>({unit:unit.value});
+    }else if(m.starter==="format_report"){
+      const template=wsField(area,"Report template",params.template,true);
+      for(const n of p.facts.inputs)area.append(wsButton("Insert report "+n,()=>template.setRangeText("{{inputs."+n+"}}",template.selectionStart,template.selectionEnd,"end")));
+      read=()=>({template:template.value});
+    }else{
+      const mappings=[];
+      function mapping(m={source_path:[],destination:"",required:true}){
+        const line=h("div"),path=wsField(line,"Source path",m.source_path.join(".")),destination=wsField(line,"Destination field",m.destination),required=h("input",{type:"checkbox",checked:m.required});
+        line.append(h("label",{},required," Required source field"));area.append(line);mappings.push(()=>({source_path:path.value.split("."),destination:destination.value,required:required.checked}));
+      }
+      params.mappings.forEach(mapping);area.append(wsButton("Add mapping",()=>mapping()));read=()=>({mappings:mappings.map(fn=>fn())});
+    }
+    area.append(wsButton("Apply parameters",async()=>{await wsFlush();await wsLoad({draft:ws.draft,edit:{kind:"starter_parameters",parameters:read()}},true);}));
+  }else if(d.kind==="script")form.append(h("p",{text:p.classification==="unsupported_starter_version"?"This starter version is unavailable. Captured source is preserved; parameter editing is disabled.":"Custom Python source; parameter controls are disabled."}));
+  const desc=h("details",{},h("summary",{text:"Standard description"+(p.description?.needs_refresh?" · Needs refresh":"")}));
+  const sections={};for(const key of ["use","exclusions","effects","limitations","missing_data","failures"])sections[key]=wsField(desc,key.replaceAll("_"," "),ws.draft.metadata.description_sections?.[key]||"",true);
+  desc.append(wsButton("Apply description",async()=>{await wsFlush();const projected=await wsApi("preview",{draft:ws.draft,edit:{kind:"description",sections:Object.fromEntries(Object.entries(sections).map(([n,f])=>[n,f.value]))}});ws.draft=projected.draft;ws.projection=projected;wsDirty();wsRender();}));form.append(desc,wsSource("Details · stable key",ws.draft.key));
+}
+async function wsRevisions(){
+  await wsFlush();const box=h("div"),historyRows=ws.draft.base_digest?(await wsApi("blocks/"+ws.draft.key+"/revisions")).revisions:[];
+  const rev=wsChoice(box,"Revision",historyRows.map(r=>[r.id,r.metadata.display_name+" · "+r.id.slice(0,8)])),name=wsField(box,"New key for duplicate");
+  const examples=h("input",{type:"checkbox"});box.append(h("label",{},examples," Copy examples to the duplicate"));
+  const choice=await wsDialog("Revision actions",box,["Restore to draft","Duplicate","Cancel"]);
+  if(choice==="Restore to draft"&&await wsLeave())await wsLoad({key:ws.draft.key,revision:rev.value},true);
+  if(choice==="Duplicate"){
+    const copied=examples.checked?structuredClone(ws.examples):[];
+    await wsLoad({draft:ws.draft,duplicate_key:name.value},true);ws.examples=copied;ws.revision=null;
+    wsNote.textContent=examples.checked?"Duplicate draft. Save the block, then explicitly save its copied example collection.":"Duplicate draft";
+  }
+}
+async function wsAssist(initialAction){
+  await wsFlush();const box=h("div"),action=wsChoice(box,"Action",["create","improve","describe","suggest_examples","explain_failure"].map(x=>[x,x.replaceAll("_"," ")]),initialAction||ws.tutorialAction||"improve"),role=wsField(box,"Assistant role","assistant"),task=wsField(box,"Task","",true);
+  const stage=wsChoice(box,"Create stage",[["","Complete block"],["fields","Fields only"],["behaviour","Behaviour only"]]);
+  const sections=[];for(const name of ["purpose","inputs","outputs","behaviour","description_sections"]){const check=h("input",{type:"checkbox",checked:true});sections.push([name,check]);box.append(h("label",{},check," Improve "+name.replaceAll("_"," ")));}
+  if(await wsDialog("Block assistance",box,["Prepare request","Cancel"])!=="Prepare request")return;
+  const snap=ws.draft,body={action:action.value,role:role.value,task:task.value,draft:snap};
+  if(action.value==="create"&&stage.value)body.stage=stage.value;
+  if(action.value==="improve")body.sections=sections.filter(([,c])=>c.checked).map(([name])=>name);
+  if(["improve","explain_failure"].includes(action.value)&&ws.batch)body.evidence={trial:ws.batch.rows};
+  await wsStart("assist",body,async batch=>{
+    const id=batch.rows[0]?.proposal_id;if(!id)return;
+    const request={proposal_id:id,draft:ws.draft},plan=await wsApi("plans",{action:"proposals/apply",request});
+    const review=h("div",{},wsShowValue(plan.descriptor.proposal.response));for(const change of plan.descriptor.changes||[])review.append(h("details",{open:change.name==="Python source"},h("summary",{text:change.name}),h("h4",{text:"Before"}),h("pre",{text:change.before}),h("h4",{text:"After"}),h("pre",{text:change.after})));
+    for(const c of plan.required_confirmations)review.append(h("p",{text:c.detail}));
+    if(await wsDialog("Review proposal",review,["Apply","Discard"])!=="Apply"){wsNote.dataset.state="proposal_discarded";wsNote.textContent="Proposal discarded";return;}
+    const bound={...request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations.map(({kind,digest})=>({kind,digest}))};
+    const applied=await wsApi("proposals/apply",bound);
+    if(applied.draft)await wsLoad({draft:applied.draft},true);
+    if(applied.examples){ws.examples.push(...applied.examples);await wsView("test");}
+    wsNote.dataset.state="proposal_applied";wsNote.textContent="Proposal applied to draft";if(applied.explanation)await wsDialog("Failure explanation",wsShowValue(applied.explanation),["Close"]);
+  });
+}
+async function wsStart(action,request,done){
+  const bound=await wsPlan(action,request);if(!bound)return;
+  const ticket=(await wsApi("tickets",{})).ticket;
+  let op;
+  try{op=await wsApi(action,{...bound,ticket});}catch(e){op=await wsApi("tickets/"+ticket);if(!op.operation_id)throw e;}
+  await wsFollow(op.operation_id,done);
+}
+async function wsFollow(id,done){
+  const generation=++wsPoll;
+  while(generation===wsPoll){
+    ws.batch=await wsApi("batches/"+id);if(ws.batch.active_run){try{ws.batch.live=await api("/api/block_runs/"+ws.batch.active_run);}catch(e){/* child may already have ended */}}wsNote.dataset.state=ws.batch.state;wsNote.textContent=ws.batch.state+" · "+ws.batch.rows.filter(r=>r.state==="terminal").length+" / "+ws.batch.rows.length;
+    wsResults();if(ws.batch.state!=="running"){if(done)await done(ws.batch);return;}
+    await new Promise(resolve=>setTimeout(resolve,250));
+  }
+}
+function wsResults(){
+  const panel=$("ws-results");if(!panel||!ws.batch)return;panel.replaceChildren();
+  if(ws.batch.live)panel.append(wsShowValue({child:ws.batch.active_run,progress:ws.batch.live.state,attempts:ws.batch.live.attempts||[]}));
+  for(const row of ws.batch.rows){
+    const result=h("article",{"data-test":"ws-trial","data-outcome":row.outcome||row.state,"data-attempts":row.attempts??0,"data-correctness":row.correctness||"unreviewed","data-arm":row.arm},h("strong",{text:(row.arm===0?"Baseline":"Candidate")+" · "+(row.example.label||row.example.id)+" · "+(row.outcome||row.state)}));
+    for(const [name,v] of Object.entries(row.outputs||{}))result.append(h("h4",{text:name}),v.format==="json"?h("div",{},wsStructured(v.text),h("details",{},h("summary",{text:"Exact answer"}),h("pre",{"data-test":"ws-output","data-output":name,text:v.text}))):h("pre",{"data-test":"ws-output","data-output":name,text:v.text}),copyControl("ws-copy-output",()=>v.text,null));
+    result.append(wsShowValue({execution:row.outcome||row.state,checks:row.final_check||row.check||row.steps?.map(s=>s.check)||"Unknown",correctness:row.correctness||"unreviewed",machine_judgement:row.machine_judgement,human_rating:row.human_rating,evidence:row.evidence_available===false?"Unavailable":row.preview_incomplete?"Partial":"Available",saving:ws.batch.saving?"Saved":"Session only"}),h("p",{text:"Correctness · "+(row.correctness||"unreviewed")}),wsSource("Checks and trace",JSON.stringify(row.steps||[],null,2)));
+    if(row.outcome==="complete"&&!row.preview_incomplete)for(const rating of ["correct","incorrect"])result.append(wsButton("Mark "+rating,async()=>{
+      const history=ws.batch.saving?await api("/api/runs/"+row.run_id):null;
+      const review=await wsPut("reviews/"+row.run_id,{context:{snapshot_id:row.snapshot_id,example_id:row.example.id,example_version:row.example.version,result_digest:row.result_digest},judgement:rating,expected_revision:history?.current_review?.revision||wsRatings[row.run_id]||0,persist:ws.batch.saving});
+      wsRatings[row.run_id]=review.revision;ws.batch=await wsApi("batches/"+ws.batch.id);wsResults();
+    }));
+    panel.append(result);
+  }
+  panel.prepend(wsShowValue({persistence:ws.batch.saving?"Saved":"Session only",state:ws.batch.state,save_error:ws.batch.save_error,trial_order:ws.batch.rows.map(r=>({example:r.example.id,arm:r.arm,state:r.state}))}));
+  if(ws.batch.metrics)panel.append(h("details",{},h("summary",{text:"Comparison totals"}),wsShowValue(ws.batch.metrics)));
+}
+async function wsEditExample(selected){
+  const e=ws.examples.find(x=>x.id===selected);if(!e)throw new Error("Select a saved example.");
+  const box=h("div"),label=wsField(box,"Label",e.label),fields={};
+  for(const [n,t] of Object.entries(e.inputs))fields[n]=wsField(box,n,t,true);
+  const kind=wsChoice(box,"Expectation",[["review","Human review"],["whole_output","Exact output"],["fields","Field assertions"]],e.expectation.kind);
+  const criterion=wsField(box,"Review criterion",e.expectation.criterion||"");const values={};
+  for(const n of ws.projection.facts.outputs)values[n]=wsField(box,"Expected "+n,e.expectation.values?.[n]||"",true);
+  const assertions=h("div"),edits=[];box.append(assertions);
+  function assertion(row={}){const line=h("div");assertions.append(line);const output=wsChoice(line,"Output",ws.projection.facts.outputs.map(n=>[n,n]),row.output),path=wsField(line,"Field path",(row.path||[]).join(".")),op=wsChoice(line,"Condition",["equals","absent","present","null"].map(x=>[x,x]),row.operation),v=wsField(line,"Exact value",row.value_text||"");edits.push(()=>({output:output.value,path:path.value.split(".").filter(Boolean),operation:op.value,...(op.value==="equals"?{value_text:v.value}:{})}));}
+  (e.expectation.assertions||[]).forEach(assertion);box.append(wsButton("Add assertion",()=>assertion()));
+  const verified=h("input",{type:"checkbox",checked:e.verified});box.append(h("label",{},verified," I verified this expectation"));
+  if(await wsDialog("Edit example",box,["Save","Cancel"])!=="Save")return;
+  const ex={...e,label:label.value,version:e.version+1,inputs:Object.fromEntries(Object.entries(fields).map(([n,f])=>[n,f.value])),verified:verified.checked,expectation:kind.value==="review"?{kind:"review",criterion:criterion.value}:kind.value==="fields"?{kind:"fields",assertions:edits.map(fn=>fn())}:{kind:"whole_output",values:Object.fromEntries(Object.entries(values).map(([n,f])=>[n,f.value]))}};
+  ws.examples=ws.examples.map(x=>x.id===e.id?ex:x);await wsPersistExamples();wsRender();
+}
+const wsRatings={};
+function wsFieldEditor(side,port,fields,sharedEdit=null){
+  const card=h("details",{},h("summary",{text:"Structured fields · "+port}));
+  const rows=fields||[];
+  async function edit(row,addition){
+    const box=h("div"),field=wsField(box,"Property name",addition?"":row.path.at(-1)||""),
+      type=wsChoice(box,"Value type",["Text","Whole number","Number","Yes/No","Group","List","Choice"].map(t=>[t,t]),addition?"Text":row.type),
+      desc=wsField(box,"Field description",addition?"":row.description),
+      required=h("input",{type:"checkbox",checked:!addition&&row.required}),
+      nullable=h("input",{type:"checkbox",checked:!addition&&row.nullable}),choices=wsField(box,"Allowed choices (one per line)",(row.choices||[]).join("\n"),true);
+    const low=wsField(box,"Minimum value or length",row.minimum??row.min_length??row.min_items??""),high=wsField(box,"Maximum value or length",row.maximum??row.max_length??row.max_items??"");
+    box.append(h("label",{},required," Required"),h("label",{},nullable," Allow null"));
+    let additional;
+    if(row.type==="Group"&&!addition){additional=wsChoice(box,"Unknown properties",[["preserve","Keep current policy"],["allow","Allow"],["reject","Reject"]]);}
+    const choice=await wsDialog("Edit structured field",box,["Apply",...(!addition&&row.path.length&&row.path.at(-1)!=="[]"?["Remove field"]:[]),"Cancel"]);if(!["Apply","Remove field"].includes(choice))return;
+    const edit={kind:"property_form",side,port,path:row.path,addition,remove:choice==="Remove field",...(additional&&additional.value!=="preserve"?{additional_properties:additional.value==="allow"}:{}),bounds:[low.value,high.value],name:field.value,type:type.value,description:desc.value,required:required.checked,nullable:nullable.checked,choices:choices.value.split("\n").filter(Boolean)};
+    if(sharedEdit){await sharedEdit(edit);return;}
+    await wsFlush();const p=await wsApi("preview",{draft:ws.draft,edit});
+    ws.projection=p;ws.draft=p.draft;wsDirty();wsRender();
+  }
+  for(const r of rows){card.append(h("div",{},r.path.join(".")+" · "+r.type+" ",wsButton("Edit field",()=>edit(r,false))));if(r.type==="Group")card.append(wsButton("Add property",()=>edit(r,true)));}
+  if(!rows.length)card.append(wsButton("Define object fields",()=>edit({path:[],type:"Group"},true)));
+  return card;
+}
+async function wsPersistExamples(){
+  const result=await wsPut("blocks/"+ws.draft.key+"/examples",{expected_revision:ws.revision,examples:ws.examples});ws.revision=result.revision;ws.examples=result.examples;wsNote.textContent="Examples saved";
+}
+function wsInput(parent,name,contract,initial){
+  if(contract?.format!=="json"||contract.source_only||!contract.fields?.length){
+    const container=contract?.format==="json"?h("details",{},h("summary",{text:name+" · advanced value"})):parent;
+    if(container!==parent)parent.append(container);
+    const field=wsField(container,name,initial,true);field.oninput=()=>ws.inputs[name]=field.value;
+    return {read:()=>field.value,set:value=>{field.value=value;}};
+  }
+  const area=h("fieldset",{},h("legend",{text:name}));parent.append(area);
+  const rows=contract.fields;
+  let read,current=Promise.resolve();
+  function draw(value){
+    area.replaceChildren(h("legend",{text:name}));
+    function node(host,row,data){
+      const box=h("div",{class:"ws-port","data-test":"ws-input-node","data-port":name,"data-path":row.path.join("/")});host.append(box);
+      const options=[["value","Provide value"]];if(!row.required)options.push(["omit","Omit"]);if(row.nullable)options.push(["null","Null"]);
+      const mode=wsChoice(box,row.path.at(-1)||name,options,data?.type==="null"?"null":!data&&!row.required?"omit":"value");
+      const holder=h("div");box.append(holder);mode.onchange=()=>holder.hidden=mode.value!=="value";mode.onchange();
+      let get;
+      if(row.type==="Group"){
+        const children=rows.filter(r=>r.path.length===row.path.length+1&&row.path.every((p,i)=>r.path[i]===p)).map(r=>[r.path.at(-1),node(holder,r,data?.fields?.find(f=>f.name===r.path.at(-1))?.value)]);
+        const extra=(data?.fields||[]).filter(f=>!children.some(([name])=>name===f.name));
+        if(extra.length){
+          const warning=h("div",{"data-test":"ws-unmapped-fields"},h("p",{text:"These input fields are outside the current form. They are retained until you explicitly remove them."}),wsTyped({type:"object",fields:extra}));
+          warning.append(wsButton("Remove unmapped fields",()=>{extra.splice(0);warning.remove();}));holder.append(warning);
+        }
+        get=()=>({type:"object",fields:[...children.map(([name,fn])=>({name,value:fn()})).filter(f=>f.value!==undefined),...extra]});
+      }else if(row.type==="List"){
+        const item=rows.find(r=>r.path.length===row.path.length+1&&r.path.at(-1)==="[]"&&row.path.every((p,i)=>r.path[i]===p)),items=[];
+        function add(d){const line=h("div");holder.append(line);const fn=node(line,item,d);items.push(fn);line.append(wsButton("Remove item",()=>{items.splice(items.indexOf(fn),1);line.remove();}));}
+        for(const d of data?.items||[])add(d);holder.append(wsButton("Add item",()=>add()));get=()=>({type:"array",items:items.map(fn=>fn())});
+      }else{
+        const type=row.type==="Yes/No"?"boolean":["Whole number","Number"].includes(row.type)?"number":"text";
+        const field=type==="boolean"?wsChoice(holder,"Value",[["false","No"],["true","Yes"]],data?.text||"false"):row.type==="Choice"?wsChoice(holder,"Value",row.choices.map(v=>[v,v]),data?.text):wsField(holder,"Value",data?.text||"");
+        get=()=>({type,text:field.value});
+      }
+      return ()=>mode.value==="omit"?undefined:mode.value==="null"?{type:"null",text:"null"}:get();
+    }
+    read=node(area,rows[0],value);
+  }
+  function set(text){current=text?wsApi("render-value",{text}).then(draw):Promise.resolve(draw());return current;}
+  set(initial).catch(wsError);
+  return {set,read:async()=>{await current;const result=await wsApi("input-value",{value:read()});ws.inputs[name]=result.text;return result.text;}};
+}
+
+function wsTrials(compare){
+  const form=h("div"),results=h("div",{id:"ws-results","aria-live":"polite"});wsBody.append(form,results);
+  const select=wsChoice(form,"Example",[["","New input"],...ws.examples.map(e=>[e.id,e.label])]);
+  const selectedInfo=h("div");form.append(selectedInfo);
+  const inputs={};for(const n of ws.projection.facts?.inputs||[])inputs[n]=wsInput(form,n,ws.projection.contracts.inputs[n],ws.inputs[n]||"");
+  const values=async()=>Object.fromEntries(await Promise.all(Object.entries(inputs).map(async([n,e])=>[n,await e.read()])));
+  select.onchange=async()=>{const ex=ws.examples.find(e=>e.id===select.value);selectedInfo.replaceChildren();if(ex){const unmatched=Object.keys(ex.inputs).filter(n=>!inputs[n]);if(unmatched.length)selectedInfo.append(h("p",{text:"Example inputs outside this block: "+unmatched.join(", ")}),wsShowValue(ex.inputs));}for(const [n,e] of Object.entries(inputs))await e.set(ws.inputs[n]=ex?.inputs[n]||"");};
+  const selection=h("fieldset",{},h("legend",{text:"Examples to run"})),selected=[];
+  for(const ex of ws.examples){const check=h("input",{type:"checkbox",checked:true,"data-test":"ws-example-choice","data-example":ex.id});selected.push([ex,check]);selection.append(h("label",{},check," "+ex.label+" "));}
+  form.append(selection);
+  const chosen=()=>selected.filter(([,check])=>check.checked).map(([ex])=>ex);
+  wsPending=async()=>{await values();};
+  if(compare){const baseline=wsChoice(form,"Baseline revision",[]),candidate=wsChoice(form,"Candidate",[["","Current draft"]]);
+    wsApi("blocks/"+ws.draft.key+"/revisions").then(x=>{baseline.replaceChildren(...x.revisions.map(r=>new Option(r.id.slice(0,8),r.id)));for(const r of x.revisions)candidate.add(new Option(r.id.slice(0,8),r.id));}).catch(wsError);
+    form.append(wsButton("Compare versions",()=>wsStart("batches",{candidates:[{key:ws.draft.key,revision:baseline.value},candidate.value?{key:ws.draft.key,revision:candidate.value}:{draft:ws.draft}],examples:chosen()})));
+  }else{
+    form.append(wsButton("Preview instructions",async()=>{const p=await wsApi("preview",{draft:ws.draft,inputs:await values()});await wsDialog("Prepared behaviour",wsShowValue(p.prepared||p.input_checks||p.issues),["Close"]);}),
+      wsButton("Run test",async()=>{
+        const input=await values(),ex=ws.examples.find(e=>e.id===select.value);
+        if(ex&&(Object.keys(ex.inputs).some(n=>!inputs[n])||Object.keys(ex.inputs).every(n=>ex.inputs[n]===input[n])))return wsStart("batches",{candidates:[{draft:ws.draft}],examples:[ex]});
+        return wsStart("test",{draft:ws.draft,inputs:input});
+      }),
+      wsButton("Save as example",async()=>{const box=h("div"),label=wsField(box,"Example label"),criterion=wsField(box,"Review criterion","Review against the source");if(await wsDialog("Save example",box,["Save","Cancel"])!=="Save")return;
+        ws.examples.push({id:crypto.randomUUID(),version:1,label:label.value||"Example",inputs:await values(),expectation:{kind:"review",criterion:criterion.value},origin:"manual",verified:false});await wsPersistExamples();wsRender();}),
+      wsButton("Edit selected example",()=>wsEditExample(select.value)),wsButton("Save example collection",wsPersistExamples),wsButton("Run saved examples",()=>wsStart("batches",{candidates:[{draft:ws.draft}],examples:chosen()})));
+  }
+  form.append(wsButton("Recent runs and comparisons",wsRecords));
+  form.append(wsButton("Stop",async()=>{if(ws.batch?.state==="running")await wsApi("batches/"+ws.batch.id+"/stop",{});}));wsResults();
+}
+async function wsRecords(){
+  const box=h("div"),key=ws.draft.key;
+  const runs=await api("/api/runs"),saved=await wsApi("comparisons");
+  box.append(h("h3",{text:"Saved runs for this block"}));
+  for(const row of runs.runs.filter(r=>r.block===key))box.append(wsButton((row.created_at||row.run_id)+" · "+row.outcome,async()=>{selectTab("history");await TABS.history.openRun(row.run_id);box.closest("dialog").querySelector('[data-test="ws-close"]').click();}));
+  box.append(h("h3",{text:"Saved comparison records"}));
+  for(const id of saved.comparisons){
+    const batch=await wsApi("comparisons/"+id);if(!batch.plan.candidates.some(c=>c.draft.key===key))continue;
+    const line=h("div",{"data-test":"ws-comparison-record","data-comparison":id,"data-arms":batch.plan.candidates.length});box.append(line);line.append(wsButton(id.slice(0,8)+" · "+batch.state,async()=>{ws.batch=batch;wsResults();box.closest("dialog").querySelector('[data-test="ws-close"]').click();},"ws-open-comparison"),wsButton("Delete comparison",async()=>{
+      const response=await fetch("/api/workshop/comparisons/"+id,{method:"DELETE",headers:{"X-Session-Token":TOKEN}});if(!response.ok)throw new Error((await response.json()).code);line.remove();
+    },"ws-delete-comparison"));
+  }
+  box.append(h("p",{text:"Saving off retains only the active and latest session batch. Saved child runs and comparison records are deleted independently."}));
+  await wsDialog("Recent evidence",box,["Close"]);
+}
+wsSearch.oninput=wsFilter;wsList.onchange=async()=>{const key=wsList.value;try{if(key&&await wsLeave())await wsLoad({key},false);else wsFilter();}catch(e){wsError(e);}};
+wsPanel.append(wsHeading,h("div",{class:"ws-layout"},h("aside",{},wsSearch,wsList,wsButton("New block",wsNew)),h("div",{},wsNav,wsNote,wsBody)));
+TABS.workshop={async tutorialAssist(action){ws.view="design";ws.tutorialAction=action;await wsLoad({key:"tutorial_extractor",starter:"extract_fields",role:"fast"},true);}, async tutorialPrepare(key,inputs){ws.view="test";await wsLoad({key,support:[]},false);ws.inputs=inputs;ws.batch=null;wsRender();},async tutorialCreate(){ws.view="design";await wsLoad({starter:"count_text",key:"tutorial_counter"},true);ws.examples=(await wsApi("starters")).starters.find(s=>s.id==="count_text").examples;wsRender();},async onShow(){try{await wsFlush();await wsRefresh();const parts=location.hash.slice(1).split("/");
+  if(parts[1]&&wsBlocks.some(b=>b.name===parts[1])){
+    if(!ws.draft||ws.draft.key!==parts[1]){if(!await wsLeave()){wsRender();return;}ws.view=["design","test","compare"].includes(parts[2])?parts[2]:"design";await wsLoad({key:parts[1]},false);}
+    else {ws.view=["design","test","compare"].includes(parts[2])?parts[2]:"design";wsRender();}
+  }else wsRender();
+  const active=await wsApi("batches"),id=active.active||active.latest;if(id){const batch=await wsApi("batches/"+id);const source=batch.plan.assistance?.draft||batch.plan.candidates[0]?.draft;
+    if(!ws.draft&&source?.key===parts[1]){ws.view="test";await wsLoad({draft:source},true);}
+    if(source?.key===ws.draft?.key)wsFollow(id).catch(wsError);
+  }
+}catch(e){wsError(e);}}};
+
+$("main-nav").append($("tab-history"));
+$("ws-workbench").onclick=()=>selectTab("chat");
+wsPanel.querySelector("aside").append($("tab-blocks"));
+$("main-nav").setAttribute("role","tablist");
+$("main-nav").addEventListener("keydown",e=>{
+  const buttons=[...$("main-nav").querySelectorAll("button")],i=buttons.indexOf(document.activeElement);
+  const n=e.key==="ArrowRight"?(i+1)%3:e.key==="ArrowLeft"?(i+2)%3:e.key==="Home"?0:e.key==="End"?2:-1;
+  if(n>=0){e.preventDefault();buttons[n].click();buttons[n].focus();}
+});
+const settingsGroup=h("details",{id:"ws-settings"},h("summary",{"data-test":"ws-settings",text:"Settings"}));
+$("open-settings").before(settingsGroup);settingsGroup.append($("open-settings"),$("open-roles"),$("open-servers"),$("save-runs").parentElement);
+const openWorkspace=wsButton("Open workspace",async()=>{
+  const box=h("div"),info=await wsApi("workspace-open"),target=wsField(box,"Workspace name",info.workspace);
+  box.append(wsShowValue({current_workspace:info.workspace,existing_workspaces:info.names,dirty_draft:ws.dirty,outstanding_work:ws.batch?.state||"none"}));
+  if(await wsDialog("Open workspace",box,["Show command","Close"])==="Show command"){
+    const launch=await wsApi("workspace-open?name="+encodeURIComponent(target.value));await wsDialog("Launch in a terminal",h("div",{},h("pre",{text:launch.command}),copyControl("ws-copy-launch",()=>launch.command,null)),["Close"]);
+  }
+});
+$("workspace").after(openWorkspace);
 // --- start -----------------------------------------------------------------------------------------------------------------
 selectTab(fragFromHash(), { hash: false });
 refreshState().then(tutorialInit).catch((e) => {

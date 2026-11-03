@@ -61,21 +61,27 @@ TOPICS: tuple[Topic, ...] = (
     Topic("model-block", "Run a model block",
           "A block is a saved step. This one asks a model (through the role fast) for the id and ratio in a report, "
           "checks the answer against the fields contract and repairs it once. Show the role opens the mapping the "
-          "block uses; then Run, and compare the two attempts in the trace.", "blocks", "0.1.4", "complete", True,
-          _page("blocks.tutorialPrepare",
+          "block uses; then Run, and compare the two attempts in the trace.", "workshop", "0.2.0", "complete", True,
+          _page("workshop.tutorialPrepare",
                 ["extract_fields", {"report": "Record 9007199254740993 has a ratio of 0.10000000000000000001."}],
-                [{"id": "show-role", "label": "Show the role"}]), "blocks-run"),
+                [{"id": "show-role", "label": "Show the role"}]), "ws-run-test"),
     Topic("tool-block", "Run a tool block",
           "This block calls the tutorial server's numbers tool with two exact numbers typed into the arguments. Run "
           "it: the output equals the inputs exactly, and the trace shows both fills as typed, with their "
-          "provenance.", "blocks", "0.1.4", "complete", True,
-          _page("blocks.tutorialPrepare",
-                ["echo_numbers", {"id": "9007199254740993", "ratio": "0.10000000000000000001"}]), "blocks-run"),
+          "provenance.", "workshop", "0.2.0", "complete", True,
+          _page("workshop.tutorialPrepare",
+                ["echo_numbers", {"id": "9007199254740993", "ratio": "0.10000000000000000001"}]), "ws-run-test"),
     Topic("script-block", "Run and stop a script block",
           "This block runs a small script that counts words. Run it for the count; then Try a script that waits, "
-          "Run it and press Stop to see a script and its process group ended.", "blocks", "0.1.4", "complete", True,
-          _page("blocks.tutorialPrepare", ["word_count", {"text": "The quick brown fox jumps over the lazy dog"}],
-                [{"id": "wait-script", "label": "Try a script that waits"}]), "blocks-run"),
+          "Run it and press Stop to see a script and its process group ended.", "workshop", "0.2.0", "complete", True,
+          _page("workshop.tutorialPrepare", ["word_count", {"text": "The quick brown fox jumps over the lazy dog"}],
+                [{"id": "wait-script", "label": "Try a script that waits"}]), "ws-run-test"),
+    Topic("workshop-design", "Create a Workshop block", "Save the word counter and confirm its captured runtime. In Test, run the prepared examples and review correctness. Return to Design, change Count unit to Characters, Apply parameters and Save again. In Compare, choose the earlier baseline and compare the same examples; inspect both answers and totals.", "workshop", "0.2.0", "complete", False, _page("workshop.tutorialCreate"), "ws-save-revision"),
+    *(Topic("assist-" + action, "Assist · " + action.replace("_", " "),
+            "Open Assist, prepare the request and inspect its destination. Apply or discard the returned proposal.",
+            "workshop", "0.2.0", "complete", False,
+            _page("workshop.tutorialAssist", [action]), "ws-assist")
+      for action in ("create", "improve", "describe", "suggest_examples", "explain_failure")),
 )
 
 _BY_ID = {t.id: t for t in TOPICS}

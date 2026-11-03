@@ -1,75 +1,225 @@
-# AgentWiz 0.1.4 — hand-over
+# AgentWiz 0.2.0 — cumulative Phase 2 handover
 
-Built from *AgentWiz 0.1.4 — Technical Specification*, version 5. Baseline: AgentWiz `devel` at `4a41304`
-(tree equals the v0.1.3 release). Nothing was committed or pushed to GitHub.
+Baseline: devel `130eaf006c6e8af6930d1feea380299f5d97d8e6`, version 0.1.4 (the implemented baseline).
+The delivery completes Phase 2 and includes the cumulative Phase 0/1 implementation and the ticket
+checkpoint. The implementation checkout remains uncommitted and unpublished: no commit, push, tag,
+merge or GitHub publication was made in it. Only a disposable local verification checkout receives a
+snapshot commit, because the release builder archives committed `HEAD`.
 
-Apply: unzip over a working copy of `devel` at `4a41304`. The zip holds every new and changed file at its
-repository path, plus this file and `DELETIONS.txt`. This file replaces the 0.1.3 hand-over.
+This document merges the former root `0.2.0 handover.md` precommit note into the technical
+`HANDOVER.md`; no delivery fact of either document was changed.
 
-## Checkpoint log (one row per gate; appended as the build goes)
+## TL;DR — what to test locally
 
-Gate = `python -m pytest -q -m "not live"`, no failures, errors or skips.
+Run this once from the repository root with the checkout's `.venv` active:
 
-| Date | Phase | Interpreter | Result |
-| --- | --- | --- | --- |
-| 2026-11-03 | 0 baseline (unchanged devel) | 3.13.18 | 350 passed, 8 deselected, 46.1 s |
-| 2026-11-03 | 0 baseline | 3.10.20 | 350 passed, 8 deselected, 37.6 s |
-| 2026-11-03 | A definitions (#89-#93, #106, #107 + block route tests) | 3.13.18 | 466 passed, 8 deselected, 47.2 s |
-| 2026-11-03 | A definitions | 3.10.20 | 466 passed, 8 deselected, 40.6 s |
-| 2026-11-03 | B block runs (#94-#105, #114, #99) | 3.13.18 | 560 passed, 8 deselected, 58.6 s |
-| 2026-11-03 | B block runs | 3.10.20 | 560 passed, 8 deselected, 49.7 s |
-| 2026-11-03 | C page (#108-#111, #86) | 3.13.18 | 564 passed, 8 deselected, 63.9 s |
-| 2026-11-03 | C page | 3.10.20 | 564 passed, 8 deselected, 53.9 s |
-| 2026-11-03 | D tutorial (#112, #113) | 3.13.18 | 569 passed, 8 deselected, 72.5 s |
-| 2026-11-03 | D tutorial | 3.10.20 | 569 passed, 8 deselected, 63.2 s |
-| 2026-11-03 | E finish (version 0.1.4, README, DEVEL, NEWS, smoke S13/S14) | 3.13.18 | 569 passed, 8 deselected, 71.3 s |
-| 2026-11-03 | E finish | 3.10.20 | 569 passed, 8 deselected, 62.3 s |
+```bash
+. .venv/bin/activate
+python -m pytest -q -m "not live"   # offline gate
+```
 
-## Smoke result
+Expect **592 passed, 10 deselected**, with no failures, skips or errors. That is the only required
+local test, and no other local testing is a precommit condition.
 
-`python scripts/build_release.py --smoke --no-isolation --modelspell-wheel modelspell-0.3.0-py3-none-any.whl`, run on 3.13.18 in
-a throwaway copy of the tree with a throwaway **local** commit (never pushed; nothing touched the real repository):
-RC1, RC2 and RC3 ok, `pip check` ok, `smoke ok: AgentWiz 0.1.4 (modelSpell 0.3.0)`, i.e. S1–S14 pass against the installed
-wheel. The wheel was `agentwiz-0.1.4-py3-none-any.whl`, sha256 `41467864d301bc129bb3677f39fe075d61019df2782ff0ab1d56da21732cce46`
-(a throwaway build; rebuild your own release from your commit). The first attempt failed because a wrapped comment line in
-`scripts/smoke_installed.py` had lost its `#`; the shipped file is fixed. The suite does not execute that script, which is
-why the gates did not catch it. The suite was not re-run after that one-character fix.
+Optional, only when preparing or re-checking a release:
 
-The optional live check (`-m live`) was **not** run: the workspace has no reachable model backend.
+| Step | Command | Expect |
+| --- | --- | --- |
+| Release checks and installed-wheel smoke, on a throwaway clone that has a snapshot commit (the builder reads committed `HEAD`, never these uncommitted edits) | `python scripts/build_release.py --smoke` | `RC1 ok`, `RC2 ok`, `RC3 ok`; installed-wheel smoke S1–S15 pass |
+| Installed-wheel UI, from outside the checkout, against an environment where the built wheel replaces the editable package | `python -I -m pytest tests/test_page.py tests/test_tutorial.py` | 30 passed; confirm AgentWiz imports from that environment's site-packages |
+| Subjective presentation review through the isolated tutorial | launch and click through | no pass/fail; optional |
 
-## Departures from the specification
+Not tested locally, and not a local task:
 
-1. Spec 20.3 says `test_attempts.py` and `test_model_step.py` stay unchanged, but 9.3 makes the attempt call
-   `checks.check_answer_value`. Two existing tests injected failures by patching `checks.check_answer`
-   (`test_model_step.py::test_a_failing_check_is_contract_error_never_a_pass`,
-   `test_attempts.py::test_stop_between_the_end_point_and_the_commit`). Only the patch target changed to
-   `check_answer_value`; assertions are untouched.
-2. Fill provenance for a whole-string typed fill in tool arguments hashes `encode_exact(value)`; text fills hash
-   the UTF-8 of the inserted text (spec 8.6 does not say which for a string value).
-3. A block's revision is kept when only file metadata changed (content hashes and named-contract revisions decide).
-4. Problem-code precedence when several kinds occur: `invalid` > `unreadable` > `unusable`; `newer_format` alone.
-5. `/api/config` does not register as a workspace writer: `ProcessState.apply_config` never touches the workspace, and
-   spec 10.10 exempts a method that does not write. Every other route in the gate table does register.
-6. After shutdown begins, a block run's `final` and `save` events are dropped (delivery is interrupted by design,
-   10.10 step 2); the run still commits and saves.
-7. `UIServer.grace_s` (default 5 s) was added so the tutorial's bounded Exit waits can be lowered in tests (#113); the
-   spec's `server_close(*, wait=True)` signature is unchanged and `grace_s` is a plain attribute.
-8. Tutorial topics `model-block`, `tool-block` and `script-block` set `seed_contract` (the example blocks name the saved
-   `fields` contract); the spec's table does not say.
-9. `Tutorial.shutdown_all()` is kept as specified and is built from two halves, `begin_shutdown()` (closing flag, active
-   session closed, pending taken) and `finish(pending)` (drain, close, remove), so `UIServer.server_close` can order them
-   around its own state's drain (14.5).
-10. `build_release.py --no-isolation` needs `hatchling>=1.27` installed in the building interpreter (its own error says so);
-    this is environment setup, not a code change.
+- **macOS and Python 3.10/3.13** — unverified in this environment. The existing Ubuntu/macOS ×
+  Python 3.10/3.13 CI matrix remains the release criterion and runs after an authorized push.
+- **Live D72, V-4–V-8/MS-21 and R7-10/R7-11 measurements** — blocked by missing configured backends
+  and credentials. They are optional experiments, never part of the offline gate.
+- **No manual tutorial walk, screenshot collection, repeated setup, dependency installation,
+  credential entry, data migration or obsolete-file deletion is required**, and no deterministic
+  regression checklist is assigned to the owner.
 
-## Obsolete files
+## Contents
 
-None. `DELETIONS.txt` is empty.
+1. [Owner actions before commit](#1-owner-actions-before-commit)
+2. [Delivered behaviour](#2-delivered-behaviour)
+3. [Integration corrections](#3-integration-corrections)
+4. [Validation and environment](#4-validation-and-environment)
+5. [Blocked experiments and dispositions](#5-blocked-experiments-and-dispositions)
+6. [Delivery payload and publication state](#6-delivery-payload-and-publication-state)
+7. [Risks, limits and security notes](#7-risks-limits-and-security-notes)
+8. [Remaining owner actions](#8-remaining-owner-actions)
 
-## Next steps
+## 1. Owner actions before commit
 
-1. Unzip over `devel` at `4a41304`, review `git diff`, commit yourself.
-2. Walk the tutorial's three new topics once in a real browser (the headless gate drives them against the stand-ins only).
-3. Run `-m live` against a real backend if you want the optional live check.
-4. Known small gap: attempt rows that the Blocks tab fills from polling (after Reattach) lack `data-repair-reason`, because the
-   polling summary does not carry it; streamed rows have it.
+1. Extract the delivery ZIP into the repository root at the stated baseline, preserving its directory
+   structure and replacing the corresponding files. The ZIP contains only the changed/new repository
+   files, cumulatively through Phase 2: 24 modified and 12 new files, 36 in total.
+2. Delete the superseded root `0.2.0 handover.md` if the ZIP re-creates it; this merged `HANDOVER.md`
+   replaces it, so a ZIP rebuilt from this merge carries 35 files. That is the only file to drop:
+   **no repository file needs deleting for behaviour reasons.**
+3. Review the cumulative diff and choose when to commit. No manual tutorial walk, screenshot
+   collection, repeated setup or deterministic regression checklist is required.
+
+No dependency installation, credential entry or data migration is required before commit. Existing v1
+blocks convert only on their first deliberate Workshop Save.
+
+## 2. Delivered behaviour
+
+Phase 2 completes the Workshop UI over the headless coordinator delivered earlier in the same payload.
+
+### 2.1 Workshop, Workbench, History and Settings
+
+Workshop is the default, with Design/Test/Compare, a searchable block selector, dirty draft handling
+and validated fragment restoration. Workbench retains the five independent utilities; History
+presents named evidence before raw records. Shared Settings and a shell-quoted, absolute-root
+workspace launch command remain in the header. The old saved-block inspector remains available
+within Workshop; its Start now uses the same ticketed coordinator. Compatibility HTTP routes remain.
+
+### 2.2 Authoring, forms and save plans
+
+Nine starters and blank model/tool/script creation, exact structured field and input forms, explicit
+source-only schema fallback, inline copies of shared contracts, real prompt preview,
+bindings/settings, standard-description freshness, save/rename/duplicate/restore and script
+source/support review are usable manually. No browser Number conversion carries structured data
+values or expected literals.
+
+### 2.3 Managed heads and legacy conversion
+
+Managed v2 heads publish complete v1 executable generations, retain newest 20, pin readers and
+protect source integrity. Conversion captures a legacy original; pruning and restoration are
+disclosed in the bound Save plan. Script starters classify against their recorded wrapper/runtime,
+retain attribution and regenerate only on an actual parameter edit. Old revisions retain their own
+helper/data bytes.
+
+### 2.4 Test, Compare and evidence
+
+Test and Compare use serial, frozen normal runner calls. Examples carry explicit versions,
+expectations and verification. Accepted output, checks, correctness and human reviews remain
+separate. Save preference is captured at Start. Active/latest session work reattaches after reload;
+saved comparisons and child histories open and delete independently. Metrics expose denominators and
+unknown/partial coverage.
+
+### 2.5 Assistance actions
+
+Five assistance actions use the existing runner and bounded checked model calls. The UI previews
+destination/settings/context, displays assumptions, requirements and diffs, and explicitly Applies or
+Discards. Apply changes only matching drafts or unsaved example suggestions. Generated custom Python
+is displayed for source acknowledgement; it is never executed during proposal validation or
+publication.
+
+### 2.6 Coordinator safety and run ownership
+
+The final review's durable `dispatch_pending` marker precedes each external effect, and DELETE refuses
+while a coordinator can still write. Tickets resolve accepted duplicate Starts without a second
+dispatch. Existing Stop, repair, history, cancellation and script cleanup ownership remain the
+execution machinery.
+
+### 2.7 Tutorials and documentation
+
+Fourteen isolated tutorial topics cover every retained function, migrated block runs,
+authoring/testing/comparison and all five assistance actions. Deterministic packaged services require
+no owner keys or live models. Version and NEWS are 0.2.0; README, architecture, release guidance and
+decision records describe final behaviour.
+
+## 3. Integration corrections
+
+Support previews now accept the current draft, preserving simultaneous entry/support edits. Selected
+root replacements carry draft-only source digests checked under the publisher reservation before
+staging and before head publication. A changed root file refuses Save without changing the current
+head. Duplicate and starter regeneration clear those preconditions; they are never persisted as future
+live dependencies.
+
+The persisted coordinator record reader now uses the existing strict record decoder, matching
+history's treatment of finite runtime timings. Authored numbers remain exact source strings. This
+fixes HTTP reads of comparisons after their session entry is evicted; the record reader refuses a
+number it cannot preserve. The regression opens persisted evidence after another batch, then deletes
+the comparison without deleting its child run.
+
+Machine expectation judgement is retained separately when a human rating overrides reported
+correctness, so conflicting evidence stays visible.
+
+Description freshness hashes normalized executable facts and captured asset bytes, so renaming a
+display or normalizing a wire representation keeps reviewed prose current. An actual source change
+still marks it stale. Structured example inputs retain fields outside the current form until the user
+explicitly removes them, avoiding silent data loss.
+
+Exact presentation adapters share the server's authoritative contract/value codecs. Shared Contracts
+edits preserve unknown local constraints; field deletion updates required membership. Checked-answer
+previews use the unchanged checker/parser. No new runtime dependency, framework, model transport or
+acceptance/recovery rule was added.
+
+## 4. Validation and environment
+
+### 4.1 Checks run and results
+
+The final implementation passed **592 offline tests, 10 optional live tests deselected**, with no
+failures, skips or errors. Release checks RC1–RC3 and installed-wheel smoke S1–S15 passed. All **30
+installed browser/tutorial tests** passed against AgentWiz imported from the installed wheel's
+site-packages. The cumulative implementation was verified on a fresh exact-baseline checkout. The
+files-only delivery preserves those application/test bytes; this repackage changes the handover
+delivery instructions only, by merging the two notes into this document.
+
+Preparing this documentation merge re-ran the offline gate on the working tree with the checkout's
+Python 3.13.13: `python -m pytest -q -m "not live"` gave **592 passed, 10 deselected in 88.95 s**
+(Linux x86_64). The release checks, installed-wheel smoke and installed browser/tutorial results
+above were not re-run for the merge and remain the implementation's results.
+
+### 4.2 Local environment
+
+Linux x86_64, Python 3.12.14, released pinned modelSpell 0.3.0, Playwright 1.63.0, jsonschema 4.26.0.
+The matching Chrome for Testing headless shell 153.0.8010.12 / Playwright 1243 was obtained from
+Google's official distribution after the Playwright cache was lost. No browser pin or check was
+weakened. Desktop and 390-pixel Workshop views were inspected; neither overflowed the viewport.
+
+### 4.3 Platform coverage and gaps
+
+macOS and Python 3.10/3.13 remain unverified locally; existing CI is the release criterion. Let
+normal CI perform that check after an authorized push; it is not a manual precommit task. Reproduce
+the local gate and the optional release checks with the commands in
+[the TL;DR](#tldr--what-to-test-locally).
+
+## 5. Blocked experiments and dispositions
+
+| Track | Disposition |
+| --- | --- |
+| D72 | LM Studio/llama-server Stop and checked-request variants use existing judgement. Live execution is blocked by absent backend configuration/credentials. |
+| V-4–V-7 | Earlier Phase 1 modelSpell probe regressions passed against its released API. No new real-route result is claimed for this UI increment. |
+| V-8 / MS-21 | Schema keyword, streaming/reasoning, latency and accuracy measurements remain blocked. Provider fixtures/results belong in modelSpell. |
+| R7-10 / R7-11 | `scripts/workshop_experiment.py` prepares label and nested/exact extraction comparisons and submits to the actual coordinator. Live measurements remain blocked. |
+| R7-8 | `scripts/replay_output.py` compares explicit saved spans/replacements through the unchanged checker, records discarded text and refuses incomplete/redacted evidence. Offline CLI regression is included. |
+
+For offline experiment fixtures use `--task extract --print-fixture` or
+`--task label --print-fixture`. Sending requires an existing server, assigned role, `--url` and
+`AGENTWIZ_SESSION_TOKEN`. No key file is created. No experimental result promotes a parser,
+schema-generation or routing change without a separate owner decision.
+
+## 6. Delivery payload and publication state
+
+- **Obsolete files: none** for behaviour. The superseded root `0.2.0 handover.md` is the single
+  documentation file folded into this document; drop it if the ZIP re-creates it.
+- Extract the changed files at the repository root. Generated virtual environments, browser
+  downloads, scratch screenshots and build products are excluded from the changed-file payload.
+- No publication was performed in the implementation checkout: no commit, push, tag, merge or GitHub
+  release. The snapshot commit exists only in the disposable verification checkout the release
+  builder needs.
+
+## 7. Risks, limits and security notes
+
+- Saved examples, source and comparison evidence can retain sensitive content.
+- Scripts run as the user and are not sandboxed.
+- Save-plan/source acknowledgements identify the reviewed bytes; they do not establish safety or
+  freeze remote backend behaviour.
+- No new runtime dependency, framework, model transport or acceptance/recovery rule was added.
+
+## 8. Remaining owner actions
+
+1. Extract the ZIP at the stated baseline and drop the superseded `0.2.0 handover.md`.
+2. Review the cumulative diff and choose when to commit; no commit, push or publication was made for
+   you.
+3. Run the offline gate locally if you want a precommit result, and let the Ubuntu/macOS × Python
+   3.10/3.13 CI matrix confirm platform coverage after an authorized push.
+4. Optionally run the release checks/smoke and the installed-wheel UI checks; subjective review
+   through the isolated tutorial is optional.
+5. Live D72, V-4–V-8/MS-21 and R7-10/R7-11 measurements stay blocked until configured backends and
+   credentials exist; fixture results authorize no parser, schema-generation or routing promotion.

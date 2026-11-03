@@ -1,0 +1,489 @@
+"""Exact typed field projections, starter generation and proposal compilation."""
+from __future__ import annotations
+
+import ast
+import copy
+from pathlib import Path
+
+from . import blocks, checks, jsonio, templates
+from .workshop_assets import fail, fingerprint, wire_files
+
+TYPES = {'Text': 'string', 'Choice': 'string', 'Whole number': 'integer', 'Number': 'number',
+         'Yes/No': 'boolean', 'List': 'array', 'Group': 'object'}
+LOCAL = {'type', 'properties', 'required', 'additionalProperties', 'items', 'enum', 'description',
+         'title', 'default', 'examples', 'const', 'minimum', 'maximum', 'minLength', 'maxLength',
+         'minItems', 'maxItems', 'pattern', 'format', 'multipleOf', '$schema', '$id', '$comment'}
+BOUNDS = {'minimum': 'minimum', 'maximum': 'maximum', 'min_length': 'minLength',
+          'max_length': 'maxLength', 'min_items': 'minItems', 'max_items': 'maxItems'}
+SECTIONS = ('use', 'exclusions', 'effects', 'limitations', 'missing_data', 'failures')
+SCRIPT_IDS = ('count_text', 'select_fields', 'format_report')
+MODEL_IDS = ('write_text', 'summarise', 'extract_fields', 'choose_label', 'check_source')
+STARTERS = MODEL_IDS + SCRIPT_IDS + ('call_tool',)
+
+
+def typed(value):
+    if isinstance(value, dict):
+        return {'type': 'object', 'fields': [{'name': k, 'value': typed(v)} for k, v in value.items()]}
+    if isinstance(value, list):
+        return {'type': 'array', 'items': [typed(v) for v in value]}
+    kind = 'null' if value is None else 'boolean' if type(value) is bool else 'text' if isinstance(value, str) else 'number'
+    return {'type': kind, 'text': value if kind == 'text' else jsonio.encode_exact(value)}
+
+
+def input_value(node):
+    kind = node['type']
+    if kind == 'object':
+        pairs = [(field['name'], input_value(field['value'])) for field in node['fields']]
+        if len(dict(pairs)) != len(pairs):
+            fail()
+        return dict(pairs)
+    if kind == 'array':
+        return [input_value(item) for item in node['items']]
+    if kind == 'text':
+        if not isinstance(node['text'], str):
+            fail()
+        return node['text']
+    value = jsonio.decode_exact(node['text'])
+    if kind == 'null' and value is None or kind == 'boolean' and type(value) is bool:
+        return value
+    from decimal import Decimal
+    if kind == 'number' and type(value) in (int, Decimal):
+        return value
+    fail()
+
+
+def field_rows(schema):
+    rows = []
+    def visit(node, path, required=True):
+        if not isinstance(node, dict) or set(node) - LOCAL:
+            fail('source_only', 409)
+        t = node.get('type')
+        nullable = isinstance(t, list) and len(t) == 2 and 'null' in t
+        if nullable:
+            t = next(x for x in t if x != 'null')
+        if t not in TYPES.values():
+            fail('source_only', 409)
+        if 'enum' in node and (t != 'string' or not all(isinstance(v, str) or (v is None and nullable) for v in node['enum'])):
+            fail('source_only', 409)
+        row = {'path': path, 'type': 'Choice' if 'enum' in node else next(k for k, v in TYPES.items() if v == t),
+               'required': required, 'nullable': nullable, 'description': node.get('description', '')}
+        if 'enum' in node:
+            row['choices'] = [v for v in node['enum'] if v is not None]
+        for k, keyword in BOUNDS.items():
+            if keyword in node:
+                row[k] = jsonio.encode_exact(node[keyword])
+        row['source_text'] = jsonio.encode_exact(node)
+        rows.append(row)
+        if len(rows) > 100 or len(path) > 10:
+            fail('source_only', 409)
+        if t == 'object':
+            if not isinstance(node.get('additionalProperties', True), bool):
+                fail('source_only', 409)
+            for name, child in node.get('properties', {}).items():
+                if blocks.IDENT.fullmatch(name) is None:
+                    fail('source_only', 409)
+                visit(child, path + [name], name in node.get('required', []))
+        if t == 'array':
+            visit(node.get('items'), path + ['[]'])
+    visit(schema, [])
+    return rows
+
+
+def contract_view(text):
+    contract = checks.parse_contract(jsonio.decode_exact(text))
+    obj = jsonio.decode_exact(text)
+    result = {'format': contract.format, 'source_text': text, 'projection': typed(obj), 'source_only': False, 'blank_schema': obj.get('schema') is None}
+    if contract.format == 'json':
+        try:
+            result['fields'] = field_rows(obj.get('schema'))
+        except Exception as exc:
+            from .workshop import WorkshopError
+            if not isinstance(exc, WorkshopError):
+                raise
+            result['source_only'] = True
+    return result
+
+
+def compile_rows(rows):
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 100:
+        fail()
+    nodes = {}
+    for row in rows:
+        if not isinstance(row, dict) or set(row) - {'path', 'type', 'required', 'nullable', 'description', 'choices', *BOUNDS}:
+            fail()
+        path = row.get('path')
+        if not isinstance(path, list) or len(path) > 10 or any(not isinstance(p, str) or (p != '[]' and blocks.IDENT.fullmatch(p) is None) for p in path):
+            fail()
+        key = tuple(path)
+        if key in nodes or row.get('type') not in TYPES or type(row.get('required')) is not bool or type(row.get('nullable')) is not bool:
+            fail()
+        t = TYPES[row['type']]
+        node = {'type': [t, 'null'] if row['nullable'] else t, 'description': row.get('description', '')}
+        if row['type'] == 'Choice':
+            choices = row.get('choices')
+            if not isinstance(choices, list) or not choices or not all(isinstance(c, str) for c in choices) or len(set(choices)) != len(choices):
+                fail()
+            node['enum'] = choices + ([None] if row['nullable'] else [])
+        for k, keyword in BOUNDS.items():
+            if k in row:
+                if not isinstance(row[k], str):
+                    fail()
+                node[keyword] = jsonio.decode_exact(row[k])
+        if t == 'object':
+            node.update(properties={}, required=[], additionalProperties=False)
+        nodes[key] = (node, row)
+    if () not in nodes or not nodes[()][1]['required']:
+        fail()
+    for path, (node, row) in nodes.items():
+        if not path:
+            continue
+        parent = nodes.get(path[:-1])
+        if parent is None:
+            fail()
+        p = parent[0]
+        t = p['type'][0] if isinstance(p['type'], list) else p['type']
+        if path[-1] == '[]' and t == 'array' and row['required']:
+            p['items'] = node
+        elif t == 'object' and path[-1] != '[]':
+            p['properties'][path[-1]] = node
+            if row['required']:
+                p['required'].append(path[-1])
+        else:
+            fail()
+    if any((n['type'] == 'array' or n['type'] == ['array', 'null']) and 'items' not in n for n, _ in nodes.values()):
+        fail()
+    return nodes[()][0]
+
+
+def port(spec):
+    if not isinstance(spec, dict) or set(spec) != {'name', 'description', 'format', 'fields'}:
+        fail()
+    if not isinstance(spec['name'], str) or blocks.IDENT.fullmatch(spec['name']) is None:
+        fail()
+    contract = {'format': spec['format'], 'checks': []}
+    if spec['format'] == 'json':
+        contract['schema'] = compile_rows(spec['fields'])
+    elif spec['format'] != 'text' or spec['fields'] != []:
+        fail()
+    checks.parse_contract(contract)
+    return {'description': spec['description'], 'contract': contract}
+
+
+WRAPPER = '''import sys
+from _agentwiz_starter_runtime import jsonio, templates
+params = jsonio.decode_exact({parameters})
+values = jsonio.decode_exact(sys.stdin.read())
+if not isinstance(values, dict):
+    raise ValueError('inputs must be an object')
+kind = {starter!r}
+if kind == 'count_text':
+    text = values['text']
+    out = len(text.split()) if params['unit'] == 'whitespace_words' else len(text)
+elif kind == 'select_fields':
+    out = {{}}
+    for mapping in params['mappings']:
+        current = values
+        try:
+            for segment in mapping['source_path']:
+                current = current[segment]
+        except (KeyError, TypeError):
+            if mapping['required']:
+                raise ValueError('missing required source field')
+            continue
+        out[mapping['destination']] = current
+else:
+    out, fills = templates.fill_text(params['template'], 'report', values)
+sys.stdout.write(jsonio.encode_exact({{'out': out}}))
+'''
+
+
+def generate_script(starter, parameters):
+    if starter not in SCRIPT_IDS or not isinstance(parameters, dict):
+        fail()
+    if starter == 'count_text' and (set(parameters) != {'unit'} or parameters['unit'] not in ('whitespace_words', 'characters')):
+        fail()
+    if starter == 'select_fields':
+        if set(parameters) != {'mappings'} or not isinstance(parameters['mappings'], list):
+            fail()
+        for m in parameters['mappings']:
+            if set(m) != {'source_path', 'destination', 'required'} or not isinstance(m['source_path'], list) or not m['source_path'] or type(m['required']) is not bool:
+                fail()
+            if any(not isinstance(p, str) or blocks.IDENT.fullmatch(p) is None for p in [*m['source_path'], m['destination']]):
+                fail()
+    if starter == 'format_report':
+        if set(parameters) != {'template'} or not isinstance(parameters['template'], str):
+            fail()
+        templates.scan_text(parameters['template'], 'report')
+    source = WRAPPER.format(starter=starter, parameters=repr(jsonio.encode_exact(parameters)))
+    runtime = {'scripts/_agentwiz_starter_runtime/__init__.py': b''}
+    for module in (jsonio, templates):
+        runtime['scripts/_agentwiz_starter_runtime/' + module.__name__.split('.')[-1] + '.py'] = Path(module.__file__).read_bytes()
+    # License is shipped as package data so installed generation has the same attribution.
+    runtime['scripts/_agentwiz_starter_runtime/LICENSE'] = (Path(__file__).parent / 'workshop_license.txt').read_bytes()
+    metadata = {'starter': starter, 'parameters': parameters, 'starter_version': 1,
+                'runtime_digest': fingerprint(runtime), 'support': list(runtime)}
+    return {**runtime, 'scripts/main.py': source.encode('utf-8')}, metadata
+
+
+def classification(draft):
+    from .workshop_assets import decode_files
+    m = draft.get('metadata', {})
+    if m.get('starter') not in SCRIPT_IDS:
+        return 'custom'
+    if m.get('starter_version') != 1:
+        return 'unsupported_starter_version'
+    files = decode_files(draft['files'])
+    expected = WRAPPER.format(starter=m['starter'], parameters=repr(jsonio.encode_exact(m['parameters']))).encode('utf-8')
+    runtime = {p: b for p, b in files.items() if p.startswith('scripts/_agentwiz_starter_runtime/')}
+    return 'starter' if files.get('scripts/main.py') == expected and fingerprint(runtime) == m.get('runtime_digest') and set(runtime) == set(m.get('support', [])) else 'custom'
+
+
+def starter(identifier, key, role=None, server=None, tool=None):
+    if identifier in ('blank_model','blank_tool','blank_script'):
+        kind = identifier.split('_')[1]
+        draft = starter({'model':'write_text','tool':'call_tool','script':'format_report'}[kind], key, role, server, tool)
+        definition = jsonio.decode_exact(draft['definition_text'])
+        definition['description'] = ''
+        if kind == 'model':
+            definition['steps'][0]['prompt'] = {'text':''}
+        if kind == 'script':
+            draft['files'] = {'scripts/main.py':''}
+        draft['metadata'] = {'format_version':1,'origin':'manual','effects':'unknown'}
+        draft['definition_text'] = jsonio.encode_exact(definition)
+        return draft
+    if identifier not in STARTERS:
+        fail()
+    text = {'format': 'text', 'checks': []}
+    obj = {'format_version': 1, 'name': key, 'description': identifier.replace('_', ' '),
+           'inputs': {'text': {'contract': text}}, 'outputs': {'out': {'contract': text}}, 'steps': []}
+    files, m = {}, {'format_version': 1, 'starter': identifier, 'origin': 'starter', 'effects': 'read-only'}
+    if identifier in MODEL_IDS:
+        instructions = {'write_text': 'Follow the supplied task on the text.', 'summarise': 'Summarise the text concisely.',
+                        'extract_fields': 'Extract product and quantity as JSON. Omit quantity when unspecified. Example: three notebooks -> {"product":"notebooks","quantity":3}.',
+                        'choose_label': 'Return one label, positive or negative, as a JSON string.',
+                        'check_source': 'Identify discrepancies between the text and the supplied source.'}[identifier]
+        if identifier == 'extract_fields':
+            obj['outputs']['out']['contract'] = {'format': 'json', 'schema': {'type': 'object', 'properties': {'product': {'type': 'string'}, 'quantity': {'type': 'integer'}}, 'required': ['product'], 'additionalProperties': False}}
+        if identifier == 'choose_label':
+            obj['outputs']['out']['contract'] = {'format': 'json', 'schema': {'type': 'string', 'enum': ['positive', 'negative']}}
+        if identifier == 'check_source':
+            obj['inputs']['source'] = {'contract': text}
+            instructions += '\nSource: {{inputs.source}}'
+        obj['steps'] = [{'id': 'request', 'kind': 'model', 'role': role, 'prompt': {'text': instructions + '\n{{inputs.text}}'}, 'output': 'out'}]
+    elif identifier in SCRIPT_IDS:
+        params = {'count_text': {'unit': 'whitespace_words'}, 'select_fields': {'mappings': [{'source_path': ['text'], 'destination': 'text', 'required': True}]}, 'format_report': {'template': '{{inputs.text}}'}}[identifier]
+        files, generated = generate_script(identifier, params)
+        m.update(generated)
+        obj['steps'] = [{'id': 'script', 'kind': 'script', 'file': 'scripts/main.py', 'timeout_s': 60}]
+        if identifier != 'format_report':
+            obj['outputs']['out']['contract'] = {'format': 'json', 'checks': []}
+    else:
+        m['effects'] = 'unknown'
+        obj['steps'] = [{'id': 'call', 'kind': 'tool', 'server': server, 'tool': tool, 'arguments': {}, 'output': 'out'}]
+        obj['outputs']['out']['contract'] = {'format': 'json', 'checks': []}
+    m['description_sections'] = {'use': obj['description'], 'exclusions': 'Use for one independent block operation.',
+        'effects': 'Review the selected external tool before running.' if identifier == 'call_tool' else 'Produces a returned value for review.',
+        'limitations': 'Model answers require correctness review.' if identifier in MODEL_IDS else 'Scripts have ordinary user-level filesystem and network access.' if identifier in SCRIPT_IDS else 'Remote behavior may change.',
+        'missing_data': 'Omit unspecified quantity.' if identifier == 'extract_fields' else 'Review required inputs before running.',
+        'failures': 'Inspect located input, execution and output-check issues.'}
+    return {'key': key, 'definition_text': jsonio.encode_exact(obj), 'files': wire_files(files), 'metadata': m}
+
+
+def edit(draft, operation):
+    """Apply a targeted field edit to the authoritative contract on the server."""
+    result = copy.deepcopy(draft)
+    obj = jsonio.decode_exact(result['definition_text'])
+    if operation.get('kind') == 'design_form':
+        result.setdefault('metadata', {})['display_name'] = operation['name']
+        obj['description'] = operation['purpose']
+        for side, entries in operation['ports'].items():
+            if side not in ('inputs', 'outputs'):
+                fail()
+            ports = {}
+            for e in entries:
+                name = e['name']
+                if not blocks.IDENT.fullmatch(name) or name in ports:
+                    fail()
+                original = obj[side].get(e['original'], {})
+                contract = jsonio.decode_exact(e['source']) if e['source'] else {'format': e['format']}
+                if isinstance(contract, dict):
+                    contract['format'] = e['format']
+                ports[name] = {**original, 'description': e['description'], 'contract': contract}
+            obj[side] = ports
+        step = obj['steps'][0]
+        if step['kind'] == 'model':
+            for key, value in [('prompt', operation['behaviour']), ('system', operation['system'])]:
+                if 'file' in step.get(key, {}):
+                    result['files'][step[key]['file']] = value
+                else:
+                    step[key] = {'text': value}
+            step['role'] = operation['binding'] or None
+            step['task'] = jsonio.decode_exact(operation['settings'])
+            for key, text in operation.get('sampling', {}).items():
+                if key not in ('reasoning','temperature','max_tokens'):
+                    fail()
+                if text:
+                    step['task'][key] = text if key == 'reasoning' else jsonio.decode_exact(text)
+                else:
+                    step['task'].pop(key, None)
+            step['repair'] = {'max_repairs': jsonio.decode_exact(operation['repairs'])}
+        elif step['kind'] == 'script':
+            result['files'][step['file']] = operation['behaviour']
+        else:
+            step.update(server=operation['binding'], tool=operation['behaviour'], arguments=jsonio.decode_exact(operation.get('arguments','{}')))
+        obj['budget'] = jsonio.decode_exact(operation['budget'])
+        for key, text in operation.get('limits', {}).items():
+            if key not in ('max_seconds','max_model_tokens'):
+                fail()
+            if text:
+                obj['budget'][key] = jsonio.decode_exact(text)
+            else:
+                obj['budget'].pop(key, None)
+        result['definition_text'] = jsonio.encode_exact(obj)
+    elif operation.get('kind') == 'property_form':
+        if operation['side'] not in ('inputs', 'outputs'):
+            fail()
+        contract = obj[operation['side']][operation['port']]['contract']
+        if not isinstance(contract, dict):
+            fail()
+        if contract.get('schema') is None:
+            contract['schema'] = {'type':'object','properties':{},'additionalProperties':False}
+        schema = contract['schema']
+        field_rows(schema)
+        path = operation['path']
+        node = schema
+        parent = None
+        for part in path:
+            parent = node
+            node = node['items'] if part == '[]' else node['properties'][part]
+        if operation.get('remove'):
+            if not path or path[-1] == '[]':
+                fail()
+            del parent['properties'][path[-1]]
+            parent['required'] = [k for k in parent.get('required', []) if k != path[-1]]
+            checks.parse_contract(contract)
+            result['definition_text'] = jsonio.encode_exact(obj)
+            return result
+        name = operation['name']
+        if operation['addition']:
+            parent = node
+            if not blocks.IDENT.fullmatch(name) or name in parent.get('properties', {}):
+                fail()
+            node = {}
+            parent.setdefault('properties', {})[name] = node
+        elif path and path[-1] != '[]' and name != path[-1]:
+            if not blocks.IDENT.fullmatch(name) or name in parent['properties']:
+                fail()
+            parent['properties'] = {name if k == path[-1] else k:v for k,v in parent['properties'].items()}
+            parent['required'] = [name if k == path[-1] else k for k in parent.get('required', [])]
+        typ = TYPES[operation['type']]
+        if node.get('properties') and typ != 'object' or 'items' in node and typ != 'array':
+            fail('field_has_children', 409)
+        if operation['type'] != 'Choice':
+            node.pop('enum', None)
+        previous_type = node.get('type')
+        node.update(type=[typ,'null'] if operation['nullable'] else typ, description=operation['description'])
+        if typ == 'object':
+            if previous_type not in ('object', ['object', 'null']):
+                node.setdefault('additionalProperties', False)
+            node.setdefault('properties', {})
+            if 'additional_properties' in operation:
+                if type(operation['additional_properties']) is not bool:
+                    fail()
+                node['additionalProperties'] = operation['additional_properties']
+        if typ == 'array':
+            node.setdefault('items', {'type':'string'})
+        if 'bounds' in operation:
+            names = {'integer':('minimum','maximum'),'number':('minimum','maximum'),
+                     'string':('minLength','maxLength'),'array':('minItems','maxItems')}.get(typ, ())
+            for bound, text in zip(names,operation['bounds']):
+                if text:
+                    node[bound] = jsonio.decode_exact(text)
+                else:
+                    node.pop(bound,None)
+        if operation['type'] == 'Choice':
+            node['enum'] = operation['choices'] + ([None] if operation['nullable'] else [])
+        if parent and 'properties' in parent:
+            required = [k for k in parent.get('required', []) if k != name]
+            parent['required'] = required + ([name] if operation['required'] else [])
+        checks.parse_contract(contract)
+        result['definition_text'] = jsonio.encode_exact(obj)
+    elif operation.get('kind') == 'starter_parameters':
+        if classification(result) != 'starter':
+            fail('custom_source', 409)
+        files, meta = generate_script(result['metadata']['starter'], operation['parameters'])
+        result['files'] = wire_files(files)
+        result['metadata'].update(meta)
+        result.pop('root_sources', None)
+    elif operation.get('kind') == 'contract':
+        side, name = operation['side'], operation['port']
+        if side not in ('inputs', 'outputs') or name not in obj[side]:
+            fail()
+        contract = obj[side][name]['contract']
+        if not isinstance(contract, dict):
+            fail('inline_copy_required', 409)
+        if 'source_text' in operation:
+            replacement = jsonio.decode_exact(operation['source_text'])
+            checks.parse_contract(replacement)
+            obj[side][name]['contract'] = replacement
+        else:
+            field_rows(contract.get('schema'))  # Whole-port fallback is authoritative.
+            node = contract['schema']
+            for segment in operation.get('path', []):
+                node = node['items'] if segment == '[]' else node['properties'][segment]
+            allowed = {'description', 'minimum', 'maximum', 'minLength', 'maxLength', 'minItems', 'maxItems', 'enum'}
+            for key, source in operation.get('set', {}).items():
+                if key not in allowed or not isinstance(source, str):
+                    fail()
+                node[key] = jsonio.decode_exact(source)
+            checks.parse_contract(contract)
+        result['definition_text'] = jsonio.encode_exact(obj)
+    elif operation.get('kind') == 'rename_field':
+        side, name = operation['side'], operation['port']
+        contract = obj[side][name]['contract']
+        field_rows(contract['schema'])
+        path = operation['path']
+        destination = operation['name']
+        if not path or not isinstance(destination, str) or blocks.IDENT.fullmatch(destination) is None:
+            fail()
+        node = contract['schema']
+        for segment in path[:-1]:
+            node = node['items'] if segment == '[]' else node['properties'][segment]
+        old = path[-1]
+        if old not in node.get('properties', {}) or destination in node['properties']:
+            fail()
+        node['properties'] = {destination if key == old else key: value for key, value in node['properties'].items()}
+        node['required'] = [destination if key == old else key for key in node.get('required', [])]
+        result['definition_text'] = jsonio.encode_exact(obj)
+    elif operation.get('kind') == 'description':
+        if set(operation['sections']) != set(SECTIONS) or not all(isinstance(v, str) for v in operation['sections'].values()):
+            fail()
+        result['metadata']['description_sections'] = operation['sections']
+        from .workshop_service import digest
+        result['metadata']['description_basis'] = digest({'definition': result['definition_text'], 'files': result['files']})
+    else:
+        fail()
+    return result
+
+
+def examples(identifier):
+    """Small fixed examples, with packaged human review distinct from user verification."""
+    text_cases = [('short', 'three blue notebooks'), ('empty', '')]
+    result = []
+    for i, (label, text) in enumerate(text_cases):
+        inputs = {'text': text}
+        expectation = {'kind': 'review', 'criterion': 'Review the answer against the stated task and source.'}
+        if identifier == 'count_text':
+            expectation = {'kind': 'whole_output', 'values': {'out': '3' if i == 0 else '0'}}
+        elif identifier == 'format_report':
+            expectation = {'kind': 'whole_output', 'values': {'out': text}}
+        elif identifier == 'select_fields':
+            expectation = {'kind': 'whole_output', 'values': {'out': jsonio.encode_exact({'text': text})}}
+        elif identifier == 'check_source':
+            inputs['source'] = 'An order for three blue notebooks.'
+        elif identifier == 'extract_fields':
+            inputs['text'] = 'send three blue notebooks' if i == 0 else 'send some blue notebooks'
+            expectation = {'kind': 'fields', 'assertions': [{'output': 'out', 'path': ['quantity'], 'operation': 'equals', 'value_text': '3'}] if i == 0 else [{'output': 'out', 'path': ['quantity'], 'operation': 'absent'}]}
+        result.append({'id': identifier + '-' + str(i + 1), 'version': 1, 'label': label, 'inputs': inputs,
+                       'expectation': expectation, 'origin': 'packaged_human_reviewed', 'verified': True, 'held_out': i == 1})
+    return result

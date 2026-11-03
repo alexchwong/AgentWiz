@@ -53,19 +53,19 @@ Paths in this table are relative to the repository root.
 | `agentwiz/errors.py` | yes | **0.1.4.** `report_internal` (re-exported by `ui/server.py`) and `ShuttingDown`, the base of every "admission closed" error. |
 | `agentwiz/roles.py` | yes | **0.1.4.** `roles.json`: parsing, reading, writing. Called from `state.py` under the state lock. No HTTP. |
 | `agentwiz/templates.py` | yes | **0.1.4.** `{{inputs.x.y}}` scanning and filling (text and typed), with provenance. No HTTP. |
-| `agentwiz/blocks.py` | yes | **0.1.4.** The block loader, problems, the block store (fingerprints, effective revisions, cache) and the `GET /api/blocks/<name>` view. Reads files only, never writes. No HTTP. |
+| `agentwiz/blocks.py` | yes | **0.1.4.** The block loader, problems, the block store (fingerprints, effective revisions, cache) and the `GET /api/blocks/<name>` view. Reads legacy or managed executable generations. Workshop publication lives in workshop_assets. No HTTP. |
 | `agentwiz/script_step.py` | yes | **0.1.4.** The script step: the single `selectors` supervisor owning the pipes, process-group handling, `Retained` cleanup owners. Hooks `spawn`, `after_spawn`. No HTTP. |
 | `agentwiz/executor.py` | yes | **0.1.4.** `execute_step` for model, tool and script steps; token tally; step results. Called only by `runner.py`. No HTTP. |
 | `agentwiz/runner.py` | yes | **0.1.4.** `run_block`: input checks, admission, preparation, the executor, the one finaliser, the observer, timers (`make_timer`, `before_run_end`). No HTTP. |
 | `agentwiz/tutorial.py`, `agentwiz/tutorial_topics.py` | yes | The tutorial session manager (child UI, seeding, the pending session) and, **0.1.4**, the topic registry the server, page and tests read. |
 | `agentwiz/tutorial_support/blocks/` | yes | **0.1.4.** The four example blocks (`extract_fields`, `echo_numbers`, `word_count`, `wait_for_stop`) copied byte for byte into the tutorial's temporary workspace. |
 | `agentwiz/ui/server.py` | yes | The HTTP server; the only module that knows HTTP. `Handler.write_event` is the one writer of stream events. |
-| `agentwiz/ui/index.html` | yes | The page: seven tabs, header dialogs (Model settings, MCP servers, Roles), one file with no build step. |
+| `agentwiz/ui/index.html` | yes | Workshop/Workbench/History, shared Settings dialogs; one framework-free file with no build step. |
 | `pyproject.toml`, `README.md`, `LICENSE` | metadata | Packaging, wheel description, MIT license. |
 | `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`; 0.1.3: `test_checks.py`, `test_contracts.py`, `test_runs.py`, `test_model_step.py`, `test_attempts.py`, `test_history.py`, `test_page.py`, `test_live_judgement.py`; 0.1.4: `test_roles.py`, `test_templates.py`, `test_blocks.py`, `test_block_routes.py`, `test_block_tool.py`, `test_scripts.py`, `test_script_cleanup.py`, `test_runner.py`, `test_shutdown.py`, `test_signals.py`, `test_tutorial.py`), opt-in live checks (`test_live.py`, with the pure judgement function `live_stop.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
 | `docs/attachment_interface.md` | no | The attachment interface (companion document, version 3, draft). |
 | `scripts/build_release.py` | no | Builds the release wheel from `HEAD`, runs release checks RC1–RC3; `--smoke`; `--no-isolation`; `--modelspell-wheel` (offline smoke); `--changed-since`. |
-| `scripts/smoke_installed.py` | no | Smoke check (S1–S14) against an installed wheel. |
+| `scripts/smoke_installed.py` | no | Smoke check (S1–S15) against an installed wheel. |
 | `scripts/dev_setup.sh` | no | Developer setup: `./.venv` with an editable install, pytest, `jsonschema`, Playwright and Chromium. |
 | `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for trying the UI without a model; logs the sampling fields and message roles each request carries. Models `json-pass`, `json-repair` and `slow-headers` serve the README tour. |
 | `scripts/stub_mcp_server.py` | no | Scripted MCP server (`--era dual|modern|legacy`, `--token`) for trying the MCP tools tab; logs every request, disconnect, notice and `DELETE`. |
@@ -174,7 +174,8 @@ modelSpell's copies are ported only by deliberate review, never synced automatic
 The page is one file, `agentwiz/ui/index.html`, with markup, styles and script and no build step,
 no framework. Its script has shared helpers (the API call with the session token, the NDJSON reader,
 Copy, the task-panel component, the stale-revision handler, the request controller Chat and Checked
-request use) and one section per tab. No tab reads or writes another tab's state. Every
+request use) and one section per tab. Independent Workbench utilities keep separate state. Workshop Design/Test/Compare share the explicitly
+selected draft, inputs, examples and evidence. Every
 server-provided string is inserted with `textContent` or `new Option`, never as markup.
 
 The request controller correlates every asynchronous update with an attempt ID, keeps reading its
@@ -351,11 +352,12 @@ repair preview. Only a `complete` attempt whose check `pass`es is accepted.
 
 ## Tutorial implementation
 
-Implementation (0.1.4): `agentwiz/tutorial_topics.py` holds `TOPICS`, `public()` and `by_id()`;
+Implementation (0.2.0): `agentwiz/tutorial_topics.py` holds `TOPICS`, `public()` and `by_id()`;
 `/api/tutorial` returns the topic list and `/api/tutorial/step` takes `{"topic": <id>}` (400 for an
 unknown ID, `{"busy": true}` while a model request, a tool call or a block run is running). A session
 seeds its temporary workspace with the profile `tutorial-json`, `roles.json` (`fast` to that profile)
-and the four example blocks, and re-saves the `fields` contract. Exit closes the child through
+and the four example blocks, and re-saves the `fields` contract. Assistance topics select their packaged model
+through a topic-local profile in that same temporary workspace. Exit closes the child through
 `UIServer.server_close(wait=False)` once; an outstanding cleanup makes the session the manager's one
 pending session (state, workspace and `TemporaryDirectory` kept until it drains); `Tutorial.shutdown_all()`
 (built from `begin_shutdown()` and `finish()`) drains it at the parent's shutdown. `test_tutorial_topics`
@@ -561,8 +563,9 @@ exit status and captured stderr size, not raw child output that might contain cr
 
 ## Installed tutorial lifecycle
 
-**Implementation (0.1.4, replacing the 0.1.3 paragraph).** Topics come from `tutorial_topics.TOPICS` (eight:
-the five 0.1.3 topics, annotated 0.1.3, and `model-block`, `tool-block`, `script-block`, annotated 0.1.4);
+**Implementation (0.2.0).** Topics come from `tutorial_topics.TOPICS` (fourteen:
+the five unchanged utility topics annotated 0.1.3, three migrated block topics, one
+authoring/testing/comparison topic and five assistance topics annotated 0.2.0);
 see `../DEVEL.md`, "UI and tutorial rules". The gate drives every topic's main action in headless
 Chromium (`tests/test_tutorial.py`, #112) and checks the sandbox and the bounded Exit (#113).
 
@@ -595,3 +598,165 @@ python -m pip install -e ../modelSpell
 
 Never commit that change. Releases always use the pinned wheel; reinstall with
 `python -m pip install -e '.[dev,checks]' --force-reinstall` to return to it.
+
+### Workshop headless services and Phase 2 integration
+
+`ProcessState.workshop` is the public headless service. `workshop_assets.Assets`
+owns publication and source capture, `workshop_editor` owns typed projections and
+versioned starter renderers, and `workshop_assist` owns closed proposal schemas and
+compilation. HTTP handlers translate requests only. All execution uses
+`runner.run_block(..., frozen=FrozenSource(...))`; existing callers retain live
+resolution. A frozen source captures the destination, credentials, settings,
+contracts, source bytes and save preference once. Script cleanup owners retain the
+private capture through the existing Env ownership chain. Managed/captured scripts
+use `python -B`. Scripts retain ordinary user-level filesystem/network access.
+
+The framework-free page uses Workshop, Workbench and History, with Design/Test/Compare
+sharing one in-memory draft. `#workshop/<key>/<view>` validates against the workspace;
+no source content enters navigation state. Dirty replacement offers Save/Discard/Stay.
+The page plans every Workshop Save/Start/Apply and resolves lost Start replies via
+its ticket before following the batch. Complete generated source is shown during
+review. Existing block clients retain compatibility; the saved-block inspector uses
+the ticketed Workshop coordinator while preserving its original trace/Stop hooks.
+
+Five deterministic proposal models named `workshop-<action>` are packaged in the
+isolated tutorial backend. `tutorial_support.workshop` supplies their closed responses.
+The three block topics now prepare Workshop Test; one authoring topic and five
+assistance topics bring the registry to fourteen. Their browser drivers run every
+main action. Tutorial configuration never touches the owner's workspace or keys.
+
+#### Wire conventions
+
+All new POST/PUT envelopes have integer `format_version: 1`. Editable data numbers
+and expected values travel as source strings. A draft is:
+
+```json
+{"key":"example","definition_text":"<exact v1 executable JSON>","files":{"scripts/main.py":"<UTF-8 source>"},"metadata":{"format_version":1,"origin":"manual","effects":"unknown","support":[]}}
+```
+
+Files may alternatively be `{encoding:"base64",text:"..."}` records for binary
+support or lossless exports. Paths are relative, link-free and bounded. No draft
+file may be undeclared: the executable's references plus selected support must
+account for the complete set. The server constructs assistant-generated filenames.
+`definition_text` remains the advanced escape hatch. Preview returns port contract
+projections, exact source, facts, descriptions, freshness, setup issues and a filled
+prompt/arguments when inputs are supplied. Unsupported schemas are source-only.
+Targeted contract edits operate on the original exact object and preserve opaque
+constraints. Reference/shape-changing schemas refuse visual editing.
+
+| Method and path under `/api/workshop` | Behavior |
+| --- | --- |
+| GET `starters` | Nine starter IDs, versions and two packaged examples each. |
+| POST `render-value`, `input-value`, `answer-view` | Exact literal text to typed presentation, or typed input back to exact text; checked answers use the existing checker/parser for display. |
+| POST `contract-form` | Shared Contracts field projection/edit against the original exact contract. |
+| POST `preview` | Accept draft, starter/key/binding, or key/revision/support selection. No dispatch/publication. |
+| POST `plans` | `{action,request}` returns `expected_plan`, effective descriptor and required confirmations. |
+| POST `save` | Draft/source, `expected_identity`, expected plan and confirmations publish one revision. |
+| GET `blocks/<key>/revisions[/<id>]` | Revision summaries or exact historical preview. |
+| GET `blocks/<key>/support` | Bounded root candidates and captured support set. |
+| POST `blocks/<key>/support/preview` | Explicit `replace`/`remove` paths update a draft, retaining old revisions. |
+| GET/PUT `blocks/<key>/examples` | Collection with revision or save using `expected_revision`. |
+| POST `test` | One source and input-text map start a frozen normal run. |
+| POST `batches` | One/two candidates and ordered exact examples start serial independent trials. |
+| GET `batches` | Current and latest completed session batch IDs. |
+| GET `batches/<id>` | Rows, child run IDs, evidence summaries and denominators. |
+| POST `batches/<id>/stop` | Cancel current child and remaining trials. |
+| POST `assist` | One independently requested action using an assigned assistant role. |
+| POST `proposals/apply` | Proposal ID, matching draft and expected plan produce draft/examples only. |
+| PUT `reviews/<run>` | Result-bound rating and optional durable review, with expected revision. |
+| GET `comparisons[/<id>]`, DELETE `comparisons/<id>` | Saved comparison listing/read or independent deletion. |
+| GET `workspace-open?name=...` | Absolute, shell-quoted separate launch command and existing names. |
+
+Start requests require a server-issued ticket. Plan a request before sending it.
+Echo each required `{kind,digest}` acknowledgement, omitting `detail`. Repeat the
+same ticket/body after a lost reply, or GET its status. Its operation ID is the batch
+ID while active. An accepted duplicate resolves before rechecking source freshness.
+No automatic restart/replay is performed. Configuration/context/save changes require
+a new plan. Schema observations are evidence, excluded from the action binding.
+
+A source selector uses `key` and optional durable `revision`; drafts use `draft`.
+`preview` also accepts `duplicate_key`, `display_name`, or an `edit` operation.
+`starter_parameters` regenerates a current version only after an actual edit.
+`contract` identifies side/port/path and exact `set` values, or `source_text`.
+`description` explicitly reviews the six semantic sections against the current basis.
+Historical selectors inline captured contracts for replay/restore. Save exposes
+that restoration in a required acknowledgement. Live definitions retain named
+contract dependencies.
+
+Examples contain id/version/label, named input source texts, expectation,
+origin/verified and optional held_out. An expectation is `whole_output` with a
+`values` map, `fields` with path-segment `assertions`, or `review` with a criterion.
+Assertions distinguish equals, absent, present and null. Edits invalidate
+verification. Batch requests may supply a frozen example list, or
+`example_selection:{key,revision,ids}` to bind current saved versions. Candidates
+must expose the same interface and use identical frozen examples. The coordinator
+alternates baseline/candidate order between examples.
+
+For a review, context contains snapshot_id, example_id, example_version and
+result_digest from the completed row. The store reserves the run against deletion
+before durable writing. `review-<revision>.json` files are write-once. History reads
+expose review versions/current review. Existing attempt/result files remain immutable.
+Only complete accepted evidence is reviewable. Redacted replay evidence is refused.
+
+#### Storage, locks and recovery
+
+A v2 `blocks/<key>/block.json` contains only format_version/current/retained.
+Executable v1 assets and Workshop metadata live under
+`.workshop/revisions/<128-bit-id>/`. Publication stages on the same filesystem,
+validates with the existing loader and atomically replaces the head last. Asset
+fingerprints cover length, path and exact bytes. The metadata records source and
+contract snapshots, origin, support, starter version/runtime identity and source
+acknowledgement. Retain newest 20. Pins protect loaded generations through real
+execution/cleanup. Pruning happens after head publication, and a later save/startup
+reaps generations whose pins have finished. Unknown/damaged heads are preserved.
+Private validation/captures use temporary directories outside the workspace.
+
+C6 is the one Workshop leaf lock, shared with tickets. It protects reservations,
+pins, batch state, proposal references and session reviews. Existing locks may
+acquire C6. Code holding C6 must never acquire any other lock, perform I/O, call
+state/store methods or callbacks, dispatch, or wait. Logical reservations/pins
+survive release of the actual lock. Publication, examples, reviews and coordinators
+register with the shutdown writer barrier. Shutdown closes Workshop admission,
+marks the batch cancelled, releases C6 and cancels its child through the ordinary
+run token. It prevents admission of the next child.
+
+Saved comparisons write a manifest before dispatch. Before each child, write a
+specific `dispatch_pending` row durably, then invoke the normal runner. Marker
+failure prevents dispatch and ends the batch. Terminal evidence is collected before
+advancing, so attempt-cache eviction cannot erase earlier metrics. Unresolved saved
+markers read as interrupted/outcome unknown after restart and are never resent.
+DELETE returns 409 while the coordinator owns any future write, including its final
+write. Saved child runs have their independent deletion lifecycle. Run deletion
+never recreates evidence through a comparison.
+
+Support preview accepts the current draft to preserve unsaved entry/support edits.
+Root replacements carry draft-only `root_sources` digests, checked under the logical
+publication reservation before staging and again before head publication. They are
+not persisted as future live dependencies. Duplicate and starter regeneration clear
+these working-copy preconditions.
+
+At most one batch is active and the latest completed session batch is retained.
+At most 50 examples and two candidates are admitted. Output previews have a 32 MiB
+budget and pre-dispatch manifest source snapshots have a 64 MiB budget. Incomplete
+previews retain digests/metrics and disable rating. Save choice is frozen at Start.
+Saving off and read-only mode use session evidence and private captures. Read-only
+mode rejects explicit persistence. Known-credential redaction remains best effort.
+
+MCP observations are exact-schema digests from ordinary successful discovery in
+both protocol eras, bounded to 128 identities and TOOL_LIMIT tools each. No extra
+discovery fills them. Configuration/credential changes stop a captured tool batch;
+schema observation differences are reported conditions and do not enforce a remote
+implementation. Model/backend internal conditions remain unknown.
+
+#### Experiments and replay
+
+D72's LM Studio/llama-server Stop and checked-request live checks now use the same
+judgement as OpenRouter. They remain optional and require configured owner backends.
+`python scripts/replay_output.py --fixture PATH` accepts exported evidence, or use
+`--workspace PATH --attempt ID` for saved attempts. An explicit span or replacement
+file is compared through the unchanged checker. It reports discarded text, exact
+recovered value and both judgements. Redaction/incomplete evidence is unassessable.
+Truncation remains an acceptance failure. The tool never sends network requests and
+never installs a production recovery rule.
+
+Experiment fixture submission uses scripts/workshop_experiment.py with --task label or --task extract. Offline --print-fixture writes no workspace data. Live submission uses the same ticket, plan and batch APIs. No execution engine or automatic parser promotion is provided by that client.
