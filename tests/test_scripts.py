@@ -103,16 +103,29 @@ def test_the_environment_is_an_allow_list(ui, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-SENTINEL-ENV")
     monkeypatch.setenv("PYTHONPATH", "/nonexistent")
     monkeypatch.setenv("LC_ALL", "C.UTF-8")
+    allowed = {"PATH", "HOME", "LANG", "TMPDIR", "AGENTWIZ_RUN_ID", "AGENTWIZ_BLOCK"}
+    expected = {name: value for name, value in os.environ.items()
+                if name in {"PATH", "HOME", "LANG", "TMPDIR"} or name.startswith("LC_")}
+    launched = []
+    original = script_step.spawn
+
+    def capture_environment(argv, **kwargs):
+        launched.append(dict(kwargs["env"]))
+        return original(argv, **kwargs)
+
+    monkeypatch.setattr(script_step, "spawn", capture_environment)
     write_script(ui, PREAMBLE + "print(json.dumps({'x': json.dumps(sorted(os.environ)), "
                                 "'y': {'run': os.environ.get('AGENTWIZ_RUN_ID'), 'block': os.environ.get('AGENTWIZ_BLOCK')}}))\n")
     result = run(ui)
+    assert result["outcome"] == "complete", result
+    expected.update(AGENTWIZ_RUN_ID=result["run_id"], AGENTWIZ_BLOCK="sc")
+    assert launched == [expected]
     names = jsonio.decode_exact(result["outputs"]["x"]["text"])
     assert "OPENROUTER_API_KEY" not in names and "PYTHONPATH" not in names
     assert "AGENTWIZ_RUN_ID" in names and "AGENTWIZ_BLOCK" in names and "LC_ALL" in names
-    assert set(names) <= {"PATH", "HOME", "LANG", "TMPDIR", "LC_ALL", "AGENTWIZ_RUN_ID", "AGENTWIZ_BLOCK",
-                          "LC_CTYPE", "LC_COLLATE", "LC_MESSAGES", "LC_NUMERIC", "LC_TIME", "LC_MONETARY",
-                          "LC_PAPER", "LC_NAME", "LC_ADDRESS", "LC_TELEPHONE", "LC_MEASUREMENT",
-                          "LC_IDENTIFICATION", "LC_ALL"} | {n for n in names if n.startswith(("LC_", "LC"))}
+    # CoreFoundation may add this in the child; it must not be passed at launch.
+    runtime_added = {"__CF_USER_TEXT_ENCODING"} if sys.platform == "darwin" else set()
+    assert set(names) <= allowed | {n for n in names if n.startswith("LC_")} | runtime_added
     out = jsonio.decode_exact(result["outputs"]["y"]["text"])
     assert out == {"run": result["run_id"], "block": "sc"}
 
