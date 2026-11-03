@@ -49,6 +49,78 @@ the page checks will not run without it); it also converts a `.venv` made by the
 (`scripts/install.sh`) refuses to run in a checkout unless `--dir` is given. `./workspaces/`, `./model_profiles/` and
 `./mcp_servers/` are ignored by git in this checkout.
 
+### Live pytest quick starts
+
+Run these Bash blocks from the repository root after developer setup. Each activates `.venv`
+and runs only that backend's basic live check, not MCP, Stop or checked-request tests.
+Each block supplies default environment settings with `${VAR:-default}`: an existing non-empty
+value takes precedence. The subshell keeps activation and variables set here out of the parent
+shell. Local servers must already be running with Qwen3.8-27B loaded; these commands do not download or start a model.
+
+**LM Studio — Qwen3.8-27B**
+
+Use the exact model ID exposed by LM Studio's `/v1/models`; change the example ID if your
+loaded Qwen3.8-27B has a different identifier. If server authentication is on, uncomment the
+hidden token prompt (or export `AGENTWIZ_LIVE_LMSTUDIO_KEY` beforehand).
+
+```bash
+(
+  . .venv/bin/activate || exit
+  export AGENTWIZ_LIVE_LMSTUDIO_URL="${AGENTWIZ_LIVE_LMSTUDIO_URL:-http://localhost:1234/v1}"
+  export AGENTWIZ_LIVE_LMSTUDIO_MODEL="${AGENTWIZ_LIVE_LMSTUDIO_MODEL:-qwen3.8-27b}"
+  export AGENTWIZ_LIVE_TIMEOUT="${AGENTWIZ_LIVE_TIMEOUT:-600}"
+  # read -r -s -p 'LM Studio token: ' AGENTWIZ_LIVE_LMSTUDIO_KEY || exit; printf '\n'
+  # export AGENTWIZ_LIVE_LMSTUDIO_KEY
+  python -m pytest -m live -s tests/test_live.py::test_live_lmstudio
+)
+```
+
+**OpenRouter — Qwen3.8-27B**
+
+This uses OpenRouter's model slug `qwen/qwen3.8-27b` and sends a real, potentially billable
+request. The hidden prompt is used only if `OPENROUTER_API_KEY` is not already set; never paste
+a real key into this guide or a shell command. The basic check prints the available provider
+slugs and pins the first by default, with fallbacks off. If account settings exclude it,
+uncomment the provider override and replace its value with an allowed slug from that output.
+
+```bash
+(
+  . .venv/bin/activate || exit
+  if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+    read -r -s -p 'OpenRouter API key: ' OPENROUTER_API_KEY || exit
+    printf '\n'
+  fi
+  export OPENROUTER_API_KEY
+  export AGENTWIZ_LIVE_OPENROUTER_MODEL="${AGENTWIZ_LIVE_OPENROUTER_MODEL:-qwen/qwen3.8-27b}"
+  export AGENTWIZ_LIVE_TIMEOUT="${AGENTWIZ_LIVE_TIMEOUT:-600}"
+  # export AGENTWIZ_LIVE_OPENROUTER_PROVIDER='provider-slug-from-test-output'
+  python -m pytest -m live -s tests/test_live.py::test_live_openrouter
+)
+```
+
+**llama-server — Qwen3.8-27B**
+
+Use the model ID or alias exposed by your running server's `/v1/models`; change the example
+ID to match its Qwen3.8-27B deployment. This live check has no llama-server API-key variable,
+so use a local endpoint that does not require authentication.
+
+```bash
+(
+  . .venv/bin/activate || exit
+  export AGENTWIZ_LIVE_LLAMASERVER_URL="${AGENTWIZ_LIVE_LLAMASERVER_URL:-http://127.0.0.1:8080/v1}"
+  export AGENTWIZ_LIVE_LLAMASERVER_MODEL="${AGENTWIZ_LIVE_LLAMASERVER_MODEL:-qwen3.8-27b}"
+  export AGENTWIZ_LIVE_TIMEOUT="${AGENTWIZ_LIVE_TIMEOUT:-600}"
+  python -m pytest -m live -s tests/test_live.py::test_live_llamaserver
+)
+```
+
+All three inherit `AGENTWIZ_LIVE_TIMEOUT`, whose default is 600 seconds per read, not a
+whole-test deadline. For a model that takes longer to load or reason before its first visible
+token, add `export AGENTWIZ_LIVE_TIMEOUT=1200` inside the chosen block before the pytest command.
+A skip because required variables are missing is not a successful live check. These optional
+checks do not replace the offline gate. OpenRouter's additional Stop and checked-request
+checks remain separate; LM Studio and llama-server variants remain blocked as described in [Tests](#tests).
+
 ## Contents
 
 - [Repository layout](#repository-layout)
@@ -691,6 +763,9 @@ the model's first visible token, so a loading or silently reasoning model can ta
 live checks are human checks: they never run in a checkpoint gate, which deselects them with
 `-m "not live"` (unsetting `AGENTWIZ_LIVE_*` alone would not be enough: the OpenRouter check reads
 `OPENROUTER_API_KEY`).
+
+For copy-and-paste provider commands with default environment settings, see
+[Live pytest quick starts](#live-pytest-quick-starts) in Quick start.
 
 **Building 0.1.3.** Phases P, 0, A, B, D and E (specification 0.1.3, Section 21); the 0.1.2 rules
 below apply unchanged. The gate in every phase is the whole offline suite on the prepared
