@@ -1,4 +1,22 @@
 # NEWS
+## 0.1.4
+- Blocks tab: run single-step blocks saved as folders in the workspace, with a generated input form and trace.
+- Block files are JSON, with prompts in Markdown files; AgentWiz reads them and never writes them.
+- Model, tool and script steps run through one executor; each output is checked against its contract.
+- Inputs are checked against their contracts before anything runs; a failing input rejects the run.
+- Roles dialog maps role names such as fast to profiles; block steps choose their model by role.
+- Templates fill {{inputs.name}} placeholders; tool arguments keep each value's JSON type and exact digits.
+- Script steps run your own Python files with JSON in and out, a time limit and no credentials.
+- Scripts are not sandboxed: they run as you, with your access to files and the network.
+- Automatic repair: repair.max_repairs counts model calls after the first; default 2, at most 5.
+- A cut-off answer is repaired with a message saying so, and is never accepted as a block output.
+- Contracts are never sent to the model; README explains how to state the required output in prompts.
+- Block runs reserve their slots up front, have time and token budgets, and Stop ends any step.
+- Block runs keep going if the page closes; the Blocks tab finds running ones again.
+- Saved block runs include a result file; History shows them with their outputs and step details.
+- Repairs record whether they followed a failed check or a cut-off answer.
+- Tutorial: three new Blocks topics; every topic shows the version that last updated it.
+
 ## 0.1.3
 - Tutorial mode prepares an isolated workbench, fills examples and offers optional learning examples without manual service setup.
 - The page is now tabs: Chat, Documents, MCP tools, Contracts, Checked request and History.

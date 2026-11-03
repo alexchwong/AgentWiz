@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import json
 import secrets
+import socket
 import sys
 import threading
 import traceback
@@ -23,20 +24,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import TCPServer
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import modelspell
 from modelspell import ModelSpellError
 
 from .. import (__version__, attachments, checks, contracts, history, insertion, jsonio, mcp_ops, model_call, model_step,
-                runs, tool_forms)
+                runner, runs, tool_forms, tutorial_topics)
 from .. import workspace as wsmod
+from ..errors import ShuttingDown, report_internal  # noqa: F401  (re-exported; defined in errors.py since 0.1.4)
 from ..mcp_client import MCPError
 from ..model_call import SettingsError, describe_error
 from ..task_settings import TaskSettingError, parse_task
-from ..state import (DefaultConflict, NoSuchProfile, NoSuchServer, ProcessState, ReadOnly, StaleRevision,
-                     WriteFailed)
-from ..workspace import Workspace
+from ..tutorial import TutorialBusy
+from ..state import (SHUTDOWN_GRACE_S, BlockUnusable, DefaultConflict, NoSuchBlock, NoSuchProfile, NoSuchServer, ProcessState, ReadOnly,
+                     RoleProfileMissing, StaleRevision, WriteFailed)
+from ..workspace import NAME_RE, Workspace
 
 INDEX = Path(__file__).with_name("index.html")
 JSON = "application/json"
@@ -47,6 +50,10 @@ _HEX = set("0123456789abcdefABCDEF")
 
 class BodyError(ValueError):
     """A malformed request body or field. Messages are fixed or name fields only."""
+
+
+class BlockBodyError(BodyError):
+    """A block run request whose body does not fit the block's declarations (400 `block_body`)."""
 
 
 class _ReadTimeout(Exception):
@@ -101,21 +108,6 @@ def decode_filename(header: str | None) -> str:
     return name
 
 
-def report_internal(route: str, exc: BaseException) -> None:
-    """Terminal report for an unexpected failure: class and stack locations only, never messages."""
-    lines = [f"[AgentWiz] internal error in {route}: {type(exc).__name__}"]
-    seen: set[int] = set()
-    current: BaseException | None = exc
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        if current is not exc:
-            lines.append(f"  caused by {type(current).__name__}")
-        for frame in traceback.extract_tb(current.__traceback__):
-            lines.append(f"    {frame.filename}, line {frame.lineno}, in {frame.name}")
-        current = current.__cause__ or current.__context__
-    print("\n".join(lines), file=sys.stderr, flush=True)
-
-
 class UIServer(ThreadingHTTPServer):
     daemon_threads = True
 
@@ -130,6 +122,7 @@ class UIServer(ThreadingHTTPServer):
                                   mcp_servers_dir=mcp_servers_dir if mcp_servers_dir is not None
                                   else Path("./mcp_servers"))
         self.page_timeout = page_timeout
+        self.grace_s = SHUTDOWN_GRACE_S               # tests lower it; the tutorial's Exit uses it for its bounded waits
         self.index = INDEX.read_bytes()
         super().__init__(("127.0.0.1", port), Handler)
 
@@ -147,9 +140,15 @@ class UIServer(ThreadingHTTPServer):
         if exc is not None:
             report_internal("connection", exc)
 
-    def server_close(self) -> None:
-        self.tutorial.close()
+    def server_close(self, *, wait: bool = True) -> list[str]:
+        """Close the listening socket and shut the process state down (10.10): the tutorial's session first
+        (bounded), then admission, cancellation and the drain. Returns the labels still outstanding (empty once
+        drained; non-empty only with `wait=False`). Idempotent: a drained state answers at once."""
+        pending = self.tutorial.begin_shutdown(take_pending=wait)
         super().server_close()
+        left = self.state.shutdown(grace_s=self.grace_s, wait=wait)
+        self.tutorial.finish(pending)             # a pending tutorial session, only after this state has drained
+        return left
 
 
 def _optional_str(body: dict, name: str) -> str:
@@ -173,6 +172,74 @@ def _revision(body: dict) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise BodyError("revision is required and must be an integer")
     return value
+
+
+class _Delivery:
+    """One page connection's event delivery, which shutdown can interrupt (10.10, step 2): further writes are
+    dropped and a write blocked on a page that stopped reading ends because the socket is shut down."""
+
+    def __init__(self, handler: "Handler"):
+        self.handler = handler
+        self._lock = threading.Lock()
+        self.gone = False
+
+    def interrupt(self) -> None:
+        with self._lock:
+            self.gone = True
+        try:
+            socket.socket.shutdown(self.handler.connection, socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+
+class BlockDelivery(_Delivery, runner.Observer):
+    """The HTTP observer of a block run (10.9). Every write is best effort and bounded by the page timeout; after
+    the first failure it marks itself gone and drops every later event without touching the socket. It never
+    raises into the runner and never cancels anything."""
+
+    def __init__(self, handler: "Handler"):
+        super().__init__(handler)
+        self.head_sent = False
+        self.run_id: str | None = None
+
+    def _write(self, event: dict) -> None:
+        with self._lock:
+            if self.gone:
+                return
+        try:
+            if not self.head_sent:
+                self.head_sent = True
+                self.handler.send_response(200)
+                self.handler.send_header("Content-Type", "application/x-ndjson")
+                self.handler.send_header("Cache-Control", "no-store")
+                self.handler.end_headers()
+            self.handler.write_event(event)
+        except OSError:                                      # includes TimeoutError
+            with self._lock:
+                self.gone = True
+
+    def started(self, event: dict) -> None:
+        self.run_id = event.get("run_id")
+        # Registered only now: a request refused before it had a run must still be able to send its 503. If
+        # shutdown has already begun, this interrupts the connection at once, which is what a started run needs.
+        self.handler.server.state.add_delivery(self)
+        self._write(event)
+
+    def attempt_committed(self, record: dict) -> None:
+        check = record.get("check")
+        self._write({"type": "attempt", "run_id": record["run_id"], "attempt_id": record["id"],
+                     "attempt": record["attempt"], "outcome": record["outcome"],
+                     "check": check.get("overall") if isinstance(check, dict) else None,
+                     "repair_reason": record.get("repair_reason")})
+
+    def operation_started(self, kind: str) -> None:
+        self._write({"type": "operation", "run_id": self.run_id, "kind": kind, "state": "running"})
+
+    def final(self, event: dict) -> None:
+        self._write(event)
+
+    def saved(self, event: dict) -> None:
+        self._write(event)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -250,6 +317,8 @@ class Handler(BaseHTTPRequestHandler):
             self._reply_safely(400, {"error": str(exc), "code": exc.code})
         except TaskSettingError as exc:  # AgentWiz's text or a modelSpell pre-send message
             self._reply_safely(400, {"error": f"TaskSettingError: {exc}", "code": "task_setting"})
+        except BlockBodyError as exc:
+            self._reply_safely(400, {"error": f"BlockBodyError: {exc}", "code": "block_body"})
         except (BodyError, SettingsError) as exc:
             self._reply_safely(400, {"error": f"{type(exc).__name__}: {exc}"})
         except StaleRevision:
@@ -260,8 +329,19 @@ class Handler(BaseHTTPRequestHandler):
             self._reply_safely(409, {"error": str(exc), "code": "read_only"})
         except BadArguments as exc:
             self._reply_safely(400, {"error": f"BadArguments: {exc}", "code": "bad_arguments"})
-        except mcp_ops.Busy as exc:
+        except (mcp_ops.Busy, ShuttingDown, TutorialBusy) as exc:
             self._reply_safely(503, {"error": str(exc), "code": "busy"})
+        except runner.Busy as exc:  # names the budget (15.1)
+            self._reply_safely(503, {"error": f"{exc.limit} {exc.budget} are still running or stopping. "
+                                              "Wait for one to finish.", "code": "busy", "budget": exc.budget})
+        except BlockUnusable as exc:  # the problem names files, locations and rules, never values
+            self._reply_safely(409, {"error": str(exc), "code": "block_unusable", "problem": exc.problem.view()})
+        except runs.NoSuchRunInMemory:
+            self._reply_safely(404, {"error": "no such run", "code": "no_such_run"})
+        except RoleProfileMissing as exc:  # names the role, never the profile
+            self._reply_safely(400, {"error": str(exc), "code": "no_such_profile", "role": exc.role})
+        except NoSuchBlock:
+            self._reply_safely(404, {"error": "no such block", "code": "no_such_block"})
         except NoSuchServer:
             self._reply_safely(404, {"error": "no such MCP server", "code": "no_such_server"})
         except mcp_ops.NoSuchOperation:
@@ -282,7 +362,7 @@ class Handler(BaseHTTPRequestHandler):
         except runs.NoSuchAttempt:
             self._reply_safely(404, {"error": "no such attempt", "code": "no_such_attempt"})
         except runs.NotHeld:
-            self._reply_safely(410, {"error": "This attempt's outcome is no longer held.", "code": "not_held"})
+            self._reply_safely(410, {"error": "This outcome is no longer held.", "code": "not_held"})
         except runs.RunActive:
             self._reply_safely(409, {"error": "This run is still active; try again when it has finished.",
                                      "code": "run_active"})
@@ -327,8 +407,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, session.info() if session else {"active": False})
         if path.startswith("/api/contracts/"):
             return self._send(200, self.server.state.get_contract(path[len("/api/contracts/"):]))
+        if path == "/api/blocks":
+            query = parse_qs(urlparse(self.path).query)
+            listing = self.server.state.block_listing(reload=query.get("reload") == ["1"])
+            return self._send(200, {**listing, "active_runs": self.server.state.store.active_block_runs()})
+        if path.startswith("/api/blocks/"):
+            return self._send(200, self.server.state.block_detail(self._block_name(path[len("/api/blocks/"):])))
         if path.startswith("/api/attempts/"):
             return self._attempt_poll(path[len("/api/attempts/"):])
+        if path.startswith("/api/block_runs/"):
+            return self._block_run_poll(path[len("/api/block_runs/"):])
         if path == "/api/runs":
             return self._send(200, self.server.state.history.list_runs())
         if path.startswith("/api/runs/"):
@@ -353,7 +441,8 @@ class Handler(BaseHTTPRequestHandler):
                   "/api/profiles/save": self._profile_save, "/api/profiles/select": self._profile_select,
                   "/api/profiles/delete": self._profile_delete,
                   "/api/profiles/update": self._profile_update,
-                  "/api/task_settings/save": self._task_save,
+                  "/api/task_settings/save": self._task_save, "/api/roles/save": self._roles_save, "/api/blocks/run": self._block_run,
+                  "/api/blocks/stop": self._block_stop,
                   "/api/contracts/save": self._contract_save, "/api/contracts/delete": self._contract_delete,
                   "/api/contracts/check": self._contract_check,
                   "/api/mcp/servers": self._mcp_servers, "/api/mcp/token": self._mcp_token,
@@ -380,8 +469,10 @@ class Handler(BaseHTTPRequestHandler):
         session = self.server.tutorial_session
         if not session:
             return self._send(409, {"error": "not a tutorial session"})
-        if type(body.get("step")) is not int or not 0 <= body["step"] < 5:
-            raise BodyError("invalid tutorial step")
+        try:
+            tutorial_topics.by_id(body.get("topic"))
+        except KeyError:
+            raise BodyError("unknown tutorial topic") from None
         self._send(200, session.prepare(body))
 
     def _tutorial_exit(self, body: dict) -> None:
@@ -440,6 +531,52 @@ class Handler(BaseHTTPRequestHandler):
     def _task_save(self, body: dict) -> None:
         revision = _revision(body)
         self._send(200, self._state_body(self.server.state.save_task_settings(body.get("task"), revision)))
+
+    def _roles_save(self, body: dict) -> None:
+        revision = _revision(body)
+        self._send(200, self._state_body(self.server.state.save_roles(body.get("roles"), revision)))
+
+    # --- block runs (techspec 0.1.4, 10.9, 15.3) --------------------------------------------------------
+    def _block_run(self, body: dict) -> None:
+        """Order (5.2): body and size; the block at its effective revision, and its problem; the `inputs` shape;
+        then the runner (input checks, admission). Everything before the stream is a real HTTP status."""
+        state = self.server.state
+        name = body.get("name")
+        if not isinstance(name, str) or NAME_RE.match(name) is None:
+            raise BodyError("the block name must follow the name rule")
+        revision = _revision(body)
+        loaded = state.block_for_run(name, revision)             # 404, 409 stale_revision, 409 block_unusable
+        declared = [d.name for d in loaded.block.inputs]
+        inputs = body.get("inputs")
+        if not isinstance(inputs, dict):
+            raise BlockBodyError("inputs must be an object with one text per declared input")
+        for key in inputs:
+            if key not in declared:
+                raise BlockBodyError("inputs holds a name that the block does not declare")
+        for key in declared:
+            if key not in inputs:
+                raise BlockBodyError(f"inputs is missing the input {key}")
+            if not isinstance(inputs[key], str):
+                raise BlockBodyError(f"the input {key} must be a string")
+        delivery = BlockDelivery(self)          # registers itself with the state once the run exists (`started`)
+        try:
+            runner.run_block(state, loaded, inputs, delivery)
+        finally:
+            state.remove_delivery(delivery)
+
+    def _block_stop(self, body: dict) -> None:
+        run_id = self._run_id(body.get("run_id"))
+        self._send(200, {"status": self.server.state.store.stop_run(run_id, runs.USER_STOP)})
+
+    def _block_run_poll(self, raw: str) -> None:
+        self._send(200, self.server.state.store.run_envelope(self._run_id(raw)))
+
+    @staticmethod
+    def _block_name(raw: str) -> str:
+        name = unquote(raw)
+        if NAME_RE.match(name) is None:
+            raise BodyError("the block name must follow the name rule")
+        return name
 
     # --- contracts (techspec 0.1.3, 7.8, 13.3) ----------------------------------------------------
     @staticmethod
@@ -718,22 +855,26 @@ class Handler(BaseHTTPRequestHandler):
         if contract_ref is not None:
             entry = state.contract_for_request(*contract_ref)   # 404, 409 stale_revision, 409 contract_unusable
             copy_ = model_step.ContractCopy.of(entry.name, entry.revision, entry.contract)
-        budget = state.budget
-        if not budget.try_acquire():
-            return self._busy()
+        writer = state.register_writer(f"{source} attempt")      # 503 once shutdown has begun (10.10)
         try:
-            prepared = model_step.prepare_first(state.store, snapshot=snapshot, system=system, prompt=prompt,
-                                                task=task, arguments=arguments, source=source,
-                                                save_runs=state.save_runs_now(), contract=copy_)
-            if prepared.run.save_runs:
-                try:
-                    state.history.start_run(prepared.run)       # run.json, before the first attempt starts
-                except BaseException:
-                    state.store.abandon_run(prepared.run, prepared.number)
-                    raise
-            self._run_stream(prepared)
+            budget = state.budget
+            if not budget.try_acquire():
+                return self._busy()
+            try:
+                prepared = model_step.prepare_first(state.store, snapshot=snapshot, system=system, prompt=prompt,
+                                                    task=task, arguments=arguments, source=source,
+                                                    save_runs=state.save_runs_now(), contract=copy_)
+                if prepared.run.save_runs:
+                    try:
+                        state.history.start_run(prepared.run)       # run.json, before the first attempt starts
+                    except BaseException:
+                        state.store.abandon_run(prepared.run, prepared.number)
+                        raise
+                self._run_stream(prepared)
+            finally:
+                budget.release()
         finally:
-            budget.release()
+            writer.release()
 
     def _busy(self) -> None:
         budget = self.server.state.budget
@@ -771,8 +912,13 @@ class Handler(BaseHTTPRequestHandler):
         callbacks = model_step.Callbacks(
             started=started, text=lambda t: emit({"type": "text", "text": t}),
             reasoning=lambda t: emit({"type": "reasoning", "text": t}), committed=committed)
-        record = model_step.run_attempt(state.store, prepared, callbacks,
-                                        state.history if prepared.run.save_runs else None)
+        delivery = _Delivery(self)
+        state.add_delivery(delivery)         # shutdown shuts this connection down, so no write waits (10.10)
+        try:
+            record = model_step.run_attempt(state.store, prepared, callbacks,
+                                            state.history if prepared.run.save_runs else None)
+        finally:
+            state.remove_delivery(delivery)
         if prepared.run.save_runs and head_sent:
             status, detail = state.store.save_detail(record["id"])
             if status in ("saved", "failed"):
@@ -798,24 +944,29 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"parent_id": record["id"], "attempt": number, "messages": plan["messages"],
                          "settings": plan["settings"],
                          "contract": {"name": contract.name, "revision": contract.revision},
-                         "repair_message": plan["repair_message"]})
+                         "repair_message": plan["repair_message"], "repair_reason": plan["repair_reason"]})
 
     def _repair(self, body: dict) -> None:
         state = self.server.state
-        run, parent, number = state.store.admit_repair(self._attempt_id(body))
-        budget = state.budget
-        if not budget.try_acquire():
-            state.store.abandon_run(run, number)
-            return self._busy()
+        attempt_id = self._attempt_id(body)
+        writer = state.register_writer("repair attempt")         # 503 once shutdown has begun (10.10)
         try:
-            try:
-                prepared = model_step.prepare_repair(run, number, parent, state.key_for)
-            except BaseException:
+            run, parent, number = state.store.admit_repair(attempt_id)
+            budget = state.budget
+            if not budget.try_acquire():
                 state.store.abandon_run(run, number)
-                raise
-            self._run_stream(prepared)
+                return self._busy()
+            try:
+                try:
+                    prepared = model_step.prepare_repair(run, number, parent, state.key_for)
+                except BaseException:
+                    state.store.abandon_run(run, number)
+                    raise
+                self._run_stream(prepared)
+            finally:
+                budget.release()
         finally:
-            budget.release()
+            writer.release()
 
     def _attempt_poll(self, attempt_id: str) -> None:
         if not runs.valid_attempt_id(attempt_id):
@@ -837,5 +988,5 @@ class Handler(BaseHTTPRequestHandler):
 
     def _runs_delete(self, body: dict) -> None:
         run_id = self._run_id(body.get("run_id"))
-        self.server.state.history.delete_run(run_id, read_only=self.server.workspace.read_only)
+        self.server.state.delete_run(run_id, read_only=self.server.workspace.read_only)
         self._send(200, {"deleted": run_id})

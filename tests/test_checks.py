@@ -448,3 +448,43 @@ def test_unsupported_version_counts_as_missing(monkeypatch):
     assert checks.schema_support() == (False, "jsonschema is not installed")
     result = checks.check_answer(contract(schema_contract('{"type": "object"}')), "{}")
     assert entry(result, "schema")["result"] == "not_run" and result["overall"] == "incomplete"
+
+
+# 93 (0.1.4) -------------------------------------------------------------------------------------
+def test_answer_value_and_truncation_message():
+    text_contract = contract({"format": "text"})
+    result, value = checks.check_answer_value(text_contract, "hello")
+    assert value == "hello" and result == checks.check_answer(text_contract, "hello")
+
+    json_contract = contract('{"format": "json"}')
+    fenced = 'Here you go:\n```json\n{"n": 9007199254740993, "x": 0.10000000000000000001}\n```\n'
+    result, value = checks.check_answer_value(json_contract, fenced)
+    assert value == {"n": 9007199254740993, "x": Decimal("0.10000000000000000001")}
+    assert type(value["n"]) is int and result == checks.check_answer(json_contract, fenced)
+    whole = ' {"a": [1, 2]} \n'
+    result, value = checks.check_answer_value(json_contract, whole)
+    assert value == {"a": [1, 2]} and result == checks.check_answer(json_contract, whole)
+    result, value = checks.check_answer_value(json_contract, "null")
+    assert value is None and value is not checks.NO_VALUE                 # a parsed null is a value
+
+    for bad in ("not json", '{"a": ', "```json\n{}\n```\n```json\n{}\n```"):
+        result, value = checks.check_answer_value(json_contract, bad)
+        assert value is checks.NO_VALUE and result["overall"] != "pass"
+        assert result == checks.check_answer(json_contract, bad)
+
+    failing = contract({"format": "json", "checks": [{"type": "contains", "value": "zzz"}]})
+    result = checks.check_answer(failing, '{"a": 1}')
+    plain = checks.repair_message(failing, result)
+    cut = checks.repair_message(failing, result, truncated=True)
+    assert plain != cut
+    assert cut.startswith("The previous answer was cut off at the output length limit")
+    for issue in result["issues"]:
+        assert f"- {issue['location']}: {issue['message']}" in cut
+    assert cut.endswith("It must fit within the same length limit.")
+
+    passing = contract({"format": "json"})
+    ok = checks.check_answer(passing, '{"a": 1}')
+    assert ok["issue_count"] == 0
+    cut_ok = checks.repair_message(passing, ok, truncated=True)
+    assert "Problems found" not in cut_ok and "\n- " not in cut_ok
+    assert cut_ok != checks.repair_message(passing, ok)

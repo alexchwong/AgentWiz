@@ -15,12 +15,15 @@ from playwright.sync_api import expect
 
 from agentwiz import history, jsonio
 from agentwiz.ui import server as server_module
-from conftest import (DONE, JSON_CONTRACT_NO_SCHEMA, Reply, answer, configure, delta, json_answer, run_folders,
-                      save_contract, simple_tool, text_result, upload, wait_until, add_server)
+from conftest import (DONE, JSON_CONTRACT_NO_SCHEMA, Reply, answer, configure, delta, group_gone, iter_events,
+                      json_answer, read_until, request, run_block, run_folders, save_contract, save_profile,
+                      save_roles, simple_tool, text_result, upload, wait_until, add_server, write_block, get_state)
+from test_runner import setup_model
+from test_scripts import PREAMBLE, write_script
 
 SSE = {"Content-Type": "text/event-stream"}
 FAST = {"idle_timeout_s": 60, "call_deadline_s": 60, "discovery_deadline_s": 60}
-FRAGS = ["chat", "documents", "mcp-tools", "contracts", "checked-request", "history"]
+FRAGS = ["chat", "documents", "mcp-tools", "contracts", "checked-request", "history", "blocks"]
 WAIT = 20_000          # only bounds a failing test
 
 
@@ -113,7 +116,7 @@ def test_page_tabs(ui, open_page):
     page.keyboard.press("ArrowLeft")
     has(page, "tab-documents", "aria-selected", "true")
     page.keyboard.press("End")
-    has(page, "tab-history", "aria-selected", "true")
+    has(page, "tab-blocks", "aria-selected", "true")                 # Blocks is the seventh and last tab
     page.keyboard.press("Home")
     has(page, "tab-chat", "aria-selected", "true")
     assert page.evaluate("location.hash") == "#chat"
@@ -383,7 +386,9 @@ def test_page_checked_request_repair(ui, server, open_page):
     has(page, "checked-check", "data-check", "pass")
     second = tid(page, "checked-status").get_attribute("data-attempt-id")
     assert second != first and second.rsplit("-", 1)[0] == first.rsplit("-", 1)[0] and second.endswith("-2")
-    expect(page.locator('[data-test="checked-attempt"]')).to_have_count(2)
+    attempts = page.locator('[data-test="checked-attempt"]')
+    expect(attempts).to_have_count(2)
+    assert [attempts.nth(i).get_attribute("data-repair-reason") for i in range(2)] == ["", "check_failed"]   # #86
     has(page, "checked-repair", "data-repair", "not_repairable")
     sent = server.requests[-1]["body"]["messages"]
     assert [m["role"] for m in sent] == ["user", "assistant", "user"]
@@ -440,3 +445,169 @@ def test_page_raises_no_script_errors(ui, open_page, context):
     tid(page, "tab-history").click()
     has(page, "history-count", "data-total", "0")
     assert problems == []
+
+
+# --- Part G: the Blocks tab and the Roles dialog (techspec 0.1.4, tests #108-#111) --------------------------------
+OBJ_BLOCK = {"format_version": 1, "name": "b", "description": "shows the exact numbers",
+             "inputs": {"text": {"contract": {"format": "text"}}, "obj": {"contract": {"format": "json"}}},
+             "outputs": {"out": {"contract": {"format": "json"}}},
+             "steps": [{"id": "s", "kind": "model", "role": "fast", "system": {"file": "prompts/system.md"},
+                        "prompt": {"file": "prompts/user.md"}, "output": "out"}]}
+OBJ_FILES = {"prompts/system.md": "You are terse.", "prompts/user.md": "Say {{inputs.text}} for {{inputs.obj.id}}"}
+EXACT = '{"id":9007199254740993,"ratio":0.10000000000000000001}'
+
+
+def profile_and_role(ui, server):
+    save_profile(ui, "p", model="m", kind="openai_compat", base_url=server.url + "/v1", provider="")
+    save_roles(ui, {"fast": "p"})
+
+
+def input_of(page, name):
+    return page.locator(f'[data-test="blocks-input"][data-input="{name}"]')
+
+
+def pick(page, block):
+    page.locator(f'[data-test="blocks-row"][data-block="{block}"]').click()
+    expect(page.locator('[data-test="blocks-file"]').first).to_be_visible()
+
+
+# 108 -----------------------------------------------------------------------------------------------------
+def test_page_blocks(ui, server, open_page):
+    profile_and_role(ui, server)
+    write_block(ui, "b", OBJ_BLOCK, OBJ_FILES)
+    server.reply(answer("not json at all"), json_answer('{"id": 9007199254740993, "ratio": 0.10000000000000000001}'))
+    page = open_page(ui, "blocks")
+    row = page.locator('[data-test="blocks-row"][data-block="b"]')
+    expect(row).to_have_count(1)
+    assert row.get_attribute("data-problem") == ""
+    pick(page, "b")
+    assert sorted(f.get_attribute("data-path") for f in page.locator('[data-test="blocks-file"]').all()) == [
+        "block.json", "prompts/system.md", "prompts/user.md"]
+    assert input_of(page, "text").evaluate("e => e.tagName") == "TEXTAREA"                 # a text field
+    assert input_of(page, "obj").evaluate("e => e.tagName") == "TEXTAREA"                  # a JSON editor
+    expect(tid(page, "blocks-run")).to_be_enabled()
+    input_of(page, "text").fill("hello")
+    input_of(page, "obj").fill('{"id": 9007199254740993}')
+    tid(page, "blocks-run").click()
+    has(page, "blocks-status", "data-state", "done")
+    has(page, "blocks-status", "data-outcome", "complete")
+    attempts = page.locator('[data-test="blocks-attempt"]')
+    expect(attempts).to_have_count(2)
+    assert [a.get_attribute("data-check") for a in attempts.all()] == ["fail", "pass"]
+    assert [a.get_attribute("data-repair-reason") for a in attempts.all()] == ["", "check_failed"]
+    has(page, "blocks-trace", "data-attempts", "2")
+    assert server.requests[0]["body"]["messages"][1]["content"] == "Say hello for 9007199254740993"   # exact number
+    copied = copy_of(page, "blocks-copy-output")
+    assert jsonio.decode_exact(copied) == jsonio.decode_exact(EXACT)
+    # a run held at the backend: the Blocks tab says it is running while another tab is shown
+    server.reply(Reply(hold_headers=True, body=[delta('{"id":1}'), delta(finish="stop"), DONE],
+                       headers=SSE))
+    tid(page, "blocks-run").click()
+    has(page, "tab-blocks", "data-state", "running")
+    has(page, "blocks-status", "data-state", "running")
+    expect(tid(page, "blocks-run")).to_be_disabled()
+    tid(page, "tab-chat").click()
+    has(page, "tab-blocks", "data-state", "running")
+    has(page, "panel-blocks", "data-state", "running")
+    server.release.set()
+    tid(page, "tab-blocks").click()
+    has(page, "blocks-status", "data-state", "done")
+    has(page, "tab-blocks", "data-state", "idle")
+
+
+# 109 -----------------------------------------------------------------------------------------------------
+def test_page_blocks_stop_and_reattach(ui, server, open_page, spawned):
+    write_script(ui, PREAMBLE + "time.sleep(60)\n", timeout_s=30)
+    page = open_page(ui, "blocks")
+    pick(page, "sc")
+    input_of(page, "a").fill("go")
+    tid(page, "blocks-run").click()
+    assert wait_until(lambda: spawned)
+    has(page, "blocks-status", "data-state", "running")
+    has(page, "blocks-operation", "data-kind", "script")
+    tid(page, "blocks-stop").click()
+    has(page, "blocks-status", "data-outcome", "stopped")
+    assert wait_until(lambda: group_gone(spawned[0]))
+    # a held model block run, reattached after a reload
+    setup_model(ui, server)
+    server.reply(Reply(hold_headers=True, body=[delta("fine"), delta(finish="stop"), DONE], headers=SSE))
+    it = iter_events(run_block(ui, "b", {"text": "x"}, raw=True))
+    run_id = read_until(it, "started")[-1]["run_id"]
+    page = open_page(ui, "blocks")
+    active = page.locator('[data-test="blocks-active-run"]')
+    expect(active).to_have_count(1)
+    assert active.get_attribute("data-run-id") == run_id
+    tid(page, "blocks-reattach").click()
+    has(page, "blocks-status", "data-state", "polling")
+    has(page, "blocks-status", "data-run-id", run_id)
+    server.release.set()
+    has(page, "blocks-status", "data-state", "done")
+    has(page, "blocks-status", "data-outcome", "complete")
+    list(it)
+
+
+# 110 -----------------------------------------------------------------------------------------------------
+def test_page_blocks_stale_and_problem(ui, server, open_page):
+    profile_and_role(ui, server)
+    saved = save_contract(ui, "tc", '{"format": "text"}')["contract"]
+    block = {**OBJ_BLOCK, "inputs": {"text": {"contract": "tc"}, "obj": {"contract": {"format": "json"}}}}
+    folder = write_block(ui, "b", block, OBJ_FILES)
+    write_block(ui, "broken", "{ this is not json")
+    server.reply(json_answer(EXACT))
+    page = open_page(ui, "blocks")
+    expect(page.locator('[data-test="blocks-row"][data-problem]:not([data-problem=""])')).to_have_count(1)
+    pick(page, "b")
+    input_of(page, "text").fill("hello")
+    input_of(page, "obj").fill('{"id": 1}')
+    (folder / "prompts" / "user.md").write_text("Edited: {{inputs.text}} {{inputs.obj.id}}")      # after it was shown
+    tid(page, "blocks-run").click()
+    has(page, "blocks-status", "data-state", "stale")
+    assert server.requests == []                                                     # nothing was resent
+    expect(input_of(page, "text")).to_have_value("hello")                           # the input texts are kept
+    tid(page, "blocks-run").click()
+    has(page, "blocks-status", "data-outcome", "complete")
+    assert server.requests[0]["body"]["messages"][1]["content"] == "Edited: hello 1"
+    # the saved contract an input uses changes: the old form is stale, the reloaded form reflects the new contract
+    request(ui, "/api/contracts/save", {"name": "tc", "revision": saved["revision"],
+                                        "text": '{"format": "text", "checks": [{"type": "contains", "value": "X"}]}'})
+    tid(page, "blocks-run").click()
+    has(page, "blocks-status", "data-state", "stale")
+    assert len(server.requests) == 1
+    assert "contains" in page.locator('[data-test="blocks-contract"][data-section="inputs"][data-name="text"]').text_content()
+    tid(page, "blocks-run").click()
+    has(page, "blocks-status", "data-outcome", "rejected")                          # "hello" lacks the X
+    assert len(server.requests) == 1
+    # a block with a problem can be read but not run
+    page.locator('[data-test="blocks-row"][data-block="broken"]').click()
+    expect(tid(page, "blocks-problem")).to_be_visible()
+    expect(tid(page, "blocks-run")).to_be_disabled()
+
+
+# 111 -----------------------------------------------------------------------------------------------------
+def test_page_roles(ui, server, open_page):
+    save_profile(ui, "p", model="m", kind="openai_compat", base_url=server.url + "/v1", provider="")
+    page = open_page(ui, "chat")
+    tid(page, "header-roles").click()
+    has(page, "roles-dialog", "data-state", "idle")
+    tid(page, "roles-add").click()
+    page.locator('[data-test="roles-row"] [data-key="role"]').fill("fast")
+    page.locator('[data-test="roles-row"] [data-key="profile"]').select_option("p")
+    tid(page, "roles-save").click()
+    has(page, "roles-dialog", "data-state", "saved")
+    assert get_state(ui)["roles"]["map"] == {"fast": "p"}
+    page = open_page(ui, "chat")                                                    # reload: the mapping is shown
+    tid(page, "header-roles").click()
+    row = page.locator('[data-test="roles-row"][data-role="fast"]')
+    expect(row).to_have_count(1)
+    expect(row.locator('[data-key="profile"]')).to_have_value("p")
+    # roles changed elsewhere: saving from the stale dialog is refused and the dialog shows what is saved
+    save_roles(ui, {"fast": "p", "slow": "p"})
+    tid(page, "roles-save").click()
+    has(page, "roles-dialog", "data-state", "stale")
+    expect(page.locator('[data-test="roles-row"]')).to_have_count(2)
+    assert get_state(ui)["roles"]["map"] == {"fast": "p", "slow": "p"}
+    # the profile is deleted: its roles are unresolved
+    request(ui, "/api/profiles/delete", {"name": "p", "revision": get_state(ui)["revision"]})
+    page = open_page(ui, "chat")
+    tid(page, "header-roles").click()
+    assert [r.get_attribute("data-unresolved") for r in page.locator('[data-test="roles-row"]').all()] == ["true", "true"]

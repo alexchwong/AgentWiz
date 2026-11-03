@@ -1,6 +1,7 @@
 # Adapted from modelSpell scripts/smoke_installed.py at commit 1759c6e3c28a637731434a73c46088048583e358
-# (MIT, Copyright (c) 2026 Alex Wong), per AgentWiz techspec 11.2 (0.1.0), 11.1 (0.1.1), 13.1 (0.1.2) and 16.1 (0.1.3).
-"""Smoke check against the installed AgentWiz wheel (steps S1-S12). Run with the environment's
+# (MIT, Copyright (c) 2026 Alex Wong), per AgentWiz techspec 11.2 (0.1.0), 11.1 (0.1.1), 13.1 (0.1.2), 16.1 (0.1.3)
+# and 18.1 (0.1.4).
+"""Smoke check against the installed AgentWiz wheel (steps S1-S14). Run with the environment's
 `python -I` from a scratch directory. Every step checks behaviour; none reads a file's contents.
 The launch's default workspace (./workspaces/default) is validated by AgentWiz itself and checked
 through /api/state."""
@@ -130,6 +131,9 @@ try:
     check(initial["mcp"]["read_only"] is False and initial["mcp"]["servers"] == {}, f"MCP library: {initial['mcp']}")
     check(initial["task"]["read_only"] is False, f"task settings: {initial['task']}")
     check("reasoning" not in initial and "max_tokens" not in initial, "retired settings still in /api/state")
+    # S4 (0.1.4): no roles yet, and the script budget is four
+    check(initial["roles"]["map"] == {} and initial["scripts"]["limit"] == 4,
+          f"roles/scripts: {initial['roles']} {initial['scripts']}")
     # S4 (0.1.3): contracts and history are present, empty and off
     check(initial["contracts"]["items"] == [] and "checks" in initial["contracts"], f"contracts: {initial['contracts']}")
     check(initial["history"]["save_runs"] is False and initial["history"]["read_only"] is False,
@@ -234,6 +238,49 @@ try:
               and final["result"]["text"] == "pong", f"tool call: {lines}")
     finally:
         mcp.shutdown()
+
+    # S13 (0.1.4): a script block written into the running workspace is found without a restart and runs from the
+    # wheel: started, then final `complete`, the output equal to the input.
+    block_dir = Path(expected_path) / "blocks" / "echo_script"
+    (block_dir / "scripts").mkdir(parents=True)
+    (block_dir / "block.json").write_text(json.dumps({
+        "format_version": 1, "name": "echo_script", "inputs": {"a": {"contract": {"format": "text"}}},
+        "outputs": {"x": {"contract": {"format": "text"}}, "y": {"contract": {"format": "json"}}},
+        "steps": [{"id": "run", "kind": "script", "file": "scripts/go.py", "timeout_s": 20}]}))
+    (block_dir / "scripts" / "go.py").write_text(
+        "import json, sys\nd = json.load(sys.stdin)\nprint(json.dumps({'x': d['a'], 'y': {'n': 1}}))\n")
+    listing = json.loads(api("/api/blocks").read())
+    row = next((b for b in listing["blocks"] if b["name"] == "echo_script"), None)
+    check(row is not None and row["problem"] is None, f"block listing: {listing}")
+    events = [json.loads(line) for line in api("/api/blocks/run", {
+        "name": "echo_script", "revision": row["revision"], "inputs": {"a": "pong"}}).read().splitlines() if line]
+    check(events[0]["type"] == "started" and events[-1]["type"] == "final"
+          and events[-1]["outcome"] == "complete"
+          and events[-1]["result"]["outputs"]["x"] == {"format": "text", "text": "pong"}, f"script block: {events}")
+
+    # S14 (0.1.4): the tutorial child ships its example blocks and scripts in the wheel
+    tutorial = json.loads(api("/api/tutorial/start", {}).read())
+    child_root, child_token = tutorial["url"].split("/?t=", 1)
+
+    def child_api(path, body=None):
+        req = urllib.request.Request(child_root + path, method="GET" if body is None else "POST",
+                                     data=None if body is None else json.dumps(body).encode(),
+                                     headers={"X-Session-Token": child_token, "Content-Type": "application/json"})
+        return urllib.request.urlopen(req, timeout=30)
+
+    try:
+        child_listing = json.loads(child_api("/api/blocks").read())
+        names = sorted(b["name"] for b in child_listing["blocks"])
+        check(names == ["echo_numbers", "extract_fields", "wait_for_stop", "word_count"]
+              and all(b["problem"] is None for b in child_listing["blocks"]), f"tutorial blocks: {child_listing}")
+        counter = next(b for b in child_listing["blocks"] if b["name"] == "word_count")
+        events = [json.loads(line) for line in child_api("/api/blocks/run", {
+            "name": "word_count", "revision": counter["revision"],
+            "inputs": {"text": "The quick brown fox jumps over the lazy dog"}}).read().splitlines() if line]
+        check(events[-1]["type"] == "final" and events[-1]["outcome"] == "complete"
+              and events[-1]["result"]["outputs"]["words"]["text"] == "9", f"word_count: {events}")
+    finally:
+        json.loads(child_api("/api/tutorial/exit", {}).read())
 
     # S8: a second AgentWiz on the same workspace is refused with exit status 3
     second = subprocess.run([str(exe), "--no-browser"], capture_output=True, text=True, timeout=15)
