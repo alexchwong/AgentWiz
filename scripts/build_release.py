@@ -107,6 +107,8 @@ def check_members(wheel: Path, version: str) -> list[str]:
             problems.append(f"unexpected wheel member {name}")
     if "agentwiz/ui/index.html" not in names:
         problems.append("wheel member agentwiz/ui/index.html is missing")
+    if "agentwiz/model-servers.ini.template" not in names:
+        problems.append("wheel member agentwiz/model-servers.ini.template is missing")
     info = {n[len(dist_info):] for n in names if n.startswith(dist_info)}
     problems += [f"wheel member {dist_info}{n} is missing" for n in sorted(DIST_INFO_FILES - info)]
     problems += [f"unexpected wheel member {dist_info}{n}" for n in sorted(info - DIST_INFO_FILES)]

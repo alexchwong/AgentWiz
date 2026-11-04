@@ -12,7 +12,7 @@ import pytest
 
 from agentwiz.workspace import open_workspace
 from conftest import (answer, complete, configure, failure_of, file_stat, get_state, record_of, request, status_of,
-                      write_ws_file)
+                      write_ws_file, configure_server)
 
 KEY_A, KEY_B = "sk-SENTINEL-KEY-A-0001", "sk-SENTINEL-KEY-B-0002"
 
@@ -22,6 +22,7 @@ def profile_fields(backend, model, **extra):
 
 
 def save(ui, name, revision=None, **fields):
+    configure_server(ui, fields)
     rev = get_state(ui)["revision"] if revision is None else revision
     return request(ui, "/api/profiles/save", {"name": name, "revision": rev, **fields})
 
@@ -71,7 +72,7 @@ DAMAGED = [
     ("profiles.json", '{"format_version": 1, "active": null, "active": null, "profiles": {}}', False,
      "invalid_json"),
     ("profiles.json", profiles_text()[:-1] + ', "extra": 0.10000000000000000001}', False, "invalid_json"),
-    ("profiles.json", profiles_text(format_version=3), False, "newer_format"),
+    ("profiles.json", profiles_text(format_version=4), False, "newer_format"),
     ("workspace.json", '{"format_version": 1, "created_by": "AgentWiz", "save_runs": false, "active_profile": 4}', True, "invalid_field"),
     ("profiles.json", bad_profile(model=64), False, "invalid_field"),
     ("profiles.json", bad_profile(base_url="http://u:p@127.0.0.1:1/v1"), False, "invalid_field"),
@@ -136,9 +137,10 @@ def test_profile_lifecycle_and_restart(make_ui, tmp_path, make_server, restart):
     ui = open_ui(make_ui, tmp_path)
     folder = ui.workspace.path
 
-    state = save(ui, "a", **profile_fields(a, "m-a"), api_key=KEY_A)
+    configure(ui, a, kind="openrouter", api_key=KEY_A)
+    state = save(ui, "a", kind="openrouter", model="m-a")
     assert state["profiles"]["active"] == "a" and state["key_source"] == "session"
-    state = save(ui, "b", **profile_fields(b, "m-b"), api_key=KEY_B)
+    state = save(ui, "b", kind="openrouter", model="m-b")
     assert state["profiles"]["names"] == ["a", "b"] and state["profiles"]["active"] == "b"
 
     state = select(ui, "a")
@@ -168,10 +170,11 @@ def test_profile_lifecycle_and_restart(make_ui, tmp_path, make_server, restart):
     ui = restart(ui)
     state = get_state(ui)
     assert state["profiles"]["names"] == ["a"] and state["profiles"]["active"] == "a"
-    assert settings_of(state) == profile_fields(a, "m-a2") and state["key_source"] == "none"
-    complete(ui, "hi")
-    assert a.requests[-1]["body"]["model"] == "m-a2"
-    assert "authorization" not in a.requests[-1]["headers"]
+    assert settings_of(state) == {"kind": "openrouter", "base_url": a.url + "/v1", "model": "m-a2", "provider": ""}
+    assert state["key_source"] == "none"
+    assert record_of(complete(ui, "hi"))["outcome"] == "error"
+    # OpenRouter requires a key after restart; the previous session key was not persisted.
+    assert len(a.requests) == 1
 
     for path in folder.rglob("*"):
         if not path.is_file():
@@ -391,7 +394,7 @@ def test_profile_conflicts(make_ui, tmp_path, server, restart, monkeypatch):
 
     with monkeypatch.context() as patched:
         patched.setattr(os, "replace", refuse_workspace)
-        fail = failure_of(lambda: save(ui, "unselected", model="unselected", api_key=KEY_A))
+        fail = failure_of(lambda: save(ui, "unselected", model="unselected"))
     assert fail.body["code"] == "write_failed"
     state = get_state(ui)
     assert "unselected" in state["profiles"]["names"]
@@ -408,7 +411,7 @@ def read_json(path):
     return json.loads(path.read_bytes())
 
 
-def test_profile_format_v2(make_ui, tmp_path, server):
+def test_profile_format_v3(make_ui, tmp_path, server):
     defaults = tmp_path / "model_profiles" / "profiles.json"
     write_ws_file(defaults, json.dumps({"format_version": 1, "profiles": {
         "d": dict(V1_PROFILE), "same": {**V1_PROFILE, "reasoning": "low"}}}))
@@ -426,7 +429,7 @@ def test_profile_format_v2(make_ui, tmp_path, server):
     # the next save writes version 2 without the retired fields, keeping unknown fields
     save(ui, "a", model="m2")
     doc = read_json(folder / "model-profiles" / "profiles.json")
-    assert doc["format_version"] == 2 and doc["future_top"] == 1
+    assert doc["format_version"] == 3 and doc["future_top"] == 1
     for name in ("a", "same"):
         assert "reasoning" not in doc["profiles"][name] and "max_tokens" not in doc["profiles"][name]
     assert doc["profiles"]["a"]["future_field"] == "kept" and doc["profiles"]["a"]["model"] == "m2"
@@ -434,18 +437,18 @@ def test_profile_format_v2(make_ui, tmp_path, server):
     # update from defaults imports without the retired fields
     update_defaults(ui)
     doc = read_json(folder / "model-profiles" / "profiles.json")
-    assert set(doc["profiles"]["d"]) == {"kind", "base_url", "model", "provider", "future_field"}
+    assert set(doc["profiles"]["d"]) == {"kind", "model", "provider", "future_field"}
 
     # a new workspace seeded from version 1 defaults gets a version 2 file without them
     second = open_ui(make_ui, tmp_path, "two")
     doc = read_json(second.workspace.path / "model-profiles" / "profiles.json")
-    assert doc["format_version"] == 2
+    assert doc["format_version"] == 3
     assert all("reasoning" not in p and "max_tokens" not in p for p in doc["profiles"].values())
 
     # export rewrites the whole defaults file as version 2
     save(ui, "a", export_default=True)
     doc = read_json(defaults)
-    assert doc["format_version"] == 2 and sorted(doc["profiles"]) == ["a", "d", "same"]
+    assert doc["format_version"] == 3 and sorted(doc["profiles"]) == ["a", "d", "same"]
     assert all("reasoning" not in p and "max_tokens" not in p for p in doc["profiles"].values())
 
     # the retired fields are refused on the settings and profile routes

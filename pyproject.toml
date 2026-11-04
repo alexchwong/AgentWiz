@@ -33,8 +33,11 @@ path = "agentwiz/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["agentwiz"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"config/model-servers.ini.template" = "agentwiz/model-servers.ini.template"
+
 [tool.hatch.build.targets.sdist]
-only-include = ["agentwiz", "pyproject.toml", "README.md", "LICENSE"]
+only-include = ["agentwiz", "config/model-servers.ini.template", "pyproject.toml", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

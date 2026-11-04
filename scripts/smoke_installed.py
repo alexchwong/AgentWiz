@@ -89,6 +89,11 @@ class Stub(BaseHTTPRequestHandler):
 stub = ThreadingHTTPServer(("127.0.0.1", 0), Stub)
 threading.Thread(target=stub.serve_forever, daemon=True).start()
 stub_url = f"http://127.0.0.1:{stub.server_address[1]}/v1"
+from agentwiz.server_config import initialize
+initialize(Path("config/model-servers.ini"))
+Path("config/model-servers.ini").write_text(
+    f"[lmstudio]\nbase_url = {stub_url}\n[openrouter]\nbase_url = https://openrouter.ai/api/v1\n"
+    f"[openai_compat]\nbase_url = {stub_url}\n", encoding="utf-8")
 
 # S4: launch the installed command; page served with the token, refused without
 proc = subprocess.Popen([str(exe), "--no-browser"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -141,7 +146,7 @@ try:
 
     # S5: configure the stub with the current revision
     rev = json.loads(api("/api/state").read())["revision"]
-    state = json.loads(api("/api/config", {"revision": rev, "kind": "openai_compat", "base_url": stub_url,
+    state = json.loads(api("/api/config", {"revision": rev, "kind": "openai_compat",
                                            "model": "m"}).read())
     check(state["revision"] == rev + 1, f"revision did not advance: {state}")
 
@@ -173,7 +178,7 @@ try:
     # S12 (0.1.3): Stop reaches a request that is still waiting for response headers, from the installed wheel:
     # the handle modelSpell 0.3.0 provides works here. The stub reads the request, so it was sent.
     state = json.loads(api("/api/config", {"revision": state["revision"], "kind": "openai_compat",
-                                           "base_url": stub_url, "model": "silent"}).read())
+                                           "model": "silent"}).read())
     stream = api("/api/complete", {"source": "chat", "prompt": "ping", "system": "", "revision": state["revision"]})
     started = json.loads(stream.readline())
     check(started["type"] == "started", f"first event: {started}")

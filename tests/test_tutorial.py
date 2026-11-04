@@ -136,6 +136,8 @@ def drive_script_block(page):
     workshop_run(page)
     assert tid(page, "ws-output").text_content() == "9"
     page.locator('[data-action="wait-script"]').click()
+    expect(tid(page, "ws-list")).to_have_value("wait_for_stop")
+    expect(tid(page, "ws-no-inputs")).to_be_visible()
     tid(page, "ws-run-test").click()
     tid(tid(page,"ws-dialog"),"ws-confirm").click()
     has(page, "ws-status", "data-state", "running")

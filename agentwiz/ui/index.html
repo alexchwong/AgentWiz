@@ -95,6 +95,7 @@
   <span id="saving" class="saving hidden" data-test="header-saving">Saving runs</span>
   <span id="switch-msg" class="note err-text hidden" data-test="header-switch-msg"></span>
   <button id="open-settings" data-test="header-model-settings">Model settings</button>
+  <button id="open-openrouter-key" data-test="header-openrouter-key">OpenRouter key</button>
   <button id="open-servers" data-test="header-mcp-servers">MCP servers</button>
   <button id="open-roles" data-test="header-roles">Roles</button>
   <button id="open-tutorial" data-test="header-tutorial">Tutorial</button>
@@ -198,6 +199,16 @@
   </div>
 </dialog>
 
+<dialog id="openrouter-key-dialog" data-test="openrouter-key-dialog">
+  <h3>OpenRouter API key</h3>
+  <p class="note">The key is held in memory only. Clearing it falls back to OPENROUTER_API_KEY if set.</p>
+  <label for="openrouter-key-input">API key</label>
+  <input id="openrouter-key-input" data-test="openrouter-key-input" type="password" autocomplete="off">
+  <p id="openrouter-key-msg" role="status"></p>
+  <div class="row"><button type="button" id="openrouter-key-cancel" data-test="openrouter-key-cancel">Cancel</button>
+    <button type="button" id="openrouter-key-clear" data-test="openrouter-key-clear">Clear session key</button>
+    <button type="button" id="openrouter-key-save" data-test="openrouter-key-save">Set / replace</button></div>
+</dialog>
 <dialog id="settings">
   <form method="dialog" id="settings-form">
     <label for="profile">Profile</label>
@@ -210,12 +221,7 @@
       <option value="openrouter">OpenRouter</option>
       <option value="openai_compat">OpenAI-compatible</option>
     </select>
-    <label for="base_url">Base URL (including /v1; blank = default)</label>
-    <input id="base_url" placeholder="">
-    <div id="key-row">
-      <label for="api_key">API key (write-only; blank keeps the current key) <span id="key-state"></span></label>
-      <div class="inline"><input id="api_key" type="password" autocomplete="off"><button type="button" id="clear-key">Clear</button></div>
-    </div>
+    <p class="note" id="server-config-note"></p>
     <label for="model">Model ID</label>
     <div class="inline"><input id="model" list="model-list"><button type="button" id="load-models">Load models</button></div>
     <datalist id="model-list"></datalist>
@@ -237,7 +243,6 @@
 <script>
 const TOKEN = new URLSearchParams(location.search).get("t") || "";
 const $ = (id) => document.getElementById(id);
-const DEFAULT_URL = { lmstudio: "http://localhost:1234/v1", openrouter: "https://openrouter.ai/api/v1", openai_compat: "required" };
 const STALE_SEND = "Settings, a contract or the saving switch were changed elsewhere. The page has reloaded them; check them and send again.";
 const STALE_SAVE = "Settings were changed in another tab. The header now shows the current settings; check them and save again.";
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -248,7 +253,7 @@ const DISCLOSURE = "Saved as given, except that credentials AgentWiz has held, i
   "Shorter credentials are not replaced. Text you paste into a request, including copied documents and tool results, is saved with it.";
 const FRAGS = ["workshop","chat", "documents", "mcp-tools", "contracts", "checked-request", "history", "blocks"];
 const POLL_MS = 2000;
-let state = {}, clearKey = false;
+let state = {};
 const modelContexts = {};       // model id -> context length, from the dialog's last Load models
 const BASIC = ["temperature", "max_tokens"];
 const ADVANCED = ["top_p", "top_k", "min_p", "repetition_penalty", "presence_penalty", "frequency_penalty", "seed", "stop"];
@@ -508,6 +513,7 @@ document.addEventListener("keydown", (e) => {
 // --- header, banner and state ------------------------------------------------------------------------------
 function keySource(s) {
   if (s.key_source === "session") return { summary: "key: session", label: "(set for this endpoint)" };
+  if (s.key_source === "config") return { summary: "key: config", label: "(from server config)" };
   if (typeof s.key_source === "string" && s.key_source.startsWith("env:")) {
     const name = s.key_source.slice(4);
     return { summary: "key: env " + name, label: `(from ${name})` };
@@ -545,6 +551,7 @@ function renderState() {
   const pr = profilesInfo();
   $("summary").title = `${pr.path || ""}\nDefaults: ${pr.defaults_path || ""}`;
   if (pr.unresolved_active) banner.append(h("p", { text: `Profile ${pr.unresolved_active} is missing; default settings are in use.` }));
+  if (state.legacy_server_profiles?.length) banner.append(h("p", {text: `Legacy server URLs in profiles ${state.legacy_server_profiles.join(", ")} are ignored. Transfer any needed URLs to ${state.server_config_path}.`}));
   for (const c of (state.contracts && state.contracts.items) || [])
     if (c.problem) banner.append(h("p", { text: `${c.problem.file}: ${c.problem.message}` }));
   const warning = shortCredentialWarning();
@@ -556,6 +563,10 @@ function renderState() {
   if (state.kind === "openrouter") parts.push("provider=" + (state.provider || "any"));
   parts.push(keySource(state).summary);
   $("summary").textContent = parts.join(" · ");
+  const keyMissing = state.openrouter_key_source === "none";
+  $("open-openrouter-key").textContent = keyMissing ? "OpenRouter key not set" : "OpenRouter key set";
+  $("open-openrouter-key").classList.toggle("primary", keyMissing);
+  $("open-openrouter-key").dataset.state = keyMissing ? "missing" : "present";
   const hi = historyInfo();
   $("save-runs").checked = !!hi.save_runs;
   $("save-runs").disabled = !!hi.read_only;
@@ -715,15 +726,13 @@ function makeTaskPanel(prefix) {
 // --- the Model settings dialog (unchanged from 0.1.2) ----------------------------------------------------
 function syncDialogVisibility() {
   const kind = $("kind").value;
-  $("base_url").placeholder = DEFAULT_URL[kind];
   $("provider-row").classList.toggle("hidden", kind !== "openrouter");
 }
 
 function dialogConfig() {
   const kind = $("kind").value;
-  const cfg = { kind, base_url: $("base_url").value.trim(), model: $("model").value.trim(),
+  const cfg = { kind, model: $("model").value.trim(),
     provider: kind === "openrouter" ? $("provider").value : "" };
-  if ($("api_key").value) cfg.api_key = $("api_key").value; else if (clearKey) cfg.api_key = "";
   return cfg;
 }
 
@@ -747,8 +756,8 @@ function renderProfileControls() {
 
 function fillDialog() {
   $("export-default").checked = false;
-  $("kind").value = state.kind; $("base_url").value = state.base_url || ""; $("model").value = state.model || "";
-  $("api_key").value = ""; clearKey = false; $("key-state").textContent = keySource(state).label;
+  $("kind").value = state.kind; $("model").value = state.model || "";
+  $("server-config-note").textContent = `Server connections are configured in ${state.server_config_path || "the model server configuration file"}; restart after editing.`;
   const p = $("provider"); p.length = 1;
   if (state.provider) p.add(new Option(state.provider, state.provider, true, true));
   renderProfileControls(); syncDialogVisibility();
@@ -756,12 +765,26 @@ function fillDialog() {
 
 $("open-settings").onclick = () => { fillDialog(); settingsMsg(""); $("settings").showModal(); };
 $("kind").onchange = syncDialogVisibility;
-$("clear-key").onclick = () => { clearKey = true; $("api_key").value = ""; $("key-state").textContent = "(will be cleared)"; };
+$("open-openrouter-key").onclick = () => { $("openrouter-key-input").value = ""; $("openrouter-key-msg").textContent = ""; $("openrouter-key-dialog").showModal(); };
+$("openrouter-key-cancel").onclick = () => $("openrouter-key-dialog").close();
+$("openrouter-key-dialog").addEventListener("close", () => { $("openrouter-key-input").value = ""; });
+async function updateOpenRouterKey(value, clear = false) {
+  if (!clear && !value.trim()) { $("openrouter-key-msg").textContent = "Enter a key, or use Clear session key."; return; }
+  try {
+    state = await api("/api/openrouter-key", {api_key: value, revision: state.revision});
+    $("openrouter-key-input").value = ""; renderState(); $("openrouter-key-dialog").close();
+  } catch (e) {
+    if (e.code === "stale_revision") await refreshState();
+    $("openrouter-key-msg").textContent = e.message;
+  }
+}
+$("openrouter-key-save").onclick = () => updateOpenRouterKey($("openrouter-key-input").value);
+$("openrouter-key-clear").onclick = () => updateOpenRouterKey("", true);
 
 $("load-models").onclick = async () => {
   const cfg = dialogConfig(); settingsMsg("Loading models…");
   try {
-    const { models } = await api("/api/models", { kind: cfg.kind, base_url: cfg.base_url, api_key: cfg.api_key || null });
+    const { models } = await api("/api/models", { kind: cfg.kind });
     const list = $("model-list"); list.replaceChildren();
     for (const key of Object.keys(modelContexts)) delete modelContexts[key];
     for (const m of models) {
@@ -777,7 +800,7 @@ $("load-models").onclick = async () => {
 $("load-providers").onclick = async () => {
   const cfg = dialogConfig(); settingsMsg("Loading providers…");
   try {
-    const { providers } = await api("/api/providers", { kind: cfg.kind, base_url: cfg.base_url, api_key: cfg.api_key || null, model: cfg.model });
+    const { providers } = await api("/api/providers", { kind: cfg.kind, model: cfg.model });
     const p = $("provider"); p.length = 1;
     for (const x of providers) {
       const label = `${x.name} — ${x.slug ?? "no tag"}${x.quantization ? " · " + x.quantization : ""}${x.context_length ? " · " + x.context_length + " ctx" : ""}`;

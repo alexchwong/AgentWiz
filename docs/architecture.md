@@ -111,6 +111,33 @@ the key; a key outside Latin-1, or a non-ASCII character in a base URL's path, r
 `UnicodeEncodeError`. Typed keys and base URLs are validated so these cannot arise from the UI;
 an environment key still can, and the server's catch-all reports it as `InternalError: <Class>`.
 
+## Fixed model-server configuration
+
+`server_config.py` reads `config/model-servers.ini` relative to the launch directory, or the CLI's
+`--config PATH`. It uses INI without interpolation, requiring `lmstudio`, `openrouter` and
+`openai_compat` sections. Each has `base_url`; only local-compatible sections may have `api_key`.
+Unknown fields, defaults, duplicate entries, unsafe URLs and invalid keys are rejected without
+printing configuration values. No OpenRouter key is accepted in the file.
+
+The tracked `config/model-servers.ini.template` is packaged as `agentwiz/model-servers.ini.template`.
+Installer and startup initialization publish a complete mode-0600 copy with an atomic no-replace
+link, preserving existing files. The configuration is read once per launch, never exported to the
+environment, and passed as an immutable mapping to process state and workspace replacements.
+The tutorial supplies its own isolated fake-server configuration.
+
+Model settings and profiles select source, model and provider only. Settings, profile and discovery
+HTTP routes reject connection overrides. Discovery, role locality and request snapshots resolve the
+same configured endpoint. Historical records retain their actual destinations; repair preview and
+dispatch reject captured destinations that differ from the current configuration.
+
+`POST /api/openrouter-key` accepts configuration `revision` and write-only `api_key` (empty clears
+the session override). State exposes `openrouter_key_source` independently of selected source:
+`session`, `env:OPENROUTER_API_KEY` or `none`. The standalone header button has `data-state`
+`present|missing`, with missing highlighted. Clearing a session key reveals the environment fallback.
+Keys are never returned or persisted; local configuration keys and the OpenRouter environment key
+participate in credential redaction. Workspace switch/reset clears session overrides, not fixed
+configuration or the inherited environment fallback.
+
 ## MCP protocol versions
 
 `mcp_client.py`, `mcp_ops.py` and `tool_forms.py` use the standard library only. Read MCP
@@ -513,11 +540,12 @@ folders are unsupported and not detected.
 `profiles.json` holds shared defaults; workspace copies live at
 `<workspaces-dir>/<workspace>/model-profiles/profiles.json`. Only state.py initiates mutations,
 under its state lock. `profiles.py` handles profile files and library locking; `workspace.py`
-handles workspace.json, its lifetime lock, and the reusable atomic writer. From 0.1.2 both libraries
-use `{"format_version": 2, "profiles": {...}}` (`profiles.PROFILES_FORMAT_VERSION`; `workspace.json`
-stays at 1), read version 1 too, preserve unknown fields and never receive session keys. Every write
-path (local writes, seeding a new workspace, update from defaults, export) writes version 2 with the
-retired `reasoning` and `max_tokens` dropped from every profile, through `profiles.write_profiles`.
+handles workspace.json, its lifetime lock, and the reusable atomic writer. Both libraries use
+`{"format_version": 3, "profiles": {...}}` (`profiles.PROFILES_FORMAT_VERSION`; `workspace.json`
+stays at 1), read versions 1 and 2 too, preserve unknown fields and never receive session keys. Every
+write path drops `base_url`, `reasoning` and `max_tokens` from every profile through
+`profiles.write_profiles`. Legacy URLs are migration information only; state warns about differences
+from configured endpoints without using them for requests or equality.
 The active selection is in workspace.json, never added to a profile library.
 
 New workspaces import all valid defaults once, with no active selection. No migration of old
@@ -533,7 +561,7 @@ Approval uses the same revision; changes while the prompt is open cause 409 `sta
 There is no default deletion route. Normal local deletion leaves defaults alone.
 
 State exposes local `profiles.path`, `defaults_path`, `default_names`, `defaults_read_only`,
-`conflicts` and `unresolved_active`. Conflicts compare the four validated ModelSettings fields,
+`conflicts` and `unresolved_active`. Conflicts compare source, model and provider,
 not unknown metadata or keys. Only differing copies display `name-(workspace-name)`; stored names
 never change. Missing active references use default settings without making files read-only.
 

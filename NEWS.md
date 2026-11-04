@@ -1,5 +1,6 @@
 # NEWS
 ## 0.2.0
+- Model-server connections now come from `config/model-servers.ini`; OpenRouter keys have a separate session-only button and environment fallback.
 - Model blocks return one named JSON envelope: several independently checked outputs, published together or not at all.
 - Each model step now sends generated output instructions; `{{output.name}}` describes an output inside prompts.
 - Design shows system instructions, per-output structured fields and a Request preview with Copy of the exact messages sent.
@@ -8,13 +9,19 @@
 - Workshop assistance has its own temperature and reasoning controls, separate from the block it proposes.
 - Saved examples and expected values use typed forms; a new empty group must gain a field before saving.
 - 0.1.x model blocks naming a step output now load as invalid; README shows the one-line rewrite.
-- Workshop reports located block validation errors instead of misleading file-permission failures; Test retains usable inputs and clearly separates one-off input from pending/saved examples. Output renames preserve step bindings and shared contracts use saved-name choices.
-- Roles now show one editor at a time, with location and family/domain filters, suggested families and custom family creation. Browsing preserves unsaved edits; Save all changes saves every role.
-- Starter roles (`fast`, `assistant`, `reasoning`), a guided role editor with model details and setup links, and enforced Local/Cloud assignments. Local roles require loopback model servers; no automatic cloud fallback.
+- Workshop reports located block validation errors instead of misleading file-permission failures.
+- Test retains usable inputs and separates one-off input from pending or saved examples.
+- Output renames preserve step bindings; shared contracts use saved-name choices.
+- Roles show one editor at a time, with location and family filters, suggested families and custom family creation.
+- Browsing preserves unsaved edits; Save all changes saves every role.
+- Starter roles (`fast`, `assistant`, `reasoning`) have a guided editor with model details and setup links.
+- Local/Cloud assignments are enforced. Local roles require loopback model servers; no automatic cloud fallback.
 - New-block creation validates keys without losing inputs, lists model roles, and discovers tools from configured MCP servers in dropdowns.
 - Design, test and compare individual blocks in Workshop with saved revisions, examples and correctness reviews.
 - Review bounded assistance proposals before applying them to a draft.
-- Workspaces dialog: switch, create, clone, reset and delete workspaces in the launch folder. Switching reloads the page and releases the old workspace lock; active work must be stopped first. Clone can include saved runs and comparisons; reset and delete require typing the workspace name.
+- Workspaces dialog: switch, create, clone, reset and delete workspaces in the launch folder.
+- Switching reloads the page and releases the old workspace lock; active work must be stopped first.
+- Clone can include saved runs and comparisons; reset and delete require typing the workspace name.
 
 ## 0.1.4
 - Blocks tab: run single-step blocks saved as folders in the workspace, with a generated input form and trace.

@@ -245,13 +245,21 @@ a block or executes its proposal automatically.
 
 ## Settings
 
-Open **Model settings** in the header to choose where requests go:
+Model-server connections are configured in `./config/model-servers.ini`, relative to the launch directory.
+The installer or first launch creates it from the supplied template if absent; it never replaces an existing
+file. Edit the URLs and, if needed, local-server API keys there, then restart AgentWiz. Use `--config PATH`
+to select another file. Protect this file if it contains local-server credentials. Do not put an OpenRouter
+key in it.
+
+Use the standalone **OpenRouter key** button to enter a write-only session key. It is highlighted when
+no key is available. A session key takes precedence over `OPENROUTER_API_KEY`; clearing it exposes that
+environment fallback if present. Neither is saved by AgentWiz.
+
+Open **Model settings** in the header to choose the model:
 
 | Setting | Notes |
 | --- | --- |
 | Model source | LM Studio, OpenRouter or OpenAI-compatible. |
-| Base URL | Including `/v1`. Blank uses the default (`http://localhost:1234/v1` for LM Studio, `https://openrouter.ai/api/v1` for OpenRouter). Required for OpenAI-compatible. Must not contain a user name, password, query or fragment (`@`, `?`, `#`): put credentials in the API key. |
-| API key | Write-only. Bound to the model source and base URL it was saved for, so it is never sent anywhere else. **Clear** removes it. For OpenRouter, `OPENROUTER_API_KEY` is used when no key is entered. Keys must be visible ASCII characters without spaces. |
 | Model ID | Type it, or use **Load models**. |
 | Provider | OpenRouter only. **Load providers** lists the model's providers; choosing one pins the request to it with no fallback. |
 
@@ -260,20 +268,17 @@ Reasoning and max tokens are set in each request panel (see **Task settings**).
 **Apply** uses the dialog's settings for this AgentWiz process.
 
 The header shows the workspace (hover for its folder), the active profile, the current settings and
-where the key comes from: `key: session` (entered here), `key: env OPENROUTER_API_KEY`, or
-`key: none`.
+where the key comes from: `key: session`, `key: env OPENROUTER_API_KEY`, `key: config`, or `key: none`.
 
 ### Profiles
 
-A profile stores four settings under a name: model source, base URL, model ID and provider. It never
-stores a key.
+A profile stores model source, model ID and provider under a name. It never stores a key or server URL.
+Older profile URLs are no longer used: transfer any required endpoint manually to the configuration file.
 
-- **From 0.1.2, profile files are format version 2.** Profiles saved by 0.1.1 load as they are, but
+- **Profile files are format version 3.** Older profiles load, but their server URLs are ignored and
+  removed on the next write. Earlier AgentWiz releases cannot read version 3 files. Profiles saved by 0.1.1 load as they are, but
   their reasoning and max tokens values are dropped the next time the file is written: set them in
   the request panel and press **Save task settings** instead.
-- **Once 0.1.2 has rewritten a profile file, AgentWiz 0.1.1 treats it as read-only.** In particular,
-  after an **Export as default** from 0.1.2, a 0.1.1 process sharing those defaults can no longer
-  import or export, though its own workspace profiles keep working.
 
 Shared **defaults** live in `./model_profiles/profiles.json`, relative to the launch directory.
 Use `--profiles-dir /path/to/another/project/model_profiles` to use defaults kept in another project.
@@ -299,8 +304,8 @@ initially. Existing workspaces are never automatically updated, including on res
 - **Delete** removes the active profile after asking; the settings stay as they are.
 - The header shows `profile: <name>`, with `(modified)` after you Apply settings that differ from
   the saved profile, or `no profile`.
-- The active profile is restored when AgentWiz starts. Keys are not: enter them again (each key is
-  remembered for its model source and base URL), or use `OPENROUTER_API_KEY` for OpenRouter.
+- The active profile and fixed server configuration are restored when AgentWiz starts. OpenRouter
+  session keys are not: enter one again or use `OPENROUTER_API_KEY`.
 
 ### Read-only workspaces
 
@@ -570,6 +575,8 @@ check, and the first 20 issues.
   and contract copy of the attempt it repairs, not what the screen shows now. Changing the input,
   profile or contract means starting a new run with **Send**. The API key is looked up again when you
   send the repair; if you cleared it, the backend's refusal is an ordinary error.
+  If its captured endpoint differs from the configured server, repair is refused before sending;
+  start a new request instead. Historical records are not rewritten.
 - **LM Studio with reasoning off** uses LM Studio's native route, which flattens a conversation into
   one text. Repair still works, but the roles are lost.
 - A repair counts toward the limit of 8 model requests in progress.

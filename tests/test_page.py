@@ -79,6 +79,30 @@ def clip(page):
     return page.evaluate("navigator.clipboard.readText()")
 
 
+def test_openrouter_key_dialog(ui, open_page, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    page = open_page(ui)
+    has(page, "header-openrouter-key", "data-state", "missing")
+    tid(page, "header-openrouter-key").click()
+    tid(page, "openrouter-key-save").click()
+    expect(tid(page, "openrouter-key-dialog")).to_be_visible()
+    tid(page, "openrouter-key-input").fill("session-secret-123")
+    tid(page, "openrouter-key-save").click()
+    expect(tid(page, "openrouter-key-dialog")).not_to_be_visible()
+    has(page, "header-openrouter-key", "data-state", "present")
+    tid(page, "header-openrouter-key").click()
+    expect(tid(page, "openrouter-key-input")).to_have_value("")
+    tid(page, "openrouter-key-input").fill("discarded-secret")
+    tid(page, "openrouter-key-cancel").click()
+    tid(page, "header-openrouter-key").click()
+    expect(tid(page, "openrouter-key-input")).to_have_value("")
+    tid(page, "openrouter-key-clear").click()
+    has(page, "header-openrouter-key", "data-state", "missing")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "environment-secret")
+    page.reload()
+    has(page, "header-openrouter-key", "data-state", "present")
+
+
 def copy_of(page, button):
     """Press a Copy button and return what reached the clipboard."""
     tid(page, button).click()

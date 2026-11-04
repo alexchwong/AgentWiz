@@ -16,6 +16,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from types import MappingProxyType
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,6 +25,7 @@ import pytest
 
 from agentwiz.ui.server import UIServer
 from agentwiz.workspace import open_workspace
+from agentwiz.server_config import ServerSettings
 
 def pytest_collection_modifyitems(config, items):
     """Tests marked needs_checks skip, with a reason, only where the checks extra is really absent: CI's
@@ -276,6 +278,11 @@ def make_ui(tmp_path):
             opened.append(workspace)
         kwargs.setdefault("profiles_dir", tmp_path / "model_profiles")
         kwargs.setdefault("mcp_servers_dir", kwargs.pop("mcp_dir", tmp_path / "mcp_servers"))
+        kwargs.setdefault("servers", {
+            "lmstudio": ServerSettings("http://localhost:1234/v1"),
+            "openrouter": ServerSettings("https://openrouter.ai/api/v1"),
+            "openai_compat": ServerSettings("http://127.0.0.1:9/v1"),
+        })
         srv = UIServer(0, workspace=workspace, **kwargs)
         srv.transcript = []  # every response body the helpers received, for "never echoed" checks
         threading.Thread(target=srv.serve_forever, args=(0.02,), daemon=True).start()
@@ -309,7 +316,7 @@ def restart(make_ui):
         reopened = open_workspace(ws.path.parent, ws.name)
         make_ui.opened.append(reopened)
         return make_ui(workspace=reopened, profiles_dir=old.state.library.path,
-                       mcp_servers_dir=old.state.mcp_library.folder)
+                       mcp_servers_dir=old.state.mcp_library.folder, servers=old.state.servers)
 
     return again
 
@@ -389,6 +396,7 @@ def get_state(ui) -> dict:
 
 def save_profile(ui, name, revision=None, **settings) -> dict:
     """POST /api/profiles/save with the current configuration revision unless one is given."""
+    configure_server(ui, settings)
     rev = get_state(ui)["revision"] if revision is None else revision
     return request(ui, "/api/profiles/save", {"name": name, "revision": rev, **settings})
 
@@ -416,8 +424,32 @@ def write_block(ui_or_path, name, block, files=None) -> Path:
     return folder
 
 
+def configure_server(ui, fields):
+    """Test-only machine configuration setup, never a browser/API override."""
+    if "base_url" not in fields and "api_key" not in fields:
+        return
+    kind = fields.get("kind", get_state(ui)["kind"])
+    url = fields.pop("base_url", ui.state.servers[kind].base_url) or {
+        "lmstudio": "http://localhost:1234/v1", "openrouter": "https://openrouter.ai/api/v1",
+    }.get(kind, ui.state.servers[kind].base_url)
+    key = fields.pop("api_key", None)
+    servers = dict(ui.state.servers)
+    previous = servers[kind]
+    if key is None:
+        key = previous.api_key if previous.base_url == url.rstrip("/") else None
+    servers[kind] = ServerSettings(url.rstrip("/"), key or None)
+    ui.servers = MappingProxyType(servers)
+    ui.state.servers = ui.servers
+    if key:
+        ui.state._credentials.add(key)
+
+
 def configure(ui, backend, kind="openai_compat", **fields) -> dict:
     body = {"kind": kind, "base_url": backend.url + "/v1", "model": "m", **fields}
+    key = body.pop("api_key", None) if kind == "openrouter" else None
+    configure_server(ui, body)
+    if key is not None:
+        request(ui, "/api/openrouter-key", {"revision": get_state(ui)["revision"], "api_key": key})
     body.setdefault("revision", get_state(ui)["revision"])
     return request(ui, "/api/config", body)
 

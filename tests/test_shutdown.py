@@ -40,7 +40,7 @@ def test_every_writing_route_answers_503_once_shutdown_has_begun(ui, server, mak
     assert ui.state.shutdown(grace_s=0.1, wait=False) == []
     paths = [
         ("/api/profiles/save", {"name": "q", "revision": rev, "kind": "openai_compat", "model": "m",
-                                "base_url": server.url + "/v1", "provider": ""}),
+                                "provider": ""}),
         ("/api/roles/save", {"roles": {}, "revision": get_state(ui)["roles"]["revision"]}),
         ("/api/history/switch", {"save_runs": True, "revision": get_state(ui)["history"]["revision"]}),
         ("/api/complete", {"source": "chat", "prompt": "x", "system": "", "revision": rev}),

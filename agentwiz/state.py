@@ -26,6 +26,7 @@ import threading
 import time
 from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 
 import modelspell
 from modelspell import Endpoint
@@ -206,10 +207,12 @@ class RoleCapture:
 
 class ProcessState:
     def __init__(self, workspace: Workspace, request_limit: int = 8, *, profiles_dir: Path,
-                 mcp_servers_dir: Path | None = None):
+                 mcp_servers_dir: Path | None = None, servers, config_path=None):
         self.budget = RequestBudget(request_limit)
         self.workspace = workspace
         self._lock = threading.Lock()
+        self.servers = MappingProxyType(dict(servers))
+        self.config_path = config_path
         self._settings = ModelSettings()
         self._revision = 1
         self._keys: dict[tuple[str, str], str] = {}
@@ -262,7 +265,9 @@ class ProcessState:
             self._save_runs = bool(raw.get("save_runs")) if raw and problem is None and not workspace.read_only else False
             self._history_revision = 1
             self._credentials: set[str] = set()      # typed keys and tokens, kept until the process exits
-            self._env_names: set[str] = set()        # environment variables read for credentials
+            if self.servers:
+                self._credentials.update(s.api_key for s in self.servers.values() if s.api_key)
+            self._env_names: set[str] = {"OPENROUTER_API_KEY"}
             self.store = runs.AttemptStore()
             self.history = history.Writer(workspace.path, self.store, self.credentials)
             # The MCP library (Section 9.1), its revision and typed tokens (bound to a URL).
@@ -296,6 +301,18 @@ class ProcessState:
                       if name in self._defaults.profiles and self._defaults.profiles[name] != settings)
 
     # --- views -------------------------------------------------------------------------------
+    def _configured_settings(self, settings: ModelSettings) -> ModelSettings:
+        return dataclasses.replace(settings, base_url=self.servers[settings.kind].base_url)
+
+    def _endpoint(self, settings: ModelSettings, api_key=None) -> Endpoint:
+        settings = self._configured_settings(settings)
+        if api_key is None:
+            api_key = self.servers[settings.kind].api_key
+        return _endpoint(settings, api_key)
+
+    def _location(self, settings: ModelSettings) -> str:
+        return roles.profile_location(self._configured_settings(settings))
+
     @property
     def problems(self) -> list[Problem]:
         """Workspace problems, then the profile problem, if any (for the terminal at launch)."""
@@ -313,17 +330,25 @@ class ProcessState:
 
     def _view_locked(self) -> dict:
         s = self._settings
-        ep = _endpoint(s)
+        ep = self._endpoint(s)
         if (ep.kind, ep.base_url) in self._keys:
             key_source = "session"
         elif ep.api_key_env and os.environ.get(ep.api_key_env, "").strip():
             key_source = "env:" + ep.api_key_env
+        elif self.servers and self.servers[s.kind].api_key:
+            key_source = "config"
         else:
             key_source = "none"
         ws = self.workspace
         active = self._active
-        return {"kind": s.kind, "base_url": s.base_url, "model": s.model, "provider": s.provider,
+        router = self._endpoint(ModelSettings(kind="openrouter"))
+        router_source = ("session" if (router.kind, router.base_url) in self._keys else
+                         "env:OPENROUTER_API_KEY" if os.environ.get("OPENROUTER_API_KEY", "").strip() else "none")
+        return {"kind": s.kind, "base_url": ep.base_url if self.servers else s.base_url, "model": s.model, "provider": s.provider,
                 "key_source": key_source,
+                "openrouter_key_source": router_source, "server_config_path": str(self.config_path or ""),
+                "legacy_server_profiles": sorted(n for n, p in self._profiles.items()
+                    if self.servers and p.base_url and p.base_url.rstrip("/") != self.servers[p.kind].base_url),
                 "revision": self._revision,
                 "task": {"saved": self._task_saved.saved_shape(), "revision": self._task_revision,
                          "read_only": self._task_read_only_locked(),
@@ -340,7 +365,7 @@ class ProcessState:
                               "read_only": ws.read_only,
                               "problems": [dataclasses.asdict(p) for p in self._problems_locked()]},
                 "profiles": {"names": sorted(self._profiles), "active": active,
-                             "details": {n: {**dataclasses.asdict(p), "location": roles.profile_location(p)}
+                             "details": {n: {**dataclasses.asdict(self._configured_settings(p)), "location": self._location(p)}
                                          for n, p in self._profiles.items()},
                              "path": str(self.profiles_path / pf.PROFILES_FILE),
                               "defaults_path": str(self.library.path / pf.PROFILES_FILE),
@@ -363,7 +388,7 @@ class ProcessState:
         if settings is None:
             return RoleUnresolved(role, "no_profile")
         definition = self._role_definitions.get(role)
-        if definition and definition["location"] != roles.profile_location(settings):
+        if definition and definition["location"] != self._location(settings):
             return RoleUnresolved(role, "location")
         if not settings.model.strip():
             return RoleUnresolved(role, "no_model")
@@ -408,16 +433,10 @@ class ProcessState:
     # --- settings ----------------------------------------------------------------------------
     def _settings_and_keys_locked(self, body: Mapping) -> tuple[ModelSettings, dict]:
         """The settings and keys a /api/config body would produce; changes nothing."""
+        if "base_url" in body or "api_key" in body:
+            raise SettingsError("server URLs and keys are configured outside model settings")
         new = settings_from_body(self._settings, body)
-        ep = _endpoint(new)
-        slot = (ep.kind, ep.base_url)
-        keys = dict(self._keys)
-        api_key = body.get("api_key")
-        if api_key == "":
-            keys.pop(slot, None)
-        elif api_key is not None:
-            keys[slot] = validate_key(api_key)
-        return new, keys
+        return new, dict(self._keys)
 
     def apply_config(self, body: Mapping, revision: int) -> dict:
         with self._lock:
@@ -429,6 +448,22 @@ class ProcessState:
                 self._settings, self._keys = new, keys
                 self._credentials.update(keys.values())
                 self._revision += 1
+            return self._view_locked()
+
+    def set_openrouter_key(self, value: object, revision: int) -> dict:
+        with self._lock:
+            self._refresh_locked()
+            if revision != self._revision:
+                raise StaleRevision(self._revision)
+            ep = self._endpoint(ModelSettings(kind="openrouter"))
+            slot = (ep.kind, ep.base_url)
+            if value == "":
+                self._keys.pop(slot, None)
+            else:
+                key = validate_key(value)
+                self._keys[slot] = key
+                self._credentials.add(key)
+            self._revision += 1
             return self._view_locked()
 
     # --- profiles ----------------------------------------------------------------------------
@@ -625,7 +660,7 @@ class ProcessState:
                         defined = copy.deepcopy(dict(self._role_definitions))
                     for n, p in parsed.items():
                         if n not in defined and p in self._profiles:
-                            defined[n] = {"description": "", "location": roles.profile_location(self._profiles[p])}
+                            defined[n] = {"description": "", "location": self._location(self._profiles[p])}
                 else:
                     defined = roles.parse_definitions(definitions)
                     if not set(parsed) <= set(defined):
@@ -635,7 +670,7 @@ class ProcessState:
             for role, profile in parsed.items():
                 if profile not in self._profiles:
                     raise RoleProfileMissing(role)
-                if role in defined and defined[role]["location"] != roles.profile_location(self._profiles[profile]):
+                if role in defined and defined[role]["location"] != self._location(self._profiles[profile]):
                     raise SettingsError(f"role {role}'s profile is incompatible with its local/cloud location")
             raw = roles.build_raw(disk.raw, parsed, defined)
             if disk.exists and raw == disk.raw:
@@ -660,11 +695,11 @@ class ProcessState:
                 raise failure
             profile = self._roles[role]
             s = self._profiles[profile]
-            ep = _endpoint(s)
+            ep = self._endpoint(s)
             key = self._keys.get((ep.kind, ep.base_url))
             if ep.api_key_env:
                 self._env_names.add(ep.api_key_env)
-            snapshot = RequestSnapshot(endpoint=_endpoint(s, key), model=s.model, kind=s.kind,
+            snapshot = RequestSnapshot(endpoint=self._endpoint(s, key), model=s.model, kind=s.kind,
                                        provider=s.provider if s.kind == "openrouter" else "",
                                        profile_name=profile, profile_modified=False)
             defaults = copy.deepcopy(dict((self._role_definitions.get(role) or {}).get("task_defaults") or {}))
@@ -1016,12 +1051,12 @@ class ProcessState:
             if revision != self._revision:
                 raise StaleRevision(self._revision)
             s = self._settings
-            ep = _endpoint(s)
+            ep = self._endpoint(s)
             key = self._keys.get((ep.kind, ep.base_url))
             if ep.api_key_env:
                 self._env_names.add(ep.api_key_env)
             active = self._active
-            return RequestSnapshot(endpoint=_endpoint(s, key), model=s.model, kind=s.kind,
+            return RequestSnapshot(endpoint=self._endpoint(s, key), model=s.model, kind=s.kind,
                                    provider=s.provider if s.kind == "openrouter" else "",
                                    profile_name=active,
                                    profile_modified=active is not None and self._profiles.get(active) != s)
@@ -1031,22 +1066,22 @@ class ProcessState:
         repair, which sends to the endpoint its parent captured (techspec 9.2)."""
         with self._lock:
             ep = Endpoint(kind, base_url or None)
+            if ep.base_url != self.servers[kind].base_url:
+                raise SettingsError("the recorded server differs from the configured server; repair is unavailable")
             if ep.api_key_env:
                 self._env_names.add(ep.api_key_env)
-            return self._keys.get((ep.kind, ep.base_url))
+            return self._keys.get((ep.kind, ep.base_url)) or self.servers[kind].api_key
 
     def discovery_endpoint(self, kind: object, base_url: object, api_key: object) -> Endpoint:
-        """Endpoint for Load models / Load providers, from the dialog's typed values."""
-        typed = settings_from_body(ModelSettings(), {"kind": kind, "base_url": base_url})
-        ep = _endpoint(typed)
-        if api_key is None or api_key == "":
-            with self._lock:
-                key = self._keys.get((ep.kind, ep.base_url))
-        else:
-            key = validate_key(api_key)
-            with self._lock:
-                self._credentials.add(key)
-        return _endpoint(typed, key)
+        """Discovery uses the same fixed server and session key as model execution."""
+        if base_url not in (None, "") or api_key not in (None, ""):
+            raise SettingsError("server URLs and keys are configured outside model settings")
+        if not isinstance(kind, str) or kind not in self.servers:
+            raise SettingsError("invalid model source")
+        with self._lock:
+            ep = self._endpoint(ModelSettings(kind=kind))
+            key = self._keys.get((ep.kind, ep.base_url))
+            return self._endpoint(ModelSettings(kind=kind), key)
 
 
 __all__ = ["DefaultConflict", "NoSuchProfile", "NoSuchBlock", "NoSuchServer", "ProcessState", "ReadOnly", "RequestBudget",

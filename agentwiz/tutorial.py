@@ -82,7 +82,7 @@ class Tutorial:
     def _seed(self, state, workspace) -> None:
         """The profile, the role map and the example blocks (14.4). Nothing is written outside the session's
         temporary folder."""
-        base = {"kind": "openai_compat", "base_url": self.backend_url}
+        base = {"kind": "openai_compat"}
         state.save_profile({"name": ROLE_PROFILE, **base, "model": ROLE_MODEL}, state.view()["revision"])
         state.select_profile(None, state.view()["revision"])          # detach: the active settings stay the stand-in's
         state.apply_config({**base, "model": "complete"}, state.view()["revision"])
@@ -113,8 +113,11 @@ class Tutorial:
                 stub = self._serve(StubServer(("127.0.0.1", 0), handler))
                 servers = {"tutorial": {"url": f"http://127.0.0.1:{stub.server_port}/mcp"}}
                 self.workspace = open_workspace(root / "workspaces", "tutorial")
+                from .server_config import ServerSettings
+                model_servers = {kind: ServerSettings(self.backend_url) for kind in
+                                 ("lmstudio", "openrouter", "openai_compat")}
                 self.child = UIServer(workspace=self.workspace, profiles_dir=root / "profiles",
-                                      mcp_servers_dir=root / "mcp")
+                                      mcp_servers_dir=root / "mcp", servers=model_servers)
                 self._serve(self.child)
                 self.child.tutorial_session = self
                 state = self.child.state
@@ -159,13 +162,13 @@ class Tutorial:
                 return {"busy": True}
             if topic.id.startswith("assist-"):
                 action = topic.id[len("assist-"):]
-                state.save_profile({"name":"tutorial-assistant","kind":"openai_compat","base_url":self.backend_url,
+                state.save_profile({"name":"tutorial-assistant","kind":"openai_compat",
                                     "model":"workshop-" + action}, state.view()["revision"])
                 state.select_profile(None, state.view()["revision"])
                 state.save_roles({ROLE:ROLE_PROFILE, "assistant":"tutorial-assistant"},state.view()["roles"]["revision"])
             self.topic = topic.id
             self.last_seen = time.monotonic()
-            state.apply_config({"kind": "openai_compat", "base_url": self.backend_url,
+            state.apply_config({"kind": "openai_compat",
                                 "model": topic.model}, state.view()["revision"])
             if topic.seed_contract and not any(c["name"] == "fields" for c in state.view()["contracts"]["items"]):
                 state.save_contract("fields", CONTRACT, None)

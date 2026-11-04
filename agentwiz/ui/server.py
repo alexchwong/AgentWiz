@@ -176,7 +176,7 @@ class UIServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, port: int = 0, *, workspace: Workspace, profiles_dir: Path, page_timeout: float = 30.0,
-                 request_limit: int = 8, mcp_servers_dir: Path | None = None):
+                 request_limit: int = 8, mcp_servers_dir: Path | None = None, servers=None, config_path=None):
         self.token = secrets.token_urlsafe(24)
         from ..tutorial import Tutorial
         self.tutorial = Tutorial(self)
@@ -187,6 +187,13 @@ class UIServer(ThreadingHTTPServer):
                                 else Path("./mcp_servers")).resolve()
         self.workspace_root = Path(workspace.path).parent.resolve()
         self.request_limit = request_limit
+        if servers is None:
+            from .. import server_config
+            config_path = Path(config_path or "./config/model-servers.ini").absolute()
+            server_config.initialize(config_path)
+            servers = server_config.load(config_path)
+        self.servers = servers
+        self.config_path = config_path
         self.workspace_gate = WorkspaceGate()
         self._admin_lock = threading.Lock()
         self._workspace_close_lock = threading.Lock()
@@ -212,7 +219,8 @@ class UIServer(ThreadingHTTPServer):
 
     def _new_state(self, workspace: Workspace) -> ProcessState:
         return ProcessState(workspace, self.request_limit, profiles_dir=self.profiles_dir,
-                            mcp_servers_dir=self.mcp_servers_dir)
+                            mcp_servers_dir=self.mcp_servers_dir, servers=self.servers,
+                            config_path=self.config_path)
 
     @property
     def workspace_admin_enabled(self) -> bool:
@@ -735,7 +743,7 @@ class Handler(BaseHTTPRequestHandler):
         routes = {"/api/workshop/tickets": self._workshop_ticket, "/api/tutorial/start": self._tutorial_start,
                   "/api/tutorial/step": self._tutorial_step,
                   "/api/tutorial/exit": self._tutorial_exit,
-                  "/api/config": self._config, "/api/models": self._models,
+                  "/api/config": self._config, "/api/openrouter-key": self._openrouter_key, "/api/models": self._models,
                   "/api/providers": self._providers, "/api/complete": self._complete,
                   "/api/complete/stop": self._complete_stop, "/api/repair/preview": self._repair_preview,
                   "/api/repair": self._repair, "/api/history/switch": self._history_switch,
@@ -988,6 +996,9 @@ class Handler(BaseHTTPRequestHandler):
     def _config(self, body: dict) -> None:
         revision = _revision(body)
         self._send(200, self._state_body(self.server.state.apply_config(body, revision)))
+
+    def _openrouter_key(self, body: dict) -> None:
+        self._send(200, self._state_body(self.server.state.set_openrouter_key(body.get("api_key"), _revision(body))))
 
     def _profile_save(self, body: dict) -> None:
         _profile_name(body)
@@ -1268,6 +1279,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, self._state_body(self.server.state.update_profiles(body, _revision(body))))
 
     def _discovery_endpoint(self, body: dict):
+        if "base_url" in body or "api_key" in body:
+            raise SettingsError("server connections are configured in the model server configuration file")
         if "kind" not in body:
             raise BodyError("kind is required")
         base_url = body.get("base_url")
@@ -1415,6 +1428,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _repair_preview(self, body: dict) -> None:
         _run, record, number = self.server.state.store.admit_repair(self._attempt_id(body), reserve=False)
+        self.server.state.key_for(record["endpoint"]["kind"], record["endpoint"]["base_url"])
         plan = model_step.repair_plan(record)
         contract = plan["contract"]
         self._send(200, {"parent_id": record["id"], "attempt": number, "messages": plan["messages"],

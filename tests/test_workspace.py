@@ -106,6 +106,31 @@ class Launch:
             stream.close()
 
 
+def test_cli_server_configuration(tmp_path):
+    config = tmp_path / "machine" / "servers.ini"
+    first = Launch(tmp_path, "--config", str(config))
+    try:
+        address = first.address()
+        assert first.state(address)["server_config_path"] == str(config)
+        assert config.is_file()
+    finally:
+        first.stop()
+    edited = config.read_text().replace("http://localhost:1234/v1", "http://127.0.0.1:9876/v1")
+    config.write_text(edited)
+    second = Launch(tmp_path, "--config", str(config))
+    try:
+        assert second.state(second.address())["base_url"] == "http://127.0.0.1:9876/v1"
+        assert config.read_text() == edited
+    finally:
+        second.stop()
+    config.write_text("[openrouter]\napi_key = sk-private-sentinel\n")
+    run = subprocess.run([sys.executable, "-m", "agentwiz", "--no-browser", "--config", str(config)],
+                         cwd=tmp_path, capture_output=True, text=True, timeout=15)
+    assert run.returncode == 1
+    assert "sk-private-sentinel" not in run.stdout + run.stderr
+    assert config.read_text() == "[openrouter]\napi_key = sk-private-sentinel\n"
+
+
 def test_cli_workspace(tmp_path):
     wsdir = str(tmp_path / "workspaces")
     launches = []

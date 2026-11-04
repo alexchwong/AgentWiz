@@ -25,7 +25,7 @@ import pytest
 
 import agentwiz
 from agentwiz.model_call import OUTCOMES
-from conftest import events, final_of, get_state, request, save_contract, strict_loads
+from conftest import events, final_of, get_state, request, save_contract, strict_loads, configure_server
 from live_stop import judge_stop
 
 CLASSIFIED = set(OUTCOMES) - {"error", "stopped"}
@@ -46,6 +46,7 @@ def _call(ui, path, body=None, **kw):
 
 
 def _configure(ui, **fields):
+    configure_server(ui, fields)
     return _call(ui, "/api/config", {"revision": get_state(ui)["revision"], **fields})
 
 
@@ -76,7 +77,7 @@ def test_live_lmstudio(ui):
     key = os.environ.get("AGENTWIZ_LIVE_LMSTUDIO_KEY", "").strip()
     auth = {"api_key": key} if key else {}
     _configure(ui, kind="lmstudio", base_url=url, model=model, **auth)
-    ids = [m["id"] for m in _call(ui, "/api/models", {"kind": "lmstudio", "base_url": url, **auth})["models"]]
+    ids = [m["id"] for m in _call(ui, "/api/models", {"kind": "lmstudio"})["models"]]
     assert model in ids, f"{model} is not among LM Studio's models: {ids}"
     evs, end = _stream(ui)
     _report("LM Studio", model, end)
@@ -86,9 +87,9 @@ def test_live_openrouter(ui):
     _key, model = _env("OPENROUTER_API_KEY", "AGENTWIZ_LIVE_OPENROUTER_MODEL",
                        optional=("AGENTWIZ_LIVE_OPENROUTER_PROVIDER", "AGENTWIZ_LIVE_TIMEOUT"))
     _configure(ui, kind="openrouter", base_url="", model=model)
-    ids = [m["id"] for m in _call(ui, "/api/models", {"kind": "openrouter", "base_url": ""})["models"]]
+    ids = [m["id"] for m in _call(ui, "/api/models", {"kind": "openrouter"})["models"]]
     assert model in ids, f"{model} is not in OpenRouter's model list (expected the form author/slug)"
-    providers = _call(ui, "/api/providers", {"kind": "openrouter", "base_url": "", "model": model})["providers"]
+    providers = _call(ui, "/api/providers", {"kind": "openrouter", "model": model})["providers"]
     tagged = [p for p in providers if p["slug"]]
     assert tagged, "no provider with a slug for this model"
     print("\nproviders (slug, name): " + ", ".join(f"{p['slug']} ({p['name']})" for p in tagged))
@@ -110,7 +111,7 @@ def test_live_llamaserver(ui):
     url, model = _env("AGENTWIZ_LIVE_LLAMASERVER_URL", "AGENTWIZ_LIVE_LLAMASERVER_MODEL",
                       optional=("AGENTWIZ_LIVE_TIMEOUT",))
     _configure(ui, kind="openai_compat", base_url=url, model=model)
-    assert _call(ui, "/api/models", {"kind": "openai_compat", "base_url": url})["models"]
+    assert _call(ui, "/api/models", {"kind": "openai_compat"})["models"]
     evs, end = _stream(ui)
     reasoning = "".join(e["text"] for e in evs if e["type"] == "reasoning")
     assert reasoning == (end["result"]["reasoning"] or "")

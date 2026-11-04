@@ -62,11 +62,11 @@ def test_startup_without_hostname_resolution(make_ui, monkeypatch):
 # 2 ---------------------------------------------------------------------------------------------
 def test_keys_write_only_bound_and_source(ui, make_server, monkeypatch):
     a, b = make_server().reply(answer()), make_server().reply(answer())
-    assert configure(ui, a, api_key=KEY)["key_source"] == "session"
+    assert configure(ui, a, api_key=KEY)["key_source"] == "config"
     assert configure(ui, b)["key_source"] == "none"
     complete(ui, "hi")
     assert "authorization" not in b.requests[-1]["headers"]
-    assert configure(ui, a)["key_source"] == "session"
+    assert configure(ui, a, api_key=KEY)["key_source"] == "config"
     complete(ui, "hi")
     assert a.requests[-1]["headers"]["authorization"] == f"Bearer {KEY}"
     assert configure(ui, a, api_key="")["key_source"] == "none"
@@ -96,7 +96,7 @@ def test_failures_never_reveal_keys(ui, make_server, monkeypatch, capfd):
     rec = record_of(evs)
     assert rec["outcome"] == "error" and rec["error"]["description"].startswith("InternalError:")
     assert c.requests == []
-    fail = failure_of(lambda: request(ui, "/api/models", {"kind": "openrouter", "base_url": c.url + "/v1"}))
+    fail = failure_of(lambda: request(ui, "/api/models", {"kind": "openrouter"}))
     assert fail.status == 500 and fail.body["code"] == "internal"
     assert c.requests == []
     monkeypatch.delenv("OPENROUTER_API_KEY")
@@ -109,8 +109,7 @@ def test_failures_never_reveal_keys(ui, make_server, monkeypatch, capfd):
     evs = complete(ui, "hi")
     rec = record_of(evs)
     assert rec["outcome"] == "error" and rec["error"]["description"].startswith("AuthError:")
-    fail = failure_of(lambda: request(ui, "/api/models", {"kind": "openai_compat", "base_url": d.url + "/v1",
-                                                          "api_key": escaped}))
+    fail = failure_of(lambda: request(ui, "/api/models", {"kind": "openai_compat"}))
     assert fail.status == 400 and fail.body["error"].startswith("AuthError:")
 
     captured = capfd.readouterr()
@@ -176,11 +175,13 @@ def test_discovery_passthrough(ui, make_server):
         {"provider_name": "Groq", "tag": "groq"}]}}).encode()
     typed.reply(Reply(body=models, headers={"Content-Type": "application/json"}),
                 Reply(body=endpoints, headers={"Content-Type": "application/json"}))
-    got = request(ui, "/api/models", {"kind": "openai_compat", "base_url": typed.url + "/v1"})["models"]
+    configure(ui, typed)
+    got = request(ui, "/api/models", {"kind": "openai_compat"})["models"]
     assert [m["id"] for m in got] == ["alpha", "zeta"]
     assert all("raw" not in m for m in got)
     assert typed.requests[0]["path"] == "/v1/models" and saved.requests == []
-    got = request(ui, "/api/providers", {"kind": "openrouter", "base_url": typed.url + "/v1", "api_key": "k",
+    configure(ui, typed, kind="openrouter", api_key="k")
+    got = request(ui, "/api/providers", {"kind": "openrouter",
                                          "model": "author/slug"})["providers"]
     assert [p["slug"] for p in got] == ["deepinfra/turbo", "groq"]
     assert typed.requests[1]["path"] == "/v1/models/author/slug/endpoints"

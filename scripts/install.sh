@@ -178,6 +178,10 @@ printf 'Installing AgentWiz and its dependencies...\n'
 "$venv_python" -m pip "${pip_args[@]}" "$target" >/dev/null 2>&1 \
     || die "pip could not install $(basename "$wheel_path"); check network access and the wheel's compatibility"
 
+"$venv_python" -c 'from pathlib import Path; from agentwiz.server_config import initialize; initialize(Path("config/model-servers.ini"))' >/dev/null 2>&1 \
+    || die "cannot initialize config/model-servers.ini"
+printf 'Model server configuration: %s/config/model-servers.ini (restart after editing)\n' "$(pwd)"
+
 venv_abs="$(cd "$venv_dir" && pwd)"
 printf '\nAgentWiz is installed in %s\n\n' "$venv_abs"
 printf 'Launch it with\n\n    %q\n\n' "$venv_abs/bin/agentwiz"
