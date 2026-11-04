@@ -118,6 +118,7 @@ def drive_model_block(page):
     expect(tid(page, "roles-dialog")).to_be_hidden()
     workshop_run(page)
     expect(tid(page, "ws-trial")).to_have_attribute("data-attempts", "2")
+    expect(tid(page, "ws-output")).to_have_count(2)      # both named outputs come from the one accepted answer
 
 
 def workshop_run(page):
@@ -349,3 +350,16 @@ def test_a_start_after_the_managers_closing_is_refused(ui):
     ui.tutorial.begin_shutdown()
     fail = failure_of(lambda: request(ui, "/api/tutorial/start", {}))
     assert fail.status == 503 and fail.body["code"] == "busy" and ui.tutorial.child is None
+
+
+def test_tutorial_model_block_inherits_its_role_default_and_declares_two_outputs(ui):
+    """The model-block topic demonstrates role defaults and named outputs, so the tutorial workspace must really
+    carry both: the block sets no temperature of its own and the role's default reaches the prepared request."""
+    request(ui, "/api/tutorial/start", {})
+    child = ui.tutorial.child
+    assert get_state(child)["roles"]["definitions"]["fast"]["task_defaults"] == {"temperature": 0}
+    preview = request(child, "/api/workshop/preview", {"format_version": 1, "key": "extract_fields",
+                                                       "inputs": {"report": "Record 1 has a ratio of 0.5."}})
+    prepared = preview["prepared"]
+    assert prepared["sources"]["temperature"] == "role_default"
+    assert [o["name"] for o in prepared["outputs"]] == ["fields", "note"]

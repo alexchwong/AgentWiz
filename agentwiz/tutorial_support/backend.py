@@ -34,7 +34,7 @@ MODELS = {
     "bigint": "Completes with usage.prompt_tokens = 9007199254740993.",
     "json-pass": "Answers a JSON object in a fenced code block (the README's contract passes).",
     "json-repair": "Answers a JSON object that fails the README's contract; a repair (a request with an assistant message) gets json-pass's answer.",
-    "block-fields": "Answers the named envelope for the example model block: {\"fields\": …}.",
+    "block-fields": "Answers the named envelope for the example model block: {\"fields\": …, \"note\": …}.",
     "block-fields-repair": "Answers an envelope whose fields fail the contract; a repair gets block-fields' answer.",
     "slow-headers": "Waits 20 s before sending anything, not even the status line; logs the client's disconnect.",
 }
@@ -70,8 +70,8 @@ def words(text: str) -> list[bytes]:
 
 PASS_TEXT = '```json\n{"id": 9007199254740993, "ratio": 0.10000000000000000001}\n```'
 FAIL_TEXT = '```json\n{"id": 9007199254740993, "ratio": 1.5}\n```'
-ENVELOPE_PASS = '{"fields": {"id": 9007199254740993, "ratio": 0.10000000000000000001}}'
-ENVELOPE_FAIL = '{"fields": {"id": 9007199254740993, "ratio": 1.5}}'
+ENVELOPE_PASS = '{"fields": {"id": 9007199254740993, "ratio": 0.10000000000000000001}, "note": "The report mentions id 9007199254740993."}'
+ENVELOPE_FAIL = '{"fields": {"id": 9007199254740993, "ratio": 1.5}, "note": "The report mentions id 9007199254740993."}'
 
 SCRIPTS = {
     "json-pass": lambda: words(PASS_TEXT) + [chunk(finish="stop", usage_json=USAGE), DONE],

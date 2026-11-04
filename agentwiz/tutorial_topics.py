@@ -60,7 +60,10 @@ TOPICS: tuple[Topic, ...] = (
           _page("checked-request.tutorialPrepare", ["Extract the id and ratio as JSON."]), "checked-send"),
     Topic("model-block", "Run a model block",
           "A block is a saved step. This one asks a model (through the role fast) for the id and ratio in a report, "
-          "checks the answer against the fields contract and repairs it once. Show the role opens the editor: "
+          "plus a one-sentence note: two named outputs returned in one JSON object, each checked on its own, "
+          "with a repair if either fails. Its system instructions are in Design, Request preview shows the exact "
+          "messages including the generated output section, and its temperature is inherited from the role's "
+          "default. Show the role opens the editor: "
           "filter by location and family, select one role, then review its purpose and assigned model profile. "
           "Add family offers your own domains; Save all changes retains every role. Local uses a server on this machine; "
           "unconfigured roles cannot run. Then Run, and compare the two attempts in the trace.", "workshop", "0.2.0", "complete", True,

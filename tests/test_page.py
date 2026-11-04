@@ -1032,3 +1032,123 @@ def test_workshop_one_off_and_pending_examples_survive_cancel_and_write_failure(
     saved = request(ui, '/api/workshop/blocks/pending_examples/examples')
     example = next(e for e in saved['examples'] if e['id'] == selected)
     assert example['label'] == 'Edited words' and example['inputs'] == {'text': 'one two three'}
+
+
+def current_revision(ui, key):
+    """The id of a block's current saved revision, or None while it has none."""
+    try:
+        return request(ui, f'/api/workshop/blocks/{key}/revisions')['current']
+    except Exception:  # noqa: BLE001 - no such block yet
+        return None
+
+
+def saved_definition(ui, key):
+    """The definition of a block's current saved revision, as the Workshop stored it."""
+    draft = request(ui, f'/api/workshop/blocks/{key}/revisions/{current_revision(ui, key)}')['draft']
+    return jsonio.decode_exact(draft['definition_text'])
+
+
+def save_new_revision(page, ui, key):
+    """Save from the page and wait for a *new* revision: the status already reads "saved" after an earlier save."""
+    before = current_revision(ui, key)
+    tid(page, 'ws-save-revision').click()
+    tid(tid(page, 'ws-dialog'), 'ws-confirm').click()
+    assert wait_until(lambda: current_revision(ui, key) not in (None, before))
+    return saved_definition(ui, key)
+
+
+@pytest.mark.needs_checks
+def test_workshop_design_controls_overrides_request_preview_cards_and_assistance(ui, server, open_page):
+    """The Design pane shows system instructions in the main form, gives each sampling setting Inherit/Custom/Backend
+    default with a blank Custom refused, previews the exact request with Copy, edits structured outputs inside their own
+    card (a group left empty is refused at save), and the assistance request carries its own sampling intent."""
+    setup_model(ui, server)
+    save_roles(ui, {'fast': 'p', 'assistant': 'p'})
+    page = open_page(ui)
+    dialog = tid(page, 'ws-dialog')
+    tid(page, 'ws-new-block').click()
+    tid(dialog, 'ws-field-block-key').fill('authoring')
+    tid(dialog, 'ws-choice-start-with').select_option('extract_fields')
+    tid(dialog, 'ws-create-draft').click()
+    expect(tid(page, 'ws-field-system-instructions')).to_be_visible()
+
+    mode, value = tid(page, 'ws-choice-temperature-source'), tid(page, 'ws-field-temperature')
+    expect(value).to_be_hidden()
+    mode.select_option('custom')
+    expect(value).to_be_visible()
+    value.fill('')
+    tid(page, 'ws-save-revision').click()
+    has(page, 'ws-status', 'data-code', 'block_invalid')                      # Custom without a value is not guessed at
+    value.fill('0')
+    step = save_new_revision(page, ui, 'authoring')['steps'][0]
+    assert step['task']['temperature'] == 0 and 'task_resets' not in step      # zero is a value, not "unset"
+    mode.select_option('reset')
+    expect(value).to_be_hidden()
+    step = save_new_revision(page, ui, 'authoring')['steps'][0]
+    assert step['task_resets'] == ['temperature'] and 'temperature' not in step['task']
+
+    tid(page, 'ws-test').click()
+    tid(page, 'ws-field-text').fill('three notebooks')
+    tid(page, 'ws-design').click()
+    tid(page, 'ws-request-preview').click()
+    system = tid(dialog, 'ws-request-system').text_content()
+    assert '"out"' in system and system.rstrip().endswith('=== end output protocol ===')
+    assert 'three notebooks' in tid(dialog, 'ws-request-prompt').text_content()
+    tid(dialog, 'ws-request-copy-system').click()
+    has(dialog, 'ws-request-copy-system', 'data-copy', 'copied')
+    assert page.evaluate('navigator.clipboard.readText()') == system
+    tid(dialog, 'ws-close').click()
+
+    card = page.locator('[data-test="ws-port"][data-side="outputs"][data-port="out"]')
+    fields = card.locator('[data-test="ws-fields"]')
+    expect(fields).to_have_count(1)                                            # the output's own card edits its fields
+
+    def add_property(which, name, kind):
+        fields.locator('summary').click()
+        getattr(tid(fields, 'ws-add-property'), which).click()
+        tid(dialog, 'ws-field-property-name').fill(name)
+        tid(dialog, 'ws-choice-value-type').select_option(kind)
+        tid(dialog, 'ws-apply').click()
+
+    add_property('first', 'extras', 'Group')
+    before = current_revision(ui, 'authoring')
+    tid(page, 'ws-save-revision').click()
+    has(page, 'ws-status', 'data-code', 'block_invalid')                      # a new group with no field is refused
+    expect(dialog).to_have_count(0)                                            # no review was offered, nothing was saved
+    assert current_revision(ui, 'authoring') == before
+    add_property('last', 'note', 'Text')
+    schema = save_new_revision(page, ui, 'authoring')['outputs']['out']['contract']['schema']
+    assert list(schema['properties']['extras']['properties']) == ['note']
+
+    tid(page, 'ws-assist').click()
+    tid(dialog, 'ws-choice-assistant-temperature-source').select_option('custom')
+    tid(dialog, 'ws-field-assistant-temperature').fill('0')
+    tid(dialog, 'ws-choice-assistant-reasoning-source').select_option('reset')
+    with page.expect_request(lambda r: r.url.endswith('/api/workshop/plans') and r.method == 'POST') as sent:
+        tid(dialog, 'ws-prepare-request').click()
+    body = json.loads(sent.value.post_data)['request']
+    assert body['settings_text'] == {'temperature': '0'} and body['task_resets'] == ['reasoning']
+
+
+def test_workshop_example_dialog_offers_an_input_the_example_lacks(ui, open_page):
+    """An input added after an example was saved has no value in it; editing the example must offer it, not hide it."""
+    page = open_page(ui)
+    dialog = tid(page, 'ws-dialog')
+    tid(page, 'ws-new-block').click()
+    tid(dialog, 'ws-field-block-key').fill('late_port')
+    tid(dialog, 'ws-choice-start-with').select_option('count_text')
+    tid(dialog, 'ws-create-draft').click()
+    tid(page, 'ws-test').click()
+    tid(page, 'ws-field-text').fill('one two')
+    tid(page, 'ws-save-as-example').click()
+    tid(dialog, 'ws-save').click()
+    selected = tid(page, 'ws-choice-example').input_value()
+    tid(page, 'ws-design').click()
+    tid(page, 'ws-add-input').click()
+    tid(page, 'ws-field-field-name').nth(1).fill('extra')
+    tid(page, 'ws-test').click()
+    expect(tid(page, 'ws-choice-example')).to_have_value(selected)
+    tid(page, 'ws-edit-selected-example').click()
+    expect(tid(dialog, 'ws-field-text')).to_have_value('one two')
+    expect(tid(dialog, 'ws-field-extra')).to_have_count(1)
+    expect(tid(dialog, 'ws-field-extra')).to_have_value('')

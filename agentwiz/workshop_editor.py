@@ -7,6 +7,7 @@ from pathlib import Path
 
 from . import blocks, checks, jsonio, templates
 from .task_settings import OVERRIDABLE
+from .workshop import WorkshopError
 from .workshop_assets import fail, fingerprint, wire_files
 
 TYPES = {'Text': 'string', 'Choice': 'string', 'Whole number': 'integer', 'Number': 'number',
@@ -103,6 +104,32 @@ def contract_view(text):
                 raise
             result['source_only'] = True
     return result
+
+
+def empty_groups(definition):
+    """The guided groups of a block definition that declare no field, as (side, port, path) triples.
+
+    A guided group is an object closed to extra properties, which is what the field editor writes. A
+    schema outside the guided subset is source-only and is never judged here, and neither is a
+    contract held by reference.
+    """
+    found = set()
+    for side in ('inputs', 'outputs'):
+        for name, declaration in definition.get(side, {}).items():
+            contract = declaration.get('contract') if isinstance(declaration, dict) else None
+            schema = contract.get('schema') if isinstance(contract, dict) else None
+            if schema is None:
+                continue
+            try:
+                rows = field_rows(schema)
+            except WorkshopError:
+                continue
+            parents = {tuple(row['path'][:-1]) for row in rows if row['path']}
+            for row in rows:
+                if (row['type'] == 'Group' and tuple(row['path']) not in parents
+                        and jsonio.decode_exact(row['source_text']).get('additionalProperties') is False):
+                    found.add((side, name, tuple(row['path'])))
+    return found
 
 
 def compile_rows(rows):
@@ -342,6 +369,19 @@ def edit(draft, operation):
             resets = operation.get('resets', [])
             if not isinstance(resets, list) or any(name not in OVERRIDABLE for name in resets) or len(set(resets)) != len(resets):
                 fail()
+            # A control left on Custom with no value is neither an override nor a reset, and guessing which
+            # one was meant would change what the block sends. It is refused where the author can see it;
+            # Inherit and Backend default are the two ways to say what a blank value might have meant.
+            customs = operation.get('customs', [])
+            if not isinstance(customs, list) or any(name not in OVERRIDABLE for name in customs) \
+                    or len(set(customs)) != len(customs) or set(customs) & set(resets):
+                fail()
+            blank = [name for name in customs if not operation.get('sampling', {}).get(name)]
+            if blank:
+                raise WorkshopError('block_invalid', 409, [
+                    {'location': f'steps[0].task.{name}',
+                     'message': 'is set to Custom without a value: enter one, or choose Inherit or Backend default'}
+                    for name in blank])
             for name in resets:
                 step['task'].pop(name, None)
             step['task_resets'] = [name for name in OVERRIDABLE if name in resets]

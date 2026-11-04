@@ -439,3 +439,160 @@ def test_display_rename_keeps_description_review_until_behaviour_changes(ui):
     assert not renamed['description']['needs_refresh']
     changed = send(ui,'preview',draft=renamed['draft'],edit={**edit,'behaviour':d['behaviour']+'\n# changed source\n'})
     assert changed['description']['needs_refresh']
+
+
+def test_review_goes_stale_when_role_defaults_declaration_or_protocol_change(ui, server, monkeypatch):
+    """A reviewed model plan is bound to what it will send: the role's saved defaults, the declared outputs
+    and the protocol renderer. Changing any of them after review makes Start refuse the old plan, and a
+    started batch is judged by the plan it was reviewed under."""
+    import json
+    from conftest import get_state, save_profile
+    from test_blocks import model_block, MODEL_FILES
+    from agentwiz import output_protocol
+    save_profile(ui, 'p', model='m', kind='openai_compat', base_url=server.url + '/v1', provider='')
+
+    def set_default(temperature):
+        definitions = {'fast': {'description': '', 'location': 'local', 'task_defaults': {'temperature': temperature}}}
+        request(ui, '/api/roles/save', {'roles': {'fast': 'p'}, 'definitions': definitions,
+                                        'revision': get_state(ui)['roles']['revision']})
+
+    def plan_of(body):
+        plan = send(ui, 'plans', action='test', request=body)
+        return plan, plan['descriptor']['candidates'][0]
+
+    set_default(0.2)
+    draft = {'key': 'b', 'definition_text': json.dumps(model_block()), 'files': MODEL_FILES, 'metadata': {}}
+    plan_save(ui, draft)
+    body = {'key': 'b', 'inputs': {'text': 'hi'}, 'ticket': send(ui, 'tickets')['ticket']}
+    reviewed, candidate = plan_of(body)
+    assert candidate['role_defaults'] == {'temperature': 0.2}
+    assert candidate['settings_source']['temperature'] == 'role_default'
+    assert candidate['output_plan']['renderer'] == output_protocol.RENDERER_VERSION
+
+    set_default(0.9)
+    refusal = failure_of(lambda: send(ui, 'test', **body, expected_plan=reviewed['expected_plan'], confirmations=[]))
+    assert refusal.status == 409 and refusal.body['code'] == 'confirmation_required'
+    after_role, candidate = plan_of(body)
+    assert after_role['expected_plan'] != reviewed['expected_plan']
+    assert candidate['role_defaults'] == {'temperature': 0.9}
+
+    monkeypatch.setattr(output_protocol, 'RENDERER_VERSION', output_protocol.RENDERER_VERSION + 1)
+    after_renderer, candidate = plan_of(body)
+    assert after_renderer['expected_plan'] != after_role['expected_plan']
+    assert candidate['output_plan']['renderer'] == output_protocol.RENDERER_VERSION
+    monkeypatch.undo()
+
+    edited = json.loads(draft['definition_text'])
+    edited['outputs']['out']['description'] = 'The reply, in one sentence'
+    before = plan_of(body)[1]['output_plan']['digest']
+    changed = plan_of({'draft': {**draft, 'definition_text': json.dumps(edited)}, 'inputs': {'text': 'hi'},
+                       'ticket': body['ticket']})[1]['output_plan']['digest']
+    assert changed != before
+
+
+def test_file_backed_output_token_survives_save_and_preview_equals_what_the_backend_receives(ui, server):
+    """A saved block keeps `{{output.NAME}}` in its prompt file; the preview shows the filled prompt and the
+    generated section, and the model receives exactly those messages."""
+    import json
+    from conftest import block_answer, save_profile, save_roles
+    from test_blocks import model_block, MODEL_FILES
+    from agentwiz import output_protocol
+    save_profile(ui, 'p', model='m', kind='openai_compat', base_url=server.url + '/v1', provider='')
+    save_roles(ui, {'fast': 'p'})
+    block = model_block(outputs={'out': {'description': 'One plain sentence', 'contract': {'format': 'text'}}})
+    files = {**MODEL_FILES, 'prompts/user.md': 'Say {{inputs.text}} as {{output.out}}.'}
+    plan_save(ui, {'key': 'b', 'definition_text': json.dumps(block), 'files': files, 'metadata': {}})
+    reopened = send(ui, 'preview', key='b', inputs={'text': 'hi'})
+    assert reopened['issues'] == [] and reopened['design']['behaviour'] == files['prompts/user.md']
+    prepared = reopened['prepared']
+    assert 'One plain sentence' in prepared['prompt'] and '{{output.out}}' not in prepared['prompt']
+    assert prepared['system_sent'] == prepared['system'] + '\n\n' + prepared['generated']
+    assert prepared['generated'].startswith(output_protocol.BEGIN) and prepared['generated'].endswith(output_protocol.END)
+    server.reply(block_answer(out='hi'))
+    batch = completed(ui, start_planned(ui, 'test', {'key': 'b', 'inputs': {'text': 'hi'}})['batch_id'])
+    assert batch['state'] == 'complete' and batch['rows'][0]['outputs']['out']['text'] == 'hi'
+    sent = server.requests[0]['body']['messages']
+    assert sent == [{'role': 'system', 'content': prepared['system_sent']}, {'role': 'user', 'content': prepared['prompt']}]
+    assert batch['rows'][0]['raw_answer'] == '{"out":"hi"}'
+
+
+def schema_block(schema, name='b'):
+    from test_blocks import model_block
+    return model_block(name, outputs={'out': {'contract': {'format': 'json', 'schema': schema}}})
+
+
+def add_property(draft, name, kind, path=()):
+    return {'kind': 'property_form', 'side': 'outputs', 'port': 'out', 'path': list(path), 'addition': True,
+            'name': name, 'type': kind, 'description': '', 'required': True, 'nullable': False,
+            'choices': [], 'bounds': ['', '']}
+
+
+def test_a_new_empty_group_may_be_edited_but_not_saved_or_started_and_a_saved_one_is_kept(ui, server):
+    """Authoring may pass through an empty group; Save and Start refuse one the author has just left empty, naming
+    it, while a group that was already empty in the saved block is left alone."""
+    import json
+    from test_blocks import MODEL_FILES
+    import pytest
+    from conftest import save_profile, save_roles
+    pytest.importorskip('jsonschema')
+    save_profile(ui, 'p', model='m', kind='openai_compat', base_url=server.url + '/v1', provider='')
+    save_roles(ui, {'fast': 'p'})
+    closed = {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ['a'], 'additionalProperties': False}
+    draft = {'key': 'g', 'definition_text': json.dumps(schema_block(closed, 'g')), 'files': MODEL_FILES, 'metadata': {}}
+    plan_save(ui, draft)
+    edited = send(ui, 'preview', draft=draft, edit=add_property(draft, 'nested', 'Group'))       # the empty state is allowed
+    assert edited['issues'] == []
+    refused = failure_of(lambda: send(ui, 'plans', action='save', request={'draft': edited['draft'], 'expected_identity': None}))
+    assert refused.status == 409 and refused.body['code'] == 'block_invalid'
+    body = {'draft': edited['draft'], 'inputs': {'text': 'hi'}, 'ticket': send(ui, 'tickets')['ticket']}
+    started = failure_of(lambda: send(ui, 'plans', action='test', request=body))
+    assert started.status == 409 and started.body['code'] == 'block_invalid'
+    assert [i['location'] for i in started.body['issues']] == ['outputs.out.nested']
+    filled = send(ui, 'preview', draft=edited['draft'], edit=add_property(edited['draft'], 'child', 'Text', ['nested']))
+    assert send(ui, 'plans', action='test', request={**body, 'draft': filled['draft']})['expected_plan']
+    # A group that the saved block already holds empty is not "new": it stays editable and runnable.
+    legacy = json.loads(json.dumps(closed))
+    legacy['properties']['old'] = {'type': 'object', 'properties': {}, 'additionalProperties': False}
+    from conftest import write_block
+    write_block(ui, 'old', schema_block(legacy, 'old'), MODEL_FILES)
+    reopened = send(ui, 'preview', key='old')
+    assert reopened['issues'] == []
+    assert send(ui, 'plans', action='test', request={'draft': reopened['draft'], 'inputs': {'text': 'hi'},
+                                                     'ticket': body['ticket']})['expected_plan']
+
+
+def design_edit(preview, **over):
+    d = preview['design']
+    ports = {side: [{'original': f['name'], 'name': f['name'], 'description': f['description'],
+                     'format': f['format'], 'source': f['source']} for f in d[side]] for side in ('inputs', 'outputs')}
+    return {'kind': 'design_form', 'name': preview['draft']['key'], 'purpose': d['purpose'], 'ports': ports,
+            'arguments': d['arguments'], 'behaviour': d['behaviour'], 'binding': d['binding'], 'system': d['system'],
+            'settings': d['settings'], 'sampling': {}, 'resets': [], 'customs': [], 'limits': {}, 'budget': d['budget'],
+            'repairs': d['repairs'], **over}
+
+
+def test_override_controls_inherit_reset_or_set_and_a_blank_custom_is_refused(ui):
+    """Each sampling control is Inherit, Custom or Backend default. Custom needs a value, zero is a value, and
+    Backend default is the one explicit request not to inherit a role default."""
+    import json
+    from test_blocks import model_block, MODEL_FILES
+    draft = {'key': 'b', 'definition_text': json.dumps(model_block()), 'files': MODEL_FILES, 'metadata': {}}
+    plan_save(ui, draft)
+    base = send(ui, 'preview', key='b')
+
+    def step_of(**over):
+        result = send(ui, 'preview', draft=base['draft'], edit=design_edit(base, **over))
+        return json.loads(result['draft']['definition_text'])['steps'][0]
+
+    blank = failure_of(lambda: step_of(customs=['temperature'], sampling={'temperature': ''}))
+    assert blank.status == 409 and blank.body['code'] == 'block_invalid'
+    assert [i['location'] for i in blank.body['issues']] == ['steps[0].task.temperature']
+    inherited = step_of(sampling={'temperature': ''})
+    assert 'temperature' not in inherited['task'] and 'task_resets' not in inherited
+    reset = step_of(resets=['temperature'], sampling={'temperature': ''})
+    assert 'temperature' not in reset['task'] and reset['task_resets'] == ['temperature']
+    zero = step_of(customs=['temperature'], sampling={'temperature': '0'})
+    assert zero['task']['temperature'] == 0 and 'task_resets' not in zero
+    for bad in ({'customs': ['temperature'], 'resets': ['temperature'], 'sampling': {'temperature': '1'}},
+                {'customs': ['max_tokens']}, {'customs': ['temperature', 'temperature']}):
+        assert failure_of(lambda: step_of(**bad)).status == 400

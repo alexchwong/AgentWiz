@@ -170,11 +170,28 @@ servers: add their URLs in Settings → MCP servers first. Discovery lists tools
 Creation errors keep the dialog and entered values available for correction. **Create draft** opens
 Design without calling a model; **Create with assistance** first creates the same draft, then opens the
 separate assistance request/review workflow. Neither button saves a revision automatically.
-More settings contains system instructions, sampling, reasoning, output cap, budgets and repair bounds.
-Test's **Preview instructions** shows the actual filled prompt or arguments for the supplied inputs.
+A model block's **System instructions** and **Instructions** are in the main Design form. Insert buttons add
+`{{inputs.name}}` and `{{output.name}}` placeholders (see [Named outputs](#named-outputs)). Each input and
+output is a card with its name, meaning, format and, for structured values, its own **Structured fields**
+editor. **Request preview** shows the exact system and user messages a run would send for the current inputs,
+with the generated output section and where each setting came from, each with Copy. **Model settings** gives
+Temperature and Reasoning level three choices:
+
+- **Inherit role default** uses the role's saved default and shows it beside the control; with no role
+  default the backend's own default applies.
+- **Custom** sends your value. It needs one: zero is a value, and Custom left empty is refused with its
+  location rather than guessed at.
+- **Backend default** asks for the backend's own default and ignores the role's. It is the only way to say
+  so once a role has a default.
+
+More settings holds the output cap, budgets, repair bounds and the source editors. Test's **Preview
+instructions** shows the actual filled prompt or arguments for the supplied inputs.
 
 Structured fields distinguish missing, null, false, zero and empty text. Numeric values travel as exact
-source text. Unsupported schema structures use the labelled contract-source editor; unknown rules are
+source text. Saved examples and their expected values use the same typed forms as Test. Editing an example
+also offers inputs it lacks, and keeps expected values for outputs the block no longer declares until you
+remove them. A new group needs at least one field before **Save revision** or a run: editing may pass through
+an empty group, and a group that was already empty in the saved block is left alone. Unsupported schema structures use the labelled contract-source editor; unknown rules are
 preserved. A shared contract can be copied inline for a block-specific edit. Deliberate shared edits
 remain in Workbench Contracts and show dependent blocks. Schema-backed validation and assistance require
 `AgentWiz[checks]`; install that extra outside the UI and restart. Text-only work remains available.
@@ -662,10 +679,17 @@ Cloud / remote; OpenRouter is always Cloud. Profile choices are filtered by loca
 checks compatibility at assignment and role resolution. Neither location silently falls back to the
 other. This constrains the endpoint AgentWiz contacts, not what a server might forward elsewhere.
 
+Each role may carry a default **Temperature** and **Reasoning level**; leave either as *Backend default*
+to set none. They apply to every model block and Workshop assistance call that uses the role, unless the block
+overrides or resets that setting ([Named outputs](#named-outputs)), and never to Chat or Checked request,
+which use the active profile. Zero is a default, not an absent one. An assignment-only save keeps existing
+definitions and defaults.
+
 Unconfigured roles can be used while drafting, but cannot run. Missing profiles, blank models and
 location mismatches are shown with reasons. Existing version-1 assignments remain usable without
 automatic reassignment; saving through the editor adds explicit location definitions. Files written
-with definitions use format version 2 and require this version of AgentWiz or newer. **Chat and
+with definitions use format version 3 (versions 1 and 2 are still read) and require this version of
+AgentWiz or newer. **Chat and
 Checked request keep using the active profile**, not these roles. Role resolution uses saved profile
 settings when preparing a run; already captured Workshop trials retain their reviewed snapshots.
 
@@ -685,13 +709,17 @@ placeholders written exactly as `{{inputs.name}}` or with a dotted path into a J
   placeholder (spaces, `{{inputs.}}`, an index) or a `{{steps...}}` placeholder is refused when the
   block is loaded.
 - The trace lists every fill with its location, placeholder, source and the SHA-256 of what was
-  inserted. There is no placeholder that renders a contract or schema.
+  inserted. In a model step's system and user prompts, `{{output.name}}` inserts that output's description,
+  format and schema (see [Named outputs](#named-outputs)); it is not a value, and script and tool
+  templates never accept it.
 
 ## Contracts in blocks
 
-- **A contract is never sent to the model.** A block's prompt must itself state the required output,
-  preferably as one short instruction and one example (for a router: say which words are allowed and
-  show one). The contract only decides whether the answer is accepted.
+- **A model step sends the output format, not the checks.** AgentWiz adds a generated section to the
+  system message naming each declared output, its description, its format and, for a structured output,
+  its complete schema ([Named outputs](#named-outputs)). Check rules (`contains`, `length` and so on),
+  examples and saved contract names are never sent. The contract still alone decides whether the answer is
+  accepted, and the generated section does not replace it.
 - **How answers are read.** In strict mode the whole trimmed answer is parsed. Otherwise a single
   fenced code block is used, with any prose around it ignored, or else the whole answer.
 - **The truncation rule.** A block never accepts a cut-off answer, even one whose check passes: a
@@ -701,6 +729,62 @@ placeholders written exactly as `{{inputs.name}}` or with a dotted path into a J
 - **Inputs have contracts too.** Each input's text is parsed and checked before the run is admitted.
   A failure rejects the run (outcome **rejected**), takes no slot, and names the input and the rule.
   A JSON input is parsed whole: a fenced block in an input field is a parse error.
+
+## Named outputs
+
+A model step has `"response_mode": "named_json"` and no `output` key. The model returns **one JSON object
+whose top-level keys are exactly the names in the block's `outputs`**, for one output or many. Each key's value
+is checked against that output's own contract, and the outputs are published together or not at all: a failed,
+truncated or stopped answer exposes no partial output. A repair asks for the whole object again.
+
+```json
+{"id": "request", "kind": "model", "role": "fast", "response_mode": "named_json",
+ "system": {"text": "Extract facts without inventing missing values."},
+ "prompt": {"text": "Read {{inputs.source}}. Return {{output.text}} and {{output.structured_table}}."},
+ "task": {"temperature": 0.2, "reasoning": "low"}, "repair": {"max_repairs": 2}}
+```
+
+**What is sent.** The system message is your system text with its input placeholders filled, then a section
+that begins and ends with marker lines and states these rules (the wording comes from
+`agentwiz/output_protocol.py`; Request preview shows the real text):
+
+- Return exactly one JSON object and nothing else: no words before or after it, and no Markdown fence around it.
+- Its top-level keys are exactly these output names, in any order, one value each.
+- Every key must be present. Do not add keys, rename them, or nest one output inside another, and do not split
+  one output across several keys.
+- Place each output's complete value directly under its own key. A value may be empty only where its schema
+  allows that.
+- A text output is a JSON string holding the complete text; quotes, backslashes and line breaks are escaped as
+  JSON requires, and any formatting the task asks for goes inside that string.
+- A JSON output is the value itself, placed directly under its key, not a string containing JSON.
+
+Each output is then described with its purpose and, when structured, its complete JSON Schema. The section is
+generated for every run and is never written into your block files, so repeated previews cannot duplicate it.
+It asks for key order of no kind, because acceptance checks the key *set*; the prohibition on prose and fences
+applies outside the object, so a text value may contain Markdown.
+
+**`{{output.name}}`** in a model step's system or user prompt inserts that output's description, format and
+schema on one line. It describes the output; it can never refer to the answer the model has not yet given.
+`{{output.a.b}}`, `{{ output.a }}` and `{{output.}}` are refused when the block loads, and so is a name the block
+does not declare. Text inserted into a prompt is never scanned again, so braces inside an input value, a
+description or a schema stay literal.
+
+**Parsing is unchanged.** The whole trimmed answer is parsed, or a single fenced block when the contract is not
+strict; duplicate keys are refused. Nothing is repaired, guessed or extracted from surrounding prose. Output
+checks for structured values need `AgentWiz[checks]`; without it a block that needs them refuses to run
+instead of skipping the check. Checks establish structure and the rules you configured, not that an answer is true.
+
+**Older blocks.** A 0.1.x model block named its single output on the step. Such a block now loads as invalid
+with the location `steps[0].output`; AgentWiz does not convert it. Edit `block.json`: delete the step's
+`"output": "name"` line, add `"response_mode": "named_json"`, and keep `outputs` as it is. Update the prompt
+if it described the old reply, since the model must now answer with the object above. Old saved attempts remain
+readable. A block carrying the new key is refused by older AgentWiz versions rather than run wrongly.
+
+**Sampling precedence.** Temperature and reasoning are resolved separately for each setting: a value the step
+sets wins; `task_resets` naming the setting asks for the backend's default and stops the role's default being
+inherited; otherwise the role's saved default; otherwise the backend's default. Other task settings stay as the
+step configures them. The result is resolved once when a run is prepared, so every repair of that run keeps it,
+and a started comparison keeps the settings it was reviewed with.
 
 ## Automatic repair
 

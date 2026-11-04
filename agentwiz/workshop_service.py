@@ -10,7 +10,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import blocks, checks, history, jsonio, runner, runs, task_settings as ts, templates
+from . import blocks, checks, history, jsonio, model_step, runner, runs, task_settings as ts, templates
 from . import workshop_editor as editor
 from .state import RoleUnresolved
 from .workshop import WorkshopError
@@ -253,6 +253,29 @@ class Service:
                         result['prepared'] = {'arguments_text': jsonio.encode_exact(templates.fill_arguments(p.block.step.arguments, checked.values)[0])}
             return result
 
+    def check_new_groups(self, draft):
+        """Save and Start refuse a guided group with no field that the saved block did not already hold empty.
+
+        Editing may pass through an empty group, and a group that was already empty in the saved block stays
+        as it is, so only a group the author has just left empty is refused, with its location.
+        """
+        definition = jsonio.decode_exact(draft['definition_text'])
+        empty = editor.empty_groups(definition)
+        if not empty:
+            return
+        saved = set()
+        loaded = self.state.block_loaded(draft['key'])
+        if loaded is not None and loaded.block is not None:
+            try:
+                saved = editor.empty_groups(jsonio.decode_exact(loaded.block.texts['block.json']))
+            except Exception:                               # an unreadable saved block cannot excuse a new group
+                saved = set()
+        new = sorted(empty - saved)
+        if new:
+            raise WorkshopError('block_invalid', 409, [
+                {'location': '.'.join([side, port, *path]), 'message': 'is a new group with no field: add at least one field to it'}
+                for side, port, path in new])
+
     def input_shape(self, block, values):
         if not isinstance(values, dict) or set(values) != {d.name for d in block.inputs} or not all(isinstance(t, str) for t in values.values()):
             fail()
@@ -375,6 +398,11 @@ class Service:
                 c.close()
                 raise WorkshopError('unusable' if problem.code == 'unreadable' else 'block_invalid', 409, problem.issues)
             self.check_schema_available(c.parsed.block)
+            try:
+                self.check_new_groups(draft)
+            except WorkshopError:
+                c.close()
+                raise
             descriptor['source'] = c.digest
             descriptor['current'] = self.assets.identity(draft['key'])
             if descriptor['current'] != body.get('expected_identity'):
@@ -429,6 +457,13 @@ class Service:
                     raise WorkshopError('unusable' if problem.code == 'unreadable' else 'block_invalid', 409, problem.issues)
                 b = c.parsed.block
                 self.check_schema_available(b)
+                if 'draft' in candidate:
+                    try:
+                        self.check_new_groups(draft)
+                    except WorkshopError:
+                        for capture in captures:
+                            capture.close()
+                        raise
                 self.validate_examples(examples, b)
                 snapshot = self.state.resolve_role(b.step.role) if b.step.kind == 'model' else self.state.mcp_snapshot_for_block(b.step.server) if b.step.kind == 'tool' else None
                 role_capture = None
@@ -460,6 +495,10 @@ class Service:
                     record['settings'] = editor.typed(effective.task.request_shape())
                     record['settings_source'] = dict(effective.sources)
                     record['role_defaults'] = dict(role_capture.defaults)
+                    # The protocol renderer and what it renders are part of what was reviewed, and Start
+                    # freezes them with the batch (0.2.0 decision 4).
+                    plan_view = model_step.OutputPlan.of(b.outputs, b.contracts['outputs']).view()
+                    record['output_plan'] = {k: plan_view[k] for k in ('mode', 'renderer', 'digest')}
                     record['credential_identity'] = credential_identity
                 elif b.step.kind == 'tool':
                     # Configuration snapshot stays in memory. Only sanitized identity is displayed.

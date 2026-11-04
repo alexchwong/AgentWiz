@@ -299,7 +299,7 @@ plain JSON only (no `Decimal`; a contract travels as `{"name", "revision", "text
 > **Contracts and repair.**
 > 1. A contract decides every answer, first or repaired. Nothing upstream of the checks changes what counts as a pass.
 > 2. The answer parser accepts the whole trimmed answer, or a single fenced block when not strict. A new recovery rule needs replay evidence on saved answers and the owner's approval.
-> 3. A contract is never sent to the model. Prompts state the required output themselves.
+> 3. A model step sends only generated *output instructions*: each declared output's name, description, format and, for a structured output, its complete schema, rendered by `output_protocol`. Check definitions, example data and saved contract names are never sent, and the contract alone decides acceptance. (This replaces 0.1.4's "a contract is never sent to the model"; see `docs/decisions.md`.)
 > 4. A truncated attempt never provides a block output.
 > 5. Repairs reuse the attempt's captured settings. Nothing raises a token cap automatically.
 
@@ -308,6 +308,35 @@ decision; `model_step.run_attempt_with_value` is the only path a block attempt t
 included, so an accepted value is never re-derived by a second check. `checks.repair_message` has a
 truncation branch; `repair_reason` (`null`, `check_failed`, `truncated`) is on every record and in the
 repair preview. Only a `complete` attempt whose check `pass`es is accepted.
+
+**Named envelope.** A block model step uses `response_mode: "named_json"`; `checks.check_named_answer` is
+its only acceptance path (Workbench attempts keep `check_answer_value`). It parses the answer once through
+`envelope_contract()` (non-strict, one JSON value, duplicate keys refused, the same parser policy as above),
+requires the exact key *set* in any order, requires a JSON string for a text output, then checks each
+already-parsed value with `check_value` against that output's own captured contract. It returns one
+aggregate result with the bounded, located per-output results under `check["outputs"]`, and a value only when
+the aggregate passes (`NO_VALUE` otherwise). `executor._publish` stages every output and commits them
+together, so a failed, truncated or stopped attempt publishes none. A repair resends the whole envelope; its
+message names failed output paths and rules, never interpolated values.
+
+`model_step.OutputPlan` is the captured plan: each output's name, description, contract revision and exact
+contract text. It is built from the block at preparation, stored on the attempt as `output_plan`
+(`mode`, `renderer`, `digest`, `outputs`) and rebuilt from the parent *record* for a repair, so a repair is
+judged by what the reviewed attempt promised, never by the contracts as they are now. Records without
+`output_plan` read as Workbench or historical attempts and are not re-validated. `scripts/replay_output.py`
+replays a captured plan with the same checker and answers `unsupported_evidence` for a plan with another mode
+or renderer, no outputs, a digest that does not match its contracts, or an unreadable contract.
+
+**Generated instructions.** `output_protocol` is pure: no HTTP, storage or transport. `instructions(specs)`
+renders the system section (marker lines `BEGIN`/`END`, the key rules, then one block per output) and
+`describe(spec)` renders `{{output.NAME}}`, from the same `Spec`, so they cannot disagree. `RENDERER_VERSION`
+names the wording and `digest(specs)` hashes the renderer, names, descriptions and contract text; both are
+recorded with each attempt and with each reviewed Workshop candidate, and only replay reads the version back, to
+refuse a renderer it does not know. The section is composed in
+`runner.model_messages` and is never written to `block.json` or `prompts/*.md`. Prompt scanning
+(`templates.scan_model_text`, `fill_model_text`) is context-scoped: only model system and user prompts accept
+`{{output.NAME}}`; `scan_text`, `fill_text` and `fill_arguments` stay input-only. A filled text is never
+rescanned.
 
 ## Blocks, roles and scripts
 
@@ -338,8 +367,13 @@ repair preview. Only a `complete` attempt whose check `pass`es is accepted.
   refuses a profile that does not exist. Resolution is live, at preparation (`state.resolve_role`).
   Version 2 retains the string assignment map and adds `definitions`, keyed by role, each containing
   `description` (at most 500 characters), `location` (`local|cloud`), and optional `family`
-  (trimmed nonblank text, at most 64 characters; absent means General in the editor). Unassigned definitions are
-  allowed; every v2 assignment needs a definition. Missing files expose unconfigured `fast`,
+  (trimmed nonblank text, at most 64 characters; absent means General in the editor). Version 3 adds
+  optional `task_defaults` with only `temperature` and `reasoning`, validated by
+  `task_settings.parse_defaults` (zero is kept, a blank reasoning level means none, anything else is refused).
+  Formats 1 and 2 are read unchanged; `roles.build_raw` always writes 3, keeps unknown top-level fields and
+  retains existing definitions, so an assignment-only save never downgrades the file or drops a default; an older
+  AgentWiz refuses the newer file rather than dropping behaviour. Unassigned definitions are
+  allowed; every v2 and v3 assignment needs a definition. Missing files expose unconfigured `fast`,
   `assistant`, `reasoning` definitions in memory only. Version-1 assignments remain readable with
   no imposed location constraint until explicitly configured in the editor. Legacy API saves retain
   existing v2 policies for retained assignments; they cannot bypass location enforcement.
@@ -356,6 +390,32 @@ repair preview. Only a `complete` attempt whose check `pass`es is accepted.
   retain edits. Save submits all drafts, not just filtered matches. Suggested families are UI hints;
   custom families are stored on role definitions and offered across locations. No empty-family
   registry is persisted. Adding a role inherits active filters; adding defaults never duplicates names.
+- **Model step format and settings.** Executable format stays 1: the model step keys are `id, kind, role,
+  system, prompt, response_mode, task, task_resets, repair`. `response_mode` is required and only `"named_json"`
+  is accepted; `output` on a model step is refused with a located issue (tool steps keep `output`); 1–50 outputs
+  are declared from `outputs` alone. `task_resets` is a bounded list of `temperature` and/or `reasoning`; a name
+  may not also appear in `task`, and an explicit `null` temperature or blank reasoning is normalised to a reset.
+  A strict older reader rejects the unfamiliar keys instead of misexecuting the block; format 2 stays reserved for
+  Workshop managed heads. `task_settings.resolve_effective(task, resets, role_defaults)` resolves each setting
+  independently (step value, then reset, then role default, then backend default; zero is a value) and records
+  the source of each in `Effective.sources`, without mutating a role or a `TaskSettings`.
+- **One preparation path.** `runner.model_messages` fills the prompts, composes the generated section,
+  resolves the effective settings and refuses a request over `insertion.REQUEST_LIMIT`; both dispatch
+  (`_prepare_model`) and Workshop preview call it. `state.role_capture(role)` returns the destination snapshot,
+  a detached copy of the role's defaults and the roles revision under one lock acquisition, and a started
+  Workshop batch freezes it (`FrozenSource`), so editing a role afterwards changes neither the trials nor their
+  repairs. `settings_sources` is recorded on each attempt.
+- **Workshop projections.** `preview` returns `prepared` (`system`, `generated`, `system_sent`, `prompt`,
+  `response_mode`, `task`, `sources`, `role_defaults`, per-output `name/description/format/schema`) or
+  `prepared_issues`, `design.role_defaults`, and per-row `output_checks` and a bounded `raw_answer` on trials.
+  The reviewed plan descriptor (and so `expected_plan`) covers the source digest, captured contracts, effective
+  `settings`, `settings_source`, `role_defaults` and `output_plan` (`mode`, `renderer`, `digest`) per model
+  candidate; plan identities are bound to a per-process salt, so they never outlive the process. `design_form`
+  accepts `resets` and `customs`: a control marked custom with no value is refused as `block_invalid` at
+  `steps[0].task.<name>`, never read as inherit or reset. `check_new_groups` runs when a draft is saved or
+  started and refuses a guided group (an object closed to extra properties) with no field that the saved block
+  did not already hold empty, naming it as `<side>.<port>.<path>`; preview and editing never refuse, and a
+  schema outside the guided subset or a contract held by reference is not judged.
 - **Shutdown.** `ProcessState.shutdown(grace_s, wait=)` closes the writer barrier and every admission
   gate, interrupts delivery, cancels admitted work, escalates, and drains the writer count;
   `UIServer.server_close(wait=)` calls it (and the tutorial's halves around it); `__main__.py` owns the

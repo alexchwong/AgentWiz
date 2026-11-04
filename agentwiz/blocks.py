@@ -476,7 +476,14 @@ def _parse_step(p: _Parse, steps: object, outputs: tuple[Declared, ...]) -> Step
         issues.add(f"{where}.kind", 'must be "model", "tool" or "script"')
         return None
     for key in raw:
-        if key not in _STEP_KEYS[kind]:
+        if key in _STEP_KEYS[kind]:
+            continue
+        if kind == "model" and key == "output":
+            # 0.1.x blocks named the one output on the step. The envelope returns every declared output,
+            # so the rewrite is mechanical: drop this key, add the response mode, keep `outputs` as it is.
+            issues.add(f"{where}.output", 'is a 0.1.x key: remove it and add "response_mode": "named_json" '
+                       "to this step; the envelope returns every output declared in outputs")
+        else:
             issues.add(f"{where}.{key}", f"is not a key of a {kind} step")
     output_names = p.declared_outputs
 

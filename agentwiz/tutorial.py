@@ -86,7 +86,9 @@ class Tutorial:
         state.save_profile({"name": ROLE_PROFILE, **base, "model": ROLE_MODEL}, state.view()["revision"])
         state.select_profile(None, state.view()["revision"])          # detach: the active settings stay the stand-in's
         state.apply_config({**base, "model": "complete"}, state.view()["revision"])
-        state.save_roles({ROLE: ROLE_PROFILE}, state.view()["roles"]["revision"])
+        state.save_roles({ROLE: ROLE_PROFILE}, state.view()["roles"]["revision"],
+                         {ROLE: {"description": "Routine extraction", "location": "local",
+                                 "task_defaults": {"temperature": 0}}})
         shutil.copytree(BLOCKS_SOURCE, workspace.path / "blocks", copy_function=shutil.copyfile)
 
     def start(self):

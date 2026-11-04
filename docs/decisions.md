@@ -252,3 +252,27 @@ Persisted coordinator records use the strict record reader for runtime timings;
 authored values stay in exact source strings. Machine expectation judgement is kept
 when a human rating overrides reported correctness. No dependency, parser acceptance
 or model transport change was introduced.
+
+
+### 4 November 2026 — block authoring, named outputs and role defaults
+
+Dispositions recorded in `proposal_block_ui_improvement.md` (sections 3 and 12) as given by the owner during the
+build; this entry restates them and records nothing further.
+
+- **Generated output instructions.** Approved: a model step sends its declared outputs' names, descriptions, formats
+  and schemas, but never check definitions, example data or private metadata. This replaces 0.1.4's
+  "a contract is never sent to the model"; the architecture contract was rewritten accordingly. Local acceptance
+  remains authoritative.
+- **`{{output.NAME}}`.** Approved: it describes a declared output in model prompts; it is not a reference to a future
+  answer, and post-run or inter-step references remain out of scope.
+- **One transport, no legacy mode.** Owner direction: "no-one is using 0.1.4, disregard reverse incompatibility
+  concerns". The named JSON envelope is the only model-step mode, with no conversion workflow; a model step
+  carrying `output` loads as invalid and README gives the rewrite. Executable format stays 1 (additive keys that a
+  strict older reader refuses); format 2 stays reserved for Workshop managed heads.
+- **Workspace data.** The default workspace's one block and the other workspaces were deleted once, by hand, under the
+  workspace lock; `roles.json` and profiles were kept. No cleanup was added to startup or upgrade.
+- **Role defaults.** Approved: `temperature` and `reasoning` only, applied to every role-based model call including
+  Workshop assistance and never to direct-profile Workbench calls, with no fallback to the mutable Workbench task
+  settings. Roles formats 1 and 2 stay readable; the file is written as format 3.
+- **Assistance sampling.** Added at the owner's request: the Workshop assistance request has its own Temperature and
+  Reasoning controls, separate from the settings of the block it proposes.

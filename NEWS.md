@@ -1,5 +1,13 @@
 # NEWS
 ## 0.2.0
+- Model blocks return one named JSON envelope: several independently checked outputs, published together or not at all.
+- Each model step now sends generated output instructions; `{{output.name}}` describes an output inside prompts.
+- Design shows system instructions, per-output structured fields and a Request preview with Copy of the exact messages sent.
+- Temperature and reasoning can inherit a role's default, be set per block, or be reset to the backend default.
+- Roles can save a default temperature and reasoning (roles file format 3); older versions cannot read it.
+- Workshop assistance has its own temperature and reasoning controls, separate from the block it proposes.
+- Saved examples and expected values use typed forms; a new empty group must gain a field before saving.
+- 0.1.x model blocks naming a step output now load as invalid; README shows the one-line rewrite.
 - Workshop reports located block validation errors instead of misleading file-permission failures; Test retains usable inputs and clearly separates one-off input from pending/saved examples. Output renames preserve step bindings and shared contracts use saved-name choices.
 - Roles now show one editor at a time, with location and family/domain filters, suggested families and custom family creation. Browsing preserves unsaved edits; Save all changes saves every role.
 - Starter roles (`fast`, `assistant`, `reasoning`), a guided role editor with model details and setup links, and enforced Local/Cloud assignments. Local roles require loopback model servers; no automatic cloud fallback.

@@ -1,5 +1,62 @@
 # AgentWiz 0.2.0 — cumulative Phase 2 handover
 
+## November 4, 2026 — block authoring, named outputs and role defaults: completing the proposal
+
+- Completed the remaining work R1–R13 of `proposal_block_ui_improvement.md` on `devel` @ `9fe6e7f`
+  ("partial implementation"). Nothing was committed, pushed or published. This entry replaces that
+  proposal's section 12 as the record of state; the proposal file itself is now obsolete (see below).
+- **Done.** R1: each input/output is a card holding its own Structured fields editor. R2: Save and
+  Start refuse a new guided group with no field (editing may pass through one). R3: the example dialog
+  offers inputs an example lacks and keeps stale expected values until explicitly removed. R4: blank
+  Custom is refused. R5/R9: README, architecture, decisions and NEWS describe the envelope, generated
+  instructions (rules copied from `output_protocol.py`), role defaults and precedence. R6: the located
+  issue for a 0.1.x `step.output` names the rewrite. R7/R8/R10/R13: functional tests added (below).
+  R11: one browser journey and one example-dialog check; Request preview has Copy. R12: see below.
+- **Implementer choices that need the owner's confirmation** (none is recorded as an owner decision):
+  1. *R4 spelling.* The proposal asked the owner to choose between an explicit control and sending a
+     reset for blank Custom. Neither was assumed: `design_form` takes `customs`, and a Custom control with
+     no value is refused as `block_invalid` at `steps[0].task.<name>`. Inherit and Backend default
+     already say what a blank might have meant. Either original option can still be layered on.
+  2. *R2 rule.* "New" cannot be told from "legacy" by schema alone, so the rule is relative to the saved
+     block: `check_new_groups` refuses a guided group (object closed to extra properties) that is empty
+     in an inline draft and was not empty in the saved head. Not judged: `key`/revision candidates,
+     schemas outside the guided subset, contracts held by reference.
+  3. *R10 premise.* Plan identities are hashed with a per-process salt, so a `RENDERER_VERSION` change
+     could never leave a reviewed plan accepted within a process; the gap was that the renderer identity
+     was not frozen or recorded. Each model candidate now carries `output_plan` (`mode`, `renderer`,
+     `digest`), included in `expected_plan` and in the persisted batch. The review `basis` digest
+     (description freshness) was left alone.
+  4. *R12.* `_version.py` is `0.2.0` and the 0.2.0 NEWS section is treated as unreleased, so bullets were
+     added to it and no bump was made; the model-block topic already carried `updated_in: 0.2.0`. If 0.2.0
+     has shipped, a bump and a new NEWS section are required before merge.
+  5. *R3 scope.* No "Keep as source" gate was added: unmapped values were already kept by default and
+     removed only by an explicit button, so a gate would add friction without adding safety.
+- **Also changed.** The Workshop status element now clears `data-code` on a successful save or batch update;
+  it used to read `saved` while still carrying the previous error's code. The tutorial's packaged
+  `extract_fields` block now declares two outputs (`fields`, `note`), inherits temperature from a seeded
+  role default, and its topic text mentions system instructions, Request preview and role defaults.
+- **Not done.** No tutorial topic demonstrates typed structured entry. The 7.2 confirmation for a type change
+  that would discard children (the `field_has_children` refusal is retained) and a field-ordering control are
+  not built. Request preview shows the sent messages, settings and their sources; the author/generated split
+  stays available in the API (`prepared.system`, `prepared.generated`) but is not drawn separately. After
+  switching a port to Structured value, **Refresh design fields** is still needed before its field editor
+  appears. `scripts/replay_output.py` hard-codes the one known renderer (`1`).
+- **Tests added** (each with its functional reason): replay of a captured named plan, and refusal of
+  unreadable/mismatched plans (R7); review freshness after a role-default, declaration or renderer change (R8,
+  R10); a file-backed `{{output.NAME}}` surviving save and the backend receiving exactly the previewed messages
+  (R13); new empty group refused at save/Start and a saved one kept (R2); the three override modes with a
+  blank Custom refused (R4); a Design journey covering field placement, override modes, Request preview with
+  Copy, output cards, the empty-group refusal and the assistance request's sampling fields; the example dialog
+  offering a newly added input; the tutorial model block inheriting its role default with two outputs.
+  Each new browser assertion was checked to fail when its behaviour was removed; the first draft of two of them
+  passed on stale state, which is why the status code is now cleared.
+- **Checks (Linux, Python 3.13.18, Playwright 1.63.0 Chromium, local `.venv`).** Baseline before any change:
+  `python -m pytest -q -m "not live"` **659 passed, 10 deselected** (148 s). Final: **668 passed, 10 deselected**
+  (155 s), including `test_page.py` and `test_tutorial.py` (10 passed). `python -m compileall -q agentwiz scripts
+  tests` and `git diff --check` passed. **Not run:** live backends, installed-wheel smoke, macOS, Python 3.10, CI.
+- **Obsolete:** `proposal_block_ui_improvement.md` — it states "partly implemented", carries stale absolute
+  paths, and its content now lives in this entry, `docs/decisions.md`, README and the architecture reference.
+
 ## November 4, 2026 — Workspaces dialog: switch, create, clone, reset and delete
 
 - Added live in-process workspace switching within the launch `--workspaces-dir`. A destination

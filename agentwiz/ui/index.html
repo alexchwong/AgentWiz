@@ -2812,7 +2812,7 @@ async function wsPlan(action,request){
 async function wsSave(){
   await wsFlush();if(!ws.draft)return false;
   const bound=await wsPlan("save",{draft:ws.draft,expected_identity:ws.draft.base_digest??null});if(!bound)return false;
-  const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};const saved=await wsApi("save",bound);await wsLoad({key:saved.key},false);Object.assign(ws,keep);wsRender();wsNote.dataset.state="saved";wsNote.textContent="Revision saved";return true;
+  const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};const saved=await wsApi("save",bound);await wsLoad({key:saved.key},false);Object.assign(ws,keep);wsRender();wsNote.dataset.state="saved";delete wsNote.dataset.code;wsNote.textContent="Revision saved";return true;
 }
 async function wsRefresh(){
   wsBlocks=(await api("/api/blocks")).blocks;wsFilter();
@@ -2920,7 +2920,7 @@ function wsDesign(){
   for(const side of ["inputs","outputs"]){
     const area=h("fieldset",{},h("legend",{text:side==="inputs"?"Inputs":"Outputs"}));form.append(area);areas[side]=area;rows[side]=[];
     function port(name,format,description,source){
-      const line=h("div",{class:"ws-port"}),n=wsField(line,"Field name",name),desc=wsField(line,"Meaning",description);
+      const line=h("div",{class:"ws-port","data-test":"ws-port","data-side":side,"data-port":name}),n=wsField(line,"Field name",name),desc=wsField(line,"Meaning",description);
       const f=wsChoice(line,"Format",[["text","Text"],["json","Structured value"],["shared","Shared contract"]],format);
       const adv=h("details",{},h("summary",{text:"Contract source"})),src=wsField(adv,"Exact contract",source||"",true);line.append(adv);
       const shared=wsChoice(line,"Saved contract",[["","Choose a saved contract"],...(state.contracts?.items||[]).filter(c=>!c.problem).map(c=>[c.name,c.name])],format==="shared"?JSON.parse(source):"");
@@ -2928,6 +2928,8 @@ function wsDesign(){
       shared.onchange=()=>{src.value=JSON.stringify(shared.value);changed();};
       f.onchange=()=>{shared.parentElement.hidden=f.value!=="shared";src.value=f.value==="shared"?JSON.stringify(shared.value):JSON.stringify({format:f.value});changed();};
       const item={original:name,n,desc,f,src};rows[side].push(item);
+      const view=p.contracts?.[side]?.[name];
+      if(format==="json"&&view&&(!view.source_only||view.blank_schema))line.append(wsFieldEditor(side,()=>item.original,view.fields));
       if(format==="shared")line.append(wsButton("Make inline copy",()=>{const c=p.contracts?.[side]?.[name];if(c){src.value=c.source_text;f.value=c.format;shared.parentElement.hidden=true;changed();}}));
       line.append(wsButton("Remove",()=>{rows[side]=rows[side].filter(x=>x!==item);line.remove();changed();}));area.append(line);
     }
@@ -2959,7 +2961,16 @@ function wsDesign(){
     sampling.max_tokens=wsField(more,"Output token cap",d.sampling.max_tokens??"");
     for(const output of d.outputs||[])form.append(wsButton("Insert output "+output.name,()=>{behavior.setRangeText("{{output."+output.name+"}}",behavior.selectionStart,behavior.selectionEnd,"end");changed();}));
     form.append(h("p",{text:"Response: named JSON envelope — one top-level key per output."}));
-    form.append(wsButton("Request preview",async()=>{await wsFlush();const p=await wsApi("preview",{draft:ws.draft,inputs:ws.inputs});await wsDialog("Request preview",wsShowValue(p.prepared||p.input_checks||p.issues),["Close"]);}));
+    form.append(wsButton("Request preview",async()=>{
+      await wsFlush();const p=await wsApi("preview",{draft:ws.draft,inputs:ws.inputs}),box=h("div",{"data-test":"ws-request-messages"});
+      if(p.prepared){
+        for(const [name,label,text] of [["system","System message sent",p.prepared.system_sent],["prompt","User message sent",p.prepared.prompt]]){
+          const pre=h("pre",{"data-test":"ws-request-"+name,text});box.append(h("h3",{text:label}),h("div",{class:"panelhead"},copyControl("ws-request-copy-"+name,()=>text,()=>pre)),pre);
+        }
+        box.append(wsShowValue({response_mode:p.prepared.response_mode,task:p.prepared.task,sources:p.prepared.sources}));
+      }else box.append(wsShowValue(p.prepared_issues||p.input_checks||p.issues));
+      await wsDialog("Request preview",box,["Close"]);
+    }));
   }
   for(const [key,label] of [["max_seconds","Time budget (seconds)"],["max_model_tokens","Model token budget"]])limits[key]=wsField(more,label,d.limits[key]||"");
   const sourceSettings=h("details",{},h("summary",{text:"Advanced settings source"}));more.append(sourceSettings);
@@ -2969,12 +2980,11 @@ function wsDesign(){
   const advanced=wsSource("Inspect executable definition",ws.draft.definition_text);form.append(advanced);
   function changed(){wsDirty();wsPending=async()=>{
     const ports={};for(const side of ["inputs","outputs"])ports[side]=rows[side].map(r=>({original:r.original,name:r.n.value,description:r.desc.value,format:r.f.value,source:r.src.value}));
-    const result=await wsApi("preview",{draft:ws.draft,edit:{kind:"design_form",name:title.value,purpose:purpose.value,ports,arguments:d.arguments,behaviour:behavior.value,binding:role.value,system:system.value,settings:settings.value,sampling:Object.fromEntries(Object.entries(sampling).map(([n,f])=>[n,settingModes[n]&&settingModes[n].value!=="custom"?"":f.value])),resets:Object.entries(settingModes).filter(([,f])=>f.value==="reset").map(([n])=>n),limits:Object.fromEntries(Object.entries(limits).map(([n,f])=>[n,f.value])),budget:budget.value,repairs:repair.value}});
+    const result=await wsApi("preview",{draft:ws.draft,edit:{kind:"design_form",name:title.value,purpose:purpose.value,ports,arguments:d.arguments,behaviour:behavior.value,binding:role.value,system:system.value,settings:settings.value,sampling:Object.fromEntries(Object.entries(sampling).map(([n,f])=>[n,settingModes[n]&&settingModes[n].value!=="custom"?"":f.value])),resets:Object.entries(settingModes).filter(([,f])=>f.value==="reset").map(([n])=>n),customs:Object.entries(settingModes).filter(([,f])=>f.value==="custom").map(([n])=>n),limits:Object.fromEntries(Object.entries(limits).map(([n,f])=>[n,f.value])),budget:budget.value,repairs:repair.value}});
     ws.projection=result;ws.draft=result.draft;
     for(const side of ["inputs","outputs"])for(const r of rows[side])r.original=r.n.value;
   };}
   form.oninput=changed;form.onchange=changed;
-  for(const side of ["inputs","outputs"])for(const [name,contract] of Object.entries(p.contracts?.[side]||{}))if(contract.format==="json"&&(!contract.source_only||contract.blank_schema))form.append(wsFieldEditor(side,name,contract.fields));
   if(p.destination)form.append(wsShowValue(p.destination));if(p.setup_issues?.length)form.append(wsShowValue(p.setup_issues));
   if(p.issues?.length)form.append(h("div",{"data-test":"ws-validation","data-state":"invalid"},wsShowValue(p.issues)));
   form.append(wsButton("Refresh design fields",async()=>{await wsFlush();wsRender();}));
@@ -3032,12 +3042,12 @@ async function wsAssist(initialAction){
     const request={proposal_id:id,draft:ws.draft},plan=await wsApi("plans",{action:"proposals/apply",request});
     const review=h("div",{},wsShowValue(plan.descriptor.proposal.response));for(const change of plan.descriptor.changes||[])review.append(h("details",{open:change.name==="Python source"},h("summary",{text:change.name}),h("h4",{text:"Before"}),h("pre",{text:change.before}),h("h4",{text:"After"}),h("pre",{text:change.after})));
     for(const c of plan.required_confirmations)review.append(h("p",{text:c.detail}));
-    if(await wsDialog("Review proposal",review,["Apply","Discard"])!=="Apply"){wsNote.dataset.state="proposal_discarded";wsNote.textContent="Proposal discarded";return;}
+    if(await wsDialog("Review proposal",review,["Apply","Discard"])!=="Apply"){wsNote.dataset.state="proposal_discarded";delete wsNote.dataset.code;wsNote.textContent="Proposal discarded";return;}
     const bound={...request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations.map(({kind,digest})=>({kind,digest}))};
     const applied=await wsApi("proposals/apply",bound);
     if(applied.draft)await wsLoad({draft:applied.draft},true);
     if(applied.examples){ws.examples.push(...applied.examples);ws.examplesDirty=true;await wsView("test");}
-    wsNote.dataset.state="proposal_applied";wsNote.textContent="Proposal applied to draft";if(applied.explanation)await wsDialog("Failure explanation",wsShowValue(applied.explanation),["Close"]);
+    wsNote.dataset.state="proposal_applied";delete wsNote.dataset.code;wsNote.textContent="Proposal applied to draft";if(applied.explanation)await wsDialog("Failure explanation",wsShowValue(applied.explanation),["Close"]);
   });
 }
 async function wsStart(action,request,done){
@@ -3050,7 +3060,7 @@ async function wsStart(action,request,done){
 async function wsFollow(id,done){
   const generation=++wsPoll;
   while(generation===wsPoll){
-    ws.batch=await wsApi("batches/"+id);if(ws.batch.active_run){try{ws.batch.live=await api("/api/block_runs/"+ws.batch.active_run);}catch(e){/* child may already have ended */}}wsNote.dataset.state=ws.batch.state;wsNote.textContent=ws.batch.state+" · "+ws.batch.rows.filter(r=>r.state==="terminal").length+" / "+ws.batch.rows.length;
+    ws.batch=await wsApi("batches/"+id);if(ws.batch.active_run){try{ws.batch.live=await api("/api/block_runs/"+ws.batch.active_run);}catch(e){/* child may already have ended */}}wsNote.dataset.state=ws.batch.state;delete wsNote.dataset.code;wsNote.textContent=ws.batch.state+" · "+ws.batch.rows.filter(r=>r.state==="terminal").length+" / "+ws.batch.rows.length;
     wsResults();if(ws.batch.state!=="running"){if(done)await done(ws.batch);return;}
     await new Promise(resolve=>setTimeout(resolve,250));
   }
@@ -3077,10 +3087,16 @@ function wsResults(){
 async function wsEditExample(selected){
   const e=ws.examples.find(x=>x.id===selected);if(!e)throw new Error("Select a saved example.");
   const box=h("div"),label=wsField(box,"Label",e.label),fields={};
-  for(const [n,t] of Object.entries(e.inputs))fields[n]=wsInput(box,n,ws.projection.contracts?.inputs?.[n],t,false);
+  const ports=ws.projection.input_ports||ws.projection.facts?.inputs||[];
+  for(const n of [...Object.keys(e.inputs),...ports.filter(n=>!(n in e.inputs))])fields[n]=wsInput(box,n,ws.projection.contracts?.inputs?.[n],e.inputs[n]||"",false);
   const kind=wsChoice(box,"Expectation",[["review","Human review"],["whole_output","Exact output"],["fields","Field assertions"]],e.expectation.kind);
   const criterion=wsField(box,"Review criterion",e.expectation.criterion||"");const values={};
   for(const n of ws.projection.facts.outputs)values[n]=wsInput(box,"Expected "+n,ws.projection.contracts?.outputs?.[n],e.expectation.values?.[n]||"",false);
+  const stale=Object.fromEntries(Object.entries(e.expectation.values||{}).filter(([n])=>!ws.projection.facts.outputs.includes(n)));
+  if(Object.keys(stale).length){
+    const warning=h("div",{"data-test":"ws-unmapped-expected"},h("p",{text:"These expected values belong to outputs the block no longer declares. They are kept until you remove them."}),wsShowValue(stale));
+    warning.append(wsButton("Remove stale expected values",()=>{for(const n of Object.keys(stale))delete stale[n];warning.remove();},"ws-remove-stale-expected"));box.append(warning);
+  }
   const assertions=h("div"),edits=[];box.append(assertions);
   function assertion(row={}){const line=h("div");assertions.append(line);const output=wsChoice(line,"Output",ws.projection.facts.outputs.map(n=>[n,n]),row.output),path=wsField(line,"Field path",(row.path||[]).join(".")),op=wsChoice(line,"Condition",["equals","absent","present","null"].map(x=>[x,x]),row.operation),v=wsField(line,"Exact value",row.value_text||"");edits.push(()=>({output:output.value,path:path.value.split(".").filter(Boolean),operation:op.value,...(op.value==="equals"?{value_text:v.value}:{})}));}
   (e.expectation.assertions||[]).forEach(assertion);box.append(wsButton("Add assertion",()=>assertion()));
@@ -3088,14 +3104,15 @@ async function wsEditExample(selected){
   let ex;const error=h("p",{role:"alert"});box.append(error);
   if(await wsDialog("Edit example",box,["Save","Cancel"],async action=>{
     if(action==="Cancel")return true;
-    try{ex={...e,label:label.value,version:e.version+1,inputs:Object.fromEntries(await Promise.all(Object.entries(fields).map(async([n,f])=>[n,await f.read()]))),verified:verified.checked,expectation:kind.value==="review"?{kind:"review",criterion:criterion.value}:kind.value==="fields"?{kind:"fields",assertions:edits.map(fn=>fn())}:{kind:"whole_output",values:Object.fromEntries(await Promise.all(Object.entries(values).map(async([n,f])=>[n,await f.read()])))} };return true;}
+    try{ex={...e,label:label.value,version:e.version+1,inputs:Object.fromEntries(await Promise.all(Object.entries(fields).map(async([n,f])=>[n,await f.read()]))),verified:verified.checked,expectation:kind.value==="review"?{kind:"review",criterion:criterion.value}:kind.value==="fields"?{kind:"fields",assertions:edits.map(fn=>fn())}:{kind:"whole_output",values:{...Object.fromEntries(await Promise.all(Object.entries(values).map(async([n,f])=>[n,await f.read()]))),...stale}} };return true;}
     catch(e){error.textContent=wsErrorText(e);return false;}
   })!=="Save")return;
   ws.examples=ws.examples.map(x=>x.id===e.id?ex:x);ws.examplesDirty=true;wsRender();
 }
 const wsRatings={};
 function wsFieldEditor(side,port,fields,sharedEdit=null){
-  const card=h("details",{},h("summary",{text:"Structured fields · "+port}));
+  const label=typeof port==="function"?port():port;
+  const card=h("details",{"data-test":"ws-fields","data-side":side,"data-port":label},h("summary",{text:"Structured fields · "+label}));
   const rows=fields||[];
   async function edit(row,addition){
     const box=h("div"),field=wsField(box,"Property name",addition?"":row.path.at(-1)||""),
@@ -3108,9 +3125,10 @@ function wsFieldEditor(side,port,fields,sharedEdit=null){
     let additional;
     if(row.type==="Group"&&!addition){additional=wsChoice(box,"Unknown properties",[["preserve","Keep current policy"],["allow","Allow"],["reject","Reject"]]);}
     const choice=await wsDialog("Edit structured field",box,["Apply",...(!addition&&row.path.length&&row.path.at(-1)!=="[]"?["Remove field"]:[]),"Cancel"]);if(!["Apply","Remove field"].includes(choice))return;
-    const edit={kind:"property_form",side,port,path:row.path,addition,remove:choice==="Remove field",...(additional&&additional.value!=="preserve"?{additional_properties:additional.value==="allow"}:{}),bounds:[low.value,high.value],name:field.value,type:type.value,description:desc.value,required:required.checked,nullable:nullable.checked,choices:choices.value.split("\n").filter(Boolean)};
+    const edit={kind:"property_form",side,port:typeof port==="function"?port():port,path:row.path,addition,remove:choice==="Remove field",...(additional&&additional.value!=="preserve"?{additional_properties:additional.value==="allow"}:{}),bounds:[low.value,high.value],name:field.value,type:type.value,description:desc.value,required:required.checked,nullable:nullable.checked,choices:choices.value.split("\n").filter(Boolean)};
     if(sharedEdit){await sharedEdit(edit);return;}
-    await wsFlush();const p=await wsApi("preview",{draft:ws.draft,edit});
+    await wsFlush();if(typeof port==="function")edit.port=port();   // a rename still pending in the row is applied first
+    const p=await wsApi("preview",{draft:ws.draft,edit});
     ws.projection=p;ws.draft=p.draft;wsDirty();wsRender();
   }
   for(const r of rows){card.append(h("div",{},r.path.join(".")+" · "+r.type+" ",wsButton("Edit field",()=>edit(r,false))));if(r.type==="Group")card.append(wsButton("Add property",()=>edit(r,true)));}
