@@ -2657,12 +2657,12 @@ async function tutorialInit() {
 
 // Block Workshop. Drafts and typed inputs stay in page memory. All execution and plans are server-owned.
 const wsPanel = $("panel-workshop");
-const ws = {draft:null, projection:null, dirty:false, view:"design", inputs:{}, examples:[], revision:null, batch:null, proposal:null};
+const ws = {draft:null, projection:null, dirty:false, view:"design", inputs:{}, examples:[], revision:null, examplesDirty:false, selectedExample:"", batch:null, proposal:null};
 const wsApi = (path, body) => api("/api/workshop/" + path, body === undefined ? undefined : {format_version:1,...body});
 async function wsPut(path, body) {
   const response = await fetch("/api/workshop/"+path,{method:"PUT",headers:{"Content-Type":"application/json","X-Session-Token":TOKEN},body:JSON.stringify({format_version:1,...body})});
   const value = await response.json();
-  if (!response.ok) throw new Error(value.code || value.error);
+  if (!response.ok) throw new ApiError(value.error, response.status, value.code, value);
   return value;
 }
 const wsNote = h("p",{role:"status","data-test":"ws-status"});
@@ -2674,7 +2674,8 @@ const wsHeading = h("h2",{text:"Block Workshop"});
 let wsBlocks=[], wsPoll=0, wsPending=null;
 function wsErrorText(e){
   const messages={invalid:"The block request is invalid. Check the key, selected starter and bindings.",stale:"Settings or source changed. Refresh and review the action again.",setup_unavailable:"The selected model role or MCP server is unavailable. Check Settings.",checks_required:"Install AgentWiz[checks] and restart to use this action.",read_only:"The workspace is read-only. Open a writable workspace to save changes.",busy:"Workshop is busy. Wait for the current operation to finish.",unusable:"The block source could not be read. Check its files and permissions."};
-  return (messages[e.code]||e.message||String(e))+(e.code?" ["+e.code+"]":"");
+  const issues=(e.body?.issues||[]).map(i=>i.location+": "+i.message).join("; ");
+  return (e.code==="block_invalid"?"The block definition needs correction.":messages[e.code]||e.message||String(e))+(issues?" "+issues:"")+(e.code?" ["+e.code+"]":"");
 }
 function wsError(e){wsNote.dataset.state="error";wsNote.dataset.code=e.code||"error";wsNote.textContent=wsErrorText(e);if(["stale","proposal_expired"].includes(e.code))wsNote.append(". Your draft is kept. Reload or request assistance again when ready.");}
 function wsButton(label,fn,id){
@@ -2693,7 +2694,7 @@ function wsChoice(parent,label,values,selected){
   parent.append(h("label",{class:"ws-field"},label,el));return el;
 }
 function wsDirty(){ws.dirty=true;wsHeading.textContent=(ws.draft?.metadata?.display_name||ws.draft?.key||"New block")+" · Unsaved";}
-window.addEventListener("beforeunload",e=>{if(ws.dirty){e.preventDefault();e.returnValue="";}});
+window.addEventListener("beforeunload",e=>{if(ws.dirty||ws.examplesDirty){e.preventDefault();e.returnValue="";}});
 function wsDialog(title,content,choices,beforeClose){
   return new Promise(resolve=>{
     const dialog=h("dialog",{"data-test":"ws-dialog"},h("h2",{text:title}),content);
@@ -2730,7 +2731,7 @@ function wsStructured(text,contract_text){
 }
 function wsSource(label,text){return h("details",{},h("summary",{text:label}),h("pre",{text}),copyControl("ws-copy-source",()=>text,null));}
 async function wsFlush(){if(wsPending){const save=wsPending;await save();wsPending=null;}}
-async function wsLeave(){if(!ws.dirty)return true;const choice=await wsDialog("Unsaved changes",h("p",{text:"Save this draft before opening another block?"}),["Save","Discard","Stay"]);if(choice==="Save")return await wsSave();return choice==="Discard";}
+async function wsLeave(){if(!ws.dirty&&!ws.examplesDirty)return true;const choice=await wsDialog("Unsaved changes",h("p",{text:"Save this draft and its pending example changes before opening another block?"}),["Save","Discard","Stay"]);if(choice==="Save"){if(ws.dirty&&!await wsSave())return false;return !ws.examplesDirty||await wsPersistExamples();}return choice==="Discard";}
 async function wsPlan(action,request){
   const plan=await wsApi("plans",{action,request});
   const d=plan.descriptor, disclosure=h("div");
@@ -2767,14 +2768,14 @@ async function wsPlan(action,request){
 async function wsSave(){
   await wsFlush();if(!ws.draft)return false;
   const bound=await wsPlan("save",{draft:ws.draft,expected_identity:ws.draft.base_digest??null});if(!bound)return false;
-  const examples=ws.examples;const saved=await wsApi("save",bound);await wsLoad({key:saved.key},false);if(!ws.revision)ws.examples=examples;wsNote.dataset.state="saved";wsNote.textContent="Revision saved";return true;
+  const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};const saved=await wsApi("save",bound);await wsLoad({key:saved.key},false);Object.assign(ws,keep);wsRender();wsNote.dataset.state="saved";wsNote.textContent="Revision saved";return true;
 }
 async function wsRefresh(){
   wsBlocks=(await api("/api/blocks")).blocks;wsFilter();
 }
 function wsFilter(){wsList.replaceChildren(new Option("Choose a saved block",""),...wsBlocks.filter(b=>(b.name+" "+b.display_name).toLowerCase().includes(wsSearch.value.toLowerCase())).map(b=>new Option((b.display_name||b.name)+" · "+(b.kind||"unavailable"),b.name)));if(ws.draft&&!wsBlocks.some(b=>b.name===ws.draft.key))wsList.add(new Option((ws.draft.metadata.display_name||ws.draft.key)+" · Unsaved draft",ws.draft.key));wsList.value=ws.draft?.key||"";}
 async function wsLoad(source,dirty){
-  const keep=source.draft&&source.draft.key===ws.draft?.key?{examples:ws.examples,revision:ws.revision,inputs:ws.inputs}:null;
+  const keep=source.draft&&source.draft.key===ws.draft?.key?{examples:ws.examples,revision:ws.revision,inputs:ws.inputs,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample}:null;
   let preview;
   try{preview=await wsApi("preview",source);}catch(e){
     if(e.code!=="support_required")throw e;
@@ -2787,7 +2788,7 @@ async function wsLoad(source,dirty){
   await wsRefresh();
   const collection=await wsApi("blocks/"+encodeURIComponent(ws.draft.key)+"/examples");
   ws.examples=collection.examples;ws.revision=collection.revision;
-  if(keep){ws.examples=keep.examples;ws.revision=keep.revision;}ws.inputs=keep?.inputs||{};if(ws.batch?.plan?.candidates?.[0]?.draft?.key!==ws.draft.key)ws.batch=null;wsRender();
+  ws.examplesDirty=false;ws.selectedExample="";ws.inputs={};if(keep)Object.assign(ws,keep);if(ws.batch?.plan?.candidates?.[0]?.draft?.key!==ws.draft.key)ws.batch=null;wsRender();
 }
 async function wsSupport(){
   await wsFlush();const key=ws.draft.key,info=await wsApi("blocks/"+key+"/support"),box=h("div"),replacements=[],removals=[];
@@ -2842,7 +2843,7 @@ async function wsNew(){
     try{await wsLoad({key:name.value,starter:kind.value,role:modelBox.hidden?null:role.value,server:toolBox.hidden?null:server.value,tool:toolBox.hidden?null:tool.value},true);return true;}
     catch(e){error.dataset.code=e.code||"error";error.textContent=wsErrorText(e);return false;}
   });if(!["Create draft","Create with assistance"].includes(choice))return;
-  ws.examples=structuredClone(starters.find(s=>s.id===kind.value)?.examples||[]);ws.view="design";wsRender();if(choice==="Create with assistance")await wsAssist("create");
+  ws.examples=structuredClone(starters.find(s=>s.id===kind.value)?.examples||[]);ws.examplesDirty=ws.examples.length>0;ws.view="design";wsRender();if(choice==="Create with assistance")await wsAssist("create");
 }
 function wsRoleChoice(parent,label,preferred){
   const roles=state.roles?.map||{},unresolved=new Set((state.roles?.unresolved||[]).map(r=>r.role)),names=[...new Set([...Object.keys(state.roles?.definitions||{}),...Object.keys(roles)])];
@@ -2878,9 +2879,12 @@ function wsDesign(){
       const line=h("div",{class:"ws-port"}),n=wsField(line,"Field name",name),desc=wsField(line,"Meaning",description);
       const f=wsChoice(line,"Format",[["text","Text"],["json","Structured value"],["shared","Shared contract"]],format);
       const adv=h("details",{},h("summary",{text:"Contract source"})),src=wsField(adv,"Exact contract",source||"",true);line.append(adv);
-      f.onchange=()=>{if(f.value!=="shared"){src.value=JSON.stringify({format:f.value});changed();}};
+      const shared=wsChoice(line,"Saved contract",[["","Choose a saved contract"],...(state.contracts?.items||[]).filter(c=>!c.problem).map(c=>[c.name,c.name])],format==="shared"?JSON.parse(source):"");
+      shared.parentElement.hidden=format!=="shared";
+      shared.onchange=()=>{src.value=JSON.stringify(shared.value);changed();};
+      f.onchange=()=>{shared.parentElement.hidden=f.value!=="shared";src.value=f.value==="shared"?JSON.stringify(shared.value):JSON.stringify({format:f.value});changed();};
       const item={original:name,n,desc,f,src};rows[side].push(item);
-      if(format==="shared")line.append(wsButton("Make inline copy",()=>{const c=p.contracts?.[side]?.[name];if(c){src.value=c.source_text;f.value=c.format;changed();}}));
+      if(format==="shared")line.append(wsButton("Make inline copy",()=>{const c=p.contracts?.[side]?.[name];if(c){src.value=c.source_text;f.value=c.format;shared.parentElement.hidden=true;changed();}}));
       line.append(wsButton("Remove",()=>{rows[side]=rows[side].filter(x=>x!==item);line.remove();changed();}));area.append(line);
     }
     for(const field of d[side]||[])port(field.name,field.format,field.description,field.source);
@@ -2910,11 +2914,12 @@ function wsDesign(){
     const ports={};for(const side of ["inputs","outputs"])ports[side]=rows[side].map(r=>({original:r.original,name:r.n.value,description:r.desc.value,format:r.f.value,source:r.src.value}));
     const result=await wsApi("preview",{draft:ws.draft,edit:{kind:"design_form",name:title.value,purpose:purpose.value,ports,arguments:d.arguments,behaviour:behavior.value,binding:role.value,system:system.value,settings:settings.value,sampling:Object.fromEntries(Object.entries(sampling).map(([n,f])=>[n,f.value])),limits:Object.fromEntries(Object.entries(limits).map(([n,f])=>[n,f.value])),budget:budget.value,repairs:repair.value}});
     ws.projection=result;ws.draft=result.draft;
+    for(const side of ["inputs","outputs"])for(const r of rows[side])r.original=r.n.value;
   };}
   form.oninput=changed;form.onchange=changed;
   for(const side of ["inputs","outputs"])for(const [name,contract] of Object.entries(p.contracts?.[side]||{}))if(contract.format==="json"&&(!contract.source_only||contract.blank_schema))form.append(wsFieldEditor(side,name,contract.fields));
   if(p.destination)form.append(wsShowValue(p.destination));if(p.setup_issues?.length)form.append(wsShowValue(p.setup_issues));
-  if(p.issues?.length)form.append(wsShowValue(p.issues));
+  if(p.issues?.length)form.append(h("div",{"data-test":"ws-validation","data-state":"invalid"},wsShowValue(p.issues)));
   form.append(wsButton("Refresh design fields",async()=>{await wsFlush();wsRender();}));
   if(d.kind==="script"&&ws.draft.base_digest)form.append(wsButton("Update support files",wsSupport));
   if(p.classification==="starter"){
@@ -2948,7 +2953,7 @@ async function wsRevisions(){
   if(choice==="Restore to draft"&&await wsLeave())await wsLoad({key:ws.draft.key,revision:rev.value},true);
   if(choice==="Duplicate"){
     const copied=examples.checked?structuredClone(ws.examples):[];
-    await wsLoad({draft:ws.draft,duplicate_key:name.value},true);ws.examples=copied;ws.revision=null;
+    await wsLoad({draft:ws.draft,duplicate_key:name.value},true);ws.examples=copied;ws.revision=null;ws.examplesDirty=copied.length>0;
     wsNote.textContent=examples.checked?"Duplicate draft. Save the block, then explicitly save its copied example collection.":"Duplicate draft";
   }
 }
@@ -2970,7 +2975,7 @@ async function wsAssist(initialAction){
     const bound={...request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations.map(({kind,digest})=>({kind,digest}))};
     const applied=await wsApi("proposals/apply",bound);
     if(applied.draft)await wsLoad({draft:applied.draft},true);
-    if(applied.examples){ws.examples.push(...applied.examples);await wsView("test");}
+    if(applied.examples){ws.examples.push(...applied.examples);ws.examplesDirty=true;await wsView("test");}
     wsNote.dataset.state="proposal_applied";wsNote.textContent="Proposal applied to draft";if(applied.explanation)await wsDialog("Failure explanation",wsShowValue(applied.explanation),["Close"]);
   });
 }
@@ -3019,7 +3024,7 @@ async function wsEditExample(selected){
   const verified=h("input",{type:"checkbox",checked:e.verified});box.append(h("label",{},verified," I verified this expectation"));
   if(await wsDialog("Edit example",box,["Save","Cancel"])!=="Save")return;
   const ex={...e,label:label.value,version:e.version+1,inputs:Object.fromEntries(Object.entries(fields).map(([n,f])=>[n,f.value])),verified:verified.checked,expectation:kind.value==="review"?{kind:"review",criterion:criterion.value}:kind.value==="fields"?{kind:"fields",assertions:edits.map(fn=>fn())}:{kind:"whole_output",values:Object.fromEntries(Object.entries(values).map(([n,f])=>[n,f.value]))}};
-  ws.examples=ws.examples.map(x=>x.id===e.id?ex:x);await wsPersistExamples();wsRender();
+  ws.examples=ws.examples.map(x=>x.id===e.id?ex:x);ws.examplesDirty=true;wsRender();
 }
 const wsRatings={};
 function wsFieldEditor(side,port,fields,sharedEdit=null){
@@ -3046,11 +3051,16 @@ function wsFieldEditor(side,port,fields,sharedEdit=null){
   return card;
 }
 async function wsPersistExamples(){
-  const result=await wsPut("blocks/"+ws.draft.key+"/examples",{expected_revision:ws.revision,examples:ws.examples});ws.revision=result.revision;ws.examples=result.examples;wsNote.textContent="Examples saved";
+  await wsFlush();
+  if(ws.dirty||!ws.draft.base_digest){
+    if(await wsDialog("Save block revision first",h("p",{text:"Examples are validated against the saved block. Save the current block revision first? Pending examples will be kept if you cancel."}),["Save revision first","Cancel"])!=="Save revision first")return false;
+    if(!await wsSave())return false;
+  }
+  const result=await wsPut("blocks/"+ws.draft.key+"/examples",{expected_revision:ws.revision,examples:ws.examples});ws.revision=result.revision;ws.examples=result.examples;ws.examplesDirty=false;wsNote.textContent="Examples saved";wsRender();return true;
 }
 function wsInput(parent,name,contract,initial){
   if(contract?.format!=="json"||contract.source_only||!contract.fields?.length){
-    const container=contract?.format==="json"?h("details",{},h("summary",{text:name+" · advanced value"})):parent;
+    const container=contract?.format==="json"?h("details",{open:true},h("summary",{text:name+" · advanced value"})):parent;
     if(container!==parent)parent.append(container);
     const field=wsField(container,name,initial,true);field.oninput=()=>ws.inputs[name]=field.value;
     return {read:()=>field.value,set:value=>{field.value=value;}};
@@ -3094,30 +3104,39 @@ function wsInput(parent,name,contract,initial){
 
 function wsTrials(compare){
   const form=h("div"),results=h("div",{id:"ws-results","aria-live":"polite"});wsBody.append(form,results);
-  const select=wsChoice(form,"Example",[["","New input"],...ws.examples.map(e=>[e.id,e.label])]);
+  const valid=ws.projection.valid!==false;
+  if(!valid)form.append(h("div",{"data-test":"ws-validation","data-state":"invalid"},h("p",{text:"Correct these definition issues in Design before saving or running. Your inputs are kept."}),wsShowValue(ws.projection.issues)));
+  const inputArea=h("fieldset",{"data-test":"ws-inputs"},h("legend",{text:"Inputs — one-off test or selected example"}));form.append(inputArea);
+  const select=wsChoice(inputArea,"Example",[["","New input — run once without saving an example"],...ws.examples.map(e=>[e.id,e.label])],ws.selectedExample);
   const selectedInfo=h("div");form.append(selectedInfo);
-  const inputs={};for(const n of ws.projection.facts?.inputs||[])inputs[n]=wsInput(form,n,ws.projection.contracts.inputs[n],ws.inputs[n]||"");
+  const names=ws.projection.input_ports||ws.projection.facts?.inputs||[],inputs={};
+  for(const n of names){const contract=ws.projection.contracts?.inputs?.[n];if(contract)inputs[n]=wsInput(inputArea,n,contract,ws.inputs[n]||"");else inputArea.append(h("p",{"data-test":"ws-input-unavailable","data-port":n,text:n+": correct its contract in Design to enable this input."}));}
+  if(!names.length)inputArea.append(h("p",{"data-test":"ws-no-inputs",text:"This block requires no inputs."}));
+  inputArea.append(h("p",{text:"New input runs without a saved example. Run-history saving follows the Save runs setting."}));
   const values=async()=>Object.fromEntries(await Promise.all(Object.entries(inputs).map(async([n,e])=>[n,await e.read()])));
-  select.onchange=async()=>{const ex=ws.examples.find(e=>e.id===select.value);selectedInfo.replaceChildren();if(ex){const unmatched=Object.keys(ex.inputs).filter(n=>!inputs[n]);if(unmatched.length)selectedInfo.append(h("p",{text:"Example inputs outside this block: "+unmatched.join(", ")}),wsShowValue(ex.inputs));}for(const [n,e] of Object.entries(inputs))await e.set(ws.inputs[n]=ex?.inputs[n]||"");};
+  const showSelected=()=>{const ex=ws.examples.find(e=>e.id===select.value);selectedInfo.replaceChildren();if(ex){const unmatched=Object.keys(ex.inputs).filter(n=>!inputs[n]);if(unmatched.length)selectedInfo.append(h("p",{text:"Example inputs outside this block: "+unmatched.join(", ")}),wsShowValue(ex.inputs));}};
+  select.onchange=async()=>{ws.selectedExample=select.value;const ex=ws.examples.find(e=>e.id===select.value);showSelected();for(const [n,e] of Object.entries(inputs))await e.set(ws.inputs[n]=ex?.inputs[n]||"");};showSelected();
+  const examplesArea=h("fieldset",{},h("legend",{text:"Saved examples"}),h("p",{"data-test":"ws-examples-state","data-state":ws.examplesDirty?"unsaved":"saved",text:ws.examplesDirty?"Example changes are in memory. Save example collection to keep them.":"Examples are saved separately from block revisions and run history."}));form.append(examplesArea);
   const selection=h("fieldset",{},h("legend",{text:"Examples to run"})),selected=[];
   for(const ex of ws.examples){const check=h("input",{type:"checkbox",checked:true,"data-test":"ws-example-choice","data-example":ex.id});selected.push([ex,check]);selection.append(h("label",{},check," "+ex.label+" "));}
-  form.append(selection);
+  examplesArea.append(selection);
   const chosen=()=>selected.filter(([,check])=>check.checked).map(([ex])=>ex);
   wsPending=async()=>{await values();};
   if(compare){const baseline=wsChoice(form,"Baseline revision",[]),candidate=wsChoice(form,"Candidate",[["","Current draft"]]);
     wsApi("blocks/"+ws.draft.key+"/revisions").then(x=>{baseline.replaceChildren(...x.revisions.map(r=>new Option(r.id.slice(0,8),r.id)));for(const r of x.revisions)candidate.add(new Option(r.id.slice(0,8),r.id));}).catch(wsError);
     form.append(wsButton("Compare versions",()=>wsStart("batches",{candidates:[{key:ws.draft.key,revision:baseline.value},candidate.value?{key:ws.draft.key,revision:candidate.value}:{draft:ws.draft}],examples:chosen()})));
   }else{
-    form.append(wsButton("Preview instructions",async()=>{const p=await wsApi("preview",{draft:ws.draft,inputs:await values()});await wsDialog("Prepared behaviour",wsShowValue(p.prepared||p.input_checks||p.issues),["Close"]);}),
+    inputArea.append(wsButton("Preview instructions",async()=>{const p=await wsApi("preview",{draft:ws.draft,inputs:await values()});await wsDialog("Prepared behaviour",wsShowValue(p.prepared||p.input_checks||p.issues),["Close"]);}),
       wsButton("Run test",async()=>{
         const input=await values(),ex=ws.examples.find(e=>e.id===select.value);
         if(ex&&(Object.keys(ex.inputs).some(n=>!inputs[n])||Object.keys(ex.inputs).every(n=>ex.inputs[n]===input[n])))return wsStart("batches",{candidates:[{draft:ws.draft}],examples:[ex]});
         return wsStart("test",{draft:ws.draft,inputs:input});
       }),
-      wsButton("Save as example",async()=>{const box=h("div"),label=wsField(box,"Example label"),criterion=wsField(box,"Review criterion","Review against the source");if(await wsDialog("Save example",box,["Save","Cancel"])!=="Save")return;
-        ws.examples.push({id:crypto.randomUUID(),version:1,label:label.value||"Example",inputs:await values(),expectation:{kind:"review",criterion:criterion.value},origin:"manual",verified:false});await wsPersistExamples();wsRender();}),
-      wsButton("Edit selected example",()=>wsEditExample(select.value)),wsButton("Save example collection",wsPersistExamples),wsButton("Run saved examples",()=>wsStart("batches",{candidates:[{draft:ws.draft}],examples:chosen()})));
+      wsButton("Add example",async()=>{const input=await values(),box=h("div"),label=wsField(box,"Example label"),criterion=wsField(box,"Review criterion","Review against the source");if(await wsDialog("Add example",box,["Save","Cancel"])!=="Save")return;
+        const id=crypto.randomUUID();ws.examples.push({id,version:1,label:label.value||"Example",inputs:input,expectation:{kind:"review",criterion:criterion.value},origin:"manual",verified:false});ws.selectedExample=id;ws.examplesDirty=true;wsRender();},"ws-save-as-example"));
+    examplesArea.append(wsButton("Edit selected example",()=>wsEditExample(select.value)),wsButton("Save example collection",wsPersistExamples),wsButton("Run saved examples",()=>wsStart("batches",{candidates:[{draft:ws.draft}],examples:chosen()})));
   }
+  for(const button of form.querySelectorAll('[data-test="ws-run-test"], [data-test="ws-run-saved-examples"], [data-test="ws-compare-versions"], [data-test="ws-save-as-example"], [data-test="ws-edit-selected-example"]'))if(!valid)button.disabled=true;
   form.append(wsButton("Recent runs and comparisons",wsRecords));
   form.append(wsButton("Stop",async()=>{if(ws.batch?.state==="running")await wsApi("batches/"+ws.batch.id+"/stop",{});}));wsResults();
 }

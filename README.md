@@ -167,7 +167,18 @@ or previews root replacements/additions/removals. Root files selected for replac
 publication. Old revisions keep their captured helpers and data. Scripts are not sandboxed; source
 review does not establish safety, and undeclared dependencies or absolute-path assumptions cannot be inferred.
 
-Test accepts new input or a saved example. Save examples separately from blocks and run history. Expectations
+Test's **Inputs** section accepts new input or a selected example. Leave **Example** at **New input**,
+enter values and choose **Run test** for a one-off run; neither a saved block nor a saved example is
+required. Run-history persistence still follows **Save runs**. Advanced JSON values start expanded.
+Definition problems appear in Design and Test with their locations; usable input fields remain
+available, but running is disabled until those problems are corrected. Input renames/removals can
+require updating prompt or tool references; output renames update the step's output binding.
+
+**Add example** captures the current input in memory. **Edit selected example** edits its expectation
+and values. **Saved examples** shows whether changes are pending; **Save example collection** persists
+them separately from blocks and run history. If the block is new or edited, saving the collection
+offers to save a block revision first, with the normal review. Cancelling or a failed save keeps
+pending examples; the selected example and entered inputs survive Design/Test navigation. Expectations
 can compare exact named outputs, assert explicit field paths or ask for human review. Verify an expectation
 before using it for automatic correctness. Editing an example invalidates prior verification. An accepted,
 well-typed result may still be incorrect. Human ratings bind the exact result and never transfer to a rerun.

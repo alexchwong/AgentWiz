@@ -221,6 +221,42 @@ def test_exact_editor_and_unsupported_schema_preservation(ui):
     assert send(ui, 'preview', key='b')['contracts']['outputs']['out']['projection']
 
 
+def test_design_binding_edits_and_located_invalid_draft_refusals(ui):
+    """Port edits must not hide usable inputs or turn definition errors into file errors."""
+    from agentwiz import jsonio
+    preview = send(ui, 'preview', starter='write_text', key='bindings', role='fast')
+    draft = preview['draft']
+    definition = jsonio.decode_exact(draft['definition_text'])
+    ports = {side: [dict(original=name, name=name, description='',
+                        format=port['contract']['format'], source=jsonio.encode_exact(port['contract']))
+                    for name, port in definition[side].items()] for side in ('inputs', 'outputs')}
+    operation = dict(kind='design_form', name='Bindings', purpose='', ports=ports,
+                     behaviour=preview['design']['behaviour'], system='', binding='fast',
+                     settings='{}', budget='{}', repairs='2')
+    ports['outputs'][0]['name'] = 'answer'
+    renamed = send(ui, 'preview', draft=draft, edit=operation)
+    assert renamed['valid'] and renamed['issues'] == []
+    assert jsonio.decode_exact(renamed['draft']['definition_text'])['steps'][0]['output'] == 'answer'
+    ports['inputs'][0]['name'] = 'message'
+    invalid = send(ui, 'preview', draft=draft, edit=operation)
+    assert invalid['valid'] is False
+    assert invalid['input_ports'] == ['message']
+    assert invalid['contracts']['inputs']['message']['format'] == 'text'
+    for action in ('save', 'test'):
+        failure = failure_of(lambda: send(ui, 'plans', action=action, request={'draft': invalid['draft']}))
+        assert failure.status == 409 and failure.body['code'] == 'block_invalid'
+        assert failure.body['issues'][0]['location'] == 'steps[0].prompt'
+    ports['inputs'][0]['format'] = 'shared'
+    failure = failure_of(lambda: send(ui, 'preview', draft=draft, edit=operation))
+    assert failure.status == 400 and failure.body['code'] == 'invalid'
+    request(ui, '/api/contracts/save', {'name': 'shared_text', 'text': '{"format":"text"}', 'revision': None})
+    ports['inputs'][0].update(name='text', source='"shared_text"')
+    shared = send(ui, 'preview', draft=draft, edit=operation)
+    assert shared['valid']
+    assert jsonio.decode_exact(shared['draft']['definition_text'])['inputs']['text']['contract'] == 'shared_text'
+    plan_save(ui, shared['draft'])
+
+
 def test_marker_write_failure_dispatches_nothing(ui, monkeypatch):
     from agentwiz import workshop_service
     from conftest import switch_history

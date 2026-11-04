@@ -306,11 +306,19 @@ def edit(draft, operation):
                     fail()
                 original = obj[side].get(e['original'], {})
                 contract = jsonio.decode_exact(e['source']) if e['source'] else {'format': e['format']}
-                if isinstance(contract, dict):
+                if e['format'] == 'shared':
+                    if not isinstance(contract, str):
+                        fail()
+                elif isinstance(contract, dict):
                     contract['format'] = e['format']
+                else:
+                    fail()
                 ports[name] = {**original, 'description': e['description'], 'contract': contract}
             obj[side] = ports
         step = obj['steps'][0]
+        output_renames = {e['original']: e['name'] for e in operation['ports'].get('outputs', [])}
+        if step.get('output') in output_renames:
+            step['output'] = output_renames[step['output']]
         if step['kind'] == 'model':
             for key, value in [('prompt', operation['behaviour']), ('system', operation['system'])]:
                 if 'file' in step.get(key, {}):

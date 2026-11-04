@@ -304,7 +304,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             fn()
         except workshop.WorkshopError as exc:
-            self._reply_safely(exc.status, {"error": "Workshop request refused", "code": exc.code, **({"plan": exc.plan} if hasattr(exc, "plan") else {})})
+            self._reply_safely(exc.status, {"error": "Workshop request refused", "code": exc.code, **({"issues": exc.issues} if exc.issues else {}), **({"plan": exc.plan} if hasattr(exc, "plan") else {})})
         except _ReadTimeout:
             self.close_connection = True
         except TooLarge as exc:

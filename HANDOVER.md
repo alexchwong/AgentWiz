@@ -1,5 +1,31 @@
 # AgentWiz 0.2.0 — cumulative Phase 2 handover
 
+## November 4, 2026 — Workshop save diagnostics and Test/example workflow
+
+- Save/Start planning returns bounded located `block_invalid` issues for invalid definitions,
+  rather than reporting all parser failures as unreadable files. Actual unreadable-source
+  failures retain `unusable`. Refused invalid captures are explicitly closed.
+- Preview projects independently usable contracts on invalid drafts. Design/Test show definition
+  issues; Test keeps usable inputs visible and disables execution until correction. Advanced JSON
+  inputs start expanded; zero-input blocks have an explicit state. Output renames update step
+  bindings; input reference changes require deliberate correction. Shared contracts use saved-name
+  choices and cannot become inline `format: shared` contracts.
+- Test groups one-off inputs and saved examples. Add/edit keeps pending examples in memory until
+  Save example collection succeeds; saving a new/edited block's examples offers the normal revision
+  review first. Cancellation/write refusal retains pending changes, inputs and selection. Replacement
+  and unload guards include pending examples; revision saves preserve inputs and example state.
+- Updated user/architecture guidance, NEWS and the existing authoring tutorial. Functional regressions
+  cover definition diagnostics/bindings, retained Test inputs, unsaved-block one-off execution,
+  selection across views, save-first cancellation and example-write refusal/retry.
+- Validation on Linux / Python 3.13.13: focused Workshop/page/tutorial run **56 passed**;
+  initial full offline gate **620 passed, 10 live tests deselected** (92.66 s). After the final
+  unreadable-category adjustment, the three new regressions passed again; the final full gate
+  **620 passed, 10 live tests deselected** (91.19 s).
+  Python compilation and `git diff --check` passed. Two initial new-test setup mistakes (wrong
+  contract-save route and a misplaced reload assertion) were corrected, without weakening checks.
+- No dependencies, commits, pushes or publication. Live backends, installed-wheel smoke, macOS and
+  Python 3.10 were not checked. No user workspace data was changed.
+
 ## November 4, 2026 — single-role browser and families
 
 - Replaced stacked Roles editors with location (All/Local/Cloud), family/domain and matching-role

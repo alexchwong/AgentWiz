@@ -132,6 +132,21 @@ class Service:
                       'issues': list(p.problem.issues) if p.problem else [], 'kind': p.kind,
                       'classification': editor.classification(draft) if p.kind == 'script' else None}
             definition = jsonio.decode_exact(draft['definition_text'])
+            result['valid'] = p.problem is None
+            result['input_ports'] = list(definition.get('inputs', {}))
+            result['contracts'] = {'inputs': {}, 'outputs': {}}
+            contract_store = self.assets.contracts()
+            for side in ('inputs', 'outputs'):
+                for name, declaration in definition.get(side, {}).items():
+                    raw = declaration.get('contract') if isinstance(declaration, dict) else None
+                    if isinstance(raw, str):
+                        entry = contract_store.get(raw)
+                        raw = jsonio.decode_exact(entry.text) if entry and entry.problem is None else None
+                    if isinstance(raw, dict):
+                        try:
+                            result['contracts'][side][name] = editor.contract_view(jsonio.encode_exact(raw))
+                        except (checks.ContractError, WorkshopError):
+                            pass
             step = next(iter(definition.get('steps', [])), {})
             def asset_text(value):
                 if 'file' in value:
@@ -323,7 +338,9 @@ class Service:
             c = self.assets.validate(draft)
             captures.append(c)
             if c.parsed.problem:
-                fail('unusable', 409)
+                problem = c.parsed.problem
+                c.close()
+                raise WorkshopError('unusable' if problem.code == 'unreadable' else 'block_invalid', 409, problem.issues)
             self.check_schema_available(c.parsed.block)
             descriptor['source'] = c.digest
             descriptor['current'] = self.assets.identity(draft['key'])
@@ -373,7 +390,10 @@ class Service:
                 c = self.assets.validate(draft)
                 captures.append(c)
                 if c.parsed.problem:
-                    fail('unusable', 409)
+                    problem = c.parsed.problem
+                    for capture in captures:
+                        capture.close()
+                    raise WorkshopError('unusable' if problem.code == 'unreadable' else 'block_invalid', 409, problem.issues)
                 b = c.parsed.block
                 self.check_schema_available(b)
                 self.validate_examples(examples, b)

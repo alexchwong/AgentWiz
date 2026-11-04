@@ -24,10 +24,11 @@ TOKEN = re.compile(r"[0-9a-f]{32}\Z")
 
 
 class WorkshopError(Exception):
-    def __init__(self, code: str, status: int):
+    def __init__(self, code: str, status: int, issues=()):
         super().__init__(code)
         self.code = code
         self.status = status
+        self.issues = list(issues)
 
 
 @dataclass

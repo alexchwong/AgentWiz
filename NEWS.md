@@ -1,5 +1,6 @@
 # NEWS
 ## 0.2.0
+- Workshop reports located block validation errors instead of misleading file-permission failures; Test retains usable inputs and clearly separates one-off input from pending/saved examples. Output renames preserve step bindings and shared contracts use saved-name choices.
 - Roles now show one editor at a time, with location and family/domain filters, suggested families and custom family creation. Browsing preserves unsaved edits; Save all changes saves every role.
 - Starter roles (`fast`, `assistant`, `reasoning`), a guided role editor with model details and setup links, and enforced Local/Cloud assignments. Local roles require loopback model servers; no automatic cloud fallback.
 - New-block creation validates keys without losing inputs, lists model roles, and discovers tools from configured MCP servers in dropdowns.

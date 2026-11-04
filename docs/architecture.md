@@ -666,6 +666,17 @@ account for the complete set. The server constructs assistant-generated filename
 `definition_text` remains the advanced escape hatch. Preview returns port contract
 projections, exact source, facts, descriptions, freshness, setup issues and a filled
 prompt/arguments when inputs are supplied. Unsupported schemas are source-only.
+Preview also returns `valid` and declared `input_ports`, and projects independently usable contracts
+even when another part of the definition is invalid. Save/Start planning rejects invalid drafts with
+409 `block_invalid` and bounded `issues` (location/rule), rather than misclassifying them as file
+read failures. Design-form output renames update the step binding; input reference errors remain
+located validation issues requiring a deliberate correction. Shared-contract choices submit names,
+never an inline `format: shared` contract.
+
+Test retains selected-example identity and typed inputs across views. Example additions/edits stay
+in page memory with an explicit unsaved state until collection persistence succeeds. Saving a new
+or edited block's collection offers the existing block Save review first; cancellation and write
+refusals retain pending examples. Dirty replacement/unload protection includes pending examples.
 Targeted contract edits operate on the original exact object and preserve opaque
 constraints. Reference/shape-changing schemas refuse visual editing.
 

@@ -659,6 +659,7 @@ def test_workshop_design_save_compare_and_review(ui, open_page, width):
     tid(page,"ws-save-as-example").click()
     tid(dialog,"ws-field-example-label").fill("Two words")
     tid(dialog,"ws-save").click()
+    tid(page,"ws-save-example-collection").click()
     tid(page,"ws-compare").click()
     page.locator('[data-test="ws-example-choice"][data-example$="-1"]').uncheck()
     page.locator('[data-test="ws-example-choice"][data-example$="-2"]').uncheck()
@@ -915,3 +916,83 @@ def test_workshop_structured_inputs_keep_exact_literals_across_views_and_reload(
     page.reload()
     expect(tid(page,'ws-trial')).to_have_attribute('data-outcome','complete')
     assert jsonio.decode_exact(tid(page,'ws-output').text_content())==expected
+
+
+def test_workshop_invalid_design_keeps_inputs_and_located_save_error(ui, open_page):
+    """A broken prompt reference must not masquerade as missing files or erase Test inputs."""
+    page = open_page(ui)
+    tid(page, 'ws-new-block').click()
+    dialog = tid(page, 'ws-dialog')
+    tid(dialog, 'ws-field-block-key').fill('invalid_design')
+    tid(dialog, 'ws-choice-start-with').select_option('write_text')
+    tid(dialog, 'ws-create-draft').click()
+    tid(page, 'ws-field-field-name').first.fill('message')
+    tid(page, 'ws-save-revision').click()
+    has(page, 'ws-status', 'data-code', 'block_invalid')
+    tid(page, 'ws-test').click()
+    has(page, 'ws-validation', 'data-state', 'invalid')
+    expect(tid(page, 'ws-field-message')).to_be_visible()
+    tid(page, 'ws-field-message').fill('retained input')
+    expect(tid(page, 'ws-run-test')).to_be_disabled()
+    tid(page, 'ws-design').click()
+    tid(page, 'ws-field-instructions').fill('Read {{inputs.message}}')
+    tid(page, 'ws-field-field-name').last.fill('answer')
+    tid(page, 'ws-test').click()
+    expect(tid(page, 'ws-validation')).to_have_count(0)
+    expect(tid(page, 'ws-field-message')).to_have_value('retained input')
+    tid(page, 'ws-save-revision').click()
+    tid(dialog, 'ws-confirm').click()
+    has(page, 'ws-status', 'data-state', 'saved')
+    from conftest import request
+    saved = request(ui, '/api/workshop/blocks/invalid_design/revisions')
+    draft = request(ui, '/api/workshop/blocks/invalid_design/revisions/' + saved['current'])['draft']
+    assert jsonio.decode_exact(draft['definition_text'])['steps'][0]['output'] == 'answer'
+
+
+def test_workshop_one_off_and_pending_examples_survive_cancel_and_write_failure(ui, open_page):
+    """One-off runs need no saved block; pending examples survive both refusal paths."""
+    from conftest import request
+    page = open_page(ui)
+    tid(page, 'ws-new-block').click()
+    dialog = tid(page, 'ws-dialog')
+    tid(dialog, 'ws-field-block-key').fill('pending_examples')
+    tid(dialog, 'ws-choice-start-with').select_option('count_text')
+    tid(dialog, 'ws-create-draft').click()
+    tid(page, 'ws-test').click()
+    tid(page, 'ws-field-text').fill('one two three')
+    tid(page, 'ws-run-test').click()
+    tid(dialog, 'ws-confirm').click()
+    expect(tid(page, 'ws-output')).to_have_text('3')
+    assert request(ui, '/api/workshop/blocks/pending_examples/examples')['examples'] == []
+    tid(page, 'ws-save-as-example').click()
+    tid(dialog, 'ws-field-example-label').fill('Three words')
+    tid(dialog, 'ws-save').click()
+    has(page, 'ws-examples-state', 'data-state', 'unsaved')
+    selected = tid(page, 'ws-choice-example').input_value()
+    tid(page, 'ws-design').click()
+    tid(page, 'ws-test').click()
+    expect(tid(page, 'ws-choice-example')).to_have_value(selected)
+    expect(tid(page, 'ws-field-text')).to_have_value('one two three')
+    tid(page, 'ws-save-example-collection').click()
+    tid(dialog, 'ws-cancel').click()
+    has(page, 'ws-examples-state', 'data-state', 'unsaved')
+    tid(page, 'ws-save-example-collection').click()
+    tid(dialog, 'ws-save-revision-first').click()
+    tid(dialog, 'ws-confirm').click()
+    has(page, 'ws-examples-state', 'data-state', 'saved')
+    tid(page, 'ws-edit-selected-example').click()
+    tid(dialog, 'ws-field-label').fill('Edited words')
+    tid(dialog, 'ws-save').click()
+    has(page, 'ws-examples-state', 'data-state', 'unsaved')
+    route = '**/api/workshop/blocks/pending_examples/examples'
+    page.route(route, lambda r: r.fulfill(status=409, content_type='application/json', body='{"code":"read_only","error":"refused"}') if r.request.method == 'PUT' else r.continue_())
+    tid(page, 'ws-save-example-collection').click()
+    has(page, 'ws-status', 'data-code', 'read_only')
+    has(page, 'ws-examples-state', 'data-state', 'unsaved')
+    expect(tid(page, 'ws-choice-example')).to_have_value(selected)
+    page.unroute(route)
+    tid(page, 'ws-save-example-collection').click()
+    has(page, 'ws-examples-state', 'data-state', 'saved')
+    saved = request(ui, '/api/workshop/blocks/pending_examples/examples')
+    example = next(e for e in saved['examples'] if e['id'] == selected)
+    assert example['label'] == 'Edited words' and example['inputs'] == {'text': 'one two three'}
