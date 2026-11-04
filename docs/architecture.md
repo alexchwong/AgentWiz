@@ -42,6 +42,7 @@ Paths in this table are relative to the repository root.
 | `agentwiz/task_settings.py` | yes | `TaskSettings`, its rules, and `task_settings.json`. No HTTP. |
 | `agentwiz/state.py` | yes | Process state: settings, keys, profiles, saved task settings, the MCP library and tokens, contracts, the history switch, the five revisions, state lock, request budget, snapshots, key and token sources, every credential held (for redaction), `key_for(kind, base_url)` for repairs. No HTTP. |
 | `agentwiz/workspace.py` | yes | Workspace names, opening and locking (`flock`), reading and validating workspace.json, atomic writes. Called only from `state.py` under the state lock. No HTTP. Not imported by `import agentwiz`. |
+| `agentwiz/workspace_admin.py` | yes | Headless workspace administration: bounded listing, staged clone, reset and tombstone delete, with no-follow filesystem safety and limits. Called by `ui/server.py` during workspace lifecycle operations. |
 | `agentwiz/profiles.py` | yes | Workspace profile copies and shared defaults (format version 2; reads 1): validation, preservation, atomic writes, fingerprints and permanent short-lived library lock. No HTTP. |
 | `agentwiz/jsonio.py` | yes | The one JSON writer (`encode`, `encode_line`); the file writer and strict reader for AgentWiz's own files (`encode_file`, `decode_file`); the exact-number reader and writer (`decode_exact`, `encode_exact(value, indent=None)`, `encode_file_exact`, `decode_file_exact`; `JSONSyntax` and `ExactLimit` are its only errors besides other `ValueError`s) and `encode_record_file` for run files. Standard library only. |
 | `agentwiz/attachments.py` | yes | The basic attachment reader (`.txt`, `.md`, `.csv`, `.json`) and `check_document`, implementing `docs/attachment_interface.md`. No HTTP. |
@@ -62,7 +63,7 @@ Paths in this table are relative to the repository root.
 | `agentwiz/ui/server.py` | yes | The HTTP server; the only module that knows HTTP. `Handler.write_event` is the one writer of stream events. |
 | `agentwiz/ui/index.html` | yes | Workshop/Workbench/History, shared Settings dialogs; one framework-free file with no build step. |
 | `pyproject.toml`, `README.md`, `LICENSE` | metadata | Packaging, wheel description, MIT license. |
-| `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`; 0.1.3: `test_checks.py`, `test_contracts.py`, `test_runs.py`, `test_model_step.py`, `test_attempts.py`, `test_history.py`, `test_page.py`, `test_live_judgement.py`; 0.1.4: `test_roles.py`, `test_templates.py`, `test_blocks.py`, `test_block_routes.py`, `test_block_tool.py`, `test_scripts.py`, `test_script_cleanup.py`, `test_runner.py`, `test_shutdown.py`, `test_signals.py`, `test_tutorial.py`), opt-in live checks (`test_live.py`, with the pure judgement function `live_stop.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
+| `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`; 0.1.3: `test_checks.py`, `test_contracts.py`, `test_runs.py`, `test_model_step.py`, `test_attempts.py`, `test_history.py`, `test_page.py`, `test_live_judgement.py`; 0.1.4: `test_roles.py`, `test_templates.py`, `test_blocks.py`, `test_block_routes.py`, `test_block_tool.py`, `test_scripts.py`, `test_script_cleanup.py`, `test_runner.py`, `test_shutdown.py`, `test_signals.py`, `test_tutorial.py`; 0.2.0: `test_workspace_admin.py`, `test_workspace_lifecycle.py`), opt-in live checks (`test_live.py`, with the pure judgement function `live_stop.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
 | `docs/attachment_interface.md` | no | The attachment interface (companion document, version 3, draft). |
 | `scripts/build_release.py` | no | Builds the release wheel from `HEAD`, runs release checks RC1–RC3; `--smoke`; `--no-isolation`; `--modelspell-wheel` (offline smoke); `--changed-since`. |
 | `scripts/smoke_installed.py` | no | Smoke check (S1–S15) against an installed wheel. |
@@ -497,6 +498,73 @@ runtime dependencies or release-tool changes are needed. For uncommitted work, t
 into a throwaway clone and commit only there before running build_release.py --smoke, which uses
 committed HEAD. Never commit the implementation checkout just to run this check.
 
+## Workspace lifecycle
+
+`ui/server.py` owns the current workspace after launch. This is a deliberate departure from the
+earlier "server never opens or closes a workspace" rule: `UIServer.close_workspace()` closes whichever
+workspace is current, and `__main__.py` calls it after a drained shutdown. A tutorial child server has
+`workspace_admin_enabled == False`, so it cannot switch, reset, clone or delete its isolated workspace.
+
+`workspace_admin.py` is headless and never follows symbolic links. Only names accepted by
+`workspace.NAME_RE` directly under the resolved launch root are managed. Listing and actions never
+accept an absolute path or `..`. Reset/delete refuse a workspace that contains the shared
+`--profiles-dir` or `--mcp-servers-dir`, so a destructive action cannot erase shared configuration.
+
+- **Request gate.** `WorkspaceGate` gives ordinary HTTP requests a shared slot. Switch/reset-current/
+  clone-current take the exclusive slot after in-flight requests finish; new ordinary requests get
+  503 `busy` during the short admin window. Destination construction happens before the exclusive
+  slot, so a failed open does not disturb the current workspace. Active page attempts, block
+  attempts/runs, MCP operations, scripts, writers and Workshop batches are refused with 409
+  `workspace_busy` and bounded `active` counts; nothing is stopped implicitly.
+- **Switch/create.** Open the destination workspace and construct its `ProcessState` first, then take
+  the gate, shut down the old state with `wait=True`, close the old lock, and swap `state` and
+  `workspace`. Re-entering the current name is idempotent. Create only adopts a folder this attempt
+  created; a concurrent collision is `workspace_exists`. A target held by another process is
+  `workspace_in_use` with holder fields (pid, host, started).
+- **Clone.** Copies `workspace.json`, `model-profiles`, `task_settings.json`, `roles.json`,
+  `contracts`, `blocks` (including managed `.workshop` revisions) and `workshop/examples`. Saved
+  `runs` and `workshop/comparisons` are copied only with `include_evidence`. Lock files, staging
+  folders, unknown top-level entries and symlinks are excluded or refused. The copy is staged under
+  `.agentwiz-clone-<random>` and atomically renamed to the target. `CLONE_FILE_LIMIT` and
+  `CLONE_BYTE_LIMIT` bound the copy; failures remove staging.
+- **Reset.** Removes every workspace entry except the `.agentwiz.lock` inode, writes a fresh
+  `workspace.json` (`save_runs: false`, `active_profile: null`) and seeds `model-profiles` from the
+  shared defaults (empty on damaged defaults). Resetting the current workspace shuts its state down
+  and constructs a fresh one; another workspace is locked and reset on disk. Reset is destructive and
+  not transactional.
+- **Delete.** The current workspace is refused. A non-current target is locked, renamed to
+  `.agentwiz-delete-<random>`, unlocked, then removed without following links. If final removal fails,
+  the response reports `cleanup: incomplete` with the tombstone path; the workspace name is already
+  gone.
+
+Routes are top-level, not Workshop routes, and all mutations are POST with integer
+`format_version: 1`:
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/workspaces` | Root, current name, bounded rows, admin/tutorial capability and limits. |
+| `GET /api/workspaces/launch?name=...` | Shell-quoted separate-process launch command. |
+| `POST /api/workspaces/switch` | `{name}`; idempotent for the current name. |
+| `POST /api/workspaces/create` | `{name}`; create and switch. |
+| `POST /api/workspaces/clone` | `{source, target, include_evidence}`. |
+| `POST /api/workspaces/reset` | `{name, confirm}`; `confirm` must equal `name`. |
+| `POST /api/workspaces/delete` | `{name, confirm}`; only a non-current workspace. |
+
+Error codes are `invalid_workspace_name` (400), `confirmation_required` (400), `no_such_workspace`
+(404), `workspace_exists`/`workspace_in_use`/`workspace_busy`/`workspace_is_current`/
+`tutorial_active`/`workspace_admin_disabled`/`unsafe_entry`/`workspace_too_large`/
+`shared_data_inside_workspace` (409), `workspace_io_error` (500) and `workspace_unavailable` (503).
+The page hides workspace administration when `/api/state.workspace.admin` is false. A switch or
+current reset reloads the page after the Workshop dirty-draft guard; clone/delete/reset-other refresh
+the dialog list only. Session API keys and MCP tokens are not transferred: they are memory-only and
+must be re-entered after a switch or reset. The page uses the existing `data-test` rules and does not
+depend on wording or layout.
+
+Functional coverage: `tests/test_workspace_admin.py` (filesystem safety/limits),
+`tests/test_workspace_lifecycle.py` (HTTP lifecycle, lock release, active work, ids),
+`tests/test_workspace.py` (CLI release after switch), `tests/test_tutorial.py` (isolation) and
+`tests/test_page.py` (dialog workflow).
+
 ## Error reporting
 
 The page and the terminal receive only text that cannot contain a credential:
@@ -701,7 +769,6 @@ constraints. Reference/shape-changing schemas refuse visual editing.
 | POST `proposals/apply` | Proposal ID, matching draft and expected plan produce draft/examples only. |
 | PUT `reviews/<run>` | Result-bound rating and optional durable review, with expected revision. |
 | GET `comparisons[/<id>]`, DELETE `comparisons/<id>` | Saved comparison listing/read or independent deletion. |
-| GET `workspace-open?name=...` | Absolute, shell-quoted separate launch command and existing names. |
 
 Start requests require a server-issued ticket. Plan a request before sending it.
 Echo each required `{kind,digest}` acknowledgement, omitting `detail`. Repeat the

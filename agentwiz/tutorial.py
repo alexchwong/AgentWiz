@@ -143,6 +143,11 @@ class Tutorial:
             return {"active": True, "return_url": self.parent.url, "topic": self.topic,
                     "topics": [tutorial_topics.public(t) for t in TOPICS], "contract": CONTRACT}
 
+    def active(self) -> bool:
+        """True while a child session or its cleanup still exists. Used before changing workspaces."""
+        with self.lock:
+            return self.closing or self.child is not None or bool(self.resources) or self.pending is not None
+
     def prepare(self, body):
         """Prepare a topic by ID. Raises KeyError for an unknown ID (the route answers 400)."""
         with self.lock:

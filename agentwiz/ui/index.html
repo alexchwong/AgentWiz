@@ -88,7 +88,7 @@
 <body>
 <header>
   <h1>AgentWiz <span id="version"></span></h1>
-  <span id="workspace"></span>
+  <span id="workspace" data-test="header-workspace"></span>
   <span id="summary"></span>
   <label class="switch" title="Saved as given, except that credentials AgentWiz has held, if at least 8 characters long, are replaced with ***. Shorter credentials are not replaced. Text you paste into a request, including copied documents and tool results, is saved with it.">
     <input type="checkbox" id="save-runs" data-test="header-save-runs"> Save runs</label>
@@ -146,6 +146,35 @@
     <button type="button" id="close-servers">Close</button>
     <button type="button" id="save-servers" class="primary">Save</button>
   </div>
+</dialog>
+
+<dialog id="workspaces-dialog" data-test="workspaces-dialog" data-state="idle">
+  <h3 style="margin:4px 0">Workspaces</h3>
+  <p class="note">A workspace holds this project's profiles, blocks, examples, roles, contracts and saved runs. Switching releases the current workspace's lock and opens another. Save or discard Workshop changes first. Session API keys and MCP tokens are memory-only and are not carried across a switch or reset.</p>
+  <p class="note" id="workspaces-root" data-test="workspaces-root"></p>
+  <p class="note" id="workspaces-current" data-test="workspaces-current"></p>
+  <div id="workspaces-list" data-test="workspaces-list"></div>
+  <label>Workspace<select id="workspaces-selection" data-test="workspaces-selection"></select></label>
+  <div class="fields">
+    <label>New or clone name<input id="workspaces-name" data-test="workspaces-name"></label>
+    <label>Clone source<select id="workspaces-source" data-test="workspaces-source"></select></label>
+  </div>
+  <label class="checkbox-label"><input type="checkbox" id="workspaces-evidence" data-test="workspaces-evidence"> Include saved runs and comparisons in a clone</label>
+  <p id="workspaces-msg" class="note" data-test="workspaces-msg" role="status"></p>
+  <div class="row" style="justify-content:flex-end">
+    <button type="button" id="workspaces-switch" data-test="workspaces-switch">Switch</button>
+    <button type="button" id="workspaces-create" data-test="workspaces-create">Create</button>
+    <button type="button" id="workspaces-clone" data-test="workspaces-clone">Clone</button>
+    <button type="button" id="workspaces-reset" data-test="workspaces-reset">Reset</button>
+    <button type="button" id="workspaces-delete" data-test="workspaces-delete">Delete</button>
+    <button type="button" id="workspaces-close" data-test="workspaces-close">Close</button>
+  </div>
+  <details>
+    <summary>Launch in another process</summary>
+    <p class="note">This starts a separate AgentWiz process. Only one process can own a workspace.</p>
+    <div class="row" id="workspaces-launch-row"><button type="button" id="workspaces-launch" data-test="workspaces-launch">Show command</button></div>
+    <pre id="workspaces-command" data-test="workspaces-command"></pre>
+  </details>
 </dialog>
 
 <dialog id="roles-dialog" data-test="roles-dialog" data-state="idle">
@@ -504,6 +533,9 @@ function renderState() {
   const ws = state.workspace || {};
   $("workspace").textContent = ws.name ? `workspace: ${ws.name}${ws.read_only ? " (read-only)" : ""}` : "";
   $("workspace").title = ws.path || "";
+  $("workspace").dataset.workspace = ws.name || "";
+  const workspaceButton = $("open-workspaces");
+  if (workspaceButton) workspaceButton.hidden = ws.admin === false;
   const banner = $("banner");
   banner.replaceChildren();
   const problems = Array.isArray(ws.problems) ? ws.problems : [];
@@ -3179,14 +3211,172 @@ $("main-nav").addEventListener("keydown",e=>{
 });
 const settingsGroup=h("details",{id:"ws-settings"},h("summary",{"data-test":"ws-settings",text:"Settings"}));
 $("open-settings").before(settingsGroup);settingsGroup.append($("open-settings"),$("open-roles"),$("open-servers"),$("save-runs").parentElement);
-const openWorkspace=wsButton("Open workspace",async()=>{
-  const box=h("div"),info=await wsApi("workspace-open"),target=wsField(box,"Workspace name",info.workspace);
-  box.append(wsShowValue({current_workspace:info.workspace,existing_workspaces:info.names,dirty_draft:ws.dirty,outstanding_work:ws.batch?.state||"none"}));
-  if(await wsDialog("Open workspace",box,["Show command","Close"])==="Show command"){
-    const launch=await wsApi("workspace-open?name="+encodeURIComponent(target.value));await wsDialog("Launch in a terminal",h("div",{},h("pre",{text:launch.command}),copyControl("ws-copy-launch",()=>launch.command,null)),["Close"]);
+// Workspace administration controls are initialized just below, before the start section.
+const workspacesDialog = $("workspaces-dialog"), workspacesMsg = $("workspaces-msg");
+let workspacesInfo = null, workspacesSelected = "";
+function workspacesSetMsg(text, code) {
+  workspacesMsg.textContent = text || "";
+  workspacesMsg.dataset.code = code || "";
+  workspacesMsg.classList.toggle("err-text", !!code);
+}
+function workspacesError(e) {
+  let text = e?.message || String(e);
+  const holder = e?.body?.holder;
+  if (holder && typeof holder === "object" && Object.keys(holder).length) {
+    text += " (" + Object.entries(holder).map(([key, value]) => key + " " + value).join(", ") + ")";
   }
-});
-$("workspace").after(openWorkspace);
+  workspacesSetMsg(text, e?.code || "error");
+}
+function workspacesCurrent() {
+  return (workspacesInfo?.workspaces || []).find(row => row.current) || null;
+}
+function workspacesSelectedRow() {
+  return (workspacesInfo?.workspaces || []).find(row => row.name === workspacesSelected) || workspacesCurrent();
+}
+function workspacesRender() {
+  if (!workspacesInfo) return;
+  const info = workspacesInfo, current = workspacesCurrent(), selected = workspacesSelectedRow();
+  $("workspaces-root").textContent = "Folder: " + info.root;
+  $("workspaces-current").textContent = current ? "Current: " + current.name + " · " + current.path : "";
+  const list = $("workspaces-list");
+  list.replaceChildren(...info.workspaces.map(row => {
+    const radio = h("input", { type: "radio", name: "workspaces-choice", value: row.name,
+      checked: row.name === workspacesSelected });
+    radio.onchange = () => { workspacesSelected = row.name; $("workspaces-selection").value = row.name; workspacesRender(); };
+    return h("label", { class: "pick", "data-test": "workspaces-row", "data-workspace": row.name,
+      "data-current": String(!!row.current) }, radio, " " + row.name + (row.current ? " (current)" : ""));
+  }));
+  const selection = $("workspaces-selection");
+  selection.replaceChildren(...info.workspaces.map(row => new Option(row.name + (row.current ? " (current)" : ""), row.name)));
+  selection.value = selected?.name || current?.name || "";
+  const source = $("workspaces-source"), priorSource = source.value;
+  source.replaceChildren(...info.workspaces.map(row => new Option(row.name + (row.current ? " (current)" : ""), row.name)));
+  source.value = info.workspaces.some(row => row.name === priorSource) ? priorSource : (current?.name || "");
+  const enabled = !!info.admin && !info.tutorial_active, target = $("workspaces-name").value.trim();
+  $("workspaces-switch").disabled = !enabled || !selected || !!selected.current;
+  $("workspaces-create").disabled = !enabled || !target;
+  $("workspaces-clone").disabled = !enabled || !target || !source.value || target === source.value;
+  $("workspaces-reset").disabled = !enabled || !selected;
+  $("workspaces-delete").disabled = !enabled || !selected || !!selected.current;
+  workspacesDialog.dataset.state = !enabled ? "disabled" : "idle";
+  if (info.tutorial_active) workspacesSetMsg("Exit the tutorial before changing workspaces.");
+  else if (info.admin === false) workspacesSetMsg("Workspace administration is unavailable in the tutorial.");
+}
+
+
+async function workspacesLoad() {
+  workspacesDialog.dataset.state = "loading";
+  try {
+    workspacesInfo = await api("/api/workspaces");
+    if (!workspacesSelected || !workspacesInfo.workspaces.some(row => row.name === workspacesSelected)) {
+      workspacesSelected = workspacesInfo.current;
+    }
+    workspacesSetMsg("");
+    workspacesRender();
+  } catch (e) {
+    workspacesDialog.dataset.state = "error";
+    workspacesError(e);
+  }
+}
+function workspacesReload() {
+  ws.dirty = false;
+  ws.examplesDirty = false;
+  location.reload();
+}
+async function workspacesConfirm(action, name) {
+  const box = h("div"), field = h("input", { "data-test": "workspaces-confirm-name" }),
+    note = h("p", { class: "note err-text", "data-test": "workspaces-confirm-error" });
+  box.append(h("p", { text: `Type the workspace name to ${action}. This cannot be undone.` }), field, note);
+  const choice = await wsDialog("Confirm " + action, box, ["Confirm", "Cancel"], async answer => {
+    if (answer !== "Confirm") return true;
+    if (field.value !== name) { note.textContent = "The typed name does not match."; return false; }
+    return true;
+  });
+  return choice === "Confirm";
+}
+async function workspacesFinishSwitch(target) {
+  const current = await api("/api/workspaces").catch(() => null);
+  if (current?.current === target) return workspacesReload();
+  if (current) { workspacesInfo = current; workspacesRender(); }
+}
+async function workspacesSwitch(create) {
+  const target = create ? $("workspaces-name").value.trim() : $("workspaces-selection").value;
+  if (!target || !await wsLeave()) return;
+  try {
+    await api("/api/workspaces/" + (create ? "create" : "switch"), { format_version: 1, name: target });
+    workspacesReload();
+  } catch (e) {
+    workspacesError(e);
+    await workspacesFinishSwitch(target);
+  }
+}
+
+async function workspacesClone() {
+  const source = $("workspaces-source").value, target = $("workspaces-name").value.trim();
+  if (!source || !target || target === source) return;
+  if (source === workspacesCurrent()?.name && !await wsLeave()) return;
+  try {
+    await api("/api/workspaces/clone", { format_version: 1, source, target,
+      include_evidence: $("workspaces-evidence").checked });
+    workspacesSelected = target;
+    await workspacesLoad();
+    workspacesSetMsg("Clone created. Switch to it when ready.");
+  } catch (e) {
+    workspacesError(e);
+  }
+}
+async function workspacesResetWorkspace() {
+  const selected = workspacesSelectedRow();
+  if (!selected) return;
+  if (selected.current && !await wsLeave()) return;
+  if (!await workspacesConfirm("reset", selected.name)) return;
+  try {
+    await api("/api/workspaces/reset", { format_version: 1, name: selected.name, confirm: selected.name });
+    if (selected.current) return workspacesReload();
+    await workspacesLoad();
+    workspacesSetMsg("Workspace reset.");
+  } catch (e) {
+    workspacesError(e);
+  }
+}
+async function workspacesDeleteWorkspace() {
+  const selected = workspacesSelectedRow();
+  if (!selected || selected.current) return;
+  if (!await workspacesConfirm("delete", selected.name)) return;
+  try {
+    await api("/api/workspaces/delete", { format_version: 1, name: selected.name, confirm: selected.name });
+    workspacesSelected = workspacesCurrent()?.name || "";
+    await workspacesLoad();
+    workspacesSetMsg("Workspace deleted.");
+  } catch (e) {
+    workspacesError(e);
+  }
+}
+async function workspacesLaunch() {
+  const name = workspacesSelectedRow()?.name || workspacesInfo?.current || "";
+  try {
+    const result = await api("/api/workspaces/launch?name=" + encodeURIComponent(name));
+    $("workspaces-command").textContent = result.command;
+  } catch (e) {
+    workspacesError(e);
+  }
+}
+$("workspaces-selection").addEventListener("change", () => { workspacesSelected = $("workspaces-selection").value; workspacesRender(); });
+$("workspaces-name").addEventListener("input", workspacesRender);
+$("workspaces-source").addEventListener("change", workspacesRender);
+$("workspaces-evidence").addEventListener("change", workspacesRender);
+$("workspaces-switch").onclick = () => workspacesSwitch(false).catch(e => workspacesError(e));
+$("workspaces-create").onclick = () => workspacesSwitch(true).catch(e => workspacesError(e));
+$("workspaces-clone").onclick = () => workspacesClone().catch(e => workspacesError(e));
+$("workspaces-reset").onclick = () => workspacesResetWorkspace().catch(e => workspacesError(e));
+$("workspaces-delete").onclick = () => workspacesDeleteWorkspace().catch(e => workspacesError(e));
+$("workspaces-launch").onclick = () => workspacesLaunch().catch(e => workspacesError(e));
+$("workspaces-close").onclick = () => workspacesDialog.close();
+$("workspaces-launch-row").append(copyControl("workspaces-copy-command", () => $("workspaces-command").textContent, null));
+const openWorkspaces = h("button", { type: "button", id: "open-workspaces", "data-test": "header-workspaces",
+  text: "Workspaces", onclick: async () => { workspacesDialog.showModal(); await workspacesLoad(); } });
+$("workspace").after(openWorkspaces);
+
 // --- start -----------------------------------------------------------------------------------------------------------------
 selectTab(fragFromHash(), { hash: false });
 refreshState().then(tutorialInit).catch((e) => {

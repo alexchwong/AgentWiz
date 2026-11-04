@@ -109,6 +109,20 @@ def write_profiles(folder: Path, raw: Mapping[str, Any]) -> None:
     write_atomic(folder, PROFILES_FILE, version2(raw))
 
 
+def seed_workspace(folder: Path, library: "Library") -> None:
+    """Create a workspace's model-profiles copy from the shared defaults, under the defaults lock.
+
+    A damaged or missing defaults file seeds an empty local library; the defaults problem itself is
+    reported when the workspace is opened. Existing local files are replaced by this call.
+    """
+    with library.locked():
+        loaded = read_profiles(library.path)
+        raw = loaded.raw if loaded.problem is None else empty_profiles_raw()
+        folder = Path(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        write_profiles(folder, raw or empty_profiles_raw())
+
+
 def fingerprint(folder: Path) -> tuple | None:
     """Missing and inaccessible files have stable, distinct signatures."""
     try:

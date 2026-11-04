@@ -170,7 +170,10 @@ def main(argv: list[str] | None = None) -> None:
                     _say(f"shutdown failed ({type(exc).__name__})", err=True)
                     os._exit(1)
             if not left:
-                ws.close()
+                if server is not None:
+                    server.close_workspace()
+                else:
+                    ws.close()
     except (KeyboardInterrupt, TerminationRequested):
         pass
 

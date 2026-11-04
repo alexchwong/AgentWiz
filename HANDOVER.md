@@ -1,5 +1,33 @@
 # AgentWiz 0.2.0 — cumulative Phase 2 handover
 
+## November 4, 2026 — Workspaces dialog: switch, create, clone, reset and delete
+
+- Added live in-process workspace switching within the launch `--workspaces-dir`. A destination
+  `ProcessState` is prepared before the current one is shut down; the old lock is released only after
+  a drained shutdown. `UIServer` now owns whichever workspace is current and exposes
+  `close_workspace()`; `__main__.py` closes the current workspace after its final drain.
+- Added top-level `GET /api/workspaces`, `GET /api/workspaces/launch` and POST
+  `switch|create|clone|reset|delete` routes. The old Workshop `workspace-open` route was removed.
+- Added `agentwiz/workspace_admin.py`: bounded listing, staged clone (configuration, profiles,
+  roles, contracts, blocks, examples; optional saved runs/comparisons), in-place reset with profile
+  reseeding, and lock-held tombstone deletion. No-follow paths, clone limits, shared-defaults/MCP
+  guards and typed-name confirmation are enforced.
+- Added a header **Workspaces** dialog. Switch/create and current reset run the Workshop
+  Save/Discard/Stay guard then reload; clone/delete/reset-other refresh only. Active work returns
+  `workspace_busy`; another process returns `workspace_in_use` with holder details. Workspace
+  administration is hidden/refused in the tutorial child and refused while a tutorial is active.
+- Session API keys and MCP tokens are not carried across switch/reset; they remain memory-only.
+- Updated README, architecture, decisions, NEWS and the proposal. Added filesystem, HTTP lifecycle,
+  CLI lock-release, tutorial isolation and browser workflow regressions.
+- Validation on Linux / Python 3.13.13: `test_workspace_admin.py` **10 passed**,
+  `test_workspace_lifecycle.py` **12 passed**, `test_workspace.py` **9 passed**, focused page
+  **30 passed**, focused tutorial **9 passed**. The full offline gate passed
+  **645 passed, 10 live tests deselected** (95.47 s). Python compilation and `git diff --check` passed.
+  These counts are from the implementation checkout; no live backend or installed-wheel smoke was run.
+- No dependencies, commits, pushes or publication. Live backends, installed-wheel smoke, macOS and
+  Python 3.10 were not checked. No user workspace data outside test temporary folders was changed.
+
+
 ## November 4, 2026 — Workshop save diagnostics and Test/example workflow
 
 - Save/Start planning returns bounded located `block_invalid` issues for invalid definitions,

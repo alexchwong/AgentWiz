@@ -20,8 +20,10 @@ import fcntl
 import os
 import re
 import socket
+import stat
 import tempfile
 from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -177,6 +179,63 @@ def _holder(fd: int) -> dict:
     return holder
 
 
+def holder(fd: int) -> dict:
+    """The lock file's holder details, for an in-use refusal. Never includes anything else."""
+    return _holder(fd)
+
+
+def new_workspace_document() -> dict:
+    """The fresh ``workspace.json`` object: no active profile and run saving off."""
+    return {"format_version": FORMAT_VERSION, "created_by": "AgentWiz " + __version__,
+            "save_runs": False, "active_profile": None}
+
+
+@contextmanager
+def acquire_existing_lock(workspaces_dir: Path, name: str):
+    """Lock an existing workspace folder for an administrative operation, without opening its state.
+
+    The folder must already exist and must be a plain directory; a missing folder, symbolic link or
+    other file is refused. The lock file may be created when it is absent, as ``open_workspace`` does.
+    Yields the absolute workspace path. The lock is released when the context exits.
+    """
+    if not valid_name(name):
+        raise WorkspaceError(f"invalid workspace name; use {NAME_RULE}")
+    path = Path(workspaces_dir).resolve() / name
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        raise WorkspaceError("the workspace folder does not exist") from None
+    except OSError as exc:
+        raise WorkspaceError(f"the workspace folder cannot be read ({_strerror(exc)})") from None
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+        raise WorkspaceError("the workspace path is not a plain folder")
+    lock_path = path / LOCK_FILE
+    try:
+        lock_st = os.lstat(lock_path)
+    except FileNotFoundError:
+        lock_st = None
+    except OSError as exc:
+        raise WorkspaceError(f"cannot read {LOCK_FILE} ({_strerror(exc)})") from None
+    if lock_st is not None and (stat.S_ISLNK(lock_st.st_mode) or not stat.S_ISREG(lock_st.st_mode)):
+        raise WorkspaceError(f"{LOCK_FILE} is not a plain file")
+    try:
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError as exc:
+        raise WorkspaceError(f"cannot open {LOCK_FILE} ({_strerror(exc)})") from None
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            details = _holder(fd)
+            raise WorkspaceInUse(details) from None
+        except OSError as exc:
+            raise WorkspaceError(f"the folder's filesystem does not support the workspace lock "
+                                 f"({_strerror(exc)})") from None
+        yield path
+    finally:
+        os.close(fd)
+
+
 def open_workspace(workspaces_dir: Path, name: str) -> Workspace:
     """Create the workspace if needed, take its lock, and read workspace.json (techspec 7.5.2)."""
     if not valid_name(name):
@@ -216,9 +275,7 @@ def open_workspace(workspaces_dir: Path, name: str) -> Workspace:
         obj, problem = read_document(path / WORKSPACE_FILE, WORKSPACE_FILE)
         if problem is None and obj is None:
             try:
-                write_atomic(path, WORKSPACE_FILE, {"format_version": FORMAT_VERSION,
-                                                    "created_by": "AgentWiz " + __version__,
-                                                    "save_runs": False, "active_profile": None})
+                write_atomic(path, WORKSPACE_FILE, new_workspace_document())
             except OSError as exc:
                 raise WorkspaceError(f"cannot create {WORKSPACE_FILE} ({_strerror(exc)})") from None
             created = True

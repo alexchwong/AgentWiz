@@ -87,12 +87,15 @@ is created with copies of the default profiles, and its terminal line ends in `(
 not expect that, check the name you typed. Names are 1 to 64 letters, digits, `.`, `_` or `-`,
 starting with a letter or digit.
 
-- **One AgentWiz process per workspace.** A second AgentWiz on the same workspace prints which
-  process holds it and exits with status 3. To switch workspace, stop AgentWiz and start it again
-  with another `--workspace`.
+- **One AgentWiz process owns one workspace at a time.** A second AgentWiz on the same workspace
+  prints which process holds it and exits with status 3. Use **Workspaces** in the header to switch
+  to another workspace in the same `--workspaces-dir`: AgentWiz releases the current lock, opens the
+  selected workspace and reloads the page. The `--workspace` option still chooses the initial
+  workspace. To use two workspaces at once, launch a separate process for the other one.
 - The folder holds `workspace.json`, `model-profiles/profiles.json`, `task_settings.json` (once
-  saved) and `.agentwiz.lock`. If you keep workspaces inside a git repository, add `.agentwiz.lock`
-  to that repository's `.gitignore`.
+  saved), `roles.json`, `contracts/`, `blocks/`, `workshop/` (saved examples and comparisons),
+  `runs/` (when saving is on) and `.agentwiz.lock`. If you keep workspaces inside a git repository,
+  add `.agentwiz.lock` to that repository's `.gitignore`.
 - **Supported locations:** local disks on Linux and macOS, and WSL2's own filesystem. Shared,
   network and cloud-synced folders are not supported and not detected: the workspace lock may not
   be visible from another machine. Under WSL2, workspaces on `/mnt/c` (the Windows drive) have not
@@ -102,7 +105,8 @@ starting with a letter or digit.
 
 **Workshop** is the default. Its saved-block selector is alongside Design, Test and Compare on desktop,
 and above them on narrow screens. **Workbench** groups the five independent utilities below. **History**
-opens saved runs. Settings in the header groups model profiles, roles, MCP servers and Save runs.
+opens saved runs. Settings in the header groups model profiles, roles, MCP servers and Save runs; the
+Workspaces control beside the workspace name opens workspace management.
 
 | Location | Address | Purpose |
 | --- | --- | --- |
@@ -122,9 +126,30 @@ Typed inputs and unsaved drafts are held in page memory. A dirty draft survives 
 switches; replacing it offers Save, Discard or Stay. Reload can lose it, with a browser unload warning
 where supported. Saved definitions and examples survive restart; session-only results do not.
 
-**Open workspace** lists workspace names and generates a shell-quoted launch command with absolute
-storage roots. Paste it into a terminal to start a separate process; save a dirty draft first if needed.
-Only one process can own a workspace.
+**Workspaces** opens the shared workspace dialog. It lists the current workspace and the other
+workspaces in the launch folder, and provides:
+
+- **Switch** — open an existing workspace and reload the page. Save or discard a dirty Workshop
+  draft first. Running requests and Workshop batches must be stopped; AgentWiz refuses to switch
+  while work is in progress.
+- **Create** — make a new workspace and switch to it. A new workspace receives copies of the shared
+  default profiles, with no active profile.
+- **Clone** — copy the selected source into a new workspace. Configuration, profiles, roles,
+  contracts, blocks and saved examples are copied. Saved runs and comparisons are excluded unless
+  **Include saved runs and comparisons** is checked. The source and clone are independent; the lock
+  file is never copied.
+- **Reset** — clear a workspace back to a fresh state, keeping its name and folder. The workspace
+  receives fresh profile copies and no saved data. This cannot be undone.
+- **Delete** — permanently remove a non-current workspace. The current workspace must be switched
+  away first. Delete and reset require typing the workspace name exactly.
+- **Launch in another process** — show a shell-quoted command for a separate AgentWiz process. Only
+  one process can own a workspace.
+
+Only names directly under the launch folder can be managed. Shared defaults and the MCP server
+library must remain outside managed workspaces; reset and delete refuse a workspace that contains
+either one. Session API keys and MCP tokens are memory-only: switching or resetting clears them, so
+re-enter them when needed. Workspace administration is disabled inside the tutorial's temporary
+workspace.
 
 ## Block Workshop
 
@@ -935,9 +960,10 @@ Stopping the original AgentWiz process also closes its tutorial.
 - **Unknown tool outcomes.** A lost connection, a server failure, a deadline or Stop after a call
   was sent leaves its outcome unknown; AgentWiz never resends it.
 - **Documents** are the four text formats, kept whole; the token count is an estimate.
-- **Workspaces.** One AgentWiz process per workspace; restart to switch. The default folders are
-  relative to where AgentWiz is launched. Shared, network and cloud-synced folders are unsupported
-  and not detected.
+- **Workspaces.** One AgentWiz process owns one workspace at a time; the Workspaces dialog can switch
+  within the launch folder. The default folders are relative to where AgentWiz is launched. Shared,
+  network and cloud-synced folders are unsupported and not detected. Clone excludes saved runs and
+  comparisons by default, reset cannot be undone, and only a non-current workspace can be deleted.
 - **Damaged or newer local files** make the workspace, its profiles or its task settings read-only
   until AgentWiz restarts. Damaged defaults disable import/export only, and a damaged MCP server list
   disables MCP; both are detected again as soon as they are repaired, as are contract files. Numbers

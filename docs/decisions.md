@@ -83,6 +83,26 @@ Departures from the plan, including the two approved for 0.1.0 (errors inside an
 described without "HTTP 200"; non-ASCII base URLs refused), are recorded in the 0.1.1
 specification's Section 16.2.
 
+Choices recorded for the 0.2.0 workspace lifecycle (owner-approved implementation plan, 4 November
+2026):
+
+- `UIServer` may prepare, open and adopt another workspace in the launch root. This replaces the
+  earlier "whoever opens it closes it" ownership rule: `close_workspace()` closes the current
+  workspace after a drained shutdown, and a switch closes the old lock only after its state has
+  drained.
+- Switch is live and in-process; re-entering the current name is idempotent. `Switch` only selects
+  an existing workspace; `Create` creates and switches. Delete is disabled for the current
+  workspace. Reset is in place and keeps the workspace name and lock inode.
+- Active requests, block runs, MCP operations, scripts, writers and Workshop batches refuse a
+  workspace change with `workspace_busy`; nothing is stopped implicitly. A destination is prepared
+  before the old state is shut down, so a failed target open leaves the current workspace intact.
+- Clone copies configuration, profiles, roles, contracts, blocks and saved examples. Saved runs and
+  comparisons are opt-in. Lock files, symlinks, staging folders and unknown top-level entries are
+  excluded or refused; reset/delete refuse shared defaults or the MCP library inside the workspace.
+- Session API keys and MCP tokens are not transferred across switch/reset; they remain memory-only
+  and are re-entered. Tutorial child servers cannot administer workspaces. The tutorial stays
+  isolated.
+
 Choices recorded for 0.1.3 (specification 0.1.3, Section 22.2, plus the builder's):
 
 - ID forms: 12-hex run IDs, `<run>-<n>` attempt IDs, step `request`; the record's field names,
@@ -147,7 +167,8 @@ Choices recorded for 0.1.1:
 - Workspace files are indented JSON with a trailing newline, ASCII only.
 - The URL rule refuses `@`, `?` and `#` anywhere in a base URL rather than parsing it.
 - Temporary files are named `.<file>.<random>.tmp` and left in place if a crash interrupts a write.
-- `UIServer` requires an opened workspace; whoever opens it closes it.
+- `UIServer` requires an opened workspace; whoever opens it closes it. (For 0.2.0 the server may
+  adopt a switched workspace; see the workspace lifecycle entry above.)
 - `UIServer.server_bind` delegates to `TCPServer.server_bind`, preserving socket binding and the
   assigned port but using the numeric loopback address for `server_name`. It bypasses HTTPServer's
   reverse-DNS lookup, which can delay address output on macOS; no hostname is needed for this UI.

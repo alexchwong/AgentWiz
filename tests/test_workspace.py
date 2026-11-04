@@ -85,6 +85,13 @@ class Launch:
         req = urllib.request.Request(root + "/api/state", headers={"X-Session-Token": token})
         return json.loads(urllib.request.build_opener().open(req, timeout=10).read())
 
+    def post(self, address, path, body):
+        root, token = address.split("/?t=", 1)
+        req = urllib.request.Request(root + path, data=json.dumps(body).encode(),
+                                     headers={"X-Session-Token": token, "Content-Type": "application/json"},
+                                     method="POST")
+        return json.loads(urllib.request.build_opener().open(req, timeout=10).read())
+
     def exit_status(self, timeout=15):
         return self.proc.wait(timeout)
 
@@ -136,3 +143,20 @@ def test_cli_workspace(tmp_path):
             item.stop()
     # Nothing else was created beside the two workspaces.
     assert sorted(p.name for p in (tmp_path / "workspaces").iterdir()) == ["default", "demo"]
+
+
+def test_cli_releases_the_current_workspace_after_a_switch(tmp_path):
+    wsdir = tmp_path / "workspaces"
+    launch = Launch(tmp_path, "--workspaces-dir", str(wsdir))
+    try:
+        address = launch.address()
+        result = launch.post(address, "/api/workspaces/create", {"format_version": 1, "name": "switched"})
+        assert result["workspace"]["name"] == "switched"
+        assert launch.state(address)["workspace"]["name"] == "switched"
+    finally:
+        launch.stop()
+    # Both the initial workspace and the switched workspace are released for another process.
+    first = open_workspace(wsdir, "default")
+    second = open_workspace(wsdir, "switched")
+    first.close()
+    second.close()

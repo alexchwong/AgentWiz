@@ -6,8 +6,9 @@ Binds to 127.0.0.1 only. Every request must carry the per-launch session token (
 `t` parameter, or the X-Session-Token header), so other web pages in the browser cannot drive the
 server or spend API credit. Settings are shared by all tabs and checked per request by revision;
 API keys are write-only and held in memory. Profiles are workspace-local copies of shared defaults;
-the server never opens or closes a workspace itself. Error text reaching the page or terminal
-is limited to text that cannot contain a credential (techspec 7.6, 7.7).
+the server prepares and adopts a destination workspace before switching, and never serves two workspace
+states at once. Error text reaching the page or terminal is limited to text that cannot contain a
+credential (techspec 7.6, 7.7).
 """
 from __future__ import annotations
 
@@ -19,7 +20,9 @@ import secrets
 import socket
 import sys
 import threading
+import time
 import traceback
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import TCPServer
@@ -32,6 +35,7 @@ from modelspell import ModelSpellError
 from .. import (__version__, attachments, checks, contracts, history, insertion, jsonio, mcp_ops, model_call, model_step,
                 runner, runs, tool_forms, tutorial_topics, workshop)
 from .. import workspace as wsmod
+from .. import workspace_admin
 from ..errors import ShuttingDown, report_internal  # noqa: F401  (re-exported; defined in errors.py since 0.1.4)
 from ..mcp_client import MCPError
 from ..model_call import SettingsError, describe_error
@@ -45,7 +49,12 @@ INDEX = Path(__file__).with_name("index.html")
 JSON = "application/json"
 UPLOAD_LIMIT = 52_428_800          # 50 MiB; the JSON cap is insertion.REQUEST_LIMIT. Tests may lower both.
 UPLOAD_ROUTE = "/api/attachments/extract"
+WORKSPACES_ROUTE = "/api/workspaces"
 _HEX = set("0123456789abcdefABCDEF")
+
+
+def _is_workspace_admin_path(path: str) -> bool:
+    return path == WORKSPACES_ROUTE or path.startswith(WORKSPACES_ROUTE + "/")
 
 
 class BodyError(ValueError):
@@ -108,6 +117,61 @@ def decode_filename(header: str | None) -> str:
     return name
 
 
+class WorkspaceGate:
+    """Refuse ordinary requests while a workspace is being switched, reset or copied.
+
+    Normal requests hold a shared slot. A workspace operation takes the exclusive slot after existing
+    requests have finished; new ordinary requests receive 503 `busy` rather than waiting indefinitely.
+    """
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._readers = 0
+        self._admin = False
+        self._closed = False
+
+    @contextmanager
+    def shared(self):
+        with self._condition:
+            if self._closed or self._admin:
+                raise workspace_admin.WorkspaceAdminError("busy", "the workspace is being changed", 503)
+            self._readers += 1
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._readers -= 1
+                self._condition.notify_all()
+
+    @contextmanager
+    def admin(self, timeout: float = 2.0):
+        deadline = time.monotonic() + timeout
+        with self._condition:
+            while self._readers or self._admin:
+                if self._closed:
+                    raise workspace_admin.WorkspaceAdminError("workspace_busy", "AgentWiz is shutting down", 503)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not self._condition.wait(remaining):
+                    raise workspace_admin.WorkspaceAdminError(
+                        "workspace_busy", "a request is still running; stop it before changing workspaces", 409)
+            self._admin = True
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._admin = False
+                self._condition.notify_all()
+
+    def active_readers(self) -> int:
+        with self._condition:
+            return self._readers
+
+    def close(self) -> None:
+        with self._condition:
+            self._closed = True
+            self._condition.notify_all()
+
+
 class UIServer(ThreadingHTTPServer):
     daemon_threads = True
 
@@ -117,10 +181,16 @@ class UIServer(ThreadingHTTPServer):
         from ..tutorial import Tutorial
         self.tutorial = Tutorial(self)
         self.tutorial_session = None
-        self.workspace = workspace  # opened and closed by the caller
-        self.state = ProcessState(workspace, request_limit, profiles_dir=profiles_dir,
-                                  mcp_servers_dir=mcp_servers_dir if mcp_servers_dir is not None
-                                  else Path("./mcp_servers"))
+        self.workspace = workspace  # the current workspace; close_workspace() closes it
+        self.profiles_dir = Path(profiles_dir).resolve()
+        self.mcp_servers_dir = (Path(mcp_servers_dir) if mcp_servers_dir is not None
+                                else Path("./mcp_servers")).resolve()
+        self.workspace_root = Path(workspace.path).parent.resolve()
+        self.request_limit = request_limit
+        self.workspace_gate = WorkspaceGate()
+        self._admin_lock = threading.Lock()
+        self._workspace_close_lock = threading.Lock()
+        self.state = self._new_state(workspace)
         self.page_timeout = page_timeout
         self.grace_s = SHUTDOWN_GRACE_S               # tests lower it; the tutorial's Exit uses it for its bounded waits
         self.index = INDEX.read_bytes()
@@ -140,13 +210,203 @@ class UIServer(ThreadingHTTPServer):
         if exc is not None:
             report_internal("connection", exc)
 
+    def _new_state(self, workspace: Workspace) -> ProcessState:
+        return ProcessState(workspace, self.request_limit, profiles_dir=self.profiles_dir,
+                            mcp_servers_dir=self.mcp_servers_dir)
+
+    @property
+    def workspace_admin_enabled(self) -> bool:
+        """Tutorial child servers must never switch or reset their isolated workspace."""
+        return self.tutorial_session is None
+
+    def _workspace_view(self) -> dict:
+        return {"name": self.workspace.name, "path": str(self.workspace.path)}
+
+    def _protected_paths(self) -> tuple[Path, Path]:
+        return self.profiles_dir, self.mcp_servers_dir
+
+    def _active_work(self) -> list[dict]:
+        state = self.state
+        active = []
+        for kind, count in (
+                ("page_attempt", getattr(state.budget, "in_flight", 0)),
+                ("block_attempt", state.store.running_count()),
+                ("block_run", len(state.store.active_block_runs())),
+                ("mcp_operation", state.mcp_ops.active_count()),
+                ("script", state.scripts.in_flight)):
+            if count:
+                active.append({"kind": kind, "count": count})
+        outstanding = state.writers.outstanding()
+        if outstanding:
+            active.append({"kind": "writer", "count": len(outstanding)})
+        if state.workshop.active:
+            active.append({"kind": "workshop_batch", "count": 1})
+        return active
+
+    def _require_admin(self) -> None:
+        if not self.workspace_admin_enabled:
+            raise workspace_admin.WorkspaceAdminError("workspace_admin_disabled",
+                                                      "workspace administration is unavailable in the tutorial", 409)
+
+    def _require_tutorial_idle(self) -> None:
+        if self.tutorial.active():
+            raise workspace_admin.WorkspaceAdminError("tutorial_active", "exit the tutorial before changing workspaces", 409)
+
+    def _require_idle(self) -> None:
+        active = self._active_work()
+        if active:
+            raise workspace_admin.WorkspaceAdminError(
+                "workspace_busy", "stop running requests and Workshop batches before changing workspaces", 409,
+                active=active)
+
+    def _discard_state(self, state: ProcessState | None, workspace: Workspace) -> None:
+        if state is not None:
+            try:
+                state.shutdown(grace_s=self.grace_s, wait=True)
+            except Exception as exc:  # noqa: BLE001 - the new state was never served
+                report_internal("workspace", exc)
+        workspace.close()
+
+    def close_workspace(self) -> None:
+        """Close the currently open workspace's lock. Idempotent; callers use it after a drained shutdown."""
+        with self._workspace_close_lock:
+            workspace, self.workspace = self.workspace, None
+        if workspace is not None:
+            workspace.close()
+
+
+    def switch_workspace(self, name: str, *, create: bool = False) -> dict:
+        """Open and adopt another workspace in the same root, or create and adopt a new one."""
+        self._require_admin()
+        self._require_tutorial_idle()
+        if not create and name == self.workspace.name:
+            return self._workspace_view()
+        if create:
+            workspace_admin.validate_new(self.workspace_root, name)
+        else:
+            workspace_admin.validate_existing(self.workspace_root, name)
+        self._require_idle()
+        try:
+            target_ws = wsmod.open_workspace(self.workspace_root, name)
+        except wsmod.WorkspaceInUse as exc:
+            raise workspace_admin.WorkspaceAdminError(
+                "workspace_in_use", "the workspace is in use by another AgentWiz process", 409,
+                holder=exc.holder) from None
+        except wsmod.WorkspaceError:
+            raise workspace_admin.WorkspaceAdminError(
+                "workspace_io_error", "the workspace could not be opened", 500) from None
+        if create and not target_ws.created:
+            target_ws.close()
+            raise workspace_admin.WorkspaceAdminError("workspace_exists", "a workspace with that name appeared", 409)
+        new_state = None
+        swapped = False
+        try:
+            try:
+                new_state = self._new_state(target_ws)
+            except Exception:
+                raise workspace_admin.WorkspaceAdminError(
+                    "workspace_unavailable", "the destination workspace could not be opened", 503) from None
+            with self.workspace_gate.admin():
+                if self._active_work():
+                    self._require_idle()
+                old_state, old_ws = self.state, self.workspace
+                old_state.shutdown(grace_s=self.grace_s, wait=True)
+                old_ws.close()
+                self.state, self.workspace = new_state, target_ws
+                new_state = None
+                swapped = True
+            return self._workspace_view()
+        finally:
+            if not swapped:
+                self._discard_state(new_state, target_ws)
+                if create and target_ws.created:
+                    try:
+                        workspace_admin.delete_workspace(self.workspace_root, name, protected=self._protected_paths())
+                    except Exception:  # noqa: BLE001 - best effort for a workspace this call just created
+                        pass
+
+    def reset_workspace_by_name(self, name: str) -> dict:
+        """Reset a workspace; resetting the current one rebuilds its ProcessState in place."""
+        self._require_admin()
+        self._require_tutorial_idle()
+        path = workspace_admin.validate_existing(self.workspace_root, name)
+        protected = self._protected_paths()
+        workspace_admin.check_protected(path, protected)
+        if name != self.workspace.name:
+            try:
+                with wsmod.acquire_existing_lock(self.workspace_root, name):
+                    workspace_admin.reset_contents(path, self.profiles_dir, protected)
+            except wsmod.WorkspaceInUse as exc:
+                raise workspace_admin.WorkspaceAdminError(
+                    "workspace_in_use", "the workspace is in use by another AgentWiz process", 409,
+                    path=str(path), holder=exc.holder) from None
+            except wsmod.WorkspaceError:
+                raise workspace_admin.WorkspaceAdminError(
+                    "workspace_io_error", "the workspace could not be locked for reset", 500,
+                    path=str(path)) from None
+            return {"name": name, "path": str(path), "reset": True}
+
+        self._require_idle()
+        with self.workspace_gate.admin():
+            if self._active_work():
+                self._require_idle()
+            old_state = self.state
+            old_state.shutdown(grace_s=self.grace_s, wait=True)
+            try:
+                workspace_admin.reset_contents(path, self.profiles_dir, protected)
+                self.workspace.problems = []
+                self.workspace.read_only = False
+                new_state = self._new_state(self.workspace)
+            except workspace_admin.WorkspaceAdminError:
+                raise
+            except Exception:
+                raise workspace_admin.WorkspaceAdminError(
+                    "workspace_unavailable", "the workspace was reset but could not be reopened; restart AgentWiz",
+                    503, path=str(path)) from None
+            self.state = new_state
+        return {"name": name, "path": str(path), "reset": True}
+
+    def clone_workspace_from(self, source: str, target: str, include_evidence: bool = False) -> dict:
+        self._require_admin()
+        self._require_tutorial_idle()
+        workspace_admin.validate_existing(self.workspace_root, source)
+        workspace_admin.validate_new(self.workspace_root, target)
+        if source != self.workspace.name:
+            try:
+                with wsmod.acquire_existing_lock(self.workspace_root, source):
+                    return workspace_admin.clone_workspace(self.workspace_root, source, target, include_evidence)
+            except wsmod.WorkspaceInUse as exc:
+                raise workspace_admin.WorkspaceAdminError(
+                    "workspace_in_use", "the source workspace is in use by another AgentWiz process", 409,
+                    holder=exc.holder) from None
+            except wsmod.WorkspaceError:
+                raise workspace_admin.WorkspaceAdminError(
+                    "workspace_io_error", "the source workspace could not be locked", 500) from None
+        self._require_idle()
+        with self.workspace_gate.admin():
+            if self._active_work():
+                self._require_idle()
+            return workspace_admin.clone_workspace(self.workspace_root, source, target, include_evidence)
+
+    def delete_workspace_by_name(self, name: str) -> dict:
+        self._require_admin()
+        self._require_tutorial_idle()
+        return workspace_admin.delete_workspace(self.workspace_root, name, current=self.workspace.name,
+                                                protected=self._protected_paths())
+
     def server_close(self, *, wait: bool = True) -> list[str]:
         """Close the listening socket and shut the process state down (10.10): the tutorial's session first
         (bounded), then admission, cancellation and the drain. Returns the labels still outstanding (empty once
-        drained; non-empty only with `wait=False`). Idempotent: a drained state answers at once."""
-        pending = self.tutorial.begin_shutdown(take_pending=wait)
-        super().server_close()
-        left = self.state.shutdown(grace_s=self.grace_s, wait=wait)
+        drained; non-empty only with `wait=False`). Idempotent: a drained state answers at once.
+
+        The workspace lock is not closed here. The owner calls close_workspace() after a drained shutdown;
+        a workspace switch closes the old lock itself only after its state has drained.
+        """
+        with self._admin_lock:
+            self.workspace_gate.close()
+            pending = self.tutorial.begin_shutdown(take_pending=wait)
+            super().server_close()
+            left = self.state.shutdown(grace_s=self.grace_s, wait=wait)
         self.tutorial.finish(pending)             # a pending tutorial session, only after this state has drained
         return left
 
@@ -305,6 +565,13 @@ class Handler(BaseHTTPRequestHandler):
             fn()
         except workshop.WorkshopError as exc:
             self._reply_safely(exc.status, {"error": "Workshop request refused", "code": exc.code, **({"issues": exc.issues} if exc.issues else {}), **({"plan": exc.plan} if hasattr(exc, "plan") else {})})
+        except workspace_admin.WorkspaceAdminError as exc:
+            payload = {"error": str(exc), "code": exc.code}
+            for key in ("path", "holder", "active", "limit", "cleanup"):
+                value = getattr(exc, key, None)
+                if value is not None:
+                    payload[key] = value
+            self._reply_safely(exc.status, payload)
         except _ReadTimeout:
             self.close_connection = True
         except TooLarge as exc:
@@ -392,16 +659,38 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             self.close_connection = True
 
+    def _reply_workspace_error(self, exc: workspace_admin.WorkspaceAdminError) -> None:
+        payload = {"error": str(exc), "code": exc.code}
+        for key in ("path", "holder", "active", "limit", "cleanup"):
+            value = getattr(exc, key, None)
+            if value is not None:
+                payload[key] = value
+        self._reply_safely(exc.status, payload)
+
+    def _dispatch_gated(self, path: str, fn: Callable[[], None]) -> None:
+        try:
+            with self.server.workspace_gate.shared():
+                self._dispatch(path, fn)
+        except workspace_admin.WorkspaceAdminError as exc:
+            self._reply_workspace_error(exc)
+
     # --- routes ------------------------------------------------------------------------------
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
-        self._dispatch(path, lambda: self._get(path))
+        if _is_workspace_admin_path(path):
+            self._dispatch(path, lambda: self._get(path))
+        else:
+            self._dispatch_gated(path, lambda: self._get(path))
 
     def _get(self, path: str) -> None:
         if not self._authorised():
             return self._send(403, {"error": "missing or invalid session token"})
         if path == "/":
             return self._send(200, self.server.index, "text/html; charset=utf-8")
+        if path == WORKSPACES_ROUTE:
+            return self._workspaces_get()
+        if path == WORKSPACES_ROUTE + "/launch":
+            return self._workspaces_launch()
         if path.startswith("/api/workshop/") and not path.startswith("/api/workshop/tickets/"):
             return self._workshop_get(path[len("/api/workshop/"):])
         if path.startswith("/api/workshop/tickets/"):
@@ -431,11 +720,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
-        self._dispatch(path, lambda: self._post(path))
+        if _is_workspace_admin_path(path):
+            self._dispatch(path, lambda: self._post(path))
+        else:
+            self._dispatch_gated(path, lambda: self._post(path))
 
     def _post(self, path: str) -> None:
         if not self._authorised():
             return self._send(403, {"error": "missing or invalid session token"})
+        if path.startswith(WORKSPACES_ROUTE + "/"):
+            return self._workspaces_post(path)
         if path.startswith("/api/workshop/") and path != "/api/workshop/tickets":
             return self._workshop_post(path[len("/api/workshop/"):], self._body())
         routes = {"/api/workshop/tickets": self._workshop_ticket, "/api/tutorial/start": self._tutorial_start,
@@ -464,10 +758,63 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "not found"})
         handler(body)
 
-    @staticmethod
-    def _state_body(view: dict) -> dict:
-        return {**view, "agentwiz_version": __version__, "modelspell_version": modelspell.__version__,
-                "limits": {"request_bytes": insertion.REQUEST_LIMIT, "upload_bytes": UPLOAD_LIMIT}}
+    def _state_body(self, view: dict) -> dict:
+        out = {**view, "agentwiz_version": __version__, "modelspell_version": modelspell.__version__,
+               "limits": {"request_bytes": insertion.REQUEST_LIMIT, "upload_bytes": UPLOAD_LIMIT}}
+        out["workspace"] = {**view["workspace"], "admin": self.server.workspace_admin_enabled}
+        return out
+
+    def _workspaces_get(self) -> None:
+        info = workspace_admin.list_workspaces(self.server.workspace_root, self.server.workspace.name)
+        info.update({"format_version": 1, "admin": self.server.workspace_admin_enabled,
+                     "tutorial_active": self.server.tutorial.active()})
+        self._send(200, info)
+
+    def _workspaces_launch(self) -> None:
+        query = parse_qs(urlparse(self.path).query)
+        name = query.get("name", [self.server.workspace.name])[0]
+        port = None
+        if "port" in query:
+            try:
+                port = int(query["port"][0])
+            except (TypeError, ValueError):
+                raise workspace_admin.WorkspaceAdminError("invalid_workspace_name",
+                                                          "port must be an integer from 0 to 65535", 400) from None
+        command = workspace_admin.launch_command(self.server.workspace_root, name, self.server.profiles_dir,
+                                                 self.server.mcp_servers_dir, port)
+        self._send(200, {"format_version": 1, "command": command})
+
+    def _workspaces_post(self, path: str) -> None:
+        body = self._body()
+        if type(body.get("format_version")) is not int or body.get("format_version") != 1:
+            raise workspace_admin.WorkspaceAdminError("invalid_workspace_name", "format_version must be 1", 400)
+        action = path[len(WORKSPACES_ROUTE) + 1:]
+        name = body.get("name")
+        if action in ("switch", "create", "reset", "delete"):
+            if not isinstance(name, str):
+                raise workspace_admin.WorkspaceAdminError("invalid_workspace_name", "name must be a string", 400)
+        if action in ("reset", "delete") and body.get("confirm") != name:
+            raise workspace_admin.WorkspaceAdminError("confirmation_required",
+                                                      "type the workspace name exactly to confirm", 400)
+        with self.server._admin_lock:
+            if action == "switch":
+                result = self.server.switch_workspace(name)
+            elif action == "create":
+                result = self.server.switch_workspace(name, create=True)
+            elif action == "clone":
+                source, target = body.get("source"), body.get("target")
+                evidence = body.get("include_evidence", False)
+                if not isinstance(source, str) or not isinstance(target, str) or type(evidence) is not bool:
+                    raise workspace_admin.WorkspaceAdminError("invalid_workspace_name",
+                                                              "source and target must be names", 400)
+                result = self.server.clone_workspace_from(source, target, evidence)
+            elif action == "reset":
+                result = self.server.reset_workspace_by_name(name)
+            elif action == "delete":
+                result = self.server.delete_workspace_by_name(name)
+            else:
+                return self._send(404, {"error": "not found", "code": "missing"})
+        self._send(200, {"format_version": 1, "workspace": self.server._workspace_view(), **result})
 
     def _workshop_get(self, path):
         service = self.server.state.workshop
@@ -476,8 +823,6 @@ class Handler(BaseHTTPRequestHandler):
         if path == 'starters':
             from ..workshop_editor import STARTERS, examples
             result = {'format_version': 1, 'starters': [{'id': k, 'version': 1, 'examples': examples(k)} for k in STARTERS]}
-        elif path == 'workspace-open':
-            result = service.workspace_open(query)
         elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'revisions':
             result = service.assets.revisions(parts[1])
         elif len(parts) == 4 and parts[0] == 'blocks' and parts[2] == 'revisions':
@@ -574,7 +919,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) == 5 and parts[1:4] == ['api', 'workshop', 'reviews']:
                 return self._send(200, self.server.state.workshop.review(parts[4], body))
             self._send(404, {'code': 'missing'})
-        self._dispatch(path, put)
+        self._dispatch_gated(path, put)
 
     def do_DELETE(self):
         path = urlparse(self.path).path
@@ -585,7 +930,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) == 5 and parts[1:4] == ['api', 'workshop', 'comparisons']:
                 return self._send(200, self.server.state.workshop.delete_comparison(parts[4]))
             self._send(404, {'code': 'missing'})
-        self._dispatch(path, delete)
+        self._dispatch_gated(path, delete)
 
     def _workshop_ticket(self, body: dict) -> None:
         if body != {"format_version": 1} or type(body.get("format_version")) is not int:

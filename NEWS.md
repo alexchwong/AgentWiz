@@ -6,6 +6,7 @@
 - New-block creation validates keys without losing inputs, lists model roles, and discovers tools from configured MCP servers in dropdowns.
 - Design, test and compare individual blocks in Workshop with saved revisions, examples and correctness reviews.
 - Review bounded assistance proposals before applying them to a draft.
+- Workspaces dialog: switch, create, clone, reset and delete workspaces in the launch folder. Switching reloads the page and releases the old workspace lock; active work must be stopped first. Clone can include saved runs and comparisons; reset and delete require typing the workspace name.
 
 ## 0.1.4
 - Blocks tab: run single-step blocks saved as folders in the workspace, with a generated input form and trace.

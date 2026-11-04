@@ -229,6 +229,22 @@ def started(ui):
     return ui.tutorial.child
 
 
+def test_tutorial_workspace_administration_is_isolated(ui):
+    child = started(ui)
+    info = request(ui, "/api/workspaces")
+    assert info["tutorial_active"] is True
+    fail = failure_of(lambda: request(ui, "/api/workspaces/switch",
+                                      {"format_version": 1, "name": ui.workspace.name}))
+    assert fail.status == 409 and fail.body["code"] == "tutorial_active"
+    assert get_state(child)["workspace"]["admin"] is False
+    fail = failure_of(lambda: request(child, "/api/workspaces/delete",
+                                      {"format_version": 1, "name": child.workspace.name,
+                                       "confirm": child.workspace.name}))
+    assert fail.status == 409 and fail.body["code"] == "workspace_admin_disabled"
+    ui.tutorial.close()
+    assert request(ui, "/api/workspaces")["tutorial_active"] is False
+
+
 def test_tutorial_sandbox(ui, spawned, tmp_path):
     parent_files = snapshot(ui.workspace.path)
     child = started(ui)

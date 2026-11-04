@@ -280,6 +280,7 @@ def make_ui(tmp_path):
     for srv in servers:
         srv.shutdown()
         srv.server_close()
+        srv.close_workspace()
     for ws in opened:
         ws.close()
 
@@ -297,7 +298,7 @@ def restart(make_ui):
         old.shutdown()
         old.server_close()
         ws = old.workspace
-        ws.close()
+        old.close_workspace()
         reopened = open_workspace(ws.path.parent, ws.name)
         make_ui.opened.append(reopened)
         return make_ui(workspace=reopened, profiles_dir=old.state.library.path,

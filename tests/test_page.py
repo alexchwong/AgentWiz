@@ -437,6 +437,37 @@ def test_page_stale_revision(ui, server, open_page):
 
 
 # extra: the script raises nothing on load or when every tab is opened -----------------------------------------
+def test_page_workspaces_clone_switch_and_delete(ui, open_page):
+    original = ui.workspace.name
+    page = open_page(ui)
+    tid(page, "header-workspaces").click()
+    expect(tid(page, "workspaces-dialog")).to_be_visible()
+    expect(page.locator('[data-test="workspaces-row"]')).to_have_count(1)
+    has(page, "workspaces-dialog", "data-state", "idle")
+    tid(page, "workspaces-name").fill("clone")
+    tid(page, "workspaces-clone").click()
+    expect(page.locator('[data-test="workspaces-row"][data-workspace="clone"]')).to_have_count(1)
+    tid(page, "workspaces-selection").select_option("clone")
+    tid(page, "workspaces-switch").click()
+    expect(tid(page, "header-workspace")).to_have_attribute("data-workspace", "clone", timeout=WAIT)
+    tid(page, "header-workspaces").click()
+    tid(page, "workspaces-selection").select_option(original)
+    tid(page, "workspaces-switch").click()
+    expect(tid(page, "header-workspace")).to_have_attribute("data-workspace", original, timeout=WAIT)
+    tid(page, "header-workspaces").click()
+    tid(page, "workspaces-reset").click()
+    tid(page, "workspaces-confirm-name").fill(original)
+    tid(page, "ws-confirm").click()
+    expect(tid(page, "header-workspace")).to_have_attribute("data-workspace", original, timeout=WAIT)
+    tid(page, "header-workspaces").click()
+    tid(page, "workspaces-selection").select_option("clone")
+    tid(page, "workspaces-delete").click()
+    tid(page, "workspaces-confirm-name").fill("clone")
+    tid(page, "ws-confirm").click()
+    expect(page.locator('[data-test="workspaces-row"][data-workspace="clone"]')).to_have_count(0)
+    expect(page.locator('[data-test="workspaces-row"]')).to_have_count(1)
+
+
 def test_page_raises_no_script_errors(ui, open_page, context):
     problems = []
     context.on("page", lambda p: (p.on("pageerror", lambda e: problems.append(str(e))),

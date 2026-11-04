@@ -815,26 +815,6 @@ class Service:
         except (KeyError, ValueError, WorkshopError):
             fail('proposal_expired', 410)
 
-    def workspace_open(self, query):
-        import shlex
-        root = self.state.workspace.path.parent.resolve()
-        names = sorted(p.name for p in root.iterdir() if p.is_dir() and not p.is_symlink() and blocks.valid_name(p.name))
-        result = {'format_version': 1, 'workspace': self.state.workspace.name, 'root': str(root), 'names': names}
-        if 'name' in query:
-            name = key_name(query['name'][0])
-            args = ['agentwiz', '--workspaces-dir', str(root), '--profiles-dir', str(self.state.library.path.resolve()),
-                    '--mcp-servers-dir', str(self.state.mcp_library.folder.resolve()), '--workspace', name]
-            if 'port' in query:
-                try:
-                    port = int(query['port'][0])
-                except ValueError:
-                    fail()
-                if not 0 <= port <= 65535:
-                    fail()
-                args += ['--port', str(port)]
-            result['command'] = shlex.join(args)
-        return result
-
     def support(self, key):
         root = self.assets.root(key)
         paths = []
