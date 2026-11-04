@@ -6,23 +6,67 @@ It is called from `state.py` under the state lock, with the roles revision, and 
 
     {"format_version": 1, "roles": {"fast": "lmstudio-qwen", "reasoning": "openrouter-big"}}
 
-Unknown top-level fields are kept when the file is rewritten. A missing file means no roles. A damaged file
+Version 2 adds definitions (description and local/cloud location), including unassigned roles.
+Version 1 assignments remain readable without imposing a new location policy. A missing file exposes
+unconfigured starter definitions without writing to disk. Unknown top-level fields are kept. A damaged file
 (`unreadable`, `invalid_json`, `invalid_field`, `newer_format`) makes roles read-only; AgentWiz never writes it.
 Messages name locations and rules, never values. Standard library only.
 """
 from __future__ import annotations
 
 import copy
+import ipaddress
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .workspace import (NAME_RULE, InvalidDocument, Problem, check_format_version, read_document, valid_name,
                         write_atomic)
 
 FILE = "roles.json"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 ROLE_LIMIT = 100
+DEFAULTS = {
+    "fast": {"description": "Routine generation, extraction and classification", "location": "local"},
+    "assistant": {"description": "Create, improve and explain Workshop blocks", "location": "local"},
+    "reasoning": {"description": "Tasks needing a more capable reasoning model", "location": "local"},
+}
+
+
+def profile_location(settings) -> str:
+    """Classify without DNS or network access. Local means a loopback model server."""
+    if settings.kind not in ("lmstudio", "openai_compat"):
+        return "cloud"
+    host = urlsplit(settings.base_url or "http://localhost:1234/v1").hostname
+    if host == "localhost":
+        return "local"
+    try:
+        if ipaddress.ip_address(host or "").is_loopback:
+            return "local"
+    except ValueError:
+        pass
+    return "cloud"
+
+
+def parse_definitions(value: object) -> dict:
+    if not isinstance(value, Mapping) or len(value) > ROLE_LIMIT:
+        raise RolesError("definitions must be an object with at most 100 entries")
+    out = {}
+    for name, definition in value.items():
+        if not valid_name(name) or not isinstance(definition, Mapping):
+            raise RolesError("definitions must contain named role objects")
+        if not {"description", "location"} <= set(definition) or set(definition) - {"description", "location", "family"}:
+            raise RolesError(f"definitions.{name} requires description and location")
+        if not isinstance(definition["description"], str) or len(definition["description"]) > 500:
+            raise RolesError(f"definitions.{name}.description must be text of at most 500 characters")
+        if definition["location"] not in ("local", "cloud"):
+            raise RolesError(f"definitions.{name}.location must be local or cloud")
+        family = definition.get("family", "General")
+        if not isinstance(family, str) or not family.strip() or family != family.strip() or len(family) > 64:
+            raise RolesError(f"definitions.{name}.family must be nonblank trimmed text of at most 64 characters")
+        out[name] = dict(definition)
+    return out
 
 
 class RolesError(ValueError):
@@ -35,10 +79,11 @@ class RolesFile:
     exists: bool = False
     roles: Mapping[str, str] = field(default_factory=dict)
     raw: dict = field(default_factory=dict)
+    definitions: Mapping = field(default_factory=dict)
 
 
 def empty_raw() -> dict:
-    return {"format_version": FORMAT_VERSION, "roles": {}}
+    return {"format_version": 1, "roles": {}}
 
 
 def parse_roles(value: object) -> dict[str, str]:
@@ -63,7 +108,7 @@ def read(folder: Path) -> RolesFile:
     if problem is not None:
         return RolesFile(problem)
     if raw is None:
-        return RolesFile(None, exists=False, raw=empty_raw())
+        return RolesFile(None, exists=False, raw=empty_raw(), definitions=copy.deepcopy(DEFAULTS))
     try:
         if check_format_version(raw) > FORMAT_VERSION:
             return RolesFile(Problem(FILE, "newer_format",
@@ -71,16 +116,23 @@ def read(folder: Path) -> RolesFile:
         if "roles" not in raw:
             raise InvalidDocument("roles is missing")
         roles = parse_roles(raw["roles"])
+        definitions = {}
+        if raw["format_version"] == 2:
+            definitions = parse_definitions(raw.get("definitions"))
+            if not set(roles) <= set(definitions):
+                raise RolesError("every assigned role requires a definition")
     except (InvalidDocument, RolesError) as exc:
         return RolesFile(Problem(FILE, "invalid_field", str(exc)))
-    return RolesFile(None, exists=True, roles=roles, raw=raw)
+    return RolesFile(None, exists=True, roles=roles, raw=raw, definitions=definitions)
 
 
-def build_raw(previous: Mapping, roles: Mapping[str, str]) -> dict:
+def build_raw(previous: Mapping, roles: Mapping[str, str], definitions=None) -> dict:
     """The new file: the previous file's unknown top-level fields kept."""
     raw = copy.deepcopy(dict(previous))
-    raw["format_version"] = FORMAT_VERSION
+    raw["format_version"] = 1 if definitions is None else FORMAT_VERSION
     raw["roles"] = dict(roles)
+    if definitions is not None:
+        raw["definitions"] = copy.deepcopy(definitions)
     return raw
 
 

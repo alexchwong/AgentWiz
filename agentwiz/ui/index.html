@@ -150,14 +150,22 @@
 
 <dialog id="roles-dialog" data-test="roles-dialog" data-state="idle">
   <h3 style="margin:4px 0">Roles</h3>
-  <p class="note">A role names a profile. Blocks use roles, so a block can be moved between models by changing this map.</p>
+  <p class="note">Roles select saved model profiles for blocks and Workshop assistance. Local means this machine (LM Studio or a loopback OpenAI-compatible server, including llama-server). Cloud roles never use local profiles. Neither location falls back to the other.</p>
   <p class="note" id="roles-path" data-test="roles-path"></p>
+  <div class="fields">
+    <label for="roles-location-filter">Find by location<select id="roles-location-filter" data-test="roles-location-filter"><option value="">All locations</option><option value="local">Local</option><option value="cloud">Cloud / remote</option></select></label>
+    <label for="roles-family-filter">Then family / domain<select id="roles-family-filter" data-test="roles-family-filter"></select></label>
+  </div>
+  <label for="roles-selection">Role<select id="roles-selection" data-test="roles-selection"></select></label>
+  <p class="note" id="roles-count" data-test="roles-count" role="status"></p>
   <div id="roles-list"></div>
   <p id="roles-msg" class="note" data-test="roles-msg"></p>
   <div class="row" style="justify-content:flex-end">
     <button type="button" id="add-role" data-test="roles-add">Add role</button>
+    <button type="button" id="default-roles" data-test="roles-defaults">Set up defaults</button>
+    <button type="button" id="role-create-profile" data-test="roles-create-profile">Create / edit model profiles</button>
     <button type="button" id="close-roles" data-test="roles-close">Close</button>
-    <button type="button" id="save-roles" class="primary" data-test="roles-save">Save</button>
+    <button type="button" id="save-roles" class="primary" data-test="roles-save">Save all changes</button>
   </div>
 </dialog>
 
@@ -2417,50 +2425,110 @@ const BLOCK_OUTCOMES = { complete: "Complete", rejected: "Rejected before any wo
 // --- the Roles dialog (techspec 0.1.4, Section 13.2) -------------------------------------------------------------
 const ROLES_STALE = "The roles were saved elsewhere. The dialog now shows the saved roles; check them and save again.";
 function rolesInfo() { return state.roles || { map: {}, revision: 0, read_only: true, path: "", problem: null, unresolved: [] }; }
+const ROLE_FAMILIES = ["General", "Writing & communication", "Coding & engineering", "Research & analysis", "Data & extraction", "Workflow assistance"];
+let roleDrafts=[], roleSelected=null, roleFamilies=new Set(ROLE_FAMILIES);
+function roleDraft(name,profile,definition){
+  return {name:name||"",profile:profile||"",saved:!!name,definition:{description:"",location:profilesInfo().details?.[profile]?.location||"local",family:"General",...definition}};
+}
+function rememberRole(){
+  const row=$("roles-list").querySelector('[data-test="roles-row"]');
+  if(!row||!roleSelected)return;
+  roleSelected.name=row.querySelector('[data-key="role"]').value;
+  roleSelected.profile=row.querySelector('[data-key="profile"]').value;
+  for(const key of ["description","location","family"])roleSelected.definition[key]=row.querySelector(`[data-key="${key}"]`).value;
+}
+function renderRoleBrowser(preferred=roleSelected){
+  const location=$("roles-location-filter").value,family=$("roles-family-filter").value;
+  for(const draft of roleDrafts)roleFamilies.add(draft.definition.family);
+  const families=$("roles-family-filter");families.replaceChildren(new Option("All families", ""));
+  for(const name of [...roleFamilies].sort())families.add(new Option(name,name));families.value=family;
+  const matches=roleDrafts.filter(d=>(!location||d.definition.location===location)&&(!family||d.definition.family===family));
+  roleSelected=matches.includes(preferred)?preferred:matches[0]||null;
+  const select=$("roles-selection");select.replaceChildren();
+  for(const draft of matches)select.add(new Option(draft.name||"New role (enter a name)",String(roleDrafts.indexOf(draft))));
+  select.disabled=!matches.length;
+  if(roleSelected)select.value=String(roleDrafts.indexOf(roleSelected));else select.add(new Option("No matching roles", ""));
+  $("roles-count").textContent=`${matches.length} matching of ${roleDrafts.length} roles. Changes are retained while browsing; Save all changes persists every role.`;
+  const list=$("roles-list");list.replaceChildren();
+  if(roleSelected)list.append(roleRow(roleSelected));else list.append(h("p",{text:"No roles match these filters. Change the filters or add a role."}));
+}
 
-function roleRow(name, profile) {
+function roleRow(draft) {
+  const {name,profile,definition}=draft;
   const info = rolesInfo(), ro = info.read_only;
   const unresolved = (info.unresolved || []).find((u) => u.role === name);
   const row = h("fieldset", { class: "server-row", "data-test": "roles-row", "data-role": name, "data-unresolved": unresolved ? "true" : "" });
-  const nameInput = h("input", { "data-key": "role", placeholder: "role name", value: name, disabled: ro });
+  const nameInput = h("input", { "data-key": "role", placeholder: "role name", value: name, disabled: ro, readOnly: draft.saved });
+  const details = profilesInfo().details || {};
+  const family=h("select",{"data-key":"family","data-test":"roles-family",disabled:ro});
+  for(const name of [...roleFamilies].sort())family.add(new Option(name,name));family.value=definition.family;
+  const familyName=h("input",{"data-test":"roles-new-family",placeholder:"New family / domain",maxLength:64,disabled:ro,"aria-label":"New family / domain"});
+  const addFamily=h("button",{type:"button","data-test":"roles-add-family",text:"Add family",disabled:ro});
+  addFamily.onclick=()=>{
+    const name=familyName.value.trim();if(!name){$("roles-msg").textContent="Enter a family name (1–64 characters).";familyName.focus();return;}
+    rememberRole();roleFamilies.add(name);draft.definition.family=name;
+    if($("roles-family-filter").value)$("roles-family-filter").value="";
+    renderRoleBrowser(draft);
+  };
+  const description = h("input", {"data-key":"description", value:definition.description, maxLength:500, disabled:ro});
+  const location = h("select", {"data-key":"location", disabled:ro});
+  location.add(new Option("Local — this machine", "local"));location.add(new Option("Cloud / remote", "cloud"));location.value=definition.location;
   const select = h("select", { "data-key": "profile", disabled: ro });
   const names = profilesInfo().names || [];
-  if (profile && !names.includes(profile)) select.add(new Option(`${profile} (missing)`, profile));
-  for (const n of names) select.add(new Option(n, n));
-  select.value = profile || (names[0] || "");
+  const status=h("p", {"data-test":"roles-status", role:"status"});
+  function update(selected){
+    select.replaceChildren(new Option("Not configured — choose a profile", ""));
+    for(const n of names){const p=details[n];if(p?.location===location.value)select.add(new Option(`${n} · ${p.kind} · ${p.base_url||"default endpoint"} · ${p.model||"no model"}`,n));}
+    if(selected&&!Array.from(select.options).some(o=>o.value===selected))select.add(new Option(`${selected} (${details[selected]?"incompatible location":"missing"})`,selected));
+    select.value=selected||"";showStatus();
+  }
+  function showStatus(){const p=details[select.value];const code=!select.value?"unconfigured":!p?"missing":p.location!==location.value?"incompatible":!p.model.trim()?"no-model":"ready";row.dataset.status=code;status.textContent={unconfigured:"Not configured. Drafting is allowed; running requires a profile.",missing:"Missing profile. Choose a replacement.",incompatible:"Profile location does not match this role.","no-model":"Choose a model in this profile.",ready:"Ready"}[code];}
+  location.onchange=()=>update("");select.onchange=showStatus;update(profile);
   const remove = h("button", { type: "button", "data-test": "roles-remove", text: "Remove", disabled: ro });
-  remove.onclick = () => row.remove();
+  remove.onclick = () => {if(!draft.saved||confirm(`Remove role ${name}? Existing blocks may still reference it and will need a replacement.`)){roleDrafts=roleDrafts.filter(d=>d!==draft);renderRoleBrowser(null);}};
   row.append(h("div", { class: "fields" }, h("div", {}, h("label", { text: "Role" }), nameInput), h("div", {}, h("label", { text: "Profile" }), select)),
+    h("div", { class: "fields" }, h("label", {}, "Purpose", description), h("label", {}, "Execution location", location)), status,
+    h("label",{},"Family / domain",family),h("div",{class:"row"},familyName,addFamily),
     h("div", { class: "row" }, remove));
   if (unresolved) row.append(h("div", { class: "warn-text", "data-test": "roles-reason", text: unresolved.reason }));
   return row;
 }
 
 function fillRoles(message) {
-  const info = rolesInfo(), list = $("roles-list");
-  list.replaceChildren();
-  for (const [role, profile] of Object.entries(info.map || {})) list.append(roleRow(role, profile));
+  const info = rolesInfo();
+  roleDrafts=[...new Set([...Object.keys(info.definitions||{}),...Object.keys(info.map||{})])].map(n=>roleDraft(n,info.map[n],info.definitions?.[n]));
+  roleFamilies=new Set(ROLE_FAMILIES);$("roles-location-filter").value="";$("roles-family-filter").replaceChildren(new Option("All families",""));
+  renderRoleBrowser(roleDrafts.find(d=>d.name===roleSelected?.name)||roleDrafts.find(d=>d.name==="fast"));
   $("roles-path").textContent = `File: ${info.path || ""} · revision ${info.revision}`;
   $("add-role").disabled = info.read_only; $("save-roles").disabled = info.read_only;
+  $("default-roles").disabled=info.read_only;
   const reason = info.read_only ? "Roles are read-only: " + (info.problem ? `${info.problem.file}: ${info.problem.message}` : "the workspace is read-only") : "";
   $("roles-msg").textContent = message || reason;
 }
 
 $("open-roles").onclick = () => { $("roles-dialog").dataset.state = "idle"; fillRoles(); $("roles-dialog").showModal(); };
 $("close-roles").onclick = () => $("roles-dialog").close();
-$("add-role").onclick = () => $("roles-list").append(roleRow("", ""));
+for(const id of ["roles-location-filter","roles-family-filter"])$(id).onchange=()=>{rememberRole();renderRoleBrowser();};
+$("roles-selection").onchange=()=>{rememberRole();renderRoleBrowser(roleDrafts[Number($("roles-selection").value)]);};
+$("add-role").onclick = () => {rememberRole();const draft=roleDraft("","",{location:$("roles-location-filter").value||"local",family:$("roles-family-filter").value||"General"});roleDrafts.push(draft);renderRoleBrowser(draft);};
+$("default-roles").onclick=()=>{rememberRole();const names=new Set(roleDrafts.map(d=>d.name));for(const [n,d] of Object.entries(rolesInfo().defaults||{}))if(!names.has(n))roleDrafts.push(roleDraft(n,"",d));renderRoleBrowser();};
+$("role-create-profile").onclick=()=>{
+  rememberRole();const dlg=$("roles-dialog");
+  dlg.close();$("open-settings").click();
+  $("settings").addEventListener("close",()=>{renderRoleBrowser();dlg.showModal();},{once:true});
+};
 $("save-roles").onclick = async () => {
-  const map = {}, dlg = $("roles-dialog");
-  for (const row of $("roles-list").querySelectorAll('[data-test="roles-row"]')) {
-    const role = row.querySelector('[data-key="role"]').value.trim();
-    const profile = row.querySelector('[data-key="profile"]').value;
+  rememberRole();
+  const map = Object.create(null), definitions=Object.create(null), dlg = $("roles-dialog");
+  for (const draft of roleDrafts) {
+    const role = draft.name.trim(),profile=draft.profile;
     if (!NAME_RE.test(role)) { dlg.dataset.state = "error"; $("roles-msg").textContent = "Each role needs a name: 1 to 64 letters, digits, '.', '_' or '-'."; return; }
-    if (Object.prototype.hasOwnProperty.call(map, role)) { dlg.dataset.state = "error"; $("roles-msg").textContent = `The role ${role} appears twice.`; return; }
-    if (!profile) { dlg.dataset.state = "error"; $("roles-msg").textContent = `Choose a profile for ${role}.`; return; }
-    map[role] = profile;
+    if (Object.prototype.hasOwnProperty.call(definitions, role)) { dlg.dataset.state = "error"; $("roles-msg").textContent = `The role ${role} appears twice.`; return; }
+    definitions[role]={...draft.definition};
+    if(profile)map[role] = profile;
   }
   try {
-    state = await api("/api/roles/save", { roles: map, revision: rolesInfo().revision });
+    state = await api("/api/roles/save", { roles: map, definitions, revision: rolesInfo().revision });
     renderState(); fillRoles("Saved."); dlg.dataset.state = "saved";
   } catch (e) {
     try { await refreshState(); } catch (e2) { /* keep */ }
@@ -2604,7 +2672,11 @@ const wsSearch = h("input",{placeholder:"Search blocks","aria-label":"Search blo
 const wsNav = h("div",{class:"row"});
 const wsHeading = h("h2",{text:"Block Workshop"});
 let wsBlocks=[], wsPoll=0, wsPending=null;
-function wsError(e){wsNote.dataset.state="error";wsNote.dataset.code=e.code||"error";wsNote.textContent=e.message||String(e);if(["stale","proposal_expired"].includes(e.code))wsNote.append(". Your draft is kept. Reload or request assistance again when ready.");}
+function wsErrorText(e){
+  const messages={invalid:"The block request is invalid. Check the key, selected starter and bindings.",stale:"Settings or source changed. Refresh and review the action again.",setup_unavailable:"The selected model role or MCP server is unavailable. Check Settings.",checks_required:"Install AgentWiz[checks] and restart to use this action.",read_only:"The workspace is read-only. Open a writable workspace to save changes.",busy:"Workshop is busy. Wait for the current operation to finish.",unusable:"The block source could not be read. Check its files and permissions."};
+  return (messages[e.code]||e.message||String(e))+(e.code?" ["+e.code+"]":"");
+}
+function wsError(e){wsNote.dataset.state="error";wsNote.dataset.code=e.code||"error";wsNote.textContent=wsErrorText(e);if(["stale","proposal_expired"].includes(e.code))wsNote.append(". Your draft is kept. Reload or request assistance again when ready.");}
 function wsButton(label,fn,id){
   const checks=state?.contracts?.checks;
   const unavailable=checks?.available===false&&(label==="Assist"||(["Save revision","Run test","Compare versions","Run saved examples"].includes(label)&&ws.projection?.requires_checks));
@@ -2622,12 +2694,17 @@ function wsChoice(parent,label,values,selected){
 }
 function wsDirty(){ws.dirty=true;wsHeading.textContent=(ws.draft?.metadata?.display_name||ws.draft?.key||"New block")+" · Unsaved";}
 window.addEventListener("beforeunload",e=>{if(ws.dirty){e.preventDefault();e.returnValue="";}});
-function wsDialog(title,content,choices){
+function wsDialog(title,content,choices,beforeClose){
   return new Promise(resolve=>{
     const dialog=h("dialog",{"data-test":"ws-dialog"},h("h2",{text:title}),content);
     const close=v=>{dialog.close();dialog.remove();resolve(v);};
-    dialog.append(h("div",{class:"row"},...choices.map(c=>wsButton(c,()=>close(c)))));
-    dialog.addEventListener("cancel",e=>{e.preventDefault();close(null);});
+    let submitting=false;
+    dialog.append(h("div",{class:"row"},...choices.map(c=>wsButton(c,async()=>{
+      if(submitting)return;
+      submitting=true;
+      try{if(!beforeClose||await beforeClose(c))close(c);}finally{submitting=false;}
+    }))));
+    dialog.addEventListener("cancel",e=>{e.preventDefault();if(!submitting)close(null);});
     document.body.append(dialog);dialog.showModal();
   });
 }
@@ -2724,12 +2801,61 @@ async function wsSupport(){
 }
 async function wsNew(){
   if(!await wsLeave())return;
+  state=await api("/api/state");
   const box=h("div"),name=wsField(box,"Block key"),starters=(await wsApi("starters")).starters;
+  box.append(h("p",{text:"A stable identifier, not a display title: 1–64 letters, digits, dots, underscores or hyphens; start with a letter or digit. Example: summarise_notes. No spaces."}));
   const kind=wsChoice(box,"Start with",[...starters.map(s=>[s.id,s.id.replaceAll("_"," ")]),...["model","tool","script"].map(k=>["blank_"+k,"Blank "+k])]);
-  const role=wsField(box,"Model role","fast"),server=wsField(box,"MCP server"),tool=wsField(box,"Tool name");
-  const choice=await wsDialog("Create a block",box,["Create draft","Create with assistance","Cancel"]);if(!["Create draft","Create with assistance"].includes(choice))return;
-  await wsLoad({key:name.value,starter:kind.value,role:role.value||null,server:server.value||null,tool:tool.value||null},true);
+  box.append(h("p",{text:"Start with chooses a prepared template or a blank model, tool or Python script block."}));
+  const modelBox=h("div"),toolBox=h("div");box.append(modelBox,toolBox);
+  const role=wsRoleChoice(modelBox,"Model role","fast");
+  modelBox.append(h("p",{text:"A role is an alias for a saved model profile, not a chat-message role. Configure assignments in Settings → Roles. Unresolved roles can be drafted but must be configured before running."}));
+  const server=wsChoice(toolBox,"MCP server",[["","Choose a configured server"],...Object.keys(mcpInfo().servers).map(n=>[n,n])]);
+  const tool=wsChoice(toolBox,"Tool name",[]),discovery=h("p",{role:"status","data-test":"ws-tool-discovery"});
+  toolBox.append(h("p",{text:"Servers come from Settings → MCP servers; unconfigured servers cannot be auto-detected. Tools are discovered from the selected server without calling them."}),discovery);
+  let generation=0;
+  async function discover(){
+    const current=++generation,selected=server.value;
+    tool.replaceChildren();tool.disabled=true;
+    discovery.dataset.state=selected?"loading":"empty";discovery.textContent=selected?"Discovering tools…":"Choose a server, or add one in Settings → MCP servers.";
+    if(!selected)return;
+    try{
+      const found=await api("/api/mcp/tools",{server:selected,revision:mcpInfo().revision});
+      if(current!==generation)return;
+      tool.replaceChildren(...found.tools.map(t=>new Option(t.title?t.title+" · "+t.name:t.name,t.name)));
+      tool.disabled=!found.tools.length;discovery.dataset.state=found.tools.length?"ready":"empty";
+      discovery.textContent=found.tools.length?"Choose an advertised tool. Review its arguments in Design.":"This server advertises no tools.";
+    }catch(e){if(current===generation){discovery.dataset.state="error";discovery.textContent=wsErrorText(e);}}
+  }
+  server.onchange=discover;toolBox.append(wsButton("Refresh tools",async()=>{state=await api("/api/state");await discover();}));
+  function updateKind(){const k=kind.value;modelBox.hidden=!["blank_model","write_text","summarise","extract_fields","choose_label","check_source"].includes(k);toolBox.hidden=!["call_tool","blank_tool"].includes(k);if(!toolBox.hidden)discover();else ++generation;}
+  kind.onchange=updateKind;updateKind();
+  const error=h("p",{role:"alert","data-test":"ws-create-error"});box.append(error);
+  const choice=await wsDialog("Create a block",box,["Create draft","Create with assistance","Cancel"],async action=>{
+    if(action==="Cancel")return true;
+    error.textContent="";delete error.dataset.code;name.removeAttribute("aria-invalid");
+    if(!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name.value)){
+      error.dataset.code="invalid_key";error.textContent="Enter a block key using 1–64 letters, digits, dots, underscores or hyphens, starting with a letter or digit. Spaces are not allowed.";name.setAttribute("aria-invalid","true");name.focus();return false;
+    }
+    if(!toolBox.hidden&&(!server.value||tool.disabled||!tool.value)){
+      error.dataset.code="tool_required";error.textContent="Select a configured server and wait for discovery, then choose an available tool.";return false;
+    }
+    try{await wsLoad({key:name.value,starter:kind.value,role:modelBox.hidden?null:role.value,server:toolBox.hidden?null:server.value,tool:toolBox.hidden?null:tool.value},true);return true;}
+    catch(e){error.dataset.code=e.code||"error";error.textContent=wsErrorText(e);return false;}
+  });if(!["Create draft","Create with assistance"].includes(choice))return;
   ws.examples=structuredClone(starters.find(s=>s.id===kind.value)?.examples||[]);ws.view="design";wsRender();if(choice==="Create with assistance")await wsAssist("create");
+}
+function wsRoleChoice(parent,label,preferred){
+  const roles=state.roles?.map||{},unresolved=new Set((state.roles?.unresolved||[]).map(r=>r.role)),names=[...new Set([...Object.keys(state.roles?.definitions||{}),...Object.keys(roles)])];
+  const selected=names.includes(preferred)?preferred:names[0];
+  const choice=wsChoice(parent,label,names.length?names.map(n=>[n,n+" → "+(roles[n]||"not assigned")+(unresolved.has(n)?" (unresolved)":"")]):[["","No roles defined — configure roles"]],selected||"");
+  parent.append(wsButton("Configure roles",()=>{
+    $("open-roles").click();
+    $("roles-dialog").addEventListener("close",()=>{
+      const names=[...new Set([...Object.keys(state.roles?.definitions||{}),...Object.keys(state.roles?.map||{})])],previous=choice.value;
+      choice.replaceChildren();for(const n of names)choice.add(new Option(n+" → "+(state.roles?.map?.[n]||"not assigned"),n));
+      choice.value=names.includes(previous)?previous:names.includes(preferred)?preferred:names[0]||"";
+    },{once:true});
+  }));return choice;
 }
 async function wsView(view){await wsFlush();ws.view=view;wsRender();}
 function wsRender(){
@@ -2827,7 +2953,7 @@ async function wsRevisions(){
   }
 }
 async function wsAssist(initialAction){
-  await wsFlush();const box=h("div"),action=wsChoice(box,"Action",["create","improve","describe","suggest_examples","explain_failure"].map(x=>[x,x.replaceAll("_"," ")]),initialAction||ws.tutorialAction||"improve"),role=wsField(box,"Assistant role","assistant"),task=wsField(box,"Task","",true);
+  await wsFlush();const box=h("div"),action=wsChoice(box,"Action",["create","improve","describe","suggest_examples","explain_failure"].map(x=>[x,x.replaceAll("_"," ")]),initialAction||ws.tutorialAction||"improve"),role=wsRoleChoice(box,"Assistant role","assistant"),task=wsField(box,"Task","",true);
   const stage=wsChoice(box,"Create stage",[["","Complete block"],["fields","Fields only"],["behaviour","Behaviour only"]]);
   const sections=[];for(const name of ["purpose","inputs","outputs","behaviour","description_sections"]){const check=h("input",{type:"checkbox",checked:true});sections.push([name,check]);box.append(h("label",{},check," Improve "+name.replaceAll("_"," ")));}
   if(await wsDialog("Block assistance",box,["Prepare request","Cancel"])!=="Prepare request")return;

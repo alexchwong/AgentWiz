@@ -335,6 +335,26 @@ repair preview. Only a `complete` attempt whose check `pass`es is accepted.
   script slot and a writer registration until the group is gone. Scripts need POSIX process groups.
 - **Roles.** `roles.json` through `roles.py`, under the state lock, with its own revision; a save
   refuses a profile that does not exist. Resolution is live, at preparation (`state.resolve_role`).
+  Version 2 retains the string assignment map and adds `definitions`, keyed by role, each containing
+  `description` (at most 500 characters), `location` (`local|cloud`), and optional `family`
+  (trimmed nonblank text, at most 64 characters; absent means General in the editor). Unassigned definitions are
+  allowed; every v2 assignment needs a definition. Missing files expose unconfigured `fast`,
+  `assistant`, `reasoning` definitions in memory only. Version-1 assignments remain readable with
+  no imposed location constraint until explicitly configured in the editor. Legacy API saves retain
+  existing v2 policies for retained assignments; they cannot bypass location enforcement.
+  `/api/state.roles` adds `definitions` and `defaults`; `profiles.details` exposes saved settings
+  plus computed location, never credentials. `/api/roles/save` accepts optional `definitions`.
+  Local requires `lmstudio|openai_compat` and a loopback IP or `localhost`; other endpoints are cloud,
+  without DNS resolution. Both save and resolution check policy, including after profile edits.
+  Frozen Workshop trial snapshots retain the existing reviewed-configuration contract.
+  The editor filters profiles, preserves drafts across model settings, and reports `roles-row`
+  `data-status` (`unconfigured|missing|incompatible|no-model|ready`). Saved names are read-only;
+  removing a role warns without rewriting blocks. Workshop role selectors link directly to setup.
+  The dialog keeps all drafts in memory but mounts at most one `roles-row`. Location and family
+  dropdowns filter the role selector; browsing, empty matches and the profile-settings round trip
+  retain edits. Save submits all drafts, not just filtered matches. Suggested families are UI hints;
+  custom families are stored on role definitions and offered across locations. No empty-family
+  registry is persisted. Adding a role inherits active filters; adding defaults never duplicates names.
 - **Shutdown.** `ProcessState.shutdown(grace_s, wait=)` closes the writer barrier and every admission
   gate, interrupts delivery, cancels admitted work, escalates, and drains the writer count;
   `UIServer.server_close(wait=)` calls it (and the tutorial's halves around it); `__main__.py` owns the
@@ -614,6 +634,11 @@ use `python -B`. Scripts retain ordinary user-level filesystem/network access.
 The framework-free page uses Workshop, Workbench and History, with Design/Test/Compare
 sharing one in-memory draft. `#workshop/<key>/<view>` validates against the workspace;
 no source content enters navigation state. Dirty replacement offers Save/Discard/Stay.
+New-block creation validates the stable key before preview and keeps its dialog open on refusal.
+Type-specific bindings use configured role/server choices; tool discovery uses the existing
+`/api/mcp/tools` operation without tool dispatch. A generation guard discards discovery replies
+after server/type changes. Empty or failed discovery cannot supply a tool binding. Unassigned
+starter role definitions permit drafting before configuration, but execution still requires resolution.
 The page plans every Workshop Save/Start/Apply and resolves lost Start replies via
 its ticket before following the batch. Complete generated source is shown during
 review. Existing block clients retain compatibility; the saved-block inspector uses

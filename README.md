@@ -131,6 +131,20 @@ Only one process can own a workspace.
 Choose **New block**, a starter or blank model/tool/script and a stable block key. Set its display name,
 purpose, inputs, behaviour and outputs in Design. A model role resolves to a profile; a tool binds to a
 server and discovered tool. Insert input controls use the existing `{{inputs.name}}` template syntax.
+The block key is an internal identifier, not a display title: use 1–64 ASCII letters, digits, dots,
+underscores or hyphens, starting with a letter or digit (for example, `summarise_notes`); no spaces.
+**Start with** chooses an initial template, not an output prefix. Model roles are aliases assigned to
+saved profiles in Settings → Roles, not chat-message roles. The dialog lists defined roles and marks
+unresolved assignments. Fresh workspaces define unconfigured `fast`, `assistant` and `reasoning` roles;
+drafts can be designed before profiles are assigned. Use **Configure roles** before running.
+Assistance separately selects an assistant role.
+Only fields relevant to the selected block type are shown. Tool blocks list configured MCP servers and
+automatically discover the selected server's advertised tool names in a dropdown. **Refresh tools**
+retries discovery after configuration or connection changes. AgentWiz does not scan for unconfigured
+servers: add their URLs in Settings → MCP servers first. Discovery lists tools without executing them.
+Creation errors keep the dialog and entered values available for correction. **Create draft** opens
+Design without calling a model; **Create with assistance** first creates the same draft, then opens the
+separate assistance request/review workflow. Neither button saves a revision automatically.
 More settings contains system instructions, sampling, reasoning, output cap, budgets and repair bounds.
 Test's **Preview instructions** shows the actual filled prompt or arguments for the supplied inputs.
 
@@ -587,13 +601,37 @@ A script step runs a Python file (see **Script steps**):
 
 ## Roles
 
-`<workspace>/roles.json` maps a role name to a profile name, for example `fast` to a profile you saved
-for a small local model. A model step names a role, so the same block can run on another model by
-changing the map. Open the **Roles** dialog in the header to add, change or remove roles and Save; a
-role whose profile no longer exists, or whose profile has no model, is shown as unresolved with the
-reason, and a block that uses it is refused before any request. **Chat and Checked request keep
-using the active profile**; roles are only for blocks. A role's profile is read when the run is
-prepared, so a profile you edit takes effect on the next run.
+Roles select saved model profiles for model blocks and Workshop assistance. Fresh workspaces offer
+three unconfigured starter roles: **fast** (routine generation/extraction), **assistant** (Workshop
+assistance), and **reasoning** (more demanding tasks). These are suggestions, not model capabilities;
+several roles may share a profile. No model, paid service or credentials are selected automatically.
+
+Open **Settings → Roles** to browse by **location** (All, Local, Cloud / remote), then by
+**family / domain**, and select a role from the matching-role dropdown. Only one role editor is
+displayed at a time. Suggested families are General, Writing & communication, Coding & engineering,
+Research & analysis, Data & extraction, and Workflow assistance. Use **Add family** in the editor
+to create and assign your own family; custom families persist with their saved roles. Older roles
+without a family appear under General. Adding a role uses the active location/family filters.
+
+Edit the selected role's purpose, location, family and saved profile. Switching roles or filters
+retains unsaved edits; **Save all changes** saves every role, including roles hidden by filters.
+Profile choices show backend, endpoint and model. **Create / edit model profiles**
+opens model settings and returns without losing role edits. **Set up defaults** adds missing starter
+roles without replacing existing definitions. Save persists assignments and definitions in
+`<workspace>/roles.json`. Saved role names are stable; removing a role warns about references in blocks.
+
+**Local means this machine:** LM Studio or an OpenAI-compatible server (including llama-server)
+using `localhost` or a loopback IP address. LAN servers and other remote endpoints are classified as
+Cloud / remote; OpenRouter is always Cloud. Profile choices are filtered by location, and the backend
+checks compatibility at assignment and role resolution. Neither location silently falls back to the
+other. This constrains the endpoint AgentWiz contacts, not what a server might forward elsewhere.
+
+Unconfigured roles can be used while drafting, but cannot run. Missing profiles, blank models and
+location mismatches are shown with reasons. Existing version-1 assignments remain usable without
+automatic reassignment; saving through the editor adds explicit location definitions. Files written
+with definitions use format version 2 and require this version of AgentWiz or newer. **Chat and
+Checked request keep using the active profile**, not these roles. Role resolution uses saved profile
+settings when preparing a run; already captured Workshop trials retain their reviewed snapshots.
 
 ## Templates
 

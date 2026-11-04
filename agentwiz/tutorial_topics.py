@@ -60,8 +60,10 @@ TOPICS: tuple[Topic, ...] = (
           _page("checked-request.tutorialPrepare", ["Extract the id and ratio as JSON."]), "checked-send"),
     Topic("model-block", "Run a model block",
           "A block is a saved step. This one asks a model (through the role fast) for the id and ratio in a report, "
-          "checks the answer against the fields contract and repairs it once. Show the role opens the mapping the "
-          "block uses; then Run, and compare the two attempts in the trace.", "workshop", "0.2.0", "complete", True,
+          "checks the answer against the fields contract and repairs it once. Show the role opens the editor: "
+          "filter by location and family, select one role, then review its purpose and assigned model profile. "
+          "Add family offers your own domains; Save all changes retains every role. Local uses a server on this machine; "
+          "unconfigured roles cannot run. Then Run, and compare the two attempts in the trace.", "workshop", "0.2.0", "complete", True,
           _page("workshop.tutorialPrepare",
                 ["extract_fields", {"report": "Record 9007199254740993 has a ratio of 0.10000000000000000001."}],
                 [{"id": "show-role", "label": "Show the role"}]), "ws-run-test"),

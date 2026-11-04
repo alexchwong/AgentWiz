@@ -600,9 +600,10 @@ def test_page_roles(ui, server, open_page):
         tid(page, "ws-settings").click()
     tid(page, "header-roles").click()
     has(page, "roles-dialog", "data-state", "idle")
-    tid(page, "roles-add").click()
-    page.locator('[data-test="roles-row"] [data-key="role"]').fill("fast")
-    page.locator('[data-test="roles-row"] [data-key="profile"]').select_option("p")
+    row = page.locator('[data-test="roles-row"][data-role="fast"]')
+    expect(row).to_have_attribute("data-status", "unconfigured")
+    row.locator('[data-key="profile"]').select_option("p")
+    expect(row).to_have_attribute("data-status", "ready")
     tid(page, "roles-save").click()
     has(page, "roles-dialog", "data-state", "saved")
     assert get_state(ui)["roles"]["map"] == {"fast": "p"}
@@ -617,7 +618,8 @@ def test_page_roles(ui, server, open_page):
     save_roles(ui, {"fast": "p", "slow": "p"})
     tid(page, "roles-save").click()
     has(page, "roles-dialog", "data-state", "stale")
-    expect(page.locator('[data-test="roles-row"]')).to_have_count(2)
+    expect(page.locator('[data-test="roles-row"]')).to_have_count(1)
+    expect(tid(page, "roles-selection").locator('option')).to_have_count(2)
     assert get_state(ui)["roles"]["map"] == {"fast": "p", "slow": "p"}
     # the profile is deleted: its roles are unresolved
     request(ui, "/api/profiles/delete", {"name": "p", "revision": get_state(ui)["revision"]})
@@ -625,7 +627,11 @@ def test_page_roles(ui, server, open_page):
     if not tid(page, "header-roles").is_visible():
         tid(page, "ws-settings").click()
     tid(page, "header-roles").click()
-    assert [r.get_attribute("data-unresolved") for r in page.locator('[data-test="roles-row"]').all()] == ["true", "true"]
+    row = page.locator('[data-test="roles-row"]')
+    expect(row).to_have_attribute("data-unresolved", "true")
+    tid(page, "roles-selection").select_option(label="slow")
+    expect(row).to_have_attribute("data-role", "slow")
+    expect(row).to_have_attribute("data-unresolved", "true")
 
 
 @pytest.mark.parametrize("width", [390, 1280])
@@ -671,6 +677,155 @@ def test_workshop_design_save_compare_and_review(ui, open_page, width):
         expect(record).to_have_count(0)
         tid(tid(page,"ws-dialog"),"ws-close").click()
         assert len(request(ui,"/api/runs")["runs"])==3
+
+
+@pytest.mark.parametrize("assisted", [False, True])
+def test_workshop_new_block_validation_and_roles(ui, server, open_page, assisted):
+    # Both entry points must keep invalid input editable and then create the same draft.
+    setup_model(ui, server)
+    save_roles(ui, {"writer": "p"})
+    page = open_page(ui)
+    tid(page, "ws-new-block").click()
+    dialog = tid(page, "ws-dialog")
+    key = tid(dialog, "ws-field-block-key")
+    role = tid(dialog, "ws-choice-model-role")
+    expect(role).to_have_value("writer")
+    expect(tid(dialog, "ws-choice-mcp-server")).to_be_hidden()
+    create = tid(dialog, "ws-create-with-assistance" if assisted else "ws-create-draft")
+    for invalid in ("", "My new block"):
+        key.fill(invalid)
+        create.click()
+        has(dialog, "ws-create-error", "data-code", "invalid_key")
+        expect(key).to_have_value(invalid)
+    key.fill("new_writer")
+    # A refused preview must leave the dialog and values available for correction.
+    page.route("**/api/workshop/preview", lambda route: route.fulfill(
+        status=409, content_type="application/json",
+        body=json.dumps({"error": "Workshop request refused", "code": "stale"})), times=1)
+    create.click()
+    has(dialog, "ws-create-error", "data-code", "stale")
+    expect(key).to_have_value("new_writer")
+    create.click()
+    if assisted:
+        expect(tid(dialog, "ws-choice-assistant-role")).to_have_value("writer")
+        tid(dialog, "ws-cancel").click()
+    else:
+        expect(dialog).to_have_count(0)
+    expect(tid(page, "ws-field-role")).to_have_value("writer")
+    expect(tid(page, "ws-field-instructions")).not_to_have_value("")
+
+
+def test_roles_filter_profiles_and_preserve_unsaved_edits(ui, server, open_page):
+    save_profile(ui, "local", model="m", kind="openai_compat", base_url=server.url + "/v1", provider="")
+    save_profile(ui, "cloud", model="remote", kind="openrouter", base_url="", provider="")
+    page = open_page(ui)
+    tid(page, "ws-settings").click()
+    tid(page, "header-roles").click()
+    tid(page, "roles-selection").select_option(label="assistant")
+    row = page.locator('[data-test="roles-row"][data-role="assistant"]')
+    expect(row.locator('[data-key="profile"] option')).to_have_count(2)
+    row.locator('[data-key="description"]').fill("My cloud helper")
+    row.locator('[data-key="location"]').select_option("cloud")
+    expect(row.locator('[data-key="profile"] option')).to_have_count(2)
+    row.locator('[data-key="profile"]').select_option("cloud")
+    tid(page, "roles-create-profile").click()
+    expect(tid(page, "roles-dialog")).not_to_be_visible()
+    page.keyboard.press("Escape")
+    expect(tid(page, "roles-dialog")).to_be_visible()
+    expect(row.locator('[data-key="description"]')).to_have_value("My cloud helper")
+    expect(row.locator('[data-key="location"]')).to_have_value("cloud")
+    expect(row.locator('[data-key="profile"]')).to_have_value("cloud")
+    tid(page, "roles-defaults").click()
+    expect(page.locator('[data-test="roles-row"]')).to_have_count(1)
+    expect(tid(page, "roles-selection").locator('option')).to_have_count(3)
+    tid(page, "roles-save").click()
+    has(page, "roles-dialog", "data-state", "saved")
+    saved = get_state(ui)["roles"]
+    assert saved["map"] == {"assistant": "cloud"}
+    assert saved["definitions"]["assistant"] == {"description": "My cloud helper", "location": "cloud", "family": "General"}
+
+
+def test_roles_single_editor_filters_families_and_retains_other_edits(ui, open_page):
+    initial = get_state(ui)["roles"]
+    definitions = {**initial["definitions"], **{
+        f"extra-{i}": {"description": "", "location": "local", "family": "General"} for i in range(30)}}
+    request(ui, "/api/roles/save", {"roles": {}, "definitions": definitions, "revision": initial["revision"]})
+    page = open_page(ui)
+    tid(page, "ws-settings").click()
+    tid(page, "header-roles").click()
+    row = page.locator('[data-test="roles-row"]')
+    expect(row).to_have_count(1)
+    row.locator('[data-key="description"]').fill("Unsaved fast purpose")
+    tid(page, "roles-selection").select_option(label="assistant")
+    expect(row).to_have_count(1)
+    row.locator('[data-key="location"]').select_option("cloud")
+    tid(page, "roles-new-family").fill("Customer support")
+    tid(page, "roles-add-family").click()
+    expect(tid(page, "roles-family")).to_have_value("Customer support")
+    tid(page, "roles-location-filter").select_option("local")
+    expect(tid(page, "roles-selection").locator('option')).to_have_count(32)
+    expect(row.locator('[data-key="description"]')).to_have_value("Unsaved fast purpose")
+    tid(page, "roles-family-filter").select_option("Coding & engineering")
+    expect(row).to_have_count(0)
+    tid(page, "roles-location-filter").select_option("cloud")
+    tid(page, "roles-family-filter").select_option("Customer support")
+    expect(row).to_have_count(1)
+    expect(row).to_have_attribute("data-role", "assistant")
+    tid(page, "roles-add").click()
+    row.locator('[data-key="role"]').fill("support")
+    expect(tid(page, "roles-family")).to_have_value("Customer support")
+    expect(row.locator('[data-key="location"]')).to_have_value("cloud")
+    tid(page, "roles-save").click()
+    has(page, "roles-dialog", "data-state", "saved")
+    saved = get_state(ui)["roles"]["definitions"]
+    assert saved["fast"]["description"] == "Unsaved fast purpose"
+    assert saved["assistant"]["family"] == saved["support"]["family"] == "Customer support"
+    tid(page, "roles-close").click()
+    tid(page, "header-roles").click()
+    tid(page, "roles-location-filter").select_option("cloud")
+    tid(page, "roles-family-filter").select_option("Customer support")
+    expect(tid(page, "roles-selection").locator('option')).to_have_count(2)
+    expect(row).to_have_count(1)
+
+
+def test_workshop_new_tool_discovery(ui, make_fake_mcp, open_page):
+    # Only advertised tools from the currently selected server can bind a new tool block.
+    first = make_fake_mcp("modern", tools=[simple_tool("echo"), simple_tool("search")])
+    empty = make_fake_mcp("modern")
+    empty.tools.clear()
+    add_server(ui, "first", first.url, **FAST)
+    add_server(ui, "empty", empty.url, **FAST)
+    page = open_page(ui)
+    tid(page, "ws-new-block").click()
+    dialog = tid(page, "ws-dialog")
+    tid(dialog, "ws-field-block-key").fill("new_tool")
+    tid(dialog, "ws-choice-start-with").select_option("call_tool")
+    expect(tid(dialog, "ws-choice-model-role")).to_be_hidden()
+    tid(dialog, "ws-create-draft").click()
+    has(dialog, "ws-create-error", "data-code", "tool_required")
+    server = tid(dialog, "ws-choice-mcp-server")
+    tool = tid(dialog, "ws-choice-tool-name")
+    server.select_option("first")
+    has(dialog, "ws-tool-discovery", "data-state", "ready")
+    expect(tool.locator("option")).to_have_count(2)
+    tool.select_option("search")
+    server.select_option("empty")
+    has(dialog, "ws-tool-discovery", "data-state", "empty")
+    expect(tool).to_be_disabled()
+    expect(tool.locator("option")).to_have_count(0)
+    empty.override("tools/list", lambda call: call.error(-32603, "discovery failed"))
+    tid(dialog, "ws-refresh-tools").click()
+    has(dialog, "ws-tool-discovery", "data-state", "error")
+    tid(dialog, "ws-create-draft").click()
+    has(dialog, "ws-create-error", "data-code", "tool_required")
+    server.select_option("first")
+    has(dialog, "ws-tool-discovery", "data-state", "ready")
+    tool.select_option("search")
+    tid(dialog, "ws-create-draft").click()
+    expect(dialog).to_have_count(0)
+    expect(tid(page, "ws-field-server")).to_have_value("first")
+    expect(tid(page, "ws-field-tool-name")).to_have_value("search")
+    assert not first.methods("tools/call") and not empty.methods("tools/call")
 
 
 def test_workshop_extractor_revision_journey(ui, server, open_page):

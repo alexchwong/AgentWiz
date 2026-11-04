@@ -1,5 +1,74 @@
 # AgentWiz 0.2.0 — cumulative Phase 2 handover
 
+## November 4, 2026 — single-role browser and families
+
+- Replaced stacked Roles editors with location (All/Local/Cloud), family/domain and matching-role
+  dropdowns. Only the selected editor is mounted, even with many roles. Empty matches are explicit.
+- Drafts remain in memory across selections, filters and model-settings visits. Save all changes
+  submits every role, including hidden roles; new roles inherit active filters. Existing read-only,
+  stale-revision, removal-warning, default-setup and backend location-policy behavior is retained.
+- Suggested families: General, Writing & communication, Coding & engineering, Research & analysis,
+  Data & extraction, Workflow assistance. Add family creates and assigns a custom family. Families
+  persist on saved role definitions, not in a separate empty-family registry. Existing definitions
+  without family remain valid and appear under General. Optional family text is validated on save/read
+  (trimmed, nonblank, at most 64 characters); role format remains 2.
+- Updated user/architecture reference and model-block tutorial guidance. No dependencies, commits,
+  pushes or publication; existing uncommitted work was preserved.
+- Focused roles/editor/tutorial checks: **53 passed** on Linux / Python 3.13.13. Final full offline
+  gate `python -m pytest -q -m "not live"`: **617 passed, 10 deselected** (90.31 s), including
+  the many-role browser regression and tutorials. Python compilation and `git diff --check` passed.
+  A polling command timed out while the background gate continued normally; the final gate result
+  was retrieved successfully. Live backends, installed-wheel smoke, macOS and Python 3.10 were not
+  checked for this change.
+
+## November 4, 2026 — role setup and location policy
+
+- Missing role files now expose unconfigured `fast`, `assistant` and `reasoning` definitions without
+  writing or selecting model profiles automatically. Existing assignments are preserved.
+- The Roles editor adds purpose, Local/Cloud selection, filtered profile details, readiness states,
+  additive default setup and a model-settings round trip preserving unsaved role edits. Saved names
+  are stable; removal warns without rewriting block references. Workshop selectors link to setup.
+- Role format 2 keeps the assignment map and adds definitions; version 1 remains readable with its
+  original unconstrained assignments until configured. Older AgentWiz versions cannot edit v2 files.
+  Legacy assignment-only API saves retain v2 policies for retained roles.
+- Local means this machine: LM Studio or OpenAI-compatible endpoints on loopback IPs/localhost.
+  Remote/LAN endpoints are Cloud; OpenRouter is always Cloud. Save and role resolution reject
+  mismatches, including after profile edits, without fallback. The policy controls the contacted
+  endpoint, not server-side forwarding. Reviewed frozen Workshop snapshots retain their existing
+  capture semantics; this change does not revoke already prepared runs.
+- Updated user/architecture documentation and the existing model-block tutorial guidance. No new
+  dependency, model transport or publication action. Existing uncommitted work was preserved.
+- Validation on Linux / Python 3.13.13: focused roles/page/tutorial run **69 passed**; final
+  focused roles/editor run **40 passed**, including no-dispatch rejection after a profile changes
+  location. An initial full gate had **1 failed, 609 passed, 10 deselected**: a state-shape assertion
+  still expected no starter roles. It was updated to assert the new definitions and unresolved state.
+  Final full offline gate `python -m pytest -q -m "not live"`: **613 passed, 10 deselected**
+  (90.48 s), including page/tutorial coverage. `git diff --check` and Python compilation passed.
+  Live providers, installed-wheel smoke, macOS and Python 3.10 were not checked for this task.
+  No commit, push or release was made.
+
+## November 4, 2026 — new-block dialog correction
+
+- New-block creation now explains and validates the stable key before sending preview requests.
+  Both create actions retain the dialog and entered values after validation or preview refusal;
+  common Workshop errors include safe guidance and their machine-readable code.
+- Bindings are type-specific. Configured model/assistant roles use dropdowns with unresolved
+  assignments marked. With no configured role, an unassigned default still permits drafting.
+- Tool blocks select configured MCP servers and automatically discover advertised tool names
+  using the existing bounded discovery endpoint. Empty/failed discovery prevents creation;
+  refresh retries discovery, changing servers clears the selection, and late replies are ignored.
+  Unconfigured servers are not scanned for. Discovery does not execute tools.
+- Functional browser coverage checks both create paths, correction after invalid keys/refused
+  previews, role selection, server/tool binding and empty/failed discovery without tool dispatch.
+- Validation on Linux / Python 3.13.13: focused new-dialog checks **3 passed**; full offline gate
+  `python -m pytest -q -m "not live"` **595 passed, 10 deselected** (87.26 s), including page/tutorial
+  checks. An initial focused run exposed the fake's empty-list default to an echo tool; the fixture
+  was corrected to advertise no tools and rerun successfully. `git diff --check` passed.
+- No dependencies, backend protocol or publication behavior changed. No commit, push or release
+  was made. Live backends, installed-wheel smoke, macOS and Python 3.10 were not checked for this
+  correction. The owner's original failing request was not captured; invalid keys are a verified
+  cause of the former generic refusal, not proof of the exact input used in that report.
+
 Baseline: devel `130eaf006c6e8af6930d1feea380299f5d97d8e6`, version 0.1.4 (the implemented baseline).
 The delivery completes Phase 2 and includes the cumulative Phase 0/1 implementation and the ticket
 checkpoint. The implementation checkout remains uncommitted and unpublished: no commit, push, tag,

@@ -665,7 +665,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _roles_save(self, body: dict) -> None:
         revision = _revision(body)
-        self._send(200, self._state_body(self.server.state.save_roles(body.get("roles"), revision)))
+        self._send(200, self._state_body(self.server.state.save_roles(body.get("roles"), revision, body.get("definitions"))))
 
     # --- block runs (techspec 0.1.4, 10.9, 15.3) --------------------------------------------------------
     def _block_run(self, body: dict) -> None:

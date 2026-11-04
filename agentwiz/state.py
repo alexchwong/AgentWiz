@@ -124,7 +124,9 @@ class RoleUnresolved(Exception):
 
     MESSAGES = {"undefined": "role {role} is not defined",
                 "no_profile": "role {role} names a profile that does not exist",
-                "no_model": "role {role}'s profile has no model"}
+                "no_model": "role {role}'s profile has no model",
+                "unconfigured": "role {role} is not configured; open Settings → Roles",
+                "location": "role {role}'s profile is incompatible with its local/cloud location"}
 
     def __init__(self, role: str, reason: str):
         super().__init__(self.MESSAGES[reason].format(role=role))
@@ -232,6 +234,7 @@ class ProcessState:
             loaded_roles = roles.read(workspace.path)
             self._roles_problem: Problem | None = loaded_roles.problem
             self._roles = dict(loaded_roles.roles)
+            self._role_definitions = dict(loaded_roles.definitions)
             self._roles_revision = 1
             # Block definitions (8.8) and the script-process budget (11.4).
             self.blocks = blocks.BlockStore(workspace.path, self.contracts)
@@ -325,6 +328,8 @@ class ProcessState:
                               "read_only": ws.read_only,
                               "problems": [dataclasses.asdict(p) for p in self._problems_locked()]},
                 "profiles": {"names": sorted(self._profiles), "active": active,
+                             "details": {n: {**dataclasses.asdict(p), "location": roles.profile_location(p)}
+                                         for n, p in self._profiles.items()},
                              "path": str(self.profiles_path / pf.PROFILES_FILE),
                               "defaults_path": str(self.library.path / pf.PROFILES_FILE),
                               "defaults_read_only": self._defaults.problem is not None,
@@ -341,17 +346,20 @@ class ProcessState:
         """Why `role` cannot be resolved now (7.4), or None."""
         profile = self._roles.get(role)
         if profile is None:
-            return RoleUnresolved(role, "undefined")
+            return RoleUnresolved(role, "unconfigured" if role in self._role_definitions else "undefined")
         settings = self._profiles.get(profile)
         if settings is None:
             return RoleUnresolved(role, "no_profile")
+        definition = self._role_definitions.get(role)
+        if definition and definition["location"] != roles.profile_location(settings):
+            return RoleUnresolved(role, "location")
         if not settings.model.strip():
             return RoleUnresolved(role, "no_model")
         return None
 
     def _unresolved_roles_locked(self) -> list[dict]:
         out = []
-        for role in sorted(self._roles):
+        for role in sorted(self._roles.keys() | self._role_definitions.keys()):
             failure = self._role_failure_locked(role)
             if failure is not None:
                 out.append({"role": role, "reason": str(failure)})
@@ -359,6 +367,7 @@ class ProcessState:
 
     def _roles_view_locked(self) -> dict:
         return {"map": dict(sorted(self._roles.items())), "revision": self._roles_revision,
+                "definitions": copy.deepcopy(self._role_definitions), "defaults": copy.deepcopy(roles.DEFAULTS),
                 "read_only": self._roles_read_only_locked(), "path": str(self.workspace.path / roles.FILE),
                 "problem": dataclasses.asdict(self._roles_problem) if self._roles_problem else None,
                 "unresolved": self._unresolved_roles_locked()}
@@ -581,7 +590,7 @@ class ProcessState:
 
     # --- roles (techspec 0.1.4, 7.3, 7.4) -----------------------------------------------------
     @_writes("roles save")
-    def save_roles(self, roles_body: object, revision: int) -> dict:
+    def save_roles(self, roles_body: object, revision: int, definitions=None) -> dict:
         """Save the role map under the state lock (7.3). The writer-barrier registration the route makes before
         taking this lock arrives with the barrier (Phase B)."""
         with self._lock:
@@ -597,20 +606,37 @@ class ProcessState:
                 raise ReadOnly([disk.problem], False, "roles")
             try:
                 parsed = roles.parse_roles(roles_body)
+                if definitions is None:
+                    # Legacy clients may change assignments, but cannot remove existing routing policy.
+                    defined = {}
+                    if disk.raw.get("format_version") == 2:
+                        defined = {n: d for n, d in self._role_definitions.items() if n in parsed}
+                    for n, p in parsed.items():
+                        if disk.raw.get("format_version") == 2 and n not in defined and p in self._profiles:
+                            defined[n] = {"description": "", "location": roles.profile_location(self._profiles[p])}
+                else:
+                    defined = roles.parse_definitions(definitions)
+                    if not set(parsed) <= set(defined):
+                        raise roles.RolesError("every assigned role requires a definition")
             except roles.RolesError as exc:
                 raise SettingsError(str(exc)) from None
             for role, profile in parsed.items():
                 if profile not in self._profiles:
                     raise RoleProfileMissing(role)
-            raw = roles.build_raw(disk.raw, parsed)
+                if role in defined and defined[role]["location"] != roles.profile_location(self._profiles[profile]):
+                    raise SettingsError(f"role {role}'s profile is incompatible with its local/cloud location")
+            versioned = definitions is not None or disk.raw.get("format_version") == 2
+            raw = roles.build_raw(disk.raw, parsed, defined if versioned else None)
             if disk.exists and raw == disk.raw:
                 self._roles = parsed
+                self._role_definitions = defined
                 return self._view_locked()
             try:
                 roles.write(self.workspace.path, raw)
             except OSError as exc:
                 raise WriteFailed(str(self.workspace.path / roles.FILE), exc.strerror or type(exc).__name__) from None
             self._roles = parsed
+            self._role_definitions = defined
             self._roles_revision += 1
             return self._view_locked()
 

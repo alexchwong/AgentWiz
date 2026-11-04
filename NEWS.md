@@ -1,5 +1,8 @@
 # NEWS
 ## 0.2.0
+- Roles now show one editor at a time, with location and family/domain filters, suggested families and custom family creation. Browsing preserves unsaved edits; Save all changes saves every role.
+- Starter roles (`fast`, `assistant`, `reasoning`), a guided role editor with model details and setup links, and enforced Local/Cloud assignments. Local roles require loopback model servers; no automatic cloud fallback.
+- New-block creation validates keys without losing inputs, lists model roles, and discovers tools from configured MCP servers in dropdowns.
 - Design, test and compare individual blocks in Workshop with saved revisions, examples and correctness reviews.
 - Review bounded assistance proposals before applying them to a draft.
 
