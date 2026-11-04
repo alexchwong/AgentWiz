@@ -7,6 +7,8 @@ It is called from `state.py` under the state lock, with the roles revision, and 
     {"format_version": 1, "roles": {"fast": "lmstudio-qwen", "reasoning": "openrouter-big"}}
 
 Version 2 adds definitions (description and local/cloud location), including unassigned roles.
+Version 3 adds each definition's optional `task_defaults` (temperature and reasoning only): the
+values a model call through that role inherits when its block neither sets nor resets them.
 Version 1 assignments remain readable without imposing a new location policy. A missing file exposes
 unconfigured starter definitions without writing to disk. Unknown top-level fields are kept. A damaged file
 (`unreadable`, `invalid_json`, `invalid_field`, `newer_format`) makes roles read-only; AgentWiz never writes it.
@@ -23,10 +25,12 @@ from urllib.parse import urlsplit
 
 from .workspace import (NAME_RULE, InvalidDocument, Problem, check_format_version, read_document, valid_name,
                         write_atomic)
+from .task_settings import TaskSettingError, parse_defaults
 
 FILE = "roles.json"
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 ROLE_LIMIT = 100
+DEFINITION_KEYS = {"description", "location", "family", "task_defaults"}
 DEFAULTS = {
     "fast": {"description": "Routine generation, extraction and classification", "location": "local"},
     "assistant": {"description": "Create, improve and explain Workshop blocks", "location": "local"},
@@ -56,7 +60,7 @@ def parse_definitions(value: object) -> dict:
     for name, definition in value.items():
         if not valid_name(name) or not isinstance(definition, Mapping):
             raise RolesError("definitions must contain named role objects")
-        if not {"description", "location"} <= set(definition) or set(definition) - {"description", "location", "family"}:
+        if not {"description", "location"} <= set(definition) or set(definition) - DEFINITION_KEYS:
             raise RolesError(f"definitions.{name} requires description and location")
         if not isinstance(definition["description"], str) or len(definition["description"]) > 500:
             raise RolesError(f"definitions.{name}.description must be text of at most 500 characters")
@@ -65,7 +69,16 @@ def parse_definitions(value: object) -> dict:
         family = definition.get("family", "General")
         if not isinstance(family, str) or not family.strip() or family != family.strip() or len(family) > 64:
             raise RolesError(f"definitions.{name}.family must be nonblank trimmed text of at most 64 characters")
-        out[name] = dict(definition)
+        kept = dict(definition)
+        try:
+            defaults = parse_defaults(definition.get("task_defaults"), f"definitions.{name}.task_defaults")
+        except TaskSettingError as exc:
+            raise RolesError(str(exc)) from None
+        if defaults:
+            kept["task_defaults"] = defaults
+        else:
+            kept.pop("task_defaults", None)
+        out[name] = kept
     return out
 
 
@@ -117,7 +130,7 @@ def read(folder: Path) -> RolesFile:
             raise InvalidDocument("roles is missing")
         roles = parse_roles(raw["roles"])
         definitions = {}
-        if raw["format_version"] == 2:
+        if raw["format_version"] in (2, 3):
             definitions = parse_definitions(raw.get("definitions"))
             if not set(roles) <= set(definitions):
                 raise RolesError("every assigned role requires a definition")
@@ -129,10 +142,12 @@ def read(folder: Path) -> RolesFile:
 def build_raw(previous: Mapping, roles: Mapping[str, str], definitions=None) -> dict:
     """The new file: the previous file's unknown top-level fields kept."""
     raw = copy.deepcopy(dict(previous))
-    raw["format_version"] = 1 if definitions is None else FORMAT_VERSION
+    raw["format_version"] = FORMAT_VERSION
     raw["roles"] = dict(roles)
-    if definitions is not None:
-        raw["definitions"] = copy.deepcopy(definitions)
+    kept = copy.deepcopy(previous.get("definitions", {}) if definitions is None else definitions)
+    for name in roles:
+        kept.setdefault(name, {"description": "", "location": "local"})
+    raw["definitions"] = kept
     return raw
 
 

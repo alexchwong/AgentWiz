@@ -34,7 +34,7 @@ from typing import Any, Mapping
 from . import checks, jsonio, templates, tool_forms
 from .contracts import ContractStore
 from .model_step import ContractCopy
-from .task_settings import TaskSettingError, TaskSettings, parse_task
+from .task_settings import OVERRIDABLE, TaskSettingError, TaskSettings, parse_task
 from .workspace import NAME_RE, NAME_RULE, valid_name
 
 DIRECTORY = "blocks"
@@ -85,12 +85,14 @@ class Step:
     id: str
     kind: str                             # "model" | "tool" | "script"
     raw: Mapping                          # the step object, exact-parsed
-    output: str | None = None             # model, tool: the declared output the step fills
+    output: str | None = None             # tool: the declared output the step fills
     role: str | None = None               # model
-    task: TaskSettings | None = None      # model
+    task: TaskSettings | None = None      # model: the block's own explicit settings
     max_repairs: int | None = None        # model
     system: str | None = None             # model: the template text (from the file or inline)
     prompt: str | None = None             # model
+    response_mode: str | None = None      # model: "named_json", the only mode
+    task_resets: tuple[str, ...] = ()     # model: settings that ask for the backend default
     server: str | None = None             # tool
     tool: str | None = None               # tool
     arguments: object = None              # tool: the arguments template
@@ -267,7 +269,7 @@ class _Issues:
 # --- parsing block.json -----------------------------------------------------------------------------------
 _TOP_KEYS = ("format_version", "name", "description", "inputs", "outputs", "steps", "budget")
 _STEP_KEYS = {
-    "model": ("id", "kind", "role", "system", "prompt", "task", "output", "repair"),
+    "model": ("id", "kind", "role", "system", "prompt", "response_mode", "task", "task_resets", "repair"),
     "tool": ("id", "kind", "server", "tool", "arguments", "output"),
     "script": ("id", "kind", "file", "timeout_s"),
 }
@@ -490,7 +492,7 @@ def _parse_step(p: _Parse, steps: object, outputs: tuple[Declared, ...]) -> Step
 
     step_id = sid if isinstance(sid, str) else "step"
     if kind == "model":
-        return _parse_model(p, raw, where, step_id, outputs, declared_output())
+        return _parse_model(p, raw, where, step_id, outputs)
     if kind == "tool":
         output = declared_output()
         if len(p.declared_outputs) != 1:
@@ -537,11 +539,31 @@ def _parse_step(p: _Parse, steps: object, outputs: tuple[Declared, ...]) -> Step
                 script_path=path)
 
 
-def _parse_model(p: _Parse, raw: Mapping, where: str, step_id: str, outputs: tuple[Declared, ...],
-                 output: str | None) -> Step:
+def _task_resets(value: object, where: str, issues: _Issues) -> list[str]:
+    """The step's explicit backend-default requests, in canonical order. Refuses anything else."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > len(OVERRIDABLE):
+        issues.add(where, "must be a list holding temperature and/or reasoning")
+        return []
+    if any(not isinstance(name, str) or name not in OVERRIDABLE for name in value):
+        issues.add(where, "may hold only temperature and reasoning")
+        return []
+    if len(set(value)) != len(value):
+        issues.add(where, "must not repeat a setting")
+        return []
+    return [name for name in OVERRIDABLE if name in value]
+
+
+def _parse_model(p: _Parse, raw: Mapping, where: str, step_id: str, outputs: tuple[Declared, ...]) -> Step:
     issues = p.issues
-    if len(p.declared_outputs) != 1:
-        issues.add("outputs", "a model block declares exactly one output, the one its step names")
+    mode = raw.get("response_mode")
+    if "response_mode" not in raw:
+        issues.add(f"{where}.response_mode", 'is required: "named_json"')
+    elif mode != "named_json":
+        issues.add(f"{where}.response_mode", 'must be "named_json": a model step returns one named JSON envelope')
+    if len(p.declared_outputs) < 1:
+        issues.add("outputs", "a model block declares at least one output, and the envelope returns them all")
     role = raw.get("role")
     if "role" not in raw:
         issues.add(f"{where}.role", "is required: a role name")
@@ -573,16 +595,20 @@ def _parse_model(p: _Parse, raw: Mapping, where: str, step_id: str, outputs: tup
             if body is None:
                 return None
         try:
-            found = templates.scan_text(body, key)
+            found, output_refs = templates.scan_model_text(body, key)
         except templates.TemplateError as exc:
             issues.add(loc, exc.message)
         else:
             p.check_placeholders(found, loc)
+            for ref in output_refs:
+                if ref.name not in p.declared_outputs:
+                    issues.add(loc, f"{ref.text} names an output that is not declared")
         return body
 
     system = text_of("system", False)
     prompt = text_of("prompt", True)
     task: TaskSettings | None = None
+    explicit: set[str] = set()
     if "task" in raw:
         loc = f"{where}.task"
         value = raw["task"]
@@ -599,8 +625,22 @@ def _parse_model(p: _Parse, raw: Mapping, where: str, step_id: str, outputs: tup
                     task = parse_task(converted)
                 except TaskSettingError as exc:
                     issues.add(loc, str(exc))
+                else:
+                    explicit = set(converted)
     else:
         task = TaskSettings()
+    resets = _task_resets(raw.get("task_resets") if "task_resets" in raw else None, f"{where}.task_resets", issues)
+    # A setting written as an explicit null temperature or a blank reasoning level has always meant
+    # "the backend's own default"; inside a role that has defaults it is an explicit reset, not an
+    # inheritance. The two spellings are the same request, so both end up in `task_resets`.
+    for name in [n for n in OVERRIDABLE if n in explicit]:
+        value = task.temperature if name == "temperature" else task.reasoning
+        if value is None or value == "":
+            explicit.discard(name)
+            if name not in resets:
+                resets = [n for n in OVERRIDABLE if n in {*resets, name}]
+    if explicit & set(resets):
+        issues.add(f"{where}.task_resets", "must not name a setting that task also sets")
     max_repairs = DEFAULT_MAX_REPAIRS
     if "repair" in raw:
         repair = raw["repair"]
@@ -617,8 +657,9 @@ def _parse_model(p: _Parse, raw: Mapping, where: str, step_id: str, outputs: tup
                     issues.add(f"{loc}.max_repairs", "must be an integer from 0 to 5")
                 else:
                     max_repairs = value
-    return Step(step_id, "model", raw, output=output, role=role if isinstance(role, str) else None, task=task,
-                max_repairs=max_repairs, system=system, prompt=prompt)
+    return Step(step_id, "model", raw, output=None, role=role if isinstance(role, str) else None, task=task,
+                max_repairs=max_repairs, system=system, prompt=prompt,
+                response_mode="named_json" if mode == "named_json" else None, task_resets=tuple(resets))
 
 
 @dataclass
@@ -922,7 +963,8 @@ def _declared_view(block: Block, section: str, declared: Declared, with_form: bo
 def _step_view(step: Step) -> dict:
     out: dict = {"id": step.id, "kind": step.kind}
     if step.kind == "model":
-        out.update(role=step.role, max_repairs=step.max_repairs)
+        out.update(role=step.role, max_repairs=step.max_repairs, response_mode=step.response_mode,
+                   task_resets=list(step.task_resets))
     elif step.kind == "tool":
         out.update(server=step.server, tool=step.tool)
     else:

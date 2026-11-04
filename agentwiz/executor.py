@@ -25,11 +25,12 @@ from .errors import report_internal
 @dataclass(frozen=True)
 class PreparedModel:
     snapshot: Any                      # model_call.RequestSnapshot, resolved once from the role
-    task: Any                          # task_settings.TaskSettings
+    task: Any                          # task_settings.TaskSettings, resolved for this call
     arguments: dict                    # model_call.task_arguments(...)
     messages: list                     # the filled system and prompt messages
     fills: list
     role: str
+    settings: Any = None               # {field: "block_override" | "block_reset" | "role_default" | "backend_default"}
 
 
 @dataclass(frozen=True)
@@ -143,10 +144,22 @@ def _stopped(ctx: StepContext, result: dict) -> dict:
     return result
 
 
+def _publish(ctx: StepContext, plan, values: object) -> None:
+    """Stage every accepted output, then publish them together: a staged failure publishes nothing."""
+    if not isinstance(values, Mapping):
+        raise ValueError("the accepted value is not a named envelope")
+    staged: dict = {}
+    for name, _description, copy in plan.outputs:
+        if name not in values:
+            raise ValueError("an accepted output is missing")
+        staged[name] = view_of(copy.parsed, values[name])
+    ctx.produced.update(staged)
+
+
 # --- model steps (11.2) ------------------------------------------------------------------------------------------------
 def _execute_model(ctx: StepContext) -> dict:
     step, p, token = ctx.block.step, ctx.prepared, ctx.run.token
-    contract = ctx.contracts[step.output]
+    plan = model_step.OutputPlan.of(ctx.block.outputs, ctx.contracts)
     snap = p.snapshot
     result = _base(ctx, "model", p.fills)
     result.update(role=p.role, profile=snap.profile_name,
@@ -163,8 +176,8 @@ def _execute_model(ctx: StepContext) -> dict:
             return _stopped(ctx, result)
         if parent is None:
             prepared = model_step.prepare_block_first(ctx.run, number, snapshot=snap, task=p.task,
-                                                      arguments=p.arguments, messages=p.messages, contract=contract,
-                                                      role=p.role, fills=p.fills)
+                                                      arguments=p.arguments, messages=p.messages, plan=plan,
+                                                      role=p.role, fills=p.fills, settings_sources=p.settings)
         else:
             try:
                 prepared = model_step.prepare_repair(ctx.run, number, parent, ctx.key_for)
@@ -179,10 +192,15 @@ def _execute_model(ctx: StepContext) -> dict:
             result["truncated_attempts"] += 1
         check = record.get("check")
         overall = check.get("overall") if isinstance(check, dict) else None
+        if isinstance(check, dict) and isinstance(check.get("outputs"), Mapping):
+            result["output_checks"] = dict(check["outputs"])
         if record["outcome"] == "complete" and overall == "pass":
+            try:
+                _publish(ctx, plan, value)
+            except Exception as exc:  # noqa: BLE001 - never publish a partial answer
+                report_internal("block outputs", exc)
+                return _failed(result, "contract_error")
             result["accepted_attempt"] = record["id"]
-            result["output_checks"] = {step.output: check}
-            ctx.produced[step.output] = view_of(contract.parsed, value)
             return _ok(result)
         if token.cancelled:                                         # inspected before any other decision
             return _stopped(ctx, result)

@@ -880,15 +880,119 @@ def check_value(contract: Contract, value: Any) -> dict:
     return _run(contract, encode_exact(value), value, "pass", [], ["value given already parsed"])
 
 
+# --- the named envelope (0.2.0) ---------------------------------------------------------------------------
+ENVELOPE_REPLY = ("as one JSON object whose top-level keys are exactly the declared outputs, "
+                  "with each output's complete value under its own key")
+_ENVELOPE: Contract | None = None
+
+
+def envelope_contract() -> Contract:
+    """The contract that decides only how an envelope answer is read: one JSON value, non-strict, so a
+    single fenced block is accepted as it is for any other JSON contract. It has no schema and no checks:
+    each output is checked against its own contract."""
+    global _ENVELOPE
+    if _ENVELOPE is None:
+        _ENVELOPE = parse_contract({"format": "json", "checks": []})
+    return _ENVELOPE
+
+
+def _envelope_issue(name: str, message: str, check: str = "envelope") -> _Issue:
+    return _Issue((2, name), f"outputs.{name}", message, check)
+
+
+def _moved_issues(name: str, checked: dict) -> list[_Issue]:
+    """An output's own issues, located under `outputs.<name>` so a repair names the failing output."""
+    moved: list[_Issue] = []
+    for issue in checked.get("issues", []):
+        location = issue.get("location", "")
+        check = issue.get("check") or "checks"
+        message = issue.get("message", "")
+        if location in ("", "answer"):
+            moved.append(_envelope_issue(name, message, check))
+        elif location.startswith("$"):
+            moved.append(_Issue((2, name), f"outputs.{name}{location[1:]}", message, check))
+        else:
+            moved.append(_Issue((2, name), f"outputs.{name}: {location}", message, check))
+    return moved
+
+
+def check_named_answer(contracts: Mapping[str, Contract], answer: str) -> tuple[dict, Any]:
+    """Check one named-envelope answer (0.2.0): (the aggregate check, {name: value} or NO_VALUE).
+
+    The answer is parsed once, with the parser policy every JSON answer uses. Its top-level keys must be
+    exactly the declared output names, in any order, with nothing missing and nothing added. Each value is
+    then checked against that output's own contract without being re-serialised, and a text output's value
+    must be a JSON string. Values come back only when the aggregate passes, so no partial answer is ever
+    published.
+    """
+    if not isinstance(answer, str):
+        raise TypeError("an answer is text")
+    names = list(contracts)
+    result, value, parse_issues, notes = _parse_answer(envelope_contract(), answer)
+    entries: list[dict] = [_entry("parse", result, len(parse_issues))]
+    issues: list[_Issue] = list(parse_issues)
+    if result != "pass":
+        aggregate = _assemble(entries, issues, notes, result == "contract_error")
+        aggregate["outputs"] = {}
+        return aggregate, NO_VALUE
+    if not isinstance(value, Mapping):
+        issues.append(_answer_issue("envelope", "the answer is not a JSON object holding the named outputs"))
+        entries.append(_entry("envelope", "fail", 1))
+        aggregate = _assemble(entries, issues, notes, False)
+        aggregate["outputs"] = {}
+        return aggregate, NO_VALUE
+
+    def blank(name: str, message: str) -> dict:
+        return {"overall": "fail", "checks": [], "issue_count": 1, "notes": [],
+                "issues": [{"location": f"outputs.{name}", "message": message, "check": "envelope"}]}
+
+    declared, found = set(names), set(value)
+    extra = found - declared
+    if extra:
+        issues.append(_answer_issue("envelope", "the answer has a top-level key that is not a declared output"))
+        entries.append(_entry("envelope", "fail", len(extra)))
+    values: dict[str, Any] = {}
+    per_output: dict[str, dict] = {}
+    contract_error = False
+    for name in names:
+        if name not in found:
+            issues.append(_envelope_issue(name, "the answer has no value for this output"))
+            entries.append(_entry(f"outputs.{name}", "fail", 1))
+            per_output[name] = blank(name, "the answer has no value for this output")
+            continue
+        item, contract = value[name], contracts[name]
+        if contract.format == "text" and not isinstance(item, str):
+            message = "the value must be a JSON string holding this output's text"
+            issues.append(_envelope_issue(name, message))
+            entries.append(_entry(f"outputs.{name}", "fail", 1))
+            per_output[name] = blank(name, message)
+            continue
+        checked = check_value(contract, item)
+        issues.extend(_moved_issues(name, checked))
+        state = checked["overall"]
+        contract_error = contract_error or state == "contract_error"
+        entries.append(_entry(f"outputs.{name}", "not_run" if state == "incomplete" else state,
+                              checked.get("issue_count", 0)))
+        per_output[name] = checked
+        values[name] = item
+    aggregate = _assemble(entries, issues, notes, contract_error)
+    aggregate["outputs"] = per_output
+    return aggregate, (values if aggregate["overall"] == "pass" else NO_VALUE)
+
+
 # --- the repair message (9.3) ---------------------------------------------------------------------------
-def repair_message(contract: Contract, result: dict, *, truncated: bool = False) -> str:
+def repair_message(contract: Contract | None, result: dict, *, truncated: bool = False,
+                   instruction: str | None = None) -> str:
     """The fixed template shown in the repair preview and sent as the repair's user message.
     With `truncated` true (0.1.4, 12.1) the message says the answer was cut off at the output length limit;
-    a passing truncated answer has no issues, so no problems paragraph is written."""
+    a passing truncated answer has no issues, so no problems paragraph is written. A named envelope passes
+    its own reply instruction and no single contract."""
     count = result["issue_count"]
     listed = result["issues"][:ISSUES_SHOWN]
     suffix = f"; the first {ISSUES_SHOWN} are listed" if count > ISSUES_SHOWN else ""
-    if contract.format == "text":
+    if instruction is not None:
+        pass
+    elif contract.format == "text":
         instruction = "as plain text"
     elif contract.strict:
         instruction = "as JSON only, with no other text"

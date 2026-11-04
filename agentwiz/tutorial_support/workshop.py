@@ -12,7 +12,7 @@ def proposal(action):
         {'path': ['quantity'], 'type': 'Whole number', 'required': False, 'nullable': False, 'description': 'Explicit quantity only'},
     ]
     behaviour = {'kind': 'model', 'instructions': 'Extract product and quantity from {{inputs.text}}. Omit quantity when unspecified.',
-                 'system': None, 'role': 'fast', 'output': 'out', 'settings': {'max_tokens': '512'}, 'limits': {'max_repairs': '2'}}
+                 'system': None, 'role': 'fast', 'settings': {'max_tokens': '512'}, 'limits': {'max_repairs': '2'}}
     payloads = {
         'create': {'purpose': 'Extract a product and explicit quantity', 'inputs': [{'name': 'text', 'description': 'Order text', 'format': 'text', 'fields': []}],
                    'outputs': [{'name': 'out', 'description': 'Extracted order', 'format': 'json', 'fields': fields}], 'behaviour': behaviour, 'effects': 'read-only'},

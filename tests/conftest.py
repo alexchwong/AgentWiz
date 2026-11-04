@@ -223,6 +223,13 @@ def delta(content=None, reasoning=None, finish=None, usage=None) -> bytes:
 def answer(text: str = "ok", **kw) -> Reply:
     """A streamed answer: one content delta, finish 'stop', [DONE]."""
     return Reply(body=[delta(text), delta(finish="stop"), DONE], headers={"Content-Type": "text/event-stream"}, **kw)
+def block_answer(**values) -> Reply:
+    """A model-block reply: one named JSON envelope. `block_answer(out="OK")` answers the output `out`."""
+    from agentwiz import jsonio as _exact
+    return answer(_exact.encode_exact(values if values else {"out": "ok"}))
+
+
+
 
 
 # --- LM Studio replies (techspec 0.1.2, Section 15.2) -------------------------------------------

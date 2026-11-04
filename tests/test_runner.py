@@ -7,9 +7,9 @@ import threading
 import pytest
 
 from agentwiz import checks, jsonio, model_step, runner, runs
-from conftest import (DONE, Reply, answer, configure, delta, events, failure_of, final_of, get_state, iter_events,
-                      poll_block, read_until, request, run_block, run_folders, result_of, save_profile, save_roles,
-                      stop_block, switch_history, wait_until, write_block)
+from conftest import (DONE, Reply, answer, block_answer, configure, delta, events, failure_of, final_of, get_state,
+                      iter_events, poll_block, read_until, request, run_block, run_folders, result_of, save_profile,
+                      save_roles, stop_block, switch_history, wait_until, write_block)
 from test_blocks import MODEL_FILES, model_block
 
 SSE = {"Content-Type": "text/event-stream"}
@@ -44,7 +44,7 @@ def step_of(result):
 # --- #96 -------------------------------------------------------------------------------------------------
 def test_block_model_step_repairs_and_accepts_the_passing_value(ui, server):
     setup_model(ui, server, **checked_output())
-    server.reply(answer("nope"), answer("OK then"))
+    server.reply(block_answer(out="nope"), block_answer(out="OK then"))
     evs = run_block(ui, "b", {"text": "world"})
     assert types(evs) == ["started", "attempt", "attempt", "final"]
     assert evs[0]["block"] == "b" and evs[0]["step_id"] == "s" and evs[0]["kind"] == "model"
@@ -59,11 +59,14 @@ def test_block_model_step_repairs_and_accepts_the_passing_value(ui, server):
     assert step["accepted_attempt"] == f"{result['run_id']}-2" and step["repairs_used"] == 1
     assert step["truncated_attempts"] == 0 and step["max_repairs"] == 2
     assert [f["where"] for f in step["fills"]] == ["prompt"]
-    # the request: the system message, the filled prompt, then (for the repair) the answer and the repair message
+    assert set(step["output_checks"]) == {"out"}
+    # the request: the author's system text then the generated section, the filled prompt,
+    # then (for the repair) the answer and the repair message
     first, second = (r["body"]["messages"] for r in server.requests)
-    assert first == [{"role": "system", "content": "You are terse."}, {"role": "user", "content": "Say world"}]
-    assert second[:2] == first and second[2] == {"role": "assistant", "content": "nope"}
-    assert second[3]["role"] == "user" and "OK" not in second[2]["content"]
+    assert first[0]["role"] == "system" and first[0]["content"].startswith("You are terse.")
+    assert first[1] == {"role": "user", "content": "Say world"}
+    assert second[:2] == first and second[2] == {"role": "assistant", "content": '{"out":"nope"}'}
+    assert second[3]["role"] == "user" and "nope" not in second[3]["content"]
     assert get_state(ui)["blocks"]["active_runs"] == 0
 
 
@@ -71,7 +74,7 @@ def test_the_active_profile_is_not_used_by_a_role(ui, server, make_server):
     other = make_server()
     configure(ui, other)                                  # the page's active settings point at `other`
     setup_model(ui, server)
-    server.reply(answer("hi"))
+    server.reply(block_answer())
     assert result_of(run_block(ui, "b", {"text": "x"}))["outcome"] == "complete"
     assert len(server.requests) == 1 and other.requests == []
 
@@ -85,7 +88,7 @@ def test_repair_counting(ui, server, repair, calls):
     if repair is not None:
         write_block(ui, "b", {**model_block("b", **block),
                               "steps": [{**model_block()["steps"][0], "repair": repair}]}, MODEL_FILES)
-    server.reply(answer("never"))
+    server.reply(block_answer(out="never"))
     result = result_of(run_block(ui, "b", {"text": "x"}))
     assert result["outcome"] == "failed" and step_of(result)["failure"] == "repairs_exhausted"
     assert len(server.requests) == calls and result["outputs"] == {}
@@ -109,32 +112,34 @@ def test_a_contract_that_cannot_decide_is_never_repaired(ui, server):
     pytest.importorskip("jsonschema")
     schema = {"format": "json", "schema": {"type": "object"}}
     setup_model(ui, server, outputs={"out": {"contract": schema}})
-    server.reply(answer("{}"))
+    server.reply(block_answer(out={}))
     assert result_of(run_block(ui, "b", {"text": "x"}))["outcome"] == "complete"
 
 
 # --- #98 -------------------------------------------------------------------------------------------------
 def test_a_truncated_answer_is_repaired_with_the_truncation_message(ui, server):
     setup_model(ui, server, **checked_output())
-    server.reply(truncated("no"), answer("OK"))
+    server.reply(truncated('{"out": "no"}'), block_answer(out="OK"))
     result = result_of(run_block(ui, "b", {"text": "x"}))
     assert result["outcome"] == "complete" and step_of(result)["truncated_attempts"] == 1
     contract = checks.contract_from_text(json.dumps(CONTAINS_OK["contract"]))
-    check = checks.check_answer(contract, "no")
+    check, _value = checks.check_named_answer({"out": contract}, '{"out": "no"}')
     sent = server.requests[1]["body"]["messages"]
-    assert sent[-1]["content"] == checks.repair_message(contract, check, truncated=True)
-    assert sent[-1]["content"] != checks.repair_message(contract, check, truncated=False)
+    assert sent[-1]["content"] == checks.repair_message(None, check, truncated=True,
+                                                        instruction=checks.ENVELOPE_REPLY)
+    assert sent[-1]["content"] != checks.repair_message(None, check, truncated=False,
+                                                        instruction=checks.ENVELOPE_REPLY)
 
 
 def test_a_truncated_answer_whose_check_passes_is_not_accepted(ui, server):
     setup_model(ui, server, **checked_output())
-    server.reply(truncated("OK"), answer("OK again"))
+    server.reply(truncated('{"out": "OK"}'), block_answer(out="OK again"))
     result = result_of(run_block(ui, "b", {"text": "x"}))
     assert result["outcome"] == "complete" and step_of(result)["accepted_attempt"].endswith("-2")
     # with no repair left the run fails with `truncated`, and no output is presented
     write_block(ui, "b", {**model_block("b", **checked_output()),
                           "steps": [{**model_block()["steps"][0], "repair": {"max_repairs": 0}}]}, MODEL_FILES)
-    server.reply(truncated("OK"))
+    server.reply(truncated('{"out": "OK"}'))
     result = result_of(run_block(ui, "b", {"text": "x"}))
     assert result["outcome"] == "failed" and step_of(result)["failure"] == "truncated"
     assert result["outputs"] == {}
@@ -218,9 +223,9 @@ def test_a_run_rejected_by_its_inputs_is_not_hidden_by_a_full_budget(ui, server)
 
 def test_slots_return_to_zero_after_every_ending(ui, server, monkeypatch):
     setup_model(ui, server, **checked_output())
-    server.reply(answer("OK"))
+    server.reply(block_answer(out="OK"))
     assert result_of(run_block(ui, "b", {"text": "x"}))["outcome"] == "complete"
-    server.reply(answer("no"))
+    server.reply(block_answer(out="no"))
     write_block(ui, "b", {**model_block("b", **checked_output()),
                           "steps": [{**model_block()["steps"][0], "repair": {"max_repairs": 0}}]}, MODEL_FILES)
     assert result_of(run_block(ui, "b", {"text": "x"}))["outcome"] == "failed"
@@ -279,7 +284,7 @@ def test_a_stop_after_a_failing_answer_makes_no_repair(ui, server, monkeypatch):
 
 def test_a_stop_just_before_the_end_point_is_not_the_runs_outcome_when_the_output_passed(ui, server, monkeypatch):
     setup_model(ui, server)
-    server.reply(answer("fine"))
+    server.reply(block_answer(out="fine"))
     ids = []
     monkeypatch.setattr(runner, "before_run_end", lambda: stop_block(ui, ids[0]) if ids else None)
     resp = run_block(ui, "b", {"text": "x"}, raw=True)
@@ -310,7 +315,7 @@ def test_the_time_budget_stops_the_run_with_its_own_reason(ui, server, fire_time
 
 def test_a_timer_that_fires_after_the_end_does_nothing(ui, server, fire_timers):
     setup_model(ui, server)
-    server.reply(answer("ok"))
+    server.reply(block_answer())
     result = result_of(run_block(ui, "b", {"text": "x"}))
     assert result["outcome"] == "complete"
     assert all(t.cancelled for t in fire_timers.timers)
@@ -320,16 +325,17 @@ def test_a_timer_that_fires_after_the_end_does_nothing(ui, server, fire_timers):
 
 def test_the_token_allowance_is_checked_before_each_attempt(ui, server):
     usage = {"prompt_tokens": 30, "completion_tokens": 10, "total_tokens": 40}
-    reply = lambda text: Reply(body=[delta(text), delta(finish="stop", usage=usage), DONE], headers=SSE)  # noqa: E731
+    reply = lambda values: Reply(body=[delta(jsonio.encode_exact(values)), delta(finish="stop", usage=usage), DONE],  # noqa: E731
+                                 headers=SSE)
     setup_model(ui, server, budget={"max_seconds": 60, "max_model_tokens": 40}, **checked_output())
-    server.reply(reply("no"), reply("OK"))
+    server.reply(reply({"out": "no"}), reply({"out": "OK"}))
     result = result_of(run_block(ui, "b", {"text": "x"}))
     assert result["outcome"] == "budget_exceeded" and step_of(result)["failure"] == "budget_exceeded"
     assert len(server.requests) == 1
     assert result["usage"] == {"reported_tokens": 40, "limit": 40, "over_by": 0, "unreported_attempts": []}
     # an attempt that crosses the allowance completes; accepted, the run is complete and reports the overshoot
     setup_model(ui, server, budget={"max_seconds": 60, "max_model_tokens": 10})
-    server.reply(reply("fine"))
+    server.reply(reply({"out": "fine"}))
     result = result_of(run_block(ui, "b", {"text": "x"}))
     assert result["outcome"] == "complete" and result["usage"]["over_by"] == 30
 
@@ -338,7 +344,7 @@ def test_the_token_allowance_is_checked_before_each_attempt(ui, server):
 def test_block_records(ui, server):
     switch_history(ui, True)
     setup_model(ui, server, **checked_output())
-    server.reply(answer("no"), answer("OK"))
+    server.reply(block_answer(out="no"), block_answer(out="OK"))
     evs = run_block(ui, "b", {"text": "x"})
     assert types(evs) == ["started", "attempt", "attempt", "final", "save"]
     result = final_of(evs)["result"]
@@ -415,8 +421,8 @@ def test_run_request_shape_errors_are_real_statuses(ui, server):
 
 def test_a_lost_page_does_not_stop_the_run_and_polling_finds_it(ui, server):
     setup_model(ui, server)
-    server.reply(Reply(body=[delta("par")], headers=SSE, hold=True, after_release=[delta("tial"), delta(finish="stop"),
-                                                                                    DONE]))
+    server.reply(Reply(body=[delta('{"out": "par')], headers=SSE, hold=True,
+                         after_release=[delta('tial"}'), delta(finish="stop"), DONE]))
     resp = run_block(ui, "b", {"text": "x"}, raw=True)
     started = read_until(iter_events(resp), "started")[-1]
     run_id = started["run_id"]
@@ -449,7 +455,7 @@ def test_a_block_attempt_cannot_be_repaired_by_hand(ui, server):
 
 def test_a_delivery_that_fails_never_stops_the_run(ui, server, monkeypatch):
     setup_model(ui, server)
-    server.reply(answer("done"))
+    server.reply(block_answer(out="done"))
     from agentwiz.ui import server as srv
 
     def broken(self, event):
@@ -467,7 +473,7 @@ def test_a_delivery_that_fails_never_stops_the_run(ui, server, monkeypatch):
 
 def test_the_observer_may_fail_without_affecting_the_run(ui, server):
     setup_model(ui, server)
-    server.reply(answer("done"))
+    server.reply(block_answer(out="done"))
 
     class Bad(runner.Observer):
         def started(self, event):

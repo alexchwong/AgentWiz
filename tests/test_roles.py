@@ -25,8 +25,9 @@ def test_save_two_roles_and_survive_restart(ui, restart):
     assert state["roles"]["map"] == {"fast": "fast-p", "reasoning": "big-p"}
     assert state["roles"]["revision"] == 2
     assert state["roles"]["problem"] is None and state["roles"]["unresolved"] == []
-    assert json.loads(roles_file(ui).read_text()) == {"format_version": 1,
-                                                      "roles": {"fast": "fast-p", "reasoning": "big-p"}}
+    assert json.loads(roles_file(ui).read_text()) == {"format_version": 3,
+        "roles": {"fast": "fast-p", "reasoning": "big-p"},
+        "definitions": {name: {"description": "", "location": "local"} for name in ("fast", "reasoning")}}
     again = restart(ui)
     assert get_state(again)["roles"]["map"] == {"fast": "fast-p", "reasoning": "big-p"}
 
@@ -79,15 +80,16 @@ def test_unknown_top_level_fields_survive_a_save(make_ui, tmp_path):
     ui = make_ui(workspace=ws)
     two_profiles(ui)
     save_roles(ui, {"fast": "fast-p"})
-    assert json.loads(roles_file(ui).read_text()) == {"format_version": 1, "roles": {"fast": "fast-p"},
-                                                      "note": {"a": 1}}
+    assert json.loads(roles_file(ui).read_text()) == {"format_version": 3, "roles": {"fast": "fast-p"},
+        "definitions": {"fast": {"description": "", "location": "local"}}, "note": {"a": 1}}
 
 
 @pytest.mark.parametrize("text, code", [
     ("{not json", "invalid_json"),
     (json.dumps({"format_version": 1}), "invalid_field"),
     (json.dumps({"format_version": 1, "roles": {"fast": 5}}), "invalid_field"),
-    (json.dumps({"format_version": 3, "roles": {}}), "newer_format"),
+    (json.dumps({"format_version": 4, "roles": {}}), "newer_format"),
+    (json.dumps({"format_version": 3, "roles": {}}), "invalid_field"),
     (json.dumps({"format_version": 2, "roles": {}}), "invalid_field"),
     (json.dumps({"format_version": 2, "roles": {"fast": "p"}, "definitions": {}}), "invalid_field"),
     (json.dumps({"format_version": True, "roles": {}}), "invalid_field"),

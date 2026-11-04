@@ -42,7 +42,8 @@ def test_listing_and_detail(ui):
                                  "form": None, "form_notes": []}]
     assert detail["outputs"][0]["name"] == "out" and detail["outputs"][0]["format"] == "text"
     assert "description" not in detail["outputs"][0]
-    assert detail["step"] == {"id": "s", "kind": "model", "role": "fast", "max_repairs": 2}
+    assert detail["step"] == {"id": "s", "kind": "model", "role": "fast", "max_repairs": 2,
+                              "response_mode": "named_json", "task_resets": []}
     assert detail["budget"] == {"max_seconds": 1800, "max_model_tokens": None}
     assert request(ui, "/api/blocks/t")["step"] == {"id": "call", "kind": "tool", "server": "docs", "tool": "lookup"}
     script = request(ui, "/api/blocks/sc")

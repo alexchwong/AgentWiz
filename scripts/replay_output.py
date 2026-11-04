@@ -9,13 +9,24 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from agentwiz import checks, jsonio
+from agentwiz import checks, jsonio, model_step
 
 
 def replay(evidence, start=None, end=None, replacement=None):
-    if evidence.get('redacted') or not isinstance(evidence.get('raw_answer'), str) or not isinstance(evidence.get('contract_text'), str):
+    plan = None
+    if evidence.get('output_plan'):
+        try:
+            saved = evidence['output_plan']
+            if not isinstance(saved, dict) or saved.get('mode') != 'named_json' or saved.get('renderer') != 1:
+                raise ValueError('unsupported plan')
+            plan = model_step.OutputPlan.from_record(saved)
+            if not plan.outputs or plan.digest() != saved.get('digest'):
+                raise ValueError('incomplete plan')
+        except (KeyError, TypeError, ValueError):
+            return {'status': 'unsupported_evidence', 'reason': 'invalid_output_plan'}
+    if evidence.get('redacted') or not isinstance(evidence.get('raw_answer'), str) or (plan is None and not isinstance(evidence.get('contract_text'), str)):
         return {'status': 'unassessable', 'reason': 'incomplete_or_redacted'}
-    contract = checks.contract_from_text(evidence['contract_text'])
+    contract = checks.contract_from_text(evidence['contract_text']) if plan is None else None
     answer = evidence['raw_answer']
     if replacement is not None:
         proposed, transformation = replacement, 'explicit_replacement'
@@ -26,8 +37,9 @@ def replay(evidence, start=None, end=None, replacement=None):
             raise ValueError('span is outside the answer')
         proposed, transformation = answer[first:last], 'explicit_span'
         discarded = answer[:first] + answer[last:]
-    old, _ = checks.check_answer_value(contract, answer)
-    new, value = checks.check_answer_value(contract, proposed)
+    check = (lambda text: checks.check_named_answer(plan.contracts(), text)) if plan is not None else (lambda text: checks.check_answer_value(contract, text))
+    old, _ = check(answer)
+    new, value = check(proposed)
     truncated = bool(evidence.get('truncated'))
     return {'status': 'assessed', 'raw_answer': answer, 'transformation': transformation,
             'span': [start, end], 'proposed_answer': proposed, 'discarded_text': discarded,
@@ -60,6 +72,7 @@ def main():
             if record.get('id') == args.attempt:
                 evidence = {'raw_answer': (record.get('result') or {}).get('text'),
                             'contract_text': (record.get('contract') or {}).get('text'),
+                            'output_plan': record.get('output_plan'),
                             'truncated': str(record.get('outcome', '')).startswith('truncated'),
                             'redacted': record.get('redacted', False)}
                 break

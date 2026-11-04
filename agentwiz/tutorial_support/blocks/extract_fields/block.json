@@ -9,8 +9,8 @@
     {"id": "extract", "kind": "model", "role": "fast",
      "system": {"file": "prompts/system.md"},
      "prompt": {"file": "prompts/user.md"},
+     "response_mode": "named_json",
      "task": {"temperature": 0, "max_tokens": 256},
-     "output": "fields",
      "repair": {"max_repairs": 2}}
   ],
   "budget": {"max_seconds": 120}

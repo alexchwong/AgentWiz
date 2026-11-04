@@ -21,7 +21,8 @@ def fixture(role):
     definition = {'format_version': 1, 'name': 'experiment_extract', 'description': 'Held-out nested exact extraction',
         'inputs': {'source': {'contract': {'format': 'json', 'schema': {'type': 'object', 'properties': {
             'message': {'type': 'string'}}, 'required': ['message'], 'additionalProperties': False}}}},
-        'outputs': {'out': {'contract': contract}}, 'steps': [{'id': 'extract', 'kind': 'model', 'role': role, 'output': 'out',
+        'outputs': {'out': {'contract': contract}}, 'steps': [{'id': 'extract', 'kind': 'model', 'role': role,
+            'response_mode': 'named_json',
             'prompt': {'text': 'Extract the order ID and explicit quantity. Example: ID 12, two items -> {"order":{"id":12,"quantity":2}}. Omit unspecified quantity.\n{{inputs.source.message}}'},
             'task': {'max_tokens': 512}, 'repair': {'max_repairs': 2}}]}
     first = {'key': definition['name'], 'definition_text': jsonio.encode_exact(definition), 'files': {},

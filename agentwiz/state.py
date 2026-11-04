@@ -192,6 +192,18 @@ def supported_view(kind: str) -> dict:
             for level in levels}
 
 
+@dataclasses.dataclass(frozen=True)
+class RoleCapture:
+    """One role as a model call uses it: the destination snapshot and the role's saved defaults, taken
+    under one lock acquisition so the two can never come from different versions of `roles.json`."""
+
+    role: str
+    profile: str
+    snapshot: RequestSnapshot
+    defaults: Mapping[str, object]      # detached copy; empty means the backend's own defaults
+    revision: int                       # the roles revision the two were read at
+
+
 class ProcessState:
     def __init__(self, workspace: Workspace, request_limit: int = 8, *, profiles_dir: Path,
                  mcp_servers_dir: Path | None = None):
@@ -609,10 +621,10 @@ class ProcessState:
                 if definitions is None:
                     # Legacy clients may change assignments, but cannot remove existing routing policy.
                     defined = {}
-                    if disk.raw.get("format_version") == 2:
-                        defined = {n: d for n, d in self._role_definitions.items() if n in parsed}
+                    if disk.raw.get("format_version") in (2, 3):
+                        defined = copy.deepcopy(dict(self._role_definitions))
                     for n, p in parsed.items():
-                        if disk.raw.get("format_version") == 2 and n not in defined and p in self._profiles:
+                        if n not in defined and p in self._profiles:
                             defined[n] = {"description": "", "location": roles.profile_location(self._profiles[p])}
                 else:
                     defined = roles.parse_definitions(definitions)
@@ -625,8 +637,7 @@ class ProcessState:
                     raise RoleProfileMissing(role)
                 if role in defined and defined[role]["location"] != roles.profile_location(self._profiles[profile]):
                     raise SettingsError(f"role {role}'s profile is incompatible with its local/cloud location")
-            versioned = definitions is not None or disk.raw.get("format_version") == 2
-            raw = roles.build_raw(disk.raw, parsed, defined if versioned else None)
+            raw = roles.build_raw(disk.raw, parsed, defined)
             if disk.exists and raw == disk.raw:
                 self._roles = parsed
                 self._role_definitions = defined
@@ -640,9 +651,9 @@ class ProcessState:
             self._roles_revision += 1
             return self._view_locked()
 
-    def resolve_role(self, role: str) -> RequestSnapshot:
-        """The snapshot a block step uses for `role` (7.4), built from the profile's saved settings. Raises
-        RoleUnresolved."""
+    def role_capture(self, role: str) -> RoleCapture:
+        """The destination snapshot and the saved defaults of `role`, read together under the state lock
+        (7.4). Raises RoleUnresolved."""
         with self._lock:
             failure = self._role_failure_locked(role)
             if failure is not None:
@@ -653,9 +664,16 @@ class ProcessState:
             key = self._keys.get((ep.kind, ep.base_url))
             if ep.api_key_env:
                 self._env_names.add(ep.api_key_env)
-            return RequestSnapshot(endpoint=_endpoint(s, key), model=s.model, kind=s.kind,
-                                   provider=s.provider if s.kind == "openrouter" else "",
-                                   profile_name=profile, profile_modified=False)
+            snapshot = RequestSnapshot(endpoint=_endpoint(s, key), model=s.model, kind=s.kind,
+                                       provider=s.provider if s.kind == "openrouter" else "",
+                                       profile_name=profile, profile_modified=False)
+            defaults = copy.deepcopy(dict((self._role_definitions.get(role) or {}).get("task_defaults") or {}))
+            return RoleCapture(role, profile, snapshot, defaults, self._roles_revision)
+
+    def resolve_role(self, role: str) -> RequestSnapshot:
+        """The snapshot a block step uses for `role` (7.4), built from the profile's saved settings. Raises
+        RoleUnresolved."""
+        return self.role_capture(role).snapshot
 
     def workshop_ticket(self) -> dict:
         return self.workshop_operations.issue()

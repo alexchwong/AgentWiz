@@ -21,7 +21,7 @@ def model_block(name="b", **over):
              "inputs": {"text": {"contract": {"format": "text"}}},
              "outputs": {"out": {"contract": {"format": "text"}}},
              "steps": [{"id": "s", "kind": "model", "role": "fast", "system": {"file": "prompts/system.md"},
-                        "prompt": {"file": "prompts/user.md"}, "output": "out"}]}
+                        "prompt": {"file": "prompts/user.md"}, "response_mode": "named_json"}]}
     block.update(over)
     return block
 
@@ -135,11 +135,22 @@ CASES = {
     "reference outside prompts": (lambda b: STEP(b).update(prompt={"file": "scripts/user.md"}), "invalid",
                                   "steps[0].prompt.file"),
     "name differs from the folder": (lambda b: b.update(name="other"), "invalid", "name"),
-    "two outputs on a model block": (lambda b: b["outputs"].update(o2={"contract": {"format": "text"}}), "invalid",
-                                     "outputs"),
-    "undeclared step output": (lambda b: STEP(b).update(output="nope"), "invalid", "steps[0].output"),
-    "input name not an identifier": (lambda b: b["inputs"].update({"1x": {"contract": {"format": "text"}}}),
-                                     "invalid", "inputs"),
+    "a mode other than named_json": (lambda b: STEP(b).update(response_mode="raw"), "invalid",
+                                     "steps[0].response_mode"),
+    "a legacy step output": (lambda b: STEP(b).update(output="out"), "invalid", "steps[0].output"),
+    "no task_resets list": (lambda b: STEP(b).update(task_resets="temperature"), "invalid",
+                            "steps[0].task_resets"),
+    "a task_reset that is not a setting": (lambda b: STEP(b).update(task_resets=["max_tokens"]), "invalid",
+                                           "steps[0].task_resets"),
+    "a setting both set and reset": (lambda b: STEP(b).update(task={"temperature": 0.5},
+                                                              task_resets=["temperature"]), "invalid",
+                                     "steps[0].task_resets"),
+    "an undeclared output token": (lambda b: STEP(b).update(prompt={"text": "{{output.nope}}"}), "invalid",
+                                   "steps[0].prompt"),
+    "an output token below the output": (lambda b: STEP(b).update(prompt={"text": "{{output.out.x}}"}), "invalid",
+                                         "steps[0].prompt"),
+    "an input name not an identifier": (lambda b: b["inputs"].update({"1x": {"contract": {"format": "text"}}}),
+                                        "invalid", "inputs"),
     "task decimal not exactly a float": (lambda b: STEP(b).update(task={"temperature": Decimal("0.1000000000000000055511151231257827")}),
                                          "invalid", "steps[0].task.temperature"),
     "task key not a task setting": (lambda b: STEP(b).update(task={"colour": 1}), "invalid", "steps[0].task.colour"),
@@ -168,6 +179,28 @@ def test_each_rule_is_a_located_problem_with_no_value_in_the_message(ws, store, 
     assert location in issues_of(problem), issues_of(problem)
     assert SENTINEL not in json.dumps(problem.view())
     assert problem.file.endswith(os.path.join("blocks", "b", "block.json"))
+
+
+def test_a_model_block_declares_several_outputs_and_they_all_load(ws, store):
+    """0.2.0: a model step returns one named envelope, so each declared output is checked on its own."""
+    block = model_block()
+    block["outputs"]["table"] = {"description": "rows", "contract": {"format": "json"}}
+    write_block(ws, "b", block, MODEL_FILES)
+    loaded = store.get("b")
+    assert loaded is not None and loaded.problem is None
+    assert [d.name for d in loaded.block.outputs] == ["out", "table"]
+    assert loaded.block.step.response_mode == "named_json" and loaded.block.step.output is None
+
+
+def test_an_explicit_null_temperature_is_a_reset_not_a_value(ws, store):
+    """A null temperature has always meant the backend's default; beside a role's defaults that is a reset."""
+    block = model_block()
+    STEP(block).update(task={"temperature": None, "max_tokens": 64})
+    write_block(ws, "b", block, MODEL_FILES)
+    loaded = store.get("b")
+    assert loaded.problem is None
+    assert loaded.block.step.task_resets == ("temperature",)
+    assert loaded.block.step.task.temperature is None and loaded.block.step.task.max_tokens == 64
 
 
 def test_a_script_not_ending_in_py_and_a_missing_prompt(ws, store):

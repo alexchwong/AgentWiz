@@ -10,8 +10,9 @@ import threading
 import time
 from pathlib import Path
 
-from . import blocks, checks, history, jsonio, runner, runs, templates
+from . import blocks, checks, history, jsonio, runner, runs, task_settings as ts, templates
 from . import workshop_editor as editor
+from .state import RoleUnresolved
 from .workshop import WorkshopError
 from .workshop_assets import Assets, Capture, decode_files, document, fail, fingerprint, head, key_name, read, relative, wire_files
 from .workspace import write_atomic_bytes
@@ -159,6 +160,7 @@ class Service:
                 'arguments': jsonio.encode_exact(step.get('arguments', {})), 'budget': jsonio.encode_exact(definition.get('budget', {})), 'settings': jsonio.encode_exact(step.get('task', {})),
                 'repairs': str(step.get('repair', {}).get('max_repairs', 2)),
                 'sampling': {k:str(v) for k,v in step.get('task',{}).items() if k != 'advanced'},
+                'resets': [name for name in step.get('task_resets', []) if isinstance(name, str)],
                 'limits': {k:str(v) for k,v in definition.get('budget',{}).items() if v is not None}}
             for side in ('inputs', 'outputs'):
                 result['design'][side] = [{'name': name, 'description': declaration.get('description', ''),
@@ -191,15 +193,25 @@ class Service:
                 # Freshness follows executable meaning and captured bytes, not
                 # JSON formatting or the draft's base64/plain-text wire spelling.
                 step = p.block.step
+                try:
+                    basis_defaults = dict(self.state.role_capture(step.role).defaults) if p.kind == 'model' else {}
+                    sources = dict(ts.resolve_effective(step.task, step.task_resets, basis_defaults).sources) \
+                        if p.kind == 'model' else {}
+                except Exception:                       # an unresolved role is reported by setup_issues
+                    basis_defaults, sources = {}, {}
+                result['design']['sampling_source'] = sources
+                result['design']['role_defaults'] = basis_defaults
                 basis = digest({'purpose': p.description, 'budget': p.block.budget.view(),
+                    'role_defaults': basis_defaults,
                     'ports': {side: {d.name: {'description': d.description,
                         'contract': jsonio.decode_exact(p.block.contracts[side][d.name].text)}
                         for d in getattr(p.block, side)} for side in ('inputs', 'outputs')},
                     'step': {'kind': step.kind, 'role': step.role,
                         'task': step.task.request_shape() if step.task else None,
+                        'response_mode': step.response_mode, 'task_resets': list(step.task_resets),
                         'system': step.system or '', 'prompt': step.prompt, 'repairs': step.max_repairs,
                         'server': step.server, 'tool': step.tool, 'arguments': step.arguments,
-                        'output': step.output, 'file': step.script_file, 'timeout': step.timeout_s},
+                        'file': step.script_file, 'timeout': step.timeout_s},
                     'assets': {path: hashlib.sha256(data).hexdigest() for path, data in captured.files.items()
                                if path != 'block.json'}})
                 if draft.get('metadata', {}).get('origin') == 'starter' and draft['metadata'].get('description_basis') is None:
@@ -214,8 +226,29 @@ class Service:
                     checked = runner.check_inputs(p.block, inputs)
                     result['input_checks'] = checked.results
                     if checked.passed and p.kind == 'model':
-                        result['prepared'] = {'system': templates.fill_text(p.block.step.system or '', 'system', checked.values)[0],
-                                              'prompt': templates.fill_text(p.block.step.prompt, 'prompt', checked.values)[0]}
+                        # The one preparation path: a preview shows exactly what a run would send.
+                        try:
+                            role_capture = self.state.role_capture(p.block.step.role)
+                            messages = runner.model_messages(p.block, checked.values, role_capture.defaults)
+                        except RoleUnresolved as exc:
+                            result.setdefault('prepared_issues', []).append({'location': 'steps[0].role',
+                                                                             'message': str(exc)})
+                        except (ts.TaskSettingError, templates.FillError) as exc:
+                            location = getattr(exc, 'location', None)
+                            result.setdefault('prepared_issues', []).append(
+                                {'location': 'steps[0].task' if isinstance(exc, ts.TaskSettingError) else location,
+                                 'message': getattr(exc, 'message', None) or str(exc)})
+                        else:
+                            result['prepared'] = {
+                                'system': messages.system_author, 'generated': messages.generated,
+                                'system_sent': messages.system_sent, 'prompt': messages.prompt,
+                                'response_mode': p.block.step.response_mode,
+                                'task': messages.effective.task.request_shape(),
+                                'sources': dict(messages.effective.sources),
+                                'role_defaults': dict(role_capture.defaults),
+                                'outputs': [{'name': spec.name, 'description': spec.description,
+                                             'format': spec.label(), 'schema': spec.schema_text()}
+                                            for spec in messages.plan.specs()]}
                     elif checked.passed and p.kind == 'tool':
                         result['prepared'] = {'arguments_text': jsonio.encode_exact(templates.fill_arguments(p.block.step.arguments, checked.values)[0])}
             return result
@@ -398,21 +431,35 @@ class Service:
                 self.check_schema_available(b)
                 self.validate_examples(examples, b)
                 snapshot = self.state.resolve_role(b.step.role) if b.step.kind == 'model' else self.state.mcp_snapshot_for_block(b.step.server) if b.step.kind == 'tool' else None
+                role_capture = None
                 if b.step.kind == 'model':
+                    role_capture = self.state.role_capture(b.step.role)
+                    snapshot = role_capture.snapshot
                     key = self.state.key_for(snapshot.kind, snapshot.endpoint.base_url)
                     snapshot = dataclasses.replace(snapshot, endpoint=dataclasses.replace(snapshot.endpoint, api_key=key, api_key_env=None))
+                    role_capture = dataclasses.replace(role_capture, snapshot=snapshot)
+                    try:
+                        effective = ts.resolve_effective(b.step.task, b.step.task_resets, role_capture.defaults)
+                    except ts.TaskSettingError as exc:
+                        for capture in captures:
+                            capture.close()
+                        raise WorkshopError('block_invalid', 409, [{'location': 'steps[0].task',
+                                                                     'message': str(exc)}]) from None
                     from .model_call import task_arguments
-                    task_arguments(b.step.task, snapshot.kind, snapshot.provider)
+                    task_arguments(effective.task, snapshot.kind, snapshot.provider)
                     fresh_identity = secrets.token_hex(16)
                     with self.lock:
                         credential_identity = self.credential_identities.setdefault(key, fresh_identity)
                 c.snapshot = snapshot
+                c.role_capture = role_capture
                 record = {'source_digest': c.digest, 'draft': draft, 'kind': b.step.kind, 'effects': draft.get('metadata', {}).get('effects', 'unknown'),
                           'contracts': {side: {n: port.text for n, port in ports.items()} for side, ports in b.contracts.items()},
                           'backend_conditions': {'quantisation': 'unknown', 'backend_template': 'unknown', 'implementation': 'unknown'}}
                 if b.step.kind == 'model':
                     record['destination'] = {'kind': snapshot.kind, 'base_url': snapshot.endpoint.base_url, 'model': snapshot.model, 'provider': snapshot.provider}
-                    record['settings'] = editor.typed(b.step.task.request_shape())
+                    record['settings'] = editor.typed(effective.task.request_shape())
+                    record['settings_source'] = dict(effective.sources)
+                    record['role_defaults'] = dict(role_capture.defaults)
                     record['credential_identity'] = credential_identity
                 elif b.step.kind == 'tool':
                     # Configuration snapshot stays in memory. Only sanitized identity is displayed.
@@ -576,12 +623,17 @@ class Service:
                 self.first = None
                 self.attempts = 0
                 self.truncated = 0
+                self.raw_answer = None
+                self.output_checks = {}
 
             def attempt_committed(self, record):
                 self.attempts += 1
                 if self.first is None:
                     self.first = {'outcome': record['outcome'], 'check': (record.get('check') or {}).get('overall')}
                 self.truncated += record['outcome'].startswith('truncated')
+                answer = (record.get('result') or {}).get('text')
+                self.raw_answer = answer if isinstance(answer, str) and len(answer.encode('utf-8')) <= 512 << 10 else None
+                self.output_checks = (record.get('check') or {}).get('outputs', {})
 
             def started(self, event):
                 with service.lock:
@@ -614,7 +666,8 @@ class Service:
                     metadata['source_review'] = fingerprint({p: b for p, b in capture.files.items() if p != 'block.json'})
                 start = time.monotonic()
                 frozen = runner.FrozenSource(capture.snapshot, batch['saving'], {'batch_id': batch['id'], 'trial_id': row['trial_id'],
-                    'snapshot_id': capture.digest, 'example_id': row['example']['id'], 'example_version': row['example']['version']}, capture)
+                    'snapshot_id': capture.digest, 'example_id': row['example']['id'], 'example_version': row['example']['version']}, capture,
+                    getattr(capture, 'role_capture', None))
                 observer = Observer()
                 try:
                     result = runner.run_block(self.state, loaded, row['example']['inputs'], observer, frozen=frozen)
@@ -636,6 +689,10 @@ class Service:
                                steps=[{k: v for k, v in step.items() if k not in ('operation', 'fills')} for step in record['steps']],
                                first_attempt=observer.first, attempts=observer.attempts, repairs=max(0, observer.attempts - 1),
                                truncated_attempts=observer.truncated, usage=record['usage'], save_status=result.save_status)
+                    if observer.raw_answer is not None and batch['preview_bytes'] + len(observer.raw_answer.encode('utf-8')) <= PREVIEW_LIMIT:
+                        row['raw_answer'] = observer.raw_answer
+                        batch['preview_bytes'] += len(observer.raw_answer.encode('utf-8'))
+                    row['output_checks'] = observer.output_checks
                 if complete:
                     batch['preview_bytes'] += len(text.encode())
                 with self.lock:

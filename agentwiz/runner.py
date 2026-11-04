@@ -15,7 +15,8 @@ from typing import Any, Mapping
 
 import modelspell
 
-from . import __version__, checks, executor, history, insertion, jsonio, model_call, model_step, runs, script_step, templates
+from . import (__version__, checks, executor, history, insertion, jsonio, model_call, model_step,
+               output_protocol, runs, script_step, templates, task_settings)
 from .errors import ShuttingDown, report_internal
 from .state import NoSuchServer, RoleUnresolved
 from .task_settings import TaskSettingError
@@ -29,6 +30,7 @@ class FrozenSource:
     save_runs: bool
     provenance: dict
     owner: Any = None
+    capture: Any = None          # state.RoleCapture: the destination and the role's defaults, taken together
 
 
 
@@ -206,26 +208,64 @@ def _rejected(location: str, message: str) -> _Preparation:
     return _Preparation("rejected", issues=[{"location": location, "message": message}])
 
 
+@dataclass(frozen=True)
+class ModelMessages:
+    """One model block's prepared prompt: the author's system text, the generated output section, the
+    filled user prompt, the messages actually sent, and the effective settings with their sources.
+
+    Preview and dispatch both build this, so what a preview shows is what a run sends.
+    """
+
+    system_author: str
+    system_sent: str
+    generated: str
+    prompt: str
+    fills: list
+    effective: Any
+    plan: Any
+
+
+def model_messages(block: Any, values: Mapping, defaults: Mapping) -> ModelMessages:
+    """Fill a model block's prompts and resolve its settings. Raises `templates.FillError` or
+    `TaskSettingError`; the caller reports them as located issues."""
+    step = block.step
+    effective = task_settings.resolve_effective(step.task, step.task_resets, defaults)
+    plan = model_step.OutputPlan.of(block.outputs, block.contracts["outputs"])
+    descriptions = {spec.name: output_protocol.describe(spec) for spec in plan.specs()}
+    system, system_fills = templates.fill_model_text(step.system or "", "system", values, descriptions)
+    prompt, prompt_fills = templates.fill_model_text(step.prompt or "", "prompt", values, descriptions)
+    generated = output_protocol.instructions(plan.specs())
+    system_sent = f"{system}\n\n{generated}" if system else generated
+    if len(jsonio.encode({"messages": model_call.build_messages(system_sent, prompt)})) > insertion.REQUEST_LIMIT:
+        raise templates.FillError("prompt", "the prepared model request exceeds the request size limit")
+    return ModelMessages(system_author=system, generated=generated, prompt=prompt,
+                         system_sent=system_sent,
+                         fills=system_fills + prompt_fills, effective=effective, plan=plan)
+
+
 def _prepare_model(state: Any, block: Any, values: Mapping) -> _Preparation:
     step = block.step
     try:
-        snapshot = state.resolve_role(step.role)
+        capture = state.role_capture(step.role)
     except RoleUnresolved as exc:
         return _rejected("steps[0].role", str(exc))
     try:
-        system, system_fills = templates.fill_text(step.system or "", "system", values)
-        prompt, prompt_fills = templates.fill_text(step.prompt or "", "prompt", values)
+        prepared_messages = model_messages(block, values, capture.defaults)
     except templates.FillError as exc:
         return _rejected("steps[0]." + exc.location, exc.message)
-    messages = model_call.build_messages(system, prompt)
+    except TaskSettingError as exc:
+        return _rejected("steps[0].task", str(exc))
+    messages = model_call.build_messages(prepared_messages.system_sent, prepared_messages.prompt)
     if len(jsonio.encode({"messages": messages})) > insertion.REQUEST_LIMIT:
         return _rejected("steps[0].prompt", "the filled request is larger than 32 MiB")
     try:
-        arguments = model_call.task_arguments(step.task, snapshot.kind, snapshot.provider)
+        arguments = model_call.task_arguments(prepared_messages.effective.task, capture.snapshot.kind,
+                                              capture.snapshot.provider)
     except TaskSettingError as exc:
         return _rejected("steps[0].task", str(exc))
-    prepared = executor.PreparedModel(snapshot=snapshot, task=step.task, arguments=arguments, messages=messages,
-                                      fills=system_fills + prompt_fills, role=step.role)
+    prepared = executor.PreparedModel(snapshot=capture.snapshot, task=prepared_messages.effective.task,
+                                      arguments=arguments, messages=messages, fills=prepared_messages.fills,
+                                      role=step.role, settings=prepared_messages.effective.sources)
     return _Preparation("prepared", prepared)
 
 
@@ -433,9 +473,13 @@ def _execute(ex: _Execution) -> None:
             ex.preparation = _rejected('source', 'generated source review is required')
             return
     if ex.frozen is not None and kind == 'model':
+        if ex.frozen.capture is None:
+            ex.preparation = _rejected('steps[0].role', 'the captured role defaults are missing')
+            return
+
         class CapturedState:
-            def resolve_role(self, role):
-                return ex.frozen.snapshot
+            def role_capture(self, role):
+                return ex.frozen.capture
         ex.preparation = _prepare_model(CapturedState(), block, values)
     elif ex.frozen is not None and kind == 'tool':
         current = state.mcp_snapshot_for_block(block.step.server)

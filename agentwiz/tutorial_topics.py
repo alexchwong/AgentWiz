@@ -20,7 +20,7 @@ CONTRACT = '''{
 
 ROLE = "fast"                 # the role the example model block uses
 ROLE_PROFILE = "tutorial-json"  # the seeded profile it is mapped to
-ROLE_MODEL = "json-repair"    # that profile's stand-in model
+ROLE_MODEL = "block-fields-repair"    # that profile's stand-in model
 BLOCKS = ("extract_fields", "echo_numbers", "word_count", "wait_for_stop")
 
 

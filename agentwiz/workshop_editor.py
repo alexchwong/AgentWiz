@@ -6,6 +6,7 @@ import copy
 from pathlib import Path
 
 from . import blocks, checks, jsonio, templates
+from .task_settings import OVERRIDABLE
 from .workshop_assets import fail, fingerprint, wire_files
 
 TYPES = {'Text': 'string', 'Choice': 'string', 'Whole number': 'integer', 'Number': 'number',
@@ -269,7 +270,9 @@ def starter(identifier, key, role=None, server=None, tool=None):
         if identifier == 'check_source':
             obj['inputs']['source'] = {'contract': text}
             instructions += '\nSource: {{inputs.source}}'
-        obj['steps'] = [{'id': 'request', 'kind': 'model', 'role': role, 'prompt': {'text': instructions + '\n{{inputs.text}}'}, 'output': 'out'}]
+        obj['steps'] = [{'id': 'request', 'kind': 'model', 'role': role, 'system': {'text': ''},
+                         'prompt': {'text': instructions + '\n{{inputs.text}}'},
+                         'response_mode': 'named_json'}]
     elif identifier in SCRIPT_IDS:
         params = {'count_text': {'unit': 'whitespace_words'}, 'select_fields': {'mappings': [{'source_path': ['text'], 'destination': 'text', 'required': True}]}, 'format_report': {'template': '{{inputs.text}}'}}[identifier]
         files, generated = generate_script(identifier, params)
@@ -317,7 +320,7 @@ def edit(draft, operation):
             obj[side] = ports
         step = obj['steps'][0]
         output_renames = {e['original']: e['name'] for e in operation['ports'].get('outputs', [])}
-        if step.get('output') in output_renames:
+        if step.get('kind') == 'tool' and step.get('output') in output_renames:
             step['output'] = output_renames[step['output']]
         if step['kind'] == 'model':
             for key, value in [('prompt', operation['behaviour']), ('system', operation['system'])]:
@@ -334,6 +337,17 @@ def edit(draft, operation):
                     step['task'][key] = text if key == 'reasoning' else jsonio.decode_exact(text)
                 else:
                     step['task'].pop(key, None)
+            # An overriding field asks for a value; a reset asks for the backend's own default instead of
+            # the role's, and is the only way to say so once a role has defaults.
+            resets = operation.get('resets', [])
+            if not isinstance(resets, list) or any(name not in OVERRIDABLE for name in resets) or len(set(resets)) != len(resets):
+                fail()
+            for name in resets:
+                step['task'].pop(name, None)
+            step['task_resets'] = [name for name in OVERRIDABLE if name in resets]
+            if not step['task_resets']:
+                step.pop('task_resets')
+            step['response_mode'] = 'named_json'
             step['repair'] = {'max_repairs': jsonio.decode_exact(operation['repairs'])}
         elif step['kind'] == 'script':
             result['files'][step['file']] = operation['behaviour']

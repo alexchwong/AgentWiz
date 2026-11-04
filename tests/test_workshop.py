@@ -114,7 +114,7 @@ def test_assist_uses_runner_and_applies_without_publication(ui, server):
     response = {'format_version': 1, 'action': 'describe', 'payload': {'description_sections': {
         k: 'Reviewed description' for k in ('use', 'exclusions', 'effects', 'limitations', 'missing_data', 'failures')}},
         'assumptions': [], 'unmet_requirements': []}
-    server.reply(answer(json.dumps(response)))
+    server.reply(answer(json.dumps({'proposal': response})))
     started = start_planned(ui, 'assist', {'action': 'describe', 'role': 'assistant', 'draft': draft, 'task': 'Describe this counter.'})
     batch = completed(ui, started['batch_id'])
     assert batch['rows'][0]['outcome'] == 'complete', batch
@@ -236,7 +236,9 @@ def test_design_binding_edits_and_located_invalid_draft_refusals(ui):
     ports['outputs'][0]['name'] = 'answer'
     renamed = send(ui, 'preview', draft=draft, edit=operation)
     assert renamed['valid'] and renamed['issues'] == []
-    assert jsonio.decode_exact(renamed['draft']['definition_text'])['steps'][0]['output'] == 'answer'
+    renamed_definition = jsonio.decode_exact(renamed['draft']['definition_text'])
+    assert list(renamed_definition['outputs']) == ['answer']
+    assert renamed_definition['steps'][0]['response_mode'] == 'named_json'
     ports['inputs'][0]['name'] = 'message'
     invalid = send(ui, 'preview', draft=draft, edit=operation)
     assert invalid['valid'] is False
@@ -287,7 +289,7 @@ def test_all_packaged_assistance_actions_use_checked_requests(ui, server):
     save_roles(ui, {'assistant': 'p', 'fast': 'p'})
     draft = send(ui, 'preview', starter='extract_fields', key='extractor', role='fast')['draft']
     for action in ('create', 'improve', 'describe', 'suggest_examples', 'explain_failure'):
-        server.reply(answer(proposal(action)))
+        server.reply(answer('{"proposal":' + proposal(action) + '}'))
         batch = completed(ui, start_planned(ui, 'assist', {'action': action, 'role': 'assistant', 'draft': draft,
                           'task': 'Prepare this proposal.', 'evidence': {}})['batch_id'])
         assert batch['rows'][0]['outcome'] == 'complete'

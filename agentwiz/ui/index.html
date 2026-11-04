@@ -2468,6 +2468,8 @@ function rememberRole(){
   roleSelected.name=row.querySelector('[data-key="role"]').value;
   roleSelected.profile=row.querySelector('[data-key="profile"]').value;
   for(const key of ["description","location","family"])roleSelected.definition[key]=row.querySelector(`[data-key="${key}"]`).value;
+  roleSelected.definition.task_defaults={};
+  for(const key of ["temperature","reasoning"]){const value=row.querySelector(`[data-key="default-${key}"]`).value;if(value!=="")roleSelected.definition.task_defaults[key]=value;}
 }
 function renderRoleBrowser(preferred=roleSelected){
   const location=$("roles-location-filter").value,family=$("roles-family-filter").value;
@@ -2503,6 +2505,9 @@ function roleRow(draft) {
     renderRoleBrowser(draft);
   };
   const description = h("input", {"data-key":"description", value:definition.description, maxLength:500, disabled:ro});
+  const defaultTemperature=h("input",{"data-key":"default-temperature","data-test":"roles-default-temperature",value:definition.task_defaults?.temperature==null?"":String(definition.task_defaults.temperature),placeholder:"Backend default",disabled:ro});
+  const defaultReasoning=h("select",{"data-key":"default-reasoning","data-test":"roles-default-reasoning",disabled:ro});
+  for(const level of ["","off","low","medium","high"])defaultReasoning.add(new Option(level||"Backend default",level));defaultReasoning.value=definition.task_defaults?.reasoning||"";
   const location = h("select", {"data-key":"location", disabled:ro});
   location.add(new Option("Local — this machine", "local"));location.add(new Option("Cloud / remote", "cloud"));location.value=definition.location;
   const select = h("select", { "data-key": "profile", disabled: ro });
@@ -2521,6 +2526,7 @@ function roleRow(draft) {
   row.append(h("div", { class: "fields" }, h("div", {}, h("label", { text: "Role" }), nameInput), h("div", {}, h("label", { text: "Profile" }), select)),
     h("div", { class: "fields" }, h("label", {}, "Purpose", description), h("label", {}, "Execution location", location)), status,
     h("label",{},"Family / domain",family),h("div",{class:"row"},familyName,addFamily),
+    h("label",{},"Default temperature",defaultTemperature),h("label",{},"Default reasoning",defaultReasoning),
     h("div", { class: "row" }, remove));
   if (unresolved) row.append(h("div", { class: "warn-text", "data-test": "roles-reason", text: unresolved.reason }));
   return row;
@@ -2557,6 +2563,12 @@ $("save-roles").onclick = async () => {
     if (!NAME_RE.test(role)) { dlg.dataset.state = "error"; $("roles-msg").textContent = "Each role needs a name: 1 to 64 letters, digits, '.', '_' or '-'."; return; }
     if (Object.prototype.hasOwnProperty.call(definitions, role)) { dlg.dataset.state = "error"; $("roles-msg").textContent = `The role ${role} appears twice.`; return; }
     definitions[role]={...draft.definition};
+    definitions[role].task_defaults={...draft.definition.task_defaults};
+    if(Object.hasOwn(definitions[role].task_defaults,"temperature")){
+      const text=String(definitions[role].task_defaults.temperature);
+      if(!text.trim()||!Number.isFinite(Number(text))){dlg.dataset.state="error";$("roles-msg").textContent="Enter a numeric default temperature or leave it blank.";return;}
+      definitions[role].task_defaults.temperature=Number(text);
+    }
     if(profile)map[role] = profile;
   }
   try {
@@ -2879,7 +2891,7 @@ async function wsNew(){
 }
 function wsRoleChoice(parent,label,preferred){
   const roles=state.roles?.map||{},unresolved=new Set((state.roles?.unresolved||[]).map(r=>r.role)),names=[...new Set([...Object.keys(state.roles?.definitions||{}),...Object.keys(roles)])];
-  const selected=names.includes(preferred)?preferred:names[0];
+  const selected=names.includes(preferred)&&roles[preferred]?preferred:names.find(n=>roles[n]&&!unresolved.has(n))||names.find(n=>n===preferred)||names[0];
   const choice=wsChoice(parent,label,names.length?names.map(n=>[n,n+" → "+(roles[n]||"not assigned")+(unresolved.has(n)?" (unresolved)":"")]):[["","No roles defined — configure roles"]],selected||"");
   parent.append(wsButton("Configure roles",()=>{
     $("open-roles").click();
@@ -2934,8 +2946,21 @@ function wsDesign(){
     }));
   }
   const more=h("details",{},h("summary",{text:"More settings"}));form.append(more,areas.outputs);
-  const system=wsField(more,"System instructions",d.system,true), sampling={},limits={};
-  for(const [key,label] of [["temperature","Temperature"],["max_tokens","Output token cap"],["reasoning","Reasoning level"]])if(d.kind==="model")sampling[key]=wsField(more,label,d.sampling[key]||"");
+  const system=wsField(d.kind==="model"?form:more,"System instructions",d.system,true), sampling={},limits={},settingModes={};
+  if(d.kind==="model"){
+    system.parentElement.dataset.test="ws-system";behavior.parentElement.before(system.parentElement);
+    const model=h("fieldset",{},h("legend",{text:"Model settings"}));more.before(model);
+    for(const [key,label] of [["temperature","Temperature"],["reasoning","Reasoning level"]]){
+      const mode=wsChoice(model,label+" source",[["inherit","Inherit role default"],["custom","Custom"],["reset","Backend default"]],d.resets?.includes(key)?"reset":d.sampling[key]!=null?"custom":"inherit");settingModes[key]=mode;
+      sampling[key]=key==="reasoning"?wsChoice(model,label,["off","low","medium","high"].map(x=>[x,x]),d.sampling[key]||"off"):wsField(model,label,d.sampling[key]??"");
+      mode.onchange=()=>{sampling[key].parentElement.hidden=mode.value!=="custom";changed();};sampling[key].parentElement.hidden=mode.value!=="custom";
+      model.append(h("p",{text:"Role default: "+(state.roles?.definitions?.[role.value]?.task_defaults?.[key]??"backend default")}));
+    }
+    sampling.max_tokens=wsField(more,"Output token cap",d.sampling.max_tokens??"");
+    for(const output of d.outputs||[])form.append(wsButton("Insert output "+output.name,()=>{behavior.setRangeText("{{output."+output.name+"}}",behavior.selectionStart,behavior.selectionEnd,"end");changed();}));
+    form.append(h("p",{text:"Response: named JSON envelope — one top-level key per output."}));
+    form.append(wsButton("Request preview",async()=>{await wsFlush();const p=await wsApi("preview",{draft:ws.draft,inputs:ws.inputs});await wsDialog("Request preview",wsShowValue(p.prepared||p.input_checks||p.issues),["Close"]);}));
+  }
   for(const [key,label] of [["max_seconds","Time budget (seconds)"],["max_model_tokens","Model token budget"]])limits[key]=wsField(more,label,d.limits[key]||"");
   const sourceSettings=h("details",{},h("summary",{text:"Advanced settings source"}));more.append(sourceSettings);
   const settings=wsField(sourceSettings,"Task settings source",d.settings,true),budget=wsField(sourceSettings,"Budget source",d.budget,true),repair=wsField(more,"Additional repairs",d.repairs);
@@ -2944,7 +2969,7 @@ function wsDesign(){
   const advanced=wsSource("Inspect executable definition",ws.draft.definition_text);form.append(advanced);
   function changed(){wsDirty();wsPending=async()=>{
     const ports={};for(const side of ["inputs","outputs"])ports[side]=rows[side].map(r=>({original:r.original,name:r.n.value,description:r.desc.value,format:r.f.value,source:r.src.value}));
-    const result=await wsApi("preview",{draft:ws.draft,edit:{kind:"design_form",name:title.value,purpose:purpose.value,ports,arguments:d.arguments,behaviour:behavior.value,binding:role.value,system:system.value,settings:settings.value,sampling:Object.fromEntries(Object.entries(sampling).map(([n,f])=>[n,f.value])),limits:Object.fromEntries(Object.entries(limits).map(([n,f])=>[n,f.value])),budget:budget.value,repairs:repair.value}});
+    const result=await wsApi("preview",{draft:ws.draft,edit:{kind:"design_form",name:title.value,purpose:purpose.value,ports,arguments:d.arguments,behaviour:behavior.value,binding:role.value,system:system.value,settings:settings.value,sampling:Object.fromEntries(Object.entries(sampling).map(([n,f])=>[n,settingModes[n]&&settingModes[n].value!=="custom"?"":f.value])),resets:Object.entries(settingModes).filter(([,f])=>f.value==="reset").map(([n])=>n),limits:Object.fromEntries(Object.entries(limits).map(([n,f])=>[n,f.value])),budget:budget.value,repairs:repair.value}});
     ws.projection=result;ws.draft=result.draft;
     for(const side of ["inputs","outputs"])for(const r of rows[side])r.original=r.n.value;
   };}
@@ -2992,9 +3017,13 @@ async function wsRevisions(){
 async function wsAssist(initialAction){
   await wsFlush();const box=h("div"),action=wsChoice(box,"Action",["create","improve","describe","suggest_examples","explain_failure"].map(x=>[x,x.replaceAll("_"," ")]),initialAction||ws.tutorialAction||"improve"),role=wsRoleChoice(box,"Assistant role","assistant"),task=wsField(box,"Task","",true);
   const stage=wsChoice(box,"Create stage",[["","Complete block"],["fields","Fields only"],["behaviour","Behaviour only"]]);
+  const assistantSettings={},assistantModes={};
+  for(const key of ["temperature","reasoning"]){assistantModes[key]=wsChoice(box,"Assistant "+key+" source",[["inherit","Inherit role default"],["custom","Custom"],["reset","Backend default"]]);assistantSettings[key]=key==="reasoning"?wsChoice(box,"Assistant reasoning",["off","low","medium","high"].map(x=>[x,x])):wsField(box,"Assistant temperature","");assistantSettings[key].parentElement.hidden=true;assistantModes[key].onchange=()=>assistantSettings[key].parentElement.hidden=assistantModes[key].value!=="custom";}
   const sections=[];for(const name of ["purpose","inputs","outputs","behaviour","description_sections"]){const check=h("input",{type:"checkbox",checked:true});sections.push([name,check]);box.append(h("label",{},check," Improve "+name.replaceAll("_"," ")));}
   if(await wsDialog("Block assistance",box,["Prepare request","Cancel"])!=="Prepare request")return;
   const snap=ws.draft,body={action:action.value,role:role.value,task:task.value,draft:snap};
+  body.settings_text=Object.fromEntries(Object.entries(assistantModes).filter(([,m])=>m.value==="custom").map(([key])=>[key,assistantSettings[key].value]));
+  body.task_resets=Object.entries(assistantModes).filter(([,m])=>m.value==="reset").map(([key])=>key);
   if(action.value==="create"&&stage.value)body.stage=stage.value;
   if(action.value==="improve")body.sections=sections.filter(([,c])=>c.checked).map(([name])=>name);
   if(["improve","explain_failure"].includes(action.value)&&ws.batch)body.evidence={trial:ws.batch.rows};
@@ -3032,6 +3061,8 @@ function wsResults(){
   for(const row of ws.batch.rows){
     const result=h("article",{"data-test":"ws-trial","data-outcome":row.outcome||row.state,"data-attempts":row.attempts??0,"data-correctness":row.correctness||"unreviewed","data-arm":row.arm},h("strong",{text:(row.arm===0?"Baseline":"Candidate")+" · "+(row.example.label||row.example.id)+" · "+(row.outcome||row.state)}));
     for(const [name,v] of Object.entries(row.outputs||{}))result.append(h("h4",{text:name}),v.format==="json"?h("div",{},wsStructured(v.text),h("details",{},h("summary",{text:"Exact answer"}),h("pre",{"data-test":"ws-output","data-output":name,text:v.text}))):h("pre",{"data-test":"ws-output","data-output":name,text:v.text}),copyControl("ws-copy-output",()=>v.text,null));
+    if(row.output_checks)result.append(wsShowValue(row.output_checks));
+    if(typeof row.raw_answer==="string")result.append(h("details",{},h("summary",{text:"Raw model answer (not accepted output)"}),h("pre",{"data-test":"ws-raw-answer",text:row.raw_answer}),copyControl("ws-copy-raw-answer",()=>row.raw_answer,null)));
     result.append(wsShowValue({execution:row.outcome||row.state,checks:row.final_check||row.check||row.steps?.map(s=>s.check)||"Unknown",correctness:row.correctness||"unreviewed",machine_judgement:row.machine_judgement,human_rating:row.human_rating,evidence:row.evidence_available===false?"Unavailable":row.preview_incomplete?"Partial":"Available",saving:ws.batch.saving?"Saved":"Session only"}),h("p",{text:"Correctness · "+(row.correctness||"unreviewed")}),wsSource("Checks and trace",JSON.stringify(row.steps||[],null,2)));
     if(row.outcome==="complete"&&!row.preview_incomplete)for(const rating of ["correct","incorrect"])result.append(wsButton("Mark "+rating,async()=>{
       const history=ws.batch.saving?await api("/api/runs/"+row.run_id):null;
@@ -3046,16 +3077,20 @@ function wsResults(){
 async function wsEditExample(selected){
   const e=ws.examples.find(x=>x.id===selected);if(!e)throw new Error("Select a saved example.");
   const box=h("div"),label=wsField(box,"Label",e.label),fields={};
-  for(const [n,t] of Object.entries(e.inputs))fields[n]=wsField(box,n,t,true);
+  for(const [n,t] of Object.entries(e.inputs))fields[n]=wsInput(box,n,ws.projection.contracts?.inputs?.[n],t,false);
   const kind=wsChoice(box,"Expectation",[["review","Human review"],["whole_output","Exact output"],["fields","Field assertions"]],e.expectation.kind);
   const criterion=wsField(box,"Review criterion",e.expectation.criterion||"");const values={};
-  for(const n of ws.projection.facts.outputs)values[n]=wsField(box,"Expected "+n,e.expectation.values?.[n]||"",true);
+  for(const n of ws.projection.facts.outputs)values[n]=wsInput(box,"Expected "+n,ws.projection.contracts?.outputs?.[n],e.expectation.values?.[n]||"",false);
   const assertions=h("div"),edits=[];box.append(assertions);
   function assertion(row={}){const line=h("div");assertions.append(line);const output=wsChoice(line,"Output",ws.projection.facts.outputs.map(n=>[n,n]),row.output),path=wsField(line,"Field path",(row.path||[]).join(".")),op=wsChoice(line,"Condition",["equals","absent","present","null"].map(x=>[x,x]),row.operation),v=wsField(line,"Exact value",row.value_text||"");edits.push(()=>({output:output.value,path:path.value.split(".").filter(Boolean),operation:op.value,...(op.value==="equals"?{value_text:v.value}:{})}));}
   (e.expectation.assertions||[]).forEach(assertion);box.append(wsButton("Add assertion",()=>assertion()));
   const verified=h("input",{type:"checkbox",checked:e.verified});box.append(h("label",{},verified," I verified this expectation"));
-  if(await wsDialog("Edit example",box,["Save","Cancel"])!=="Save")return;
-  const ex={...e,label:label.value,version:e.version+1,inputs:Object.fromEntries(Object.entries(fields).map(([n,f])=>[n,f.value])),verified:verified.checked,expectation:kind.value==="review"?{kind:"review",criterion:criterion.value}:kind.value==="fields"?{kind:"fields",assertions:edits.map(fn=>fn())}:{kind:"whole_output",values:Object.fromEntries(Object.entries(values).map(([n,f])=>[n,f.value]))}};
+  let ex;const error=h("p",{role:"alert"});box.append(error);
+  if(await wsDialog("Edit example",box,["Save","Cancel"],async action=>{
+    if(action==="Cancel")return true;
+    try{ex={...e,label:label.value,version:e.version+1,inputs:Object.fromEntries(await Promise.all(Object.entries(fields).map(async([n,f])=>[n,await f.read()]))),verified:verified.checked,expectation:kind.value==="review"?{kind:"review",criterion:criterion.value}:kind.value==="fields"?{kind:"fields",assertions:edits.map(fn=>fn())}:{kind:"whole_output",values:Object.fromEntries(await Promise.all(Object.entries(values).map(async([n,f])=>[n,await f.read()])))} };return true;}
+    catch(e){error.textContent=wsErrorText(e);return false;}
+  })!=="Save")return;
   ws.examples=ws.examples.map(x=>x.id===e.id?ex:x);ws.examplesDirty=true;wsRender();
 }
 const wsRatings={};
@@ -3090,11 +3125,11 @@ async function wsPersistExamples(){
   }
   const result=await wsPut("blocks/"+ws.draft.key+"/examples",{expected_revision:ws.revision,examples:ws.examples});ws.revision=result.revision;ws.examples=result.examples;ws.examplesDirty=false;wsNote.textContent="Examples saved";wsRender();return true;
 }
-function wsInput(parent,name,contract,initial){
+function wsInput(parent,name,contract,initial,remember=true){
   if(contract?.format!=="json"||contract.source_only||!contract.fields?.length){
     const container=contract?.format==="json"?h("details",{open:true},h("summary",{text:name+" · advanced value"})):parent;
     if(container!==parent)parent.append(container);
-    const field=wsField(container,name,initial,true);field.oninput=()=>ws.inputs[name]=field.value;
+    const field=wsField(container,name,initial,true);field.oninput=()=>{if(remember)ws.inputs[name]=field.value;};
     return {read:()=>field.value,set:value=>{field.value=value;}};
   }
   const area=h("fieldset",{},h("legend",{text:name}));parent.append(area);
@@ -3131,7 +3166,7 @@ function wsInput(parent,name,contract,initial){
   }
   function set(text){current=text?wsApi("render-value",{text}).then(draw):Promise.resolve(draw());return current;}
   set(initial).catch(wsError);
-  return {set,read:async()=>{await current;const result=await wsApi("input-value",{value:read()});ws.inputs[name]=result.text;return result.text;}};
+  return {set,read:async()=>{await current;const result=await wsApi("input-value",{value:read()});if(remember)ws.inputs[name]=result.text;return result.text;}};
 }
 
 function wsTrials(compare){

@@ -490,7 +490,7 @@ OBJ_BLOCK = {"format_version": 1, "name": "b", "description": "shows the exact n
              "inputs": {"text": {"contract": {"format": "text"}}, "obj": {"contract": {"format": "json"}}},
              "outputs": {"out": {"contract": {"format": "json"}}},
              "steps": [{"id": "s", "kind": "model", "role": "fast", "system": {"file": "prompts/system.md"},
-                        "prompt": {"file": "prompts/user.md"}, "output": "out"}]}
+                        "prompt": {"file": "prompts/user.md"}, "response_mode": "named_json"}]}
 OBJ_FILES = {"prompts/system.md": "You are terse.", "prompts/user.md": "Say {{inputs.text}} for {{inputs.obj.id}}"}
 EXACT = '{"id":9007199254740993,"ratio":0.10000000000000000001}'
 
@@ -513,7 +513,7 @@ def pick(page, block):
 def test_page_blocks(ui, server, open_page):
     profile_and_role(ui, server)
     write_block(ui, "b", OBJ_BLOCK, OBJ_FILES)
-    server.reply(answer("not json at all"), json_answer('{"id": 9007199254740993, "ratio": 0.10000000000000000001}'))
+    server.reply(answer("not json at all"), json_answer('{"out":{"id": 9007199254740993, "ratio": 0.10000000000000000001}}'))
     page = open_page(ui, "blocks")
     row = page.locator('[data-test="blocks-row"][data-block="b"]')
     expect(row).to_have_count(1)
@@ -570,7 +570,7 @@ def test_page_blocks_stop_and_reattach(ui, server, open_page, spawned):
     assert wait_until(lambda: group_gone(spawned[0]))
     # a held model block run, reattached after a reload
     setup_model(ui, server)
-    server.reply(Reply(hold_headers=True, body=[delta("fine"), delta(finish="stop"), DONE], headers=SSE))
+    server.reply(Reply(hold_headers=True, body=[delta('{"out":"fine"}'), delta(finish="stop"), DONE], headers=SSE))
     it = iter_events(run_block(ui, "b", {"text": "x"}, raw=True))
     run_id = read_until(it, "started")[-1]["run_id"]
     page = open_page(ui, "blocks")
@@ -593,7 +593,7 @@ def test_page_blocks_stale_and_problem(ui, server, open_page):
     block = {**OBJ_BLOCK, "inputs": {"text": {"contract": "tc"}, "obj": {"contract": {"format": "json"}}}}
     folder = write_block(ui, "b", block, OBJ_FILES)
     write_block(ui, "broken", "{ this is not json")
-    server.reply(json_answer(EXACT))
+    server.reply(json_answer('{"out":'+EXACT+'}'))
     page = open_page(ui, "blocks")
     expect(page.locator('[data-test="blocks-row"][data-problem]:not([data-problem=""])')).to_have_count(1)
     pick(page, "b")
@@ -650,7 +650,7 @@ def test_page_roles(ui, server, open_page):
     tid(page, "roles-save").click()
     has(page, "roles-dialog", "data-state", "stale")
     expect(page.locator('[data-test="roles-row"]')).to_have_count(1)
-    expect(tid(page, "roles-selection").locator('option')).to_have_count(2)
+    expect(tid(page, "roles-selection").locator('option')).to_have_count(4)
     assert get_state(ui)["roles"]["map"] == {"fast": "p", "slow": "p"}
     # the profile is deleted: its roles are unresolved
     request(ui, "/api/profiles/delete", {"name": "p", "revision": get_state(ui)["revision"]})
@@ -788,6 +788,8 @@ def test_roles_single_editor_filters_families_and_retains_other_edits(ui, open_p
     row = page.locator('[data-test="roles-row"]')
     expect(row).to_have_count(1)
     row.locator('[data-key="description"]').fill("Unsaved fast purpose")
+    tid(page, "roles-default-temperature").fill("0")
+    tid(page, "roles-default-reasoning").select_option("low")
     tid(page, "roles-selection").select_option(label="assistant")
     expect(row).to_have_count(1)
     row.locator('[data-key="location"]').select_option("cloud")
@@ -811,6 +813,7 @@ def test_roles_single_editor_filters_families_and_retains_other_edits(ui, open_p
     has(page, "roles-dialog", "data-state", "saved")
     saved = get_state(ui)["roles"]["definitions"]
     assert saved["fast"]["description"] == "Unsaved fast purpose"
+    assert saved["fast"]["task_defaults"] == {"temperature": 0, "reasoning": "low"}
     assert saved["assistant"]["family"] == saved["support"]["family"] == "Customer support"
     tid(page, "roles-close").click()
     tid(page, "header-roles").click()
@@ -864,7 +867,7 @@ def test_workshop_extractor_revision_journey(ui, server, open_page):
     setup_model(ui,server)
     old=json.dumps({"product":"notebooks","quantity":300})
     revised=json.dumps({"product":"notebooks"})
-    server.reply(answer(old),answer(old),answer(revised))
+    server.reply(answer('{"out":'+old+'}'),answer('{"out":'+old+'}'),answer('{"out":'+revised+'}'))
     page=open_page(ui)
     dialog=tid(page,"ws-dialog")
     tid(page,"ws-new-block").click()
@@ -977,7 +980,9 @@ def test_workshop_invalid_design_keeps_inputs_and_located_save_error(ui, open_pa
     from conftest import request
     saved = request(ui, '/api/workshop/blocks/invalid_design/revisions')
     draft = request(ui, '/api/workshop/blocks/invalid_design/revisions/' + saved['current'])['draft']
-    assert jsonio.decode_exact(draft['definition_text'])['steps'][0]['output'] == 'answer'
+    definition = jsonio.decode_exact(draft['definition_text'])
+    assert list(definition['outputs']) == ['answer']
+    assert definition['steps'][0]['response_mode'] == 'named_json'
 
 
 def test_workshop_one_off_and_pending_examples_survive_cancel_and_write_failure(ui, open_page):
