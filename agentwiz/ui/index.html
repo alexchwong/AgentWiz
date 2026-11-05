@@ -84,6 +84,22 @@
 .ws-layout input[type=checkbox],dialog input[type=checkbox]{width:auto}#main-nav .mark,.ws-layout aside .mark{display:none}#main-nav [data-state=running] .mark,.ws-layout aside [data-state=running] .mark{display:inline}.ws-facts dd{min-width:0;overflow-wrap:anywhere}
 .ws-table{overflow-x:auto}.ws-table table{border-collapse:collapse;width:100%}.ws-table th,.ws-table td{border:1px solid var(--line);padding:6px;text-align:left}
 #main-nav{display:flex;gap:.5rem;margin:1rem 0}#main-nav [aria-selected=true],#main-nav [aria-pressed=true],.ws-layout [aria-pressed=true]{font-weight:700;border-bottom:3px solid currentColor}.ws-layout{display:grid;grid-template-columns:minmax(10rem,17rem) minmax(0,1fr);gap:1.25rem}.ws-layout aside,.ws-field{display:grid;gap:.35rem;align-content:start}.ws-field{margin:.65rem 0}.ws-layout textarea,dialog textarea{width:100%;min-height:4rem}.ws-port,article{padding:.6rem;border:1px solid var(--line);margin:.5rem 0}.ws-facts{display:grid;grid-template-columns:auto 1fr;gap:.25rem .75rem}.ws-facts dd{margin:0}dialog{max-height:85vh;max-width:min(48rem,92vw);overflow:auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}#tablist[hidden]{display:none}@media(max-width:720px){.ws-layout{grid-template-columns:minmax(0,1fr)}} </style>
+<style>
+.ws-layout{grid-template-columns:minmax(0,1fr)}
+.ws-layout aside{grid-template-columns:minmax(8rem,14rem) minmax(10rem,20rem) auto minmax(10rem,20rem);align-items:start;justify-content:start}
+.ws-layout aside #tab-blocks{grid-column:1/-1}
+.ws-design-grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1.4fr) minmax(0,1fr);gap:1rem;align-items:start}
+.ws-design-grid>section,.ws-body,.ws-design-grid fieldset{min-width:0}
+.ws-instructions textarea{min-height:13rem}.ws-instructions label:first-child textarea{min-height:6rem}
+.ws-port-table{width:100%;table-layout:fixed;border-collapse:collapse}.ws-port-table th{text-align:left;font-size:12px}
+.ws-port-table td{padding:.2rem;vertical-align:top}.ws-port-table .ws-field{margin:.2rem 0}
+.ws-port-table .ws-port-main label{font-size:0}.ws-port-table td input,.ws-port-table td select{font-size:13px;padding:.4rem}
+.ws-port-table tbody{border-bottom:1px solid var(--line)}.ws-port-table details{margin:.3rem 0}
+.ws-misc{display:flex;flex-direction:column;gap:.4rem}.ws-misc>button{align-self:start}
+.ws-revision-save,.ws-model-settings{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.6rem;align-items:end}.ws-model-settings{grid-template-columns:repeat(2,minmax(0,1fr))}.ws-misc .ws-field{margin:.3rem 0}.ws-revision-save>button{margin-bottom:.3rem}.ws-model-settings input::placeholder{color:var(--muted);opacity:1}.ws-role-field{grid-template-columns:minmax(0,1fr) auto;align-items:center}.ws-role-field select{grid-column:1/-1;grid-row:2}.ws-role-config{font-size:12px;padding:0 4px;grid-column:2;grid-row:1}.ws-revision-picker{max-width:20rem}.ws-revision-picker .ws-field{margin:0}.ws-workshop-nav{flex-wrap:wrap}
+@media(max-width:1100px){.ws-design-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.ws-misc{grid-column:1/-1}}
+@media(max-width:720px){.ws-design-grid{grid-template-columns:minmax(0,1fr)}.ws-layout aside{grid-template-columns:minmax(0,1fr)}.ws-revision-save,.ws-model-settings{grid-template-columns:minmax(0,1fr)}.ws-revision-save>button{justify-self:start}.ws-port-table td input,.ws-port-table td select{padding:.25rem}}
+</style>
 </head>
 <body>
 <header>
@@ -2724,7 +2740,7 @@ async function tutorialInit() {
 
 // Block Workshop. Drafts and typed inputs stay in page memory. All execution and plans are server-owned.
 const wsPanel = $("panel-workshop");
-const ws = {draft:null, projection:null, dirty:false, view:"design", inputs:{}, examples:[], revision:null, examplesDirty:false, selectedExample:"", batch:null, proposal:null};
+const ws = {draft:null, projection:null, dirty:false, view:"design", inputs:{}, examples:[], revision:null, examplesDirty:false, selectedExample:"", batch:null, proposal:null, selectedRevision:null, revisionRows:[], currentRevision:null};
 const wsApi = (path, body) => api("/api/workshop/" + path, body === undefined ? undefined : {format_version:1,...body});
 async function wsPut(path, body) {
   const response = await fetch("/api/workshop/"+path,{method:"PUT",headers:{"Content-Type":"application/json","X-Session-Token":TOKEN},body:JSON.stringify({format_version:1,...body})});
@@ -2736,9 +2752,10 @@ const wsNote = h("p",{role:"status","data-test":"ws-status"});
 const wsBody = h("div",{class:"ws-body"});
 const wsList = h("select",{"aria-label":"Saved block","data-test":"ws-list"});
 const wsSearch = h("input",{placeholder:"Search blocks","aria-label":"Search blocks"});
-const wsNav = h("div",{class:"row"});
+const wsNav = h("div",{class:"row ws-workshop-nav","data-test":"ws-actions"});
+const wsRevisionPicker = h("div",{class:"ws-revision-picker","data-test":"ws-revision-picker"});
 const wsHeading = h("h2",{text:"Block Workshop"});
-let wsBlocks=[], wsPoll=0, wsPending=null;
+let wsBlocks=[], wsPoll=0, wsPending=null, wsLoadGeneration=0;
 function wsErrorText(e){
   const messages={invalid:"The block request is invalid. Check the key, selected starter and bindings.",stale:"Settings or source changed. Refresh and review the action again.",setup_unavailable:"The selected model role or MCP server is unavailable. Check Settings.",checks_required:"Install AgentWiz[checks] and restart to use this action.",read_only:"The workspace is read-only. Open a writable workspace to save changes.",busy:"Workshop is busy. Wait for the current operation to finish.",unusable:"The block source could not be read. Check its files and permissions."};
   const issues=(e.body?.issues||[]).map(i=>i.location+": "+i.message).join("; ");
@@ -2809,7 +2826,7 @@ async function wsPlan(action,request){
   }
   if(d.candidates?.length===2){const [a,b]=d.candidates;disclosure.append(wsShowValue({definition_changed:a.source_digest!==b.source_digest,baseline:a.source_digest,candidate:b.source_digest}));
     disclosure.append(wsSource("Compare exact definitions",a.draft.definition_text+"\n\nCandidate\n"+b.draft.definition_text));}
-  disclosure.append(wsShowValue({saving:d.saving,persistence:d.saving?"Saved evidence":"Session only; restart loses results",trials:d.trial_count??1,repairs:d.repair_bounds||[],pruned:d.pruned||[]}));
+  disclosure.append(wsShowValue({saving:d.saving,persistence:d.saving?"Saved evidence":"Session only; restart loses results",trials:d.trial_count??1,repairs:d.repair_bounds||[],pruned:(d.pruned||[]).map(id=>{const r=ws.revisionRows.find(r=>r.id===id);return r?wsRevisionLabel(r):id;})}));
   disclosure.append(h("p",{text:"Start makes real model, tool or script calls. Comparison order alternates by example; backend internals and cold starts may differ."}));
   if(d.assistance)disclosure.append(wsShowValue({action:d.assistance.action,task:d.assistance.task,stage:d.assistance.stage,sections:d.assistance.sections,evidence:d.assistance.evidence}));
   const reviewed=plan.required_confirmations.some(c=>c.kind==="generated_source"||c.kind==="support_set");
@@ -2833,15 +2850,19 @@ async function wsPlan(action,request){
   return {...request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations.map(({kind,digest})=>({kind,digest}))};
 }
 async function wsSave(){
+  wsBody.inert=true;wsNav.inert=true;wsRevisionPicker.inert=true;
+  try{
   await wsFlush();if(!ws.draft)return false;
   const bound=await wsPlan("save",{draft:ws.draft,expected_identity:ws.draft.base_digest??null});if(!bound)return false;
   const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};const saved=await wsApi("save",bound);await wsLoad({key:saved.key},false);Object.assign(ws,keep);wsRender();wsNote.dataset.state="saved";delete wsNote.dataset.code;wsNote.textContent="Revision saved";return true;
+  }finally{wsBody.inert=false;wsNav.inert=false;wsRevisionPicker.inert=false;}
 }
 async function wsRefresh(){
   wsBlocks=(await api("/api/blocks")).blocks;wsFilter();
 }
 function wsFilter(){wsList.replaceChildren(new Option("Choose a saved block",""),...wsBlocks.filter(b=>(b.name+" "+b.display_name).toLowerCase().includes(wsSearch.value.toLowerCase())).map(b=>new Option((b.display_name||b.name)+" · "+(b.kind||"unavailable"),b.name)));if(ws.draft&&!wsBlocks.some(b=>b.name===ws.draft.key))wsList.add(new Option((ws.draft.metadata.display_name||ws.draft.key)+" · Unsaved draft",ws.draft.key));wsList.value=ws.draft?.key||"";}
 async function wsLoad(source,dirty){
+  const generation=++wsLoadGeneration;
   const keep=source.draft&&source.draft.key===ws.draft?.key?{examples:ws.examples,revision:ws.revision,inputs:ws.inputs,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample}:null;
   let preview;
   try{preview=await wsApi("preview",source);}catch(e){
@@ -2851,9 +2872,17 @@ async function wsLoad(source,dirty){
     if(await wsDialog("Select script support files",box,["Use selection","Cancel"])!=="Use selection")return;
     preview=await wsApi("preview",{...source,support:checks.filter(([,c])=>c.checked).map(([p])=>p)});
   }
+  if(generation!==wsLoadGeneration)return;
+  const sameBlock=ws.draft?.key===preview.draft.key;
   ws.draft=preview.draft;ws.projection=preview;ws.dirty=dirty;wsPending=null;
+  const versions=ws.draft.base_digest?await wsApi("blocks/"+encodeURIComponent(ws.draft.key)+"/revisions"):{current:null,revisions:[]};
+  if(generation!==wsLoadGeneration)return;
+  ws.revisionRows=versions.revisions;ws.currentRevision=versions.current;
+  ws.selectedRevision=source.revision||(source.draft&&sameBlock?ws.selectedRevision:versions.current);
+  ws.draft.metadata.revision_name=source.draft?(ws.draft.metadata.revision_name||""):"";
   await wsRefresh();
   const collection=await wsApi("blocks/"+encodeURIComponent(ws.draft.key)+"/examples");
+  if(generation!==wsLoadGeneration)return;
   ws.examples=collection.examples;ws.revision=collection.revision;
   ws.examplesDirty=false;ws.selectedExample="";ws.inputs={};if(keep)Object.assign(ws,keep);if(ws.batch?.plan?.candidates?.[0]?.draft?.key!==ws.draft.key)ws.batch=null;wsRender();
 }
@@ -2927,64 +2956,108 @@ function wsRoleChoice(parent,label,preferred){
 }
 async function wsView(view){await wsFlush();ws.view=view;wsRender();}
 function wsRender(){
-  wsBody.replaceChildren();wsNav.replaceChildren();wsPending=null;
+  wsBody.replaceChildren();wsNav.replaceChildren();wsRevisionPicker.replaceChildren();wsPending=null;
+  wsNav.after(wsNote);
   wsHeading.textContent=(ws.draft?.metadata?.display_name||ws.draft?.key||"Block Workshop")+(ws.dirty?" · Unsaved":"");
   if(!ws.draft){wsBody.append(h("p",{text:"Choose a saved block or create one to design and test it."}));return;}
   if(activeFrag==="workshop")history.replaceState(null,"","#workshop/"+encodeURIComponent(ws.draft.key)+"/"+ws.view);
   for(const view of ["design","test","compare"]){const b=wsButton(view[0].toUpperCase()+view.slice(1),()=>wsView(view));b.setAttribute("aria-pressed",String(ws.view===view));wsNav.append(b);}
-  wsNav.append(wsButton("Save revision",wsSave),wsButton("Assist",wsAssist),wsButton("Revision actions",wsRevisions));
+  wsNav.append(wsButton("Assist",wsAssist),wsButton("Revision actions",wsRevisions));
   if(ws.view==="design")wsDesign();else wsTrials(ws.view==="compare");
 }
 function wsDesign(){
-  const p=ws.projection,form=h("div"),d=p.design||{};
+  const p=ws.projection,form=h("div",{class:"ws-design-grid"}),d=p.design||{};
   wsBody.append(form);
-  const title=wsField(form,"Display name",ws.draft.metadata.display_name||ws.draft.key),purpose=wsField(form,"Purpose",d.purpose,true);
-  const rows={},areas={};
+  const instructions=h("section",{class:"ws-instructions"}),variables=h("section",{class:"ws-variables"}),misc=h("section",{class:"ws-misc"});
+  form.append(instructions,variables,misc);
+  const title=wsField(misc,"Display name",ws.draft.metadata.display_name||ws.draft.key),purpose=wsField(instructions,"Purpose",d.purpose,true);
+  purpose.parentElement.firstChild.textContent="Block description";purpose.setAttribute("aria-label","Block description");instructions.append(purpose.parentElement);
+  const revision=wsChoice(wsRevisionPicker,"Block revision",ws.revisionRows.length?ws.revisionRows.map(r=>[r.id,wsRevisionLabel(r)+(r.id===ws.currentRevision?" (current)":"")]):[["","Unsaved draft"]],ws.selectedRevision);
+  revision.dataset.current=ws.currentRevision||"";revision.dataset.selected=ws.selectedRevision||"";
+  revision.disabled=!ws.revisionRows.length;
+  revision.oninput=e=>e.stopPropagation();
+  revision.onchange=async e=>{e.stopPropagation();const selected=revision.value;revision.disabled=true;try{
+    if(await wsLeave()){const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};await wsLoad({key:ws.draft.key,revision:selected},true);Object.assign(ws,keep);wsRender();}
+  }catch(error){wsError(error);}finally{revision.value=ws.selectedRevision||"";revision.disabled=false;}};
+  const revisionSave=h("div",{class:"ws-revision-save"});misc.append(revisionSave);
+  const revisionName=wsField(revisionSave,"Revision name (optional)",ws.draft.metadata.revision_name||"");revisionName.maxLength=120;
+  const save=wsButton("Save revision",wsSave);save.title="Saving creates a new revision; older revisions remain unchanged.";revisionSave.append(save);
+  const rows={};
   for(const side of ["inputs","outputs"]){
-    const area=h("fieldset",{},h("legend",{text:side==="inputs"?"Inputs":"Outputs"}));form.append(area);areas[side]=area;rows[side]=[];
+    const area=h("fieldset",{},h("legend",{text:side==="inputs"?"Inputs":"Outputs"}));variables.append(area);rows[side]=[];
+    const table=h("table",{class:"ws-port-table"},h("thead",{},h("tr",{},...["Field name","Format","Meaning"].map(text=>h("th",{scope:"col",text})))));area.append(table);
     function port(name,format,description,source){
-      const line=h("div",{class:"ws-port","data-test":"ws-port","data-side":side,"data-port":name}),n=wsField(line,"Field name",name),desc=wsField(line,"Meaning",description);
-      const f=wsChoice(line,"Format",[["text","Text"],["json","Structured value"],["shared","Shared contract"]],format);
-      const adv=h("details",{},h("summary",{text:"Contract source"})),src=wsField(adv,"Exact contract",source||"",true);line.append(adv);
-      const shared=wsChoice(line,"Saved contract",[["","Choose a saved contract"],...(state.contracts?.items||[]).filter(c=>!c.problem).map(c=>[c.name,c.name])],format==="shared"?JSON.parse(source):"");
+      const line=h("tbody",{class:"ws-port","data-test":"ws-port","data-side":side,"data-port":name}),cells=[h("td"),h("td"),h("td")];line.append(h("tr",{class:"ws-port-main"},...cells));
+      const n=wsField(cells[0],"Field name",name),desc=wsField(cells[2],"Meaning",description);
+      const f=wsChoice(cells[1],"Format",[["text","Text"],["json","Structured value"],["shared","Shared contract"]],format);
+      const detail=h("td",{colspan:"3"});line.append(h("tr",{},detail));
+      const adv=h("details",{},h("summary",{text:"Contract source"})),src=wsField(adv,"Exact contract",source||"",true);detail.append(adv);
+      const shared=wsChoice(detail,"Saved contract",[["","Choose a saved contract"],...(state.contracts?.items||[]).filter(c=>!c.problem).map(c=>[c.name,c.name])],format==="shared"?JSON.parse(source):"");
       shared.parentElement.hidden=format!=="shared";
       shared.onchange=()=>{src.value=JSON.stringify(shared.value);changed();};
-      f.onchange=()=>{shared.parentElement.hidden=f.value!=="shared";src.value=f.value==="shared"?JSON.stringify(shared.value):JSON.stringify({format:f.value});changed();};
       const item={original:name,n,desc,f,src};rows[side].push(item);
       const view=p.contracts?.[side]?.[name];
-      if(format==="json"&&view&&(!view.source_only||view.blank_schema))line.append(wsFieldEditor(side,()=>item.original,view.fields));
-      if(format==="shared")line.append(wsButton("Make inline copy",()=>{const c=p.contracts?.[side]?.[name];if(c){src.value=c.source_text;f.value=c.format;shared.parentElement.hidden=true;changed();}}));
-      line.append(wsButton("Remove",()=>{rows[side]=rows[side].filter(x=>x!==item);line.remove();changed();}));area.append(line);
+      let editor=null;
+      function fields(current){if(editor)editor.remove();editor=null;if(f.value==="json"&&current&&(!current.source_only||current.blank_schema)){editor=wsFieldEditor(side,()=>item.original,current.fields);detail.append(editor);}}
+      fields(view);
+      let previous=format;
+      f.onchange=async e=>{e.stopPropagation();const next=f.value;f.value=previous;
+        let destructive=false;try{const c=JSON.parse(src.value||"{}");destructive=typeof c==="string"||Object.keys(c).some(k=>k!=="format"&&(k!=="checks"||!Array.isArray(c.checks)||c.checks.length));}catch(error){destructive=true;}
+        if(destructive&&await wsDialog("Change variable format",h("p",{text:"Changing format replaces this variable's contract, including any structured fields or checks."}),["Replace contract","Cancel"])!=="Replace contract")return;
+        f.value=next;previous=next;shared.parentElement.hidden=next!=="shared";src.value=next==="shared"?JSON.stringify(shared.value):JSON.stringify({format:next});fields({blank_schema:true,fields:[]});changed();};
+      if(format==="shared")detail.append(wsButton("Make inline copy",()=>{const c=p.contracts?.[side]?.[name];if(c){src.value=c.source_text;f.value=c.format;previous=c.format;shared.parentElement.hidden=true;fields(c);changed();}}));
+      detail.append(wsButton("Remove",()=>{rows[side]=rows[side].filter(x=>x!==item);line.remove();changed();}));table.append(line);
     }
     for(const field of d[side]||[])port(field.name,field.format,field.description,field.source);
     area.append(wsButton("Add "+side.slice(0,-1),()=>{port("","text","","");changed();}));
   }
-  const behavior=wsField(form,d.kind==="script"?"Python source":d.kind==="tool"?"Tool name":"Instructions",d.behaviour,true);
-  if(d.kind==="model")for(const input of d.inputs||[])form.append(wsButton("Insert "+input.name,()=>{behavior.setRangeText("{{inputs."+input.name+"}}",behavior.selectionStart,behavior.selectionEnd,"end");changed();}));
-  if(d.kind==="script"){const details=h("details",{},h("summary",{text:"Inspect or edit Python source"}));behavior.parentElement.before(details);details.append(behavior.parentElement);form.append(h("p",{text:p.script_warning}));}
-  const role=wsField(form,d.kind==="tool"?"Server":"Role",d.binding);role.parentElement.hidden=d.kind==="script";
+  const behavior=wsField(instructions,d.kind==="script"?"Python source":d.kind==="tool"?"Tool name":"Instructions",d.behaviour,true);
+  if(d.kind==="model"){behavior.parentElement.firstChild.textContent="User prompt";behavior.setAttribute("aria-label","User prompt");instructions.append(behavior.parentElement);}
+  if(d.kind==="model")for(const input of d.inputs||[])instructions.append(wsButton("Insert "+input.name,()=>{behavior.setRangeText("{{inputs."+input.name+"}}",behavior.selectionStart,behavior.selectionEnd,"end");changed();}));
+  if(d.kind==="script"){const details=h("details",{},h("summary",{text:"Inspect or edit Python source"}));instructions.append(details);details.append(behavior.parentElement);instructions.append(h("p",{text:p.script_warning}));}
+  if(d.kind==="tool")instructions.append(behavior.parentElement);
+  const role=d.kind==="model"?wsChoice(misc,"Model role",[],d.binding):wsField(misc,d.kind==="tool"?"Server":"Role",d.binding);role.parentElement.hidden=d.kind==="script";
+  let refreshModelDefaults=()=>{};
+  if(d.kind==="model"){
+    function refreshRoles(){
+      const selected=role.options.length?role.value:d.binding||"",map=state.roles?.map||{},unresolved=new Set((state.roles?.unresolved||[]).map(r=>r.role));
+      const names=[...new Set([selected,...Object.keys(state.roles?.definitions||{}),...Object.keys(map)])];
+      role.replaceChildren(...names.map(n=>new Option(n?n+" → "+(map[n]||"not assigned")+(unresolved.has(n)||!map[n]?" (unresolved)":""):"No role selected",n)));role.value=selected;
+      refreshModelDefaults();
+    }
+    refreshRoles();role.onchange=()=>refreshModelDefaults();
+    const configure=wsButton("Configure roles",()=>{$("open-roles").click();$("roles-dialog").addEventListener("close",()=>{if(role.isConnected)refreshRoles();},{once:true});});configure.className="ws-role-config";role.parentElement.classList.add("ws-role-field");role.parentElement.append(configure);
+  }
   if(d.kind==="tool"){
-    form.append(wsButton("Discover tools",async()=>{
+    misc.append(wsButton("Discover tools",async()=>{
       const discovered=await api("/api/mcp/tools",{server:role.value,revision:mcpInfo().revision}),box=h("div");
       const tool=wsChoice(box,"Discovered tool",discovered.tools.map(t=>[t.name,t.title||t.name]),behavior.value);
       if(await wsDialog("Choose a tool",box,["Use tool","Cancel"])==="Use tool"){behavior.value=tool.value;changed();}
     }));
   }
-  const more=h("details",{},h("summary",{text:"More settings"}));form.append(more,areas.outputs);
-  const system=wsField(d.kind==="model"?form:more,"System instructions",d.system,true), sampling={},limits={},settingModes={};
+  const more=h("details",{},h("summary",{"data-test":"ws-advanced-settings",text:d.kind==="model"?"Model advanced settings":"More settings"}));misc.append(more);
+  const system=wsField(d.kind==="model"?instructions:more,"System instructions",d.system,true), sampling={},limits={},settingModes={};
   if(d.kind==="model"){
-    system.parentElement.dataset.test="ws-system";behavior.parentElement.before(system.parentElement);
-    const model=h("fieldset",{},h("legend",{text:"Model settings"}));more.before(model);
+    system.parentElement.dataset.test="ws-system";system.parentElement.firstChild.textContent="System prompt";system.setAttribute("aria-label","System prompt");behavior.parentElement.before(system.parentElement);
+    const model=h("div",{class:"ws-model-settings"});more.before(model);
     for(const [key,label] of [["temperature","Temperature"],["reasoning","Reasoning level"]]){
-      const mode=wsChoice(model,label+" source",[["inherit","Inherit role default"],["custom","Custom"],["reset","Backend default"]],d.resets?.includes(key)?"reset":d.sampling[key]!=null?"custom":"inherit");settingModes[key]=mode;
-      sampling[key]=key==="reasoning"?wsChoice(model,label,["off","low","medium","high"].map(x=>[x,x]),d.sampling[key]||"off"):wsField(model,label,d.sampling[key]??"");
-      mode.onchange=()=>{sampling[key].parentElement.hidden=mode.value!=="custom";changed();};sampling[key].parentElement.hidden=mode.value!=="custom";
-      model.append(h("p",{text:"Role default: "+(state.roles?.definitions?.[role.value]?.task_defaults?.[key]??"backend default")}));
+      const reset=h("input",{type:"checkbox",checked:d.resets?.includes(key),"data-test":"ws-reset-"+key});more.append(h("label",{class:"ws-field"},h("span",{},reset," Use backend default for "+label.toLowerCase()+" (bypass role)")));
+      const mode={value:reset.checked?"reset":d.sampling[key]!=null?"custom":"inherit"};settingModes[key]=mode;
+      sampling[key]=key==="reasoning"?wsChoice(model,label,[["","Backend default (default)"],...["off","low","medium","high"].map(x=>[x,x])],d.sampling[key]||""):wsField(model,label,d.sampling[key]??"");
+      if(key==="temperature")sampling[key].inputMode="decimal";
+      sampling[key].oninput=()=>{reset.checked=false;mode.value=sampling[key].value.trim()?"custom":"inherit";refreshModelDefaults();};
+      reset.onchange=()=>{if(reset.checked)sampling[key].value="";mode.value=reset.checked?"reset":sampling[key].value.trim()?"custom":"inherit";refreshModelDefaults();};
     }
+    refreshModelDefaults=()=>{
+      const defaults=state.roles?.definitions?.[role.value]?.task_defaults||{};
+      sampling.temperature.placeholder=settingModes.temperature.value==="reset"?"Backend default":String(defaults.temperature??"Backend default");
+      sampling.reasoning.options[0].text=settingModes.reasoning.value==="reset"?"Backend default (role bypassed)":(defaults.reasoning||"Backend default")+" (default)";
+      for(const key of ["temperature","reasoning"])sampling[key].dataset.source=settingModes[key].value;
+    };refreshModelDefaults();
     sampling.max_tokens=wsField(more,"Output token cap",d.sampling.max_tokens??"");
-    for(const output of d.outputs||[])form.append(wsButton("Insert output "+output.name,()=>{behavior.setRangeText("{{output."+output.name+"}}",behavior.selectionStart,behavior.selectionEnd,"end");changed();}));
-    form.append(h("p",{text:"Response: named JSON envelope — one top-level key per output."}));
-    form.append(wsButton("Request preview",async()=>{
+    for(const output of d.outputs||[])instructions.append(wsButton("Insert output "+output.name,()=>{behavior.setRangeText("{{output."+output.name+"}}",behavior.selectionStart,behavior.selectionEnd,"end");changed();}));
+    variables.append(h("p",{text:"Response: named JSON envelope — one top-level key per output."}));
+    instructions.append(wsButton("Request preview",async()=>{
       await wsFlush();const p=await wsApi("preview",{draft:ws.draft,inputs:ws.inputs}),box=h("div",{"data-test":"ws-request-messages"});
       if(p.prepared){
         for(const [name,label,text] of [["system","System message sent",p.prepared.system_sent],["prompt","User message sent",p.prepared.prompt]]){
@@ -2997,21 +3070,22 @@ function wsDesign(){
   }
   for(const [key,label] of [["max_seconds","Time budget (seconds)"],["max_model_tokens","Model token budget"]])limits[key]=wsField(more,label,d.limits[key]||"");
   const sourceSettings=h("details",{},h("summary",{text:"Advanced settings source"}));more.append(sourceSettings);
-  const settings=wsField(sourceSettings,"Task settings source",d.settings,true),budget=wsField(sourceSettings,"Budget source",d.budget,true),repair=wsField(more,"Additional repairs",d.repairs);
+  const settings=wsField(sourceSettings,"Task settings source",d.settings,true),budget=wsField(sourceSettings,"Budget source",d.budget,true),repair=wsField(variables,"Additional repairs",d.repairs);
+  repair.title="Additional attempts after the initial response fails output validation.";
   if(d.kind!=="model"){system.parentElement.hidden=true;repair.parentElement.hidden=true;}
   if(d.kind==="tool"){const args=wsField(more,"Tool argument mapping",d.arguments||"{}",true);args.oninput=()=>{d.arguments=args.value;};}
-  const advanced=wsSource("Inspect executable definition",ws.draft.definition_text);form.append(advanced);
+  const advanced=wsSource("Inspect executable definition",ws.draft.definition_text);more.append(advanced);
   function changed(){wsDirty();wsPending=async()=>{
     const ports={};for(const side of ["inputs","outputs"])ports[side]=rows[side].map(r=>({original:r.original,name:r.n.value,description:r.desc.value,format:r.f.value,source:r.src.value}));
-    const result=await wsApi("preview",{draft:ws.draft,edit:{kind:"design_form",name:title.value,purpose:purpose.value,ports,arguments:d.arguments,behaviour:behavior.value,binding:role.value,system:system.value,settings:settings.value,sampling:Object.fromEntries(Object.entries(sampling).map(([n,f])=>[n,settingModes[n]&&settingModes[n].value!=="custom"?"":f.value])),resets:Object.entries(settingModes).filter(([,f])=>f.value==="reset").map(([n])=>n),customs:Object.entries(settingModes).filter(([,f])=>f.value==="custom").map(([n])=>n),limits:Object.fromEntries(Object.entries(limits).map(([n,f])=>[n,f.value])),budget:budget.value,repairs:repair.value}});
+    const result=await wsApi("preview",{draft:ws.draft,edit:{kind:"design_form",name:title.value,revision_name:revisionName.value,purpose:purpose.value,ports,arguments:d.arguments,behaviour:behavior.value,binding:role.value,system:system.value,settings:settings.value,sampling:Object.fromEntries(Object.entries(sampling).map(([n,f])=>[n,settingModes[n]&&settingModes[n].value!=="custom"?"":f.value])),resets:Object.entries(settingModes).filter(([,f])=>f.value==="reset").map(([n])=>n),customs:Object.entries(settingModes).filter(([,f])=>f.value==="custom").map(([n])=>n),limits:Object.fromEntries(Object.entries(limits).map(([n,f])=>[n,f.value])),budget:budget.value,repairs:repair.value}});
     ws.projection=result;ws.draft=result.draft;
     for(const side of ["inputs","outputs"])for(const r of rows[side])r.original=r.n.value;
   };}
   form.oninput=changed;form.onchange=changed;
-  if(p.destination)form.append(wsShowValue(p.destination));if(p.setup_issues?.length)form.append(wsShowValue(p.setup_issues));
-  if(p.issues?.length)form.append(h("div",{"data-test":"ws-validation","data-state":"invalid"},wsShowValue(p.issues)));
-  form.append(wsButton("Refresh design fields",async()=>{await wsFlush();wsRender();}));
-  if(d.kind==="script"&&ws.draft.base_digest)form.append(wsButton("Update support files",wsSupport));
+  if(p.destination)more.append(wsShowValue(p.destination));if(p.setup_issues?.length)misc.append(wsShowValue(p.setup_issues));
+  if(p.issues?.length)misc.append(h("div",{"data-test":"ws-validation","data-state":"invalid"},wsShowValue(p.issues)));
+  more.append(wsButton("Refresh design fields",async()=>{await wsFlush();wsRender();}));
+  if(d.kind==="script"&&ws.draft.base_digest)more.append(wsButton("Update support files",wsSupport));
   if(p.classification==="starter"){
     const area=h("fieldset",{},h("legend",{text:"Starter parameters"}));behavior.closest("details").before(area);
     const m=ws.draft.metadata,params=m.parameters;let read;
@@ -3030,14 +3104,15 @@ function wsDesign(){
       params.mappings.forEach(mapping);area.append(wsButton("Add mapping",()=>mapping()));read=()=>({mappings:mappings.map(fn=>fn())});
     }
     area.append(wsButton("Apply parameters",async()=>{await wsFlush();await wsLoad({draft:ws.draft,edit:{kind:"starter_parameters",parameters:read()}},true);}));
-  }else if(d.kind==="script")form.append(h("p",{text:p.classification==="unsupported_starter_version"?"This starter version is unavailable. Captured source is preserved; parameter editing is disabled.":"Custom Python source; parameter controls are disabled."}));
+  }else if(d.kind==="script")instructions.append(h("p",{text:p.classification==="unsupported_starter_version"?"This starter version is unavailable. Captured source is preserved; parameter editing is disabled.":"Custom Python source; parameter controls are disabled."}));
   const desc=h("details",{},h("summary",{text:"Standard description"+(p.description?.needs_refresh?" · Needs refresh":"")}));
   const sections={};for(const key of ["use","exclusions","effects","limitations","missing_data","failures"])sections[key]=wsField(desc,key.replaceAll("_"," "),ws.draft.metadata.description_sections?.[key]||"",true);
-  desc.append(wsButton("Apply description",async()=>{await wsFlush();const projected=await wsApi("preview",{draft:ws.draft,edit:{kind:"description",sections:Object.fromEntries(Object.entries(sections).map(([n,f])=>[n,f.value]))}});ws.draft=projected.draft;ws.projection=projected;wsDirty();wsRender();}));form.append(desc,wsSource("Details · stable key",ws.draft.key));
+  desc.append(wsButton("Apply description",async()=>{await wsFlush();const projected=await wsApi("preview",{draft:ws.draft,edit:{kind:"description",sections:Object.fromEntries(Object.entries(sections).map(([n,f])=>[n,f.value]))}});ws.draft=projected.draft;ws.projection=projected;wsDirty();wsRender();}));misc.append(desc);more.append(wsSource("Details · stable key",ws.draft.key));
 }
+function wsRevisionLabel(r){return String(r.revision_number)+(r.revision_name?" — "+r.revision_name:"");}
 async function wsRevisions(){
   await wsFlush();const box=h("div"),historyRows=ws.draft.base_digest?(await wsApi("blocks/"+ws.draft.key+"/revisions")).revisions:[];
-  const rev=wsChoice(box,"Revision",historyRows.map(r=>[r.id,r.metadata.display_name+" · "+r.id.slice(0,8)])),name=wsField(box,"New key for duplicate");
+  const rev=wsChoice(box,"Revision",historyRows.map(r=>[r.id,wsRevisionLabel(r)])),name=wsField(box,"New key for duplicate");
   const examples=h("input",{type:"checkbox"});box.append(h("label",{},examples," Copy examples to the duplicate"));
   const choice=await wsDialog("Revision actions",box,["Restore to draft","Duplicate","Cancel"]);
   if(choice==="Restore to draft"&&await wsLeave())await wsLoad({key:ws.draft.key,revision:rev.value},true);
@@ -3231,7 +3306,7 @@ function wsTrials(compare){
   const chosen=()=>selected.filter(([,check])=>check.checked).map(([ex])=>ex);
   wsPending=async()=>{await values();};
   if(compare){const baseline=wsChoice(form,"Baseline revision",[]),candidate=wsChoice(form,"Candidate",[["","Current draft"]]);
-    wsApi("blocks/"+ws.draft.key+"/revisions").then(x=>{baseline.replaceChildren(...x.revisions.map(r=>new Option(r.id.slice(0,8),r.id)));for(const r of x.revisions)candidate.add(new Option(r.id.slice(0,8),r.id));}).catch(wsError);
+    wsApi("blocks/"+ws.draft.key+"/revisions").then(x=>{if(!baseline.isConnected)return;baseline.replaceChildren(...x.revisions.map(r=>new Option(wsRevisionLabel(r),r.id)));for(const r of x.revisions)candidate.add(new Option(wsRevisionLabel(r),r.id));}).catch(wsError);
     form.append(wsButton("Compare versions",()=>wsStart("batches",{candidates:[{key:ws.draft.key,revision:baseline.value},candidate.value?{key:ws.draft.key,revision:candidate.value}:{draft:ws.draft}],examples:chosen()})));
   }else{
     inputArea.append(wsButton("Preview instructions",async()=>{const p=await wsApi("preview",{draft:ws.draft,inputs:await values()});await wsDialog("Prepared behaviour",wsShowValue(p.prepared||p.input_checks||p.issues),["Close"]);}),
@@ -3264,7 +3339,7 @@ async function wsRecords(){
   await wsDialog("Recent evidence",box,["Close"]);
 }
 wsSearch.oninput=wsFilter;wsList.onchange=async()=>{const key=wsList.value;try{if(key&&await wsLeave())await wsLoad({key},false);else wsFilter();}catch(e){wsError(e);}};
-wsPanel.append(wsHeading,h("div",{class:"ws-layout"},h("aside",{},wsSearch,wsList,wsButton("New block",wsNew)),h("div",{},wsNav,wsNote,wsBody)));
+wsPanel.append(wsHeading,h("div",{class:"ws-layout"},h("aside",{},wsSearch,wsList,wsButton("New block",wsNew),wsRevisionPicker),h("div",{},wsNav,wsNote,wsBody)));
 TABS.workshop={async tutorialAssist(action){ws.view="design";ws.tutorialAction=action;await wsLoad({key:"tutorial_extractor",starter:"extract_fields",role:"fast"},true);}, async tutorialPrepare(key,inputs){ws.view="test";await wsLoad({key,support:[]},false);ws.inputs=inputs;ws.batch=null;wsRender();},async tutorialCreate(){ws.view="design";await wsLoad({starter:"count_text",key:"tutorial_counter"},true);ws.examples=(await wsApi("starters")).starters.find(s=>s.id==="count_text").examples;wsRender();},async onShow(){try{await wsFlush();await wsRefresh();const parts=location.hash.slice(1).split("/");
   if(parts[1]&&wsBlocks.some(b=>b.name===parts[1])){
     if(!ws.draft||ws.draft.key!==parts[1]){if(!await wsLeave()){wsRender();return;}ws.view=["design","test","compare"].includes(parts[2])?parts[2]:"design";await wsLoad({key:parts[1]},false);}

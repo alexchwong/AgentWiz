@@ -800,6 +800,24 @@ its ticket before following the batch. Complete generated source is shown during
 review. Existing block clients retain compatibility; the saved-block inspector uses
 the ticketed Workshop coordinator while preserving its original trace/Stop hooks.
 
+Design uses three unlabelled responsive columns: description/system/user prompts, input/output tables,
+and identity/save/settings/advanced controls. The block selector is a compact row above the editor.
+The historical revision selector shares that selection area. Design builds each column explicitly;
+the right column orders display name, revision name with Save, model role, paired temperature/reasoning,
+model advanced settings and standard description. Model roles preserve missing/unresolved bindings rather
+than selecting a replacement. Blank temperature and the reasoning default option inherit; explicit values
+override, and advanced bypass controls preserve backend-reset intent through the existing sampling/resets/
+customs payload. Role changes refresh default hints without replacing the form. Additional repairs sits
+below Outputs. Assist and Revision actions share navigation in every mode; save locks navigation and the
+revision selector as well as the editor until publication/reload completes.
+Each variable table row retains expandable contract/source controls; structured format selection exposes
+its editor immediately. Destructive format replacement requires confirmation. Stable row identity is
+separate from the edited name; pending form edits flush before contract operations.
+The primary Save lives in Design, not the shared navigation. The block-revision dropdown loads a historical
+draft through Save/Discard/Stay, preserving same-block example/input state. Selected/current block revision
+IDs are separate from the example collection's revision. Historical restore still uses captured contracts
+and the existing save acknowledgement. Compare and revision actions share numeric/name display labels.
+
 Five deterministic proposal models named `workshop-<action>` are packaged in the
 isolated tutorial backend. `tutorial_support.workshop` supplies their closed responses.
 The three block topics now prepare Workshop Test; one authoring topic and five
@@ -901,6 +919,17 @@ acknowledgement. Retain newest 20. Pins protect loaded generations through real
 execution/cleanup. Pruning happens after head publication, and a later save/startup
 reaps generations whose pins have finished. Unknown/damaged heads are preserved.
 Private validation/captures use temporary directories outside the workspace.
+
+Generation metadata additionally records server-owned `revision_number` and optional `revision_name`
+(at most 120 characters, no control characters, trimmed at publication). Publication allocates the next
+per-block number under the existing logical reservation and writes it with the generation before replacing
+the head. Submitted/copied numbers are not authoritative; IDs, head v2 schema and effective freshness
+tokens are unchanged. Revision summaries and save responses expose the number and name additively.
+Unnumbered retained histories project oldest-first numbers starting at 1 without read-time writes. The
+first new generation anchors the baseline so pruning does not renumber survivors. Already-pruned lifetime
+history cannot be recovered. Legacy v1 import saves original=1 and edited=2; new blocks and duplicates
+start at 1. Restore appends, never rewrites an old generation. The UI starts a new revision label blank;
+historical names are immutable rather than editable in place. Retention remains 20.
 
 C6 is the one Workshop leaf lock, shared with tickets. It protects reservations,
 pins, batch state, proposal references and session reviews. Existing locks may

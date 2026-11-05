@@ -36,6 +36,61 @@ def plan_save(ui, draft, expected=None):
                 confirmations=[{'kind': r['kind'], 'digest': r['digest']} for r in plan['required_confirmations']])
 
 
+def test_revision_numbers_survive_retention_restore_duplicate_and_restart(ui, restart, monkeypatch):
+    """User versions must not shift with retention or trust copied/client numbering."""
+    from agentwiz import workshop_assets
+    monkeypatch.setattr(workshop_assets, 'REVISION_LIMIT', 3)
+    draft = send(ui, 'preview', starter='count_text', key='versions')['draft']
+    for number in range(1, 6):
+        draft['metadata'].update(revision_number=900, revision_name='Named' if number == 2 else '')
+        saved = plan_save(ui, draft, draft.get('base_digest'))
+        assert saved['revision_number'] == number
+        draft = send(ui, 'preview', key='versions')['draft']
+    rows = request(ui, '/api/workshop/blocks/versions/revisions')['revisions']
+    assert [r['revision_number'] for r in rows] == [5, 4, 3]
+    restored = send(ui, 'preview', key='versions', revision=rows[-1]['id'])['draft']
+    assert plan_save(ui, restored, restored['base_digest'])['revision_number'] == 6
+    duplicate = send(ui, 'preview', draft=restored, duplicate_key='copy')['draft']
+    assert plan_save(ui, duplicate)['revision_number'] == 1
+    ui = restart(ui)
+    draft = send(ui, 'preview', key='versions')['draft']
+    assert plan_save(ui, draft, draft['base_digest'])['revision_number'] == 7
+    draft = send(ui, 'preview', key='copy')['draft']
+    draft['metadata']['revision_name'] = '\ninvalid'
+    refusal = failure_of(lambda: plan_save(ui, draft, draft['base_digest']))
+    assert refusal.body['code'] == 'block_invalid'
+    assert refusal.body['issues'][0]['location'] == 'metadata.revision_name'
+
+
+def test_unnumbered_history_is_anchored_without_rewriting_generations(ui, monkeypatch):
+    """Upgrade numbering remains stable as unnumbered generations are pruned."""
+    from agentwiz import jsonio, workshop_assets
+    monkeypatch.setattr(workshop_assets, 'REVISION_LIMIT', 3)
+    draft = send(ui, 'preview', starter='count_text', key='old')['draft']
+    for _ in range(3):
+        plan_save(ui, draft, draft.get('base_digest'))
+        draft = send(ui, 'preview', key='old')['draft']
+    folders = ui.workspace.path / 'blocks' / 'old' / '.workshop' / 'revisions'
+    for folder in folders.iterdir():
+        path = folder / 'workshop.json'
+        metadata = jsonio.decode_exact(path.read_text())
+        metadata.pop('revision_number')
+        path.write_bytes(jsonio.encode_file_exact(metadata))
+    before = {p: p.read_bytes() for p in folders.glob('*/workshop.json')}
+    rows = request(ui, '/api/workshop/blocks/old/revisions')['revisions']
+    assert [r['revision_number'] for r in rows] == [3, 2, 1]
+    assert all(p.read_bytes() == data for p, data in before.items())
+    for number in (4, 5, 6, 7):
+        draft = send(ui, 'preview', key='old')['draft']
+        draft['metadata']['revision_name'] = ' Label ' if number == 4 else ''
+        saved = plan_save(ui, draft, draft['base_digest'])
+        assert saved['revision_number'] == number
+        rows = request(ui, '/api/workshop/blocks/old/revisions')['revisions']
+        assert [r['revision_number'] for r in rows] == list(range(number, number - 3, -1))
+        if number == 4:
+            assert rows[0]['revision_name'] == 'Label'
+
+
 def test_script_starter_save_reopen_run_compare_restore(ui):
     preview = send(ui, 'preview', starter='count_text', key='counter')
     assert preview['issues'] == []
@@ -69,6 +124,8 @@ def test_stale_publication_keeps_revision_and_exact_projection(ui):
     refusal = failure_of(lambda: plan_save(ui, draft))
     assert refusal.status == 409
     assert request(ui, '/api/workshop/blocks/b/revisions')['current'] == result['durable_id']
+    reopened = send(ui, 'preview', key='b')['draft']
+    assert plan_save(ui, reopened, reopened['base_digest'])['revision_number'] == 2
 
 
 def completed(ui, ident):
@@ -319,11 +376,13 @@ def test_legacy_conversion_confirmation_and_retention(ui):
     saved = plan_save(ui, draft, draft['base_digest'])
     revisions = request(ui, '/api/workshop/blocks/b/revisions')
     assert len(revisions['revisions']) == 2
+    assert [r['revision_number'] for r in revisions['revisions']] == [2, 1]
     assert (ui.workspace.path / 'blocks/b/prompts/user.md').read_text() == MODEL_FILES['prompts/user.md']
     for i in range(20):
         draft = send(ui, 'preview', key='b', display_name='revision-' + str(i))['draft']
         saved = plan_save(ui, draft, saved['base_digest'])
     assert len(request(ui, '/api/workshop/blocks/b/revisions')['revisions']) == 20
+    assert saved['revision_number'] == 22
 
 
 def test_custom_script_support_versions_are_frozen(ui):

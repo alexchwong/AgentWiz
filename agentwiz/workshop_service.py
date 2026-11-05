@@ -121,6 +121,8 @@ class Service:
             draft['definition_text'] = jsonio.encode_exact(obj)
             draft.pop('base_digest', None)
             draft.pop('root_sources', None)
+            draft.setdefault('metadata', {}).pop('revision_number', None)
+            draft['metadata'].pop('revision_name', None)
         if 'display_name' in body:
             draft.setdefault('metadata', {})['display_name'] = body['display_name']
         return draft

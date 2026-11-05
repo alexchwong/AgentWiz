@@ -103,8 +103,8 @@ starting with a letter or digit.
 
 ## Navigation
 
-**Workshop** is the default. Its saved-block selector is alongside Design, Test and Compare on desktop,
-and above them on narrow screens. **Workbench** groups the five independent utilities below. **History**
+**Workshop** is the default. Its compact saved-block selector is above Design, Test and Compare.
+**Workbench** groups the five independent utilities below. **History**
 opens saved runs. Settings in the header groups model profiles, roles, MCP servers and Save runs; the
 Workspaces control beside the workspace name opens workspace management.
 
@@ -170,21 +170,26 @@ servers: add their URLs in Settings → MCP servers first. Discovery lists tools
 Creation errors keep the dialog and entered values available for correction. **Create draft** opens
 Design without calling a model; **Create with assistance** first creates the same draft, then opens the
 separate assistance request/review workflow. Neither button saves a revision automatically.
-A model block's **System instructions** and **Instructions** are in the main Design form. Insert buttons add
+A model block's Design form has three unlabelled columns on wide screens: block description, **System prompt**
+and **User prompt** on the left; variable tables in the middle; identity, saving and settings on the right.
+The form stacks on narrow screens. Insert buttons add
 `{{inputs.name}}` and `{{output.name}}` placeholders (see [Named outputs](#named-outputs)). Each input and
-output is a card with its name, meaning, format and, for structured values, its own **Structured fields**
-editor. **Request preview** shows the exact system and user messages a run would send for the current inputs,
-with the generated output section and where each setting came from, each with Copy. **Model settings** gives
-Temperature and Reasoning level three choices:
+output is an editable row with field name, format dropdown and meaning. Each row retains its own expandable
+contract source, shared-contract selector or **Structured fields** editor. Choosing Structured value exposes
+its field editor without a manual refresh. Destructive format changes ask before replacing a contract.
+**Request preview** shows the exact system and user messages a run would send for the current inputs,
+with the generated output section and where each setting came from, each with Copy. On the right,
+**Model role** selects a configured role without silently replacing an unavailable saved binding.
+Temperature and Reasoning level sit side by side. An empty Temperature inherits the selected role's
+default, shown in grey; zero is an explicit value. Reasoning's first option shows the role's value
+followed by **(default)** and inherits it; selecting a level explicitly overrides it. If no role default
+is declared, the backend default applies and no numeric value is guessed.
 
-- **Inherit role default** uses the role's saved default and shows it beside the control; with no role
-  default the backend's own default applies.
-- **Custom** sends your value. It needs one: zero is a value, and Custom left empty is refused with its
-  location rather than guessed at.
-- **Backend default** asks for the backend's own default and ignores the role's. It is the only way to say
-  so once a role has a default.
-
-More settings holds the output cap, budgets, repair bounds and the source editors. Test's **Preview
+**Model advanced settings** holds explicit backend-default bypasses for both settings, the output cap,
+budgets and source editors. **Additional repairs** is always visible below Outputs; zero allows no
+repair attempts after the initial response. The optional revision name sits beside **Save revision**;
+the historical Block revision selector sits above the editor. **Assist** and **Revision actions** share
+the Design/Test/Compare action row in all three modes. Test's **Preview
 instructions** shows the actual filled prompt or arguments for the supplied inputs.
 
 Structured fields distinguish missing, null, false, zero and empty text. Numeric values travel as exact
@@ -196,9 +201,18 @@ preserved. A shared contract can be copied inline for a block-specific edit. Del
 remain in Workbench Contracts and show dependent blocks. Schema-backed validation and assistance require
 `AgentWiz[checks]`; install that extra outside the UI and restart. Text-only work remains available.
 
-**Save revision** previews the effective action and its required acknowledgements. Opening a legacy v1
+**Save revision**, in Design's right-hand controls, previews the effective action and its required
+acknowledgements. **Block revision** selects a retained revision into the draft, not the saved head;
+unsaved changes offer Save, Discard or Stay. Revisions display per-block numbers starting at 1 and an
+optional name of up to 120 characters. Enter a name before saving; names need not be unique and do not
+rename the block. A new revision's name defaults to blank. Historical names are not edited in place.
+Numbers survive restart and pruning; restoring an older version and saving creates the next number.
+Duplicates start their own sequence. Existing unnumbered histories are numbered oldest first from the
+retained history available at upgrade, not from already-pruned lifetime history. Internal IDs remain unchanged.
+Opening a legacy v1
 block never converts it. Its first Save captures the original and edited definitions in a managed v2
-head. Only the newest 20 revisions are retained, including that original. The Save plan names revisions
+head, numbered 1 (original) and 2 (edited). Only the newest 20 revisions are retained, including that original.
+The Save plan identifies revisions
 being pruned. Duplicate keeps the original key intact and offers explicit copying of examples. Restore
 loads a retained definition into a draft; a deliberate Save creates a new revision, without rerunning it.
 Renaming the display name also requires Save; the stable key remains in Details.

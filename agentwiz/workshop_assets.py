@@ -266,6 +266,10 @@ class Assets:
         metadata = draft.get('metadata', {})
         if not isinstance(metadata, dict):
             fail()
+        name = metadata.get('revision_name', '')
+        if not isinstance(name, str) or len(name) > 120 or any(ord(c) < 32 for c in name):
+            raise WorkshopError('block_invalid', 409, [
+                {'location': 'metadata.revision_name', 'message': 'must be at most 120 characters without control characters'}])
         if type(metadata.get('format_version', 1)) is not int or metadata.get('format_version', 1) != 1:
             fail('newer_format', 409)
         if metadata.get('origin', 'manual') not in ('starter', 'manual', 'llm_generated', 'derived_from_llm'):
@@ -414,9 +418,19 @@ class Assets:
         h = head(root)
         if h is None:
             return {'format_version': 1, 'current': None, 'revisions': []}
-        return {'format_version': 1, 'current': h['current'], 'revisions': [
+        rows = [
             {'id': i, 'metadata': document(root / '.workshop' / 'revisions' / i, 'workshop.json')}
-            for i in h['retained']]}
+            for i in h['retained']]
+        # Retention is a contiguous newest-first suffix. A numbered generation anchors
+        # older unnumbered history without rewriting immutable generations on read.
+        anchor = next(((index, r['metadata']['revision_number']) for index, r in enumerate(rows)
+                       if type(r['metadata'].get('revision_number')) is int
+                       and r['metadata']['revision_number'] > 0), None)
+        newest = anchor[0] + anchor[1] if anchor else len(rows)
+        for index, row in enumerate(rows):
+            row['revision_number'] = newest - index
+            row['revision_name'] = row['metadata'].get('revision_name', '')
+        return {'format_version': 1, 'current': h['current'], 'revisions': rows}
 
     def publish(self, draft, expected, metadata, capture=None):
         key = key_name(draft['key'])
@@ -443,6 +457,10 @@ class Assets:
                         fail('unusable', 409)
                     root = self.path / key
                     old = head(root) if expected is not None else None
+                    if old:
+                        next_number = self.revisions(key)['revisions'][0]['revision_number'] + 1
+                    else:
+                        next_number = 2 if expected is not None else 1
                     stage = Path(tempfile.mkdtemp(prefix='.workshop-stage-', dir=self.path))
                     (stage / '.owner').write_bytes(b'AgentWiz Workshop staging v1\n')
                     os.chmod(stage / '.owner', 0o600)
@@ -463,6 +481,8 @@ class Assets:
                              'assets': {p: hashlib.sha256(b).hexdigest() for p, b in files.items()},
                              'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                              'parent': old['current'] if old else generations[0][0] if len(generations) == 2 and ident == revision else None}
+                        m['revision_number'] = next_number if ident == revision else 1
+                        m['revision_name'] = value['metadata'].get('revision_name', '').strip()
                         files['workshop.json'] = jsonio.encode_file_exact(m)
                         if sum(map(len, files.values())) > CAPTURE_LIMIT:
                             fail('too_large', 400)
@@ -495,6 +515,7 @@ class Assets:
                             if head(root) != h:
                                 raise
                             return {'key': key, 'durable_id': revision, 'base_digest': self.identity(key),
+                                    'revision_number': next_number, 'revision_name': metadata.get('revision_name', '').strip(),
                                     'publication': 'durability_uncertain'}
                     durability_uncertain = False
                     try:
@@ -512,6 +533,7 @@ class Assets:
                             except OSError:
                                 pass  # Reap this unreferenced generation at a later save/startup.
                     return {'key': key, 'durable_id': revision, 'base_digest': self.identity(key),
+                            'revision_number': next_number, 'revision_name': metadata.get('revision_name', '').strip(),
                             'publication': 'durability_uncertain' if durability_uncertain else 'committed'}
         finally:
             if stage:

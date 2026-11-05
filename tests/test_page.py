@@ -767,7 +767,7 @@ def test_workshop_new_block_validation_and_roles(ui, server, open_page, assisted
         tid(dialog, "ws-cancel").click()
     else:
         expect(dialog).to_have_count(0)
-    expect(tid(page, "ws-field-role")).to_have_value("writer")
+    expect(tid(page, "ws-choice-model-role")).to_have_value("writer")
     expect(tid(page, "ws-field-instructions")).not_to_have_value("")
 
 
@@ -976,6 +976,80 @@ def test_workshop_structured_inputs_keep_exact_literals_across_views_and_reload(
     assert jsonio.decode_exact(tid(page,'ws-output').text_content())==expected
 
 
+def test_workshop_numbered_revision_selection_keeps_dirty_edits_and_names(ui, open_page):
+    """Inline history must protect edits and restore without overwriting saved generations."""
+    page = open_page(ui)
+    dialog = tid(page, 'ws-dialog')
+    tid(page, 'ws-new-block').click()
+    tid(dialog, 'ws-field-block-key').fill('numbered')
+    tid(dialog, 'ws-choice-start-with').select_option('write_text')
+    tid(dialog, 'ws-create-draft').click()
+    original = tid(page, 'ws-field-instructions').input_value()
+    tid(page, 'ws-field-revision-name-optional-').fill('Initial')
+    save_new_revision(page, ui, 'numbered')
+    first = current_revision(ui, 'numbered')
+    from conftest import request
+    rows = request(ui, '/api/workshop/blocks/numbered/revisions')['revisions']
+    assert rows[0]['revision_number'] == 1 and rows[0]['revision_name'] == 'Initial'
+    expect(tid(page, 'ws-field-revision-name-optional-')).to_have_value('')
+    tid(page, 'ws-field-instructions').fill('Second {{inputs.text}}')
+    save_new_revision(page, ui, 'numbered')
+    second = current_revision(ui, 'numbered')
+    tid(page, 'ws-field-instructions').fill('Pending {{inputs.text}}')
+    tid(page, 'ws-choice-block-revision').select_option(first)
+    tid(dialog, 'ws-stay').click()
+    expect(tid(page, 'ws-field-instructions')).to_have_value('Pending {{inputs.text}}')
+    expect(tid(page, 'ws-choice-block-revision')).to_have_value(second)
+    tid(page, 'ws-choice-block-revision').select_option(first)
+    tid(dialog, 'ws-discard').click()
+    expect(tid(page, 'ws-field-instructions')).to_have_value(original)
+    assert current_revision(ui, 'numbered') == second
+    expect(tid(page, 'ws-choice-block-revision')).to_have_value(first)
+    tid(page, 'ws-field-revision-name-optional-').fill('Restored')
+    save_new_revision(page, ui, 'numbered')
+    rows = request(ui, '/api/workshop/blocks/numbered/revisions')['revisions']
+    assert [r['revision_number'] for r in rows] == [3, 2, 1]
+    assert rows[0]['revision_name'] == 'Restored'
+    assert rows[-1]['id'] == first
+    tid(page, 'ws-field-instructions').fill('Saved before switch {{inputs.text}}')
+    tid(page, 'ws-choice-block-revision').select_option(first)
+    tid(dialog, 'ws-save').click()
+    tid(dialog, 'ws-confirm').click()
+    expect(tid(page, 'ws-field-instructions')).to_have_value(original)
+    rows = request(ui, '/api/workshop/blocks/numbered/revisions')['revisions']
+    assert rows[0]['revision_number'] == 4
+    saved = request(ui, '/api/workshop/blocks/numbered/revisions/' + rows[0]['id'])['draft']
+    assert jsonio.decode_exact(saved['definition_text'])['steps'][0]['prompt']['text'] == 'Saved before switch {{inputs.text}}'
+
+
+@pytest.mark.needs_checks
+def test_workshop_variable_format_exposes_editor_and_confirms_data_loss(ui, open_page):
+    """A fresh structured variable is editable immediately; cancelling format loss keeps its schema."""
+    page = open_page(ui)
+    dialog = tid(page, 'ws-dialog')
+    tid(page, 'ws-new-block').click()
+    tid(dialog, 'ws-field-block-key').fill('variables')
+    tid(dialog, 'ws-choice-start-with').select_option('write_text')
+    tid(dialog, 'ws-create-draft').click()
+    output = page.locator('[data-test="ws-port"][data-side="outputs"]')
+    tid(output, 'ws-choice-format').select_option('json')
+    fields = tid(output, 'ws-fields')
+    fields.locator('summary').click()
+    tid(fields, 'ws-define-object-fields').click()
+    tid(dialog, 'ws-field-property-name').fill('message')
+    tid(dialog, 'ws-apply').click()
+    expect(tid(fields, 'ws-edit-field')).to_have_count(2)
+    tid(output, 'ws-choice-format').select_option('text')
+    tid(dialog, 'ws-cancel').click()
+    expect(tid(output, 'ws-choice-format')).to_have_value('json')
+    definition = save_new_revision(page, ui, 'variables')
+    assert 'message' in definition['outputs']['out']['contract']['schema']['properties']
+    tid(output, 'ws-choice-format').select_option('text')
+    tid(dialog, 'ws-replace-contract').click()
+    definition = save_new_revision(page, ui, 'variables')
+    assert definition['outputs']['out']['contract'] == {'format': 'text'}
+
+
 def test_workshop_invalid_design_keeps_inputs_and_located_save_error(ui, open_page):
     """A broken prompt reference must not masquerade as missing files or erase Test inputs."""
     page = open_page(ui)
@@ -998,6 +1072,7 @@ def test_workshop_invalid_design_keeps_inputs_and_located_save_error(ui, open_pa
     tid(page, 'ws-test').click()
     expect(tid(page, 'ws-validation')).to_have_count(0)
     expect(tid(page, 'ws-field-message')).to_have_value('retained input')
+    tid(page, 'ws-design').click()
     tid(page, 'ws-save-revision').click()
     tid(dialog, 'ws-confirm').click()
     has(page, 'ws-status', 'data-state', 'saved')
@@ -1078,13 +1153,75 @@ def save_new_revision(page, ui, key):
     tid(page, 'ws-save-revision').click()
     tid(tid(page, 'ws-dialog'), 'ws-confirm').click()
     assert wait_until(lambda: current_revision(ui, key) not in (None, before))
+    expect(tid(page, 'ws-choice-block-revision')).to_have_attribute('data-current', current_revision(ui, key))
     return saved_definition(ui, key)
 
 
 @pytest.mark.needs_checks
+def test_workshop_model_role_defaults_and_missing_binding_preserve_intent(ui, server, open_page):
+    """Role changes update inherited settings without substituting missing bindings or losing explicit edits."""
+    setup_model(ui, server)
+    initial = get_state(ui)['roles']
+    definitions = {
+        'fast': {'description': '', 'location': 'local', 'task_defaults': {'temperature': 0, 'reasoning': 'low'}},
+        'writer': {'description': '', 'location': 'local', 'task_defaults': {'temperature': 0.7, 'reasoning': 'high'}},
+    }
+    request(ui, '/api/roles/save', {'roles': {'fast': 'p', 'writer': 'p'},
+                                  'definitions': definitions, 'revision': initial['revision']})
+    page = open_page(ui)
+    dialog = tid(page, 'ws-dialog')
+    tid(page, 'ws-new-block').click()
+    tid(dialog, 'ws-field-block-key').fill('role_defaults')
+    tid(dialog, 'ws-choice-start-with').select_option('write_text')
+    tid(dialog, 'ws-choice-model-role').select_option('fast')
+    tid(dialog, 'ws-create-draft').click()
+    role = tid(page, 'ws-choice-model-role')
+    temperature = tid(page, 'ws-field-temperature')
+    reasoning = tid(page, 'ws-choice-reasoning-level')
+    expect(temperature).to_have_attribute('placeholder', '0')
+    expect(reasoning).to_have_value('')
+    tid(page, 'ws-field-instructions').fill('Keep {{inputs.text}}')
+    role.select_option('writer')
+    expect(temperature).to_have_attribute('placeholder', '0.7')
+    temperature.fill('0')
+    reasoning.select_option('low')
+    role.select_option('fast')
+    expect(temperature).to_have_value('0')
+    expect(reasoning).to_have_value('low')
+    tid(page, 'ws-save-revision').click()
+    expect(tid(page, 'ws-actions')).to_have_attribute('inert', '')
+    expect(tid(page, 'ws-revision-picker')).to_have_attribute('inert', '')
+    tid(dialog, 'ws-confirm').click()
+    assert wait_until(lambda: current_revision(ui, 'role_defaults') is not None)
+    expect(tid(page, 'ws-choice-block-revision')).to_have_attribute('data-current', current_revision(ui, 'role_defaults'))
+    step = saved_definition(ui, 'role_defaults')['steps'][0]
+    expect(tid(page, 'ws-actions')).not_to_have_attribute('inert', '')
+    assert step['role'] == 'fast' and step['task']['temperature'] == 0 and step['task']['reasoning'] == 'low'
+    assert step['prompt']['text'] == 'Keep {{inputs.text}}'
+    temperature.fill('')
+    reasoning.select_option('')
+    step = save_new_revision(page, ui, 'role_defaults')['steps'][0]
+    assert 'temperature' not in step['task'] and 'reasoning' not in step['task']
+    for view in ['test', 'compare', 'design']:
+        tid(page, 'ws-' + view).click()
+        tid(page, 'ws-assist').click()
+        tid(dialog, 'ws-cancel').click()
+        tid(page, 'ws-revision-actions').click()
+        tid(dialog, 'ws-cancel').click()
+    current = get_state(ui)['roles']
+    request(ui, '/api/roles/save', {'roles': {'writer': 'p'}, 'definitions': {'writer': definitions['writer']},
+                                  'revision': current['revision']})
+    page.reload()
+    expect(role).to_have_value('fast')
+    expect(temperature).to_have_value('')
+    role.select_option('writer')
+    expect(temperature).to_have_attribute('placeholder', '0.7')
+
+
+@pytest.mark.needs_checks
 def test_workshop_design_controls_overrides_request_preview_cards_and_assistance(ui, server, open_page):
-    """The Design pane shows system instructions in the main form, gives each sampling setting Inherit/Custom/Backend
-    default with a blank Custom refused, previews the exact request with Copy, edits structured outputs inside their own
+    """Design's compact controls preserve inheritance, overrides, resets and repairs, preview requests with Copy,
+    edit structured outputs inside their own
     card (a group left empty is refused at save), and the assistance request carries its own sampling intent."""
     setup_model(ui, server)
     save_roles(ui, {'fast': 'p', 'assistant': 'p'})
@@ -1096,20 +1233,27 @@ def test_workshop_design_controls_overrides_request_preview_cards_and_assistance
     tid(dialog, 'ws-create-draft').click()
     expect(tid(page, 'ws-field-system-instructions')).to_be_visible()
 
-    mode, value = tid(page, 'ws-choice-temperature-source'), tid(page, 'ws-field-temperature')
-    expect(value).to_be_hidden()
-    mode.select_option('custom')
+    value = tid(page, 'ws-field-temperature')
     expect(value).to_be_visible()
-    value.fill('')
+    value.fill('not-a-number')
     tid(page, 'ws-save-revision').click()
-    has(page, 'ws-status', 'data-code', 'block_invalid')                      # Custom without a value is not guessed at
+    has(page, 'ws-status', 'data-state', 'error')
     value.fill('0')
     step = save_new_revision(page, ui, 'authoring')['steps'][0]
     assert step['task']['temperature'] == 0 and 'task_resets' not in step      # zero is a value, not "unset"
-    mode.select_option('reset')
-    expect(value).to_be_hidden()
+    value.fill('')
+    step = save_new_revision(page, ui, 'authoring')['steps'][0]
+    assert 'temperature' not in step['task'] and 'task_resets' not in step
+    tid(page, 'ws-advanced-settings').click()
+    tid(page, 'ws-reset-temperature').check()
+    expect(value).to_have_value('')
     step = save_new_revision(page, ui, 'authoring')['steps'][0]
     assert step['task_resets'] == ['temperature'] and 'temperature' not in step['task']
+    expect(value).to_have_attribute('data-source', 'reset')
+    expect(tid(page, 'ws-field-additional-repairs')).to_be_visible()
+    tid(page, 'ws-field-additional-repairs').fill('0')
+    step = save_new_revision(page, ui, 'authoring')['steps'][0]
+    assert step['repair']['max_repairs'] == 0 and step['task_resets'] == ['temperature']
 
     tid(page, 'ws-test').click()
     tid(page, 'ws-field-text').fill('three notebooks')

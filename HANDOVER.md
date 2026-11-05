@@ -1,5 +1,67 @@
 # AgentWiz 0.2.0 — cumulative Phase 2 handover
 
+## November 5, 2026 — Design settings and action-row follow-up
+
+- Preserved the existing uncommitted three-column/revision work. Design now builds its columns
+  explicitly: the RHS orders display name, revision name beside Save revision, model-role dropdown,
+  paired temperature/reasoning, model advanced settings and Standard description. The historical
+  revision selector is beside block selection. Additional repairs is visible below Outputs.
+- Blank temperature inherits the role's default, shown as a muted placeholder; reasoning's inherited
+  option names the default. Explicit values (including zero), missing role bindings and backend resets
+  are preserved. Role changes refresh defaults without rebuilding or losing unsaved prompt edits.
+  Backend-reset controls remain in advanced settings; backend settings/revision formats are unchanged.
+- Assist and Revision actions share Design/Test/Compare's action row in every mode. Save locks that
+  row and the relocated revision picker until review/publication/reload completes.
+- Updated existing browser journeys and added functional coverage for role/default intent, missing
+  bindings, shared actions and save locking. README, architecture and NEWS describe the controls.
+- Final validation on Linux / Python 3.13.13: `python -m pytest -q -m "not live"`:
+  **685 passed, 10 deselected in 108.90 s**. Earlier page/Workshop/tutorial run: **71 passed**;
+  corrected focused settings/save-lock checks: **2 passed**. An intermediate route-callback test
+  stalled while awaiting browser assertions; replaced it with assertions during the save-review
+  dialog, then reran the full gate successfully. Compilation and `git diff --check` passed.
+- Inspected rendered desktop/tablet views and checked widths 1440, 1280, 900 and 390: no horizontal
+  overflow. No live-provider, installed-wheel, macOS or Python 3.10 validation was performed.
+  No dependencies, commits, pushes or publication were added.
+
+## November 5, 2026 — Workshop Design layout and numbered revisions
+
+- Implemented the owner's approved three-column Design rework: unlabelled prompt, variable and
+  miscellaneous columns, responsive stacking, compact block selection above the editor, and the primary
+  Save in miscellaneous rather than navigation. Inputs/outputs are editable tables with field name,
+  format and meaning; per-variable schema/shared/source controls remain available. Model prompt labels
+  are Block description, System prompt and User prompt. Tool/script behaviour remains type-specific.
+- Structured format selection exposes its editor immediately. Replacing a meaningful contract asks
+  for confirmation; empty text contracts need no destructive-change acknowledgement. Saving makes the
+  editor inert until its reviewed publication/reload finishes, preventing edits to an outgoing form.
+- Revisions expose stable per-block numbers and optional names, separate from block names, opaque IDs
+  and effective freshness tokens. Numbers are assigned under the existing publication reservation and
+  persisted in generation metadata; the strict head format is unchanged. Reads project old unnumbered
+  retained history without rewriting it; the next save anchors that baseline through pruning. Earlier
+  pruned lifetime history cannot be reconstructed. Legacy import is original=1, edited=2; duplicates
+  start at 1. Retention stays 20. Historical restore appends a new revision and keeps its contract
+  acknowledgement. Labels are at most 120 characters without controls, trimmed on publication;
+  new UI labels default blank and historical labels are not renamed in place.
+- Inline revision selection uses Save/Discard/Stay, preserves same-block examples and test inputs,
+  and distinguishes selected/current IDs from example-collection revisions. Compare and revision
+  actions show numeric/name labels. Late load responses are guarded. No dependency or execution
+  transport changed; no commit, push or publication was made.
+- Functional regression reasons: stable numbering through retention/restart/restore/duplication and
+  unnumbered-history upgrade; legacy conversion and stale-save continuity; optional label validation;
+  dirty revision-switch choices; immediate schema entry and cancelling destructive format changes.
+  Existing browser save helpers now wait for the new revision's form to finish loading, and schema
+  tests wait for the applied field rather than racing the asynchronous preview. The Test-tab save
+  journey returns to Design, matching the intentional button relocation. README, architecture and
+  unreleased 0.2.0 NEWS were updated; no release/version bump was inferred.
+- Validation on Linux / Python 3.13.13: focused Workshop/replay/page suite **63 passed** (30.66 s);
+  final desktop/mobile and revision-switch/format checks **4 passed** (5.44 s); targeted revision
+  persistence/legacy/stale-save checks **4 passed** (1.12 s). Final full offline gate
+  `python -m pytest -q -m "not live"`: **684 passed, 10 deselected** (106.67 s), no skips.
+  Separate final tutorial run: **10 passed** (30.74 s).
+  Python compilation and `git diff --check` passed. Earlier runs exposed the intentional Save relocation,
+  asynchronous form/schema test races, and an over-eager confirmation for an empty text contract; these
+  were corrected and covered in the final passing runs. Live providers, installed-wheel smoke, macOS
+  and Python 3.10 were not checked locally.
+
 ## November 4, 2026 — block authoring, named outputs and role defaults: completing the proposal
 
 - Completed the remaining work R1–R13 of `proposal_block_ui_improvement.md` on `devel` @ `9fe6e7f`

@@ -325,6 +325,8 @@ def edit(draft, operation):
     obj = jsonio.decode_exact(result['definition_text'])
     if operation.get('kind') == 'design_form':
         result.setdefault('metadata', {})['display_name'] = operation['name']
+        if 'revision_name' in operation:
+            result['metadata']['revision_name'] = operation['revision_name']
         obj['description'] = operation['purpose']
         for side, entries in operation['ports'].items():
             if side not in ('inputs', 'outputs'):

@@ -1,5 +1,10 @@
 # NEWS
 ## 0.2.0
+- Workshop Design uses three responsive columns with editable input/output tables and Save in the settings pane.
+- Design now has a model-role dropdown, paired temperature/reasoning controls with visible inherited defaults,
+  repairs below Outputs, and revision naming beside Save. Assist and Revision actions share the mode action row.
+- Block revisions have stable per-block numbers, optional names and an inline selector; restoring saves a new revision.
+- Structured-variable editors appear immediately after format selection; destructive contract replacement asks first.
 - Model-server connections now come from `config/model-servers.ini`; OpenRouter keys have a separate session-only button and environment fallback.
 - Model blocks return one named JSON envelope: several independently checked outputs, published together or not at all.
 - Each model step now sends generated output instructions; `{{output.name}}` describes an output inside prompts.
