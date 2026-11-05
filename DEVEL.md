@@ -70,7 +70,7 @@ python -m pytest tests/test_page.py # focused page checks when relevant
 python scripts/build_release.py --smoke # installed-wheel validation when required
 ```
 
-Setup installs `.[dev,checks]` and the matching Playwright Chromium. Missing Chromium blocks page
+Setup installs `.[dev]` (including required JSON Schema validation) and the matching Playwright Chromium. Missing Chromium blocks page
 checks; do not skip them. Setup/service details and local modelSpell checkout instructions are
 in `docs/architecture.md`. Never commit a local dependency override; releases use the pinned wheel.
 

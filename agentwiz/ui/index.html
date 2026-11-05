@@ -1797,7 +1797,7 @@ $("save-servers").onclick = async () => {
     const c = (state.contracts && state.contracts.checks) || { available: false, detail: "unknown" };
     schemaStatus.dataset.available = c.available ? "true" : "false";
     schemaStatus.textContent = c.available ? `JSON Schema checks: available (${c.detail})`
-      : `JSON Schema checks: not available (${c.detail}). Install them with: pip install 'AgentWiz[checks]'`;
+      : `JSON Schema validation unavailable (${c.detail}). Repair the AgentWiz installation and restart.`;
   }
 
   function showIssues(body) {
@@ -2757,15 +2757,13 @@ const wsRevisionPicker = h("div",{class:"ws-revision-picker","data-test":"ws-rev
 const wsHeading = h("h2",{text:"Block Workshop"});
 let wsBlocks=[], wsPoll=0, wsPending=null, wsLoadGeneration=0;
 function wsErrorText(e){
-  const messages={invalid:"The block request is invalid. Check the key, selected starter and bindings.",stale:"Settings or source changed. Refresh and review the action again.",setup_unavailable:"The selected model role or MCP server is unavailable. Check Settings.",checks_required:"Install AgentWiz[checks] and restart to use this action.",read_only:"The workspace is read-only. Open a writable workspace to save changes.",busy:"Workshop is busy. Wait for the current operation to finish.",unusable:"The block source could not be read. Check its files and permissions."};
+  const messages={invalid:"The block request is invalid. Check the key, selected starter and bindings.",stale:"Settings or source changed. Refresh and review the action again.",setup_unavailable:"The selected model role or MCP server is unavailable. Check Settings.",validation_unavailable:"Repair the AgentWiz validator installation and restart.",read_only:"The workspace is read-only. Open a writable workspace to save changes.",busy:"Workshop is busy. Wait for the current operation to finish.",unusable:"The block source could not be read. Check its files and permissions."};
   const issues=(e.body?.issues||[]).map(i=>i.location+": "+i.message).join("; ");
   return (e.code==="block_invalid"?"The block definition needs correction.":messages[e.code]||e.message||String(e))+(issues?" "+issues:"")+(e.code?" ["+e.code+"]":"");
 }
 function wsError(e){wsNote.dataset.state="error";wsNote.dataset.code=e.code||"error";wsNote.textContent=wsErrorText(e);if(["stale","proposal_expired"].includes(e.code))wsNote.append(". Your draft is kept. Reload or request assistance again when ready.");}
 function wsButton(label,fn,id){
-  const checks=state?.contracts?.checks;
-  const unavailable=checks?.available===false&&(label==="Assist"||(["Save revision","Run test","Compare versions","Run saved examples"].includes(label)&&ws.projection?.requires_checks));
-  return h("button",{type:"button",disabled:unavailable,title:unavailable?"Install AgentWiz[checks] and restart.":undefined,"data-test":id || "ws-"+label.toLowerCase().replace(/[^a-z0-9]+/g,"-"),text:label,
+  return h("button",{type:"button","data-test":id || "ws-"+label.toLowerCase().replace(/[^a-z0-9]+/g,"-"),text:label,
     onclick:async e=>{const button=e.currentTarget;button.disabled=true;try{await fn();}catch(error){wsError(error);}finally{button.disabled=false;}}});
 }
 function wsField(parent,label,value="",multi=false){

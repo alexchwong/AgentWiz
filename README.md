@@ -32,9 +32,15 @@ curl -fsSL https://github.com/alexchwong/AgentWiz/releases/latest/download/insta
 The script creates `.venv` in the current directory, checks the newest release wheel against the
 sha256 GitHub publishes, installs it, and prints how to launch. Pin a release with
 `… | bash -s -- --version 0.2.0`; download the script first if you want to read it before running it.
-Add `--with-checks` (`… | bash -s -- --with-checks`) to install the optional JSON Schema checks.
+JSON Schema validation is included in the standard installation.
 
 Working from a clone? See DEVEL.md for the developer setup.
+
+**Development checkout:** the contract overhaul is between phases. The backend now rejects legacy
+contract `checks`, `strict` and unsupported schema keywords. Saved-contract storage, packaged
+examples/tutorials and browser editing are not all migrated yet; do not treat this checkout as a
+finished upgrade or automatically migrate a user workspace. See `contract_overhaul_handover.md`
+for cumulative progress and the current validation status.
 
 Prefer to do it by hand? Download the wheel from the release page (the wheel, not the source zip),
 then run:
@@ -49,13 +55,10 @@ For checksum verification, use `python -m pip install` with the wheel URL and `#
 from the release notes instead of the local filename. Both methods also install modelSpell 0.3.0,
 pinned by URL and checksum.
 
-**JSON Schema checks are optional.** Contracts with a `schema` need the extra
-`AgentWiz[checks]` (it installs `jsonschema` 4.26 or later, below 5): add `--with-checks` to
-`install.sh`, or run `python -m pip install './agentwiz-0.2.0-py3-none-any.whl[checks]'`. Without it
-everything else works; a contract with a schema cannot be saved, and a schema in a contract file
-is reported as not run, so the answer never passes on it (see **Contracts**). The extra brings
-`rpds-py`, a compiled package; a platform without a published wheel needs a Rust toolchain to
-install it.
+**JSON Schema validation is required and installed automatically** (`jsonschema>=4.26,<5`).
+It brings `rpds-py`, a compiled package; a platform without a published wheel needs a Rust
+toolchain to install it. If validation support becomes unavailable because the installation is
+damaged or unsupported, reinstall AgentWiz before using schema-dependent actions.
 
 ## Launch
 
@@ -198,8 +201,8 @@ also offers inputs it lacks, and keeps expected values for outputs the block no 
 remove them. A new group needs at least one field before **Save revision** or a run: editing may pass through
 an empty group, and a group that was already empty in the saved block is left alone. Unsupported schema structures use the labelled contract-source editor; unknown rules are
 preserved. A shared contract can be copied inline for a block-specific edit. Deliberate shared edits
-remain in Workbench Contracts and show dependent blocks. Schema-backed validation and assistance require
-`AgentWiz[checks]`; install that extra outside the UI and restart. Text-only work remains available.
+remain in Workbench Contracts and show dependent blocks. Schema-backed validation and assistance use
+the validator included in the standard installation; repair the installation if it becomes unavailable.
 
 **Save revision**, in Design's right-hand controls, previews the effective action and its required
 acknowledgements. **Block revision** selects a retained revision into the draft, not the saved head;
@@ -528,7 +531,7 @@ so are `0.10000000000000000001` and `0.1`. The page never parses a contract's nu
 travels as text. The limits are integers of at most 4,300 digits and a 2,100-digit decimal
 precision. Beyond them a check reports **not run**, never an approximation.
 
-**JSON Schema** needs the `checks` extra (see **Install**). It is Draft 2020-12 only, and:
+**JSON Schema** uses the required validator (see **Install**). It is Draft 2020-12 only, and:
 
 - References (`$ref`, `$dynamicRef`) must be local, starting with `#`; nothing is ever fetched.
 - Every `$schema` in the schema must name Draft 2020-12; a subschema declaring another draft is refused.
@@ -792,7 +795,7 @@ description or a schema stay literal.
 
 **Parsing is unchanged.** The whole trimmed answer is parsed, or a single fenced block when the contract is not
 strict; duplicate keys are refused. Nothing is repaired, guessed or extracted from surrounding prose. Output
-checks for structured values need `AgentWiz[checks]`; without it a block that needs them refuses to run
+checks for structured values need a working validator installation; otherwise a block that needs them refuses to run
 instead of skipping the check. Checks establish structure and the rules you configured, not that an answer is true.
 
 **Older blocks.** A 0.1.x model block named its single output on the step. Such a block now loads as invalid
@@ -1042,7 +1045,7 @@ Stopping the original AgentWiz process also closes its tutorial.
   pathological expression can take a long time on a long answer.
 - **Number limits.** Exact checks stop at 4,300-digit integers and a 2,100-digit decimal precision;
   beyond them a check reports not run, never an approximation.
-- **JSON Schema** needs the `checks` extra, which brings the compiled package `rpds-py`.
+- **JSON Schema** is included in the standard installation and brings the compiled package `rpds-py`.
 - **A contract edited on disk while a request uses it** does not affect that request, which uses the
   copy taken when it was accepted. A repair uses the contract of the attempt it repairs.
 - **Memory.** At most 100 finished attempts and 256 MiB are held, plus 1,000 summaries. Older

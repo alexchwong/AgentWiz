@@ -143,13 +143,13 @@ def decode_files(raw):
 
 
 class Capture:
-    def __init__(self, files, key, contracts, metadata=None):
+    def __init__(self, files, key, contracts, metadata=None, *, internal_contracts=False):
         from . import blocks
         self.directory = tempfile.TemporaryDirectory(prefix='agentwiz-capture-')
         self.root = Path(self.directory.name)
         try:
             write_files(self.root, files)
-            self.parsed = blocks.parse_block(self.root, key, contracts)
+            self.parsed = blocks.parse_block(self.root, key, contracts, internal_contracts=internal_contracts)
             self.files = files
             self.metadata = metadata or {}
             self.digest = fingerprint(files)
@@ -243,6 +243,9 @@ class Assets:
             return copy.deepcopy(self.state.contracts)
 
     def validate(self, draft):
+        return self._validate(draft)
+
+    def _validate(self, draft, *, internal_contracts=False):
         if not isinstance(draft, dict) or set(draft) - {'key', 'definition_text', 'files', 'metadata', 'base_digest', 'root_sources'}:
             fail()
         key = key_name(draft.get('key'))
@@ -289,7 +292,7 @@ class Assets:
             fail()
         if any(relative(p) not in files or p == 'block.json' for p in support):
             fail()
-        captured = Capture(files, key, self.contracts(), metadata)
+        captured = Capture(files, key, self.contracts(), metadata, internal_contracts=internal_contracts)
         self.check_references(captured)
         if captured.parsed.block is not None and set(files) != set(captured.parsed.paths) | set(support):
             captured.close()

@@ -14,7 +14,6 @@ from conftest import (JSON_CONTRACT, JSON_CONTRACT_NO_SCHEMA, TEXT_CONTRACT, HTT
                       contract_item, failure_of, file_stat, get_state, mcp_state, request, save_contract, status_of,
                       write_ws_file)
 
-needs_checks = pytest.mark.needs_checks
 
 
 def read_contract_file(ui, name):
@@ -30,7 +29,6 @@ def edit_on_disk(ui, name, text):
 
 
 # 64 ---------------------------------------------------------------------------------------------
-@needs_checks
 def test_contract_storage(ui):
     state = get_state(ui)
     assert state["contracts"]["items"] == [] and state["contracts"]["read_only"] is False
@@ -247,7 +245,6 @@ def test_write_failure_is_reported(ui):
 
 
 # the route-level half of 62 ---------------------------------------------------------------------
-@needs_checks
 def test_schema_rules_through_the_routes(ui):
     refused = '{"format": "json", "schema": {"$ref": "http://example.com/x.json"}}'
     fail = failure_of(lambda: save_contract(ui, "remote", refused))
@@ -281,7 +278,9 @@ def test_schema_without_extra_through_the_routes(ui, monkeypatch):
     monkeypatch.setattr(checks, "schema_support", lambda: (False, "jsonschema is not installed"))
     fail = failure_of(lambda: save_contract(ui, "needs_extra", schema_text))
     assert (fail.status, fail.body["code"]) == (400, "contract_error")
-    assert "AgentWiz[checks]" in fail.body["issues"][0]["message"] and fail.body["issues"][0]["location"] == "schema"
+    assert fail.body['issues'][0]['location'] == 'schema'
+    assert 'validation_unavailable' in fail.body['issues'][0]['message']
+    assert 'repair the AgentWiz installation' in fail.body['issues'][0]['message']
     assert not contract_files(ui).exists()
     assert save_contract(ui, "plain", JSON_CONTRACT_NO_SCHEMA)["contract"]["problem"] is None   # no schema: no extra needed
     state = get_state(ui)["contracts"]["checks"]

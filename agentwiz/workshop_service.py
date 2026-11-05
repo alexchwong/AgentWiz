@@ -42,9 +42,7 @@ def load_capture(capture, key):
 
 
 def exact_equal(a, b):
-    # Reuse the production equality checker, including its bool/number distinction.
-    contract = checks.parse_contract({'format': 'json', 'checks': [{'type': 'json_equals', 'value': b}]})
-    return checks.check_value(contract, a)['overall'] == 'pass'
+    return checks.exact_equal(a, b)
 
 
 def judgement(outputs, expectation, verified):
@@ -365,7 +363,7 @@ class Service:
         if action == 'assist':
             from . import workshop_assist
             if not checks.schema_support()[0]:
-                fail('checks_required', 409)
+                fail('validation_unavailable', 503)
             selected = dict(body)
             with self.state._lock:
                 roles = list(self.state._roles)
@@ -447,10 +445,14 @@ class Service:
                     fail('stale', 409)
                 examples = [by_id[i] for i in selection['ids']]
             for candidate in candidates:
-                draft = self.source(candidate)
+                # The private policy is only for the complete ephemeral definition
+                # generated above. Do not apply caller edit/duplicate/source options
+                # to that server-owned definition before granting internal policy.
+                draft = copy.deepcopy(body['draft']) if action == 'assist' else self.source(candidate)
                 if captures and draft['key'] != jsonio.decode_exact(captures[0].files['block.json'].decode())['name']:
                     fail('different_block', 400)
-                c = self.assets.validate(draft)
+                c = (self.assets._validate(draft, internal_contracts=True) if action == 'assist'
+                     else self.assets.validate(draft))
                 captures.append(c)
                 if c.parsed.problem:
                     problem = c.parsed.problem
@@ -979,7 +981,7 @@ class Service:
 
     def assist(self, body):
         if not checks.schema_support()[0]:
-            fail('checks_required', 409)
+            fail('validation_unavailable', 503)
         return self.start('assist', body)
 
     def apply(self, body):
@@ -1079,7 +1081,7 @@ class Service:
 
     def check_schema_available(self, block):
         if any(port.parsed.schema is not None for ports in block.contracts.values() for port in ports.values()) and not checks.schema_support()[0]:
-            fail('checks_required', 409)
+            fail('validation_unavailable', 503)
 
     def reviewed(self, key, source_hash):
         root = self.assets.path / key_name(key)

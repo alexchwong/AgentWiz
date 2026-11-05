@@ -2,7 +2,7 @@
 # Install the newest AgentWiz release into a virtual environment.
 #
 #   curl -fsSL https://github.com/alexchwong/AgentWiz/releases/latest/download/install.sh | bash
-#   install.sh [--version X.Y.Z] [--wheel PATH] [--sha256 HEX] [--dir PATH] [--python PATH] [--with-checks]
+#   install.sh [--version X.Y.Z] [--wheel PATH] [--sha256 HEX] [--dir PATH] [--python PATH]
 #
 # The wheel comes from a GitHub release and is checked against the sha256 that release publishes:
 # the asset digest, or the "sha256:" line in the release notes when the digest is absent. Inside an
@@ -20,7 +20,6 @@ sha256=""
 venv_dir="./.venv"
 dir_given=0
 python_bin="python3"
-with_checks=0
 
 usage() {
     cat <<'USAGE'
@@ -29,7 +28,6 @@ Install AgentWiz from a GitHub release.
   install.sh                     newest release, into ./.venv
   install.sh --version 0.1.0     that release instead of the newest
   install.sh --wheel PATH        a wheel you downloaded yourself
-  install.sh --with-checks       also install JSON Schema checks (AgentWiz[checks])
 
 Options:
   --version X.Y.Z  release to install (default: the newest)
@@ -37,7 +35,6 @@ Options:
   --sha256 HEX     expected sha256; also verifies a --wheel file
   --dir PATH       virtual environment to create or update (default: ./.venv)
   --python PATH    interpreter used to create it (default: python3)
-  --with-checks    also install the optional extra for JSON Schema checks in contracts
   -h, --help       show this message
 
 Re-running the same command upgrades to a newer release.
@@ -56,7 +53,6 @@ while [ "$#" -gt 0 ]; do
         --sha256)  [ "$#" -ge 2 ] || die "--sha256 needs a value"; sha256="$2"; shift 2 ;;
         --dir)     [ "$#" -ge 2 ] || die "--dir needs a path";     venv_dir="$2"; dir_given=1; shift 2 ;;
         --python)  [ "$#" -ge 2 ] || die "--python needs a path";  python_bin="$2"; shift 2 ;;
-        --with-checks) with_checks=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; die "unknown option: $1" ;;
     esac
@@ -170,10 +166,6 @@ if [ "$fresh" = 0 ]; then
     pip_args+=(--upgrade)
 fi
 target="$wheel_path"
-if [ "$with_checks" = 1 ]; then
-    # the release wheel with its optional extra: pip reads "<wheel>[checks]" and adds jsonschema
-    target="$(cd "$(dirname "$wheel_path")" && pwd)/$(basename "$wheel_path")[checks]"
-fi
 printf 'Installing AgentWiz and its dependencies...\n'
 "$venv_python" -m pip "${pip_args[@]}" "$target" >/dev/null 2>&1 \
     || die "pip could not install $(basename "$wheel_path"); check network access and the wheel's compatibility"

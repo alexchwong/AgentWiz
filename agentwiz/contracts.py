@@ -2,7 +2,7 @@
 
 A contract is `<workspace>/contracts/<name>.json`; its name is the file name without `.json` and follows
 the profile name rule. Each file is read whole with the exact reader and checked with
-`checks.parse_contract` (plus the schema rules when the checks extra is installed). A file that fails is
+`checks.parse_contract` (plus schema rules when the required validator is available). A file that fails is
 listed with its problem: it can be opened and deleted, but never selected for a request, and AgentWiz
 never writes over it.
 
@@ -212,11 +212,7 @@ class ContractStore:
         except checks.ContractError as exc:
             raise ContractInvalid(exc.issues, exc.total) from None
         if contract.schema is not None:
-            available, detail = checks.schema_support()
-            if not available:
-                raise ContractInvalid([{"location": "schema",
-                                        "message": "a contract with a schema needs the checks extra: "
-                                                   f"{checks.EXTRA_HINT} ({detail})"}])
+            checks.require_validation([contract])
         raw = contract.raw
         payload = ({k: (checks.FORMAT_VERSION if k == "format_version" else v) for k, v in raw.items()}
                    if "format_version" in raw else {"format_version": checks.FORMAT_VERSION, **raw})

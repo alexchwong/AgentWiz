@@ -9,7 +9,7 @@ Release operations are in `releases.md`; historical decisions are in `decisions.
 ## Checkout setup reference
 
 `scripts/dev_setup.sh [--python PATH]` is the one developer setup command. It refuses to run outside
-a checkout, creates `./.venv` if missing, runs `python -m pip install -e '.[dev,checks]'` and then
+a checkout, creates `./.venv` if missing, runs `python -m pip install -e '.[dev]'` and then
 `python -m playwright install chromium` (if the browser download fails it says so and how to retry;
 the page checks will not run without it); it also converts a `.venv` made by the user installer
 (wheel only, no pytest). The user installer
@@ -70,7 +70,7 @@ Paths in this table are relative to the repository root.
 | `scripts/dev_setup.sh` | no | Developer setup: `./.venv` with an editable install, pytest, `jsonschema`, Playwright and Chromium. |
 | `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for trying the UI without a model; logs the sampling fields and message roles each request carries. Models `json-pass`, `json-repair` and `slow-headers` serve the README tour. |
 | `scripts/stub_mcp_server.py` | no | Scripted MCP server (`--era dual|modern|legacy`, `--token`) for trying the MCP tools tab; logs every request, disconnect, notice and `DELETE`. |
-| `scripts/install.sh` | no | Installer behind the README one-liner; refuses to run in a checkout without `--dir`; `--with-checks` installs `AgentWiz[checks]`; re-attached to every release as `install.sh`. |
+| `scripts/install.sh` | no | Installer behind the README one-liner; refuses to run in a checkout without `--dir`; installs required validation dependencies; re-attached to every release as `install.sh`. |
 | `DEVEL.md`, `docs/`, `HANDOVER.md`, `NEWS.md`, `.clinerules` | no | Agent directives, technical/release/history references, task handover, changelog and agent workflow. |
 | `.github/workflows/` | no | `tests.yml` (push, PR) and `release.yml` (push to `main`). |
 
@@ -295,6 +295,45 @@ plain JSON only (no `Decimal`; a contract travels as `{"name", "revision", "text
 
 ## Contracts and checks
 
+### Contract overhaul — Phase 1A (implementation in progress)
+
+`contract_schema` is the authoritative recognizer for the new user vocabulary and owns the
+canonical exact-number digest. `contract_service.project` and `apply_edit` validate complete
+definitions and apply targeted edits to exact-parsed copies without filesystem writes. Group
+extra-property policy, required membership, ordered Choices and exact numeric bounds survive
+unrelated edits. Source is parsed in full; advanced editing does not widen this vocabulary.
+
+The session-authenticated, workspace-gated `/api/contracts/project` and `/api/contracts/edit`
+routes require strict version-2 envelopes and carry definitions/bounds as text. Version-2 sample
+checks use `definition_text` and `value_text`; schema validator unavailability returns 503 with
+`validation_unavailable`. These draft operations do not save or dispatch work. Text diagnostics
+use `text.*` rule names, literal equality and code-point lengths; nonstring Text values fail.
+
+`checks.parse_internal_contract` accepts rich server-owned assistance schemas, not legacy checks
+or a user-selectable policy. Only the complete server-generated assistance definition enters the
+private internal capture path; caller edit/duplicate options cannot modify it under that policy.
+Internal capture records retain their policy for repair. Workshop expectations call
+`checks.exact_equal` directly, distinguishing booleans from numbers and preserving Decimal values.
+Renderer version 2 renders captured descriptions, exact schemas and new Text constraints.
+
+`checks.parse_contract` and `contract_from_text` enforce the user recognizer on every public path.
+Source is one exact JSON definition, limited to 1 MiB before decoding. Legacy `checks`, `strict`,
+inline version/policy markers and rich schemas are rejected. The fixed answer parser accepts whole
+JSON or the existing single fenced block; it performs no extraction, coercion or quote repair.
+Text rules execute on decoded, unnormalized strings. JSON value diagnostics redact actual values.
+Schema-dependent block and Checked request dispatch refuses before admission when validation is
+unavailable. Unexpected validator failures never pass. Checked requests append the shared renderer's
+direct-value instructions; recorded messages and repairs retain those exact instructions and the
+captured contract revision. All new user/internal capture records explicitly record their policy.
+
+**Not yet migrated:** the saved registry, executable format, managed generation
+metadata, Checked request selection, synthesis and shared browser editor still need the overhaul.
+The legacy storage description below documents unfinished paths, not supported compatibility.
+Its v1 saved definitions no longer pass the public parser. Until Phase 1B replaces storage and
+Phase 1C/2 migrate assets/UI, the checkout is not shippable and the full offline gate is not green.
+The new project/edit endpoints must not be mistaken for completed versioned persistence. Cumulative
+progress and actual validation evidence are in `../contract_overhaul_handover.md`.
+
 - **File format.** `<workspace>/contracts/<name>.json`, `format_version` 1, written with
   `jsonio.encode_file_exact` (indented, ASCII, numbers digit for digit) through `workspace.write_atomic`.
   Unknown top-level fields are kept. Revisions come from one process-wide counter, so a deleted and
@@ -311,11 +350,9 @@ plain JSON only (no `Decimal`; a contract travels as `{"name", "revision", "text
   `decimal.DecimalException` makes only the check that needed it `not_run`; handlers are tried in the
   order: `DecimalException` (`not_run`), `ValidationError` (issues), anything else (`contract_error`).
   Never fall back to float arithmetic.
-- **The extra.** `jsonschema>=4.26,<5` is the optional extra `checks`; `checks.schema_support()`
-  reports it, and a version outside the range counts as missing. Tests that need it carry the marker
-  `needs_checks`, which skips with the reason "the checks extra is not installed" only where it is
-  absent (CI's Python 3.10 jobs); the build's gates install it, so nothing skips there. The no-extra
-  path is tested everywhere by making `schema_support()` report the extra missing.
+- **Validator installation.** `jsonschema>=4.26,<5` is required in every installation and CI job.
+  `checks.schema_support()` remains a defensive probe for damaged or unsupported installations.
+  Tests never skip schema validation because a dependency is missing.
 - **One dialect.** Every `$schema` on an actual schema, at the root or reached from it, must be
   Draft 2020-12; `$ref` and `$dynamicRef` must start with `#`; a `$schema` key inside literal data
   (`const`, `enum`, `default`, `examples`) is data. A missing local target is not refused at save; it
@@ -325,8 +362,8 @@ plain JSON only (no `Decimal`; a contract travels as `{"name", "revision", "text
 
 > **Contracts and repair.**
 > 1. A contract decides every answer, first or repaired. Nothing upstream of the checks changes what counts as a pass.
-> 2. The answer parser accepts the whole trimmed answer, or a single fenced block when not strict. A new recovery rule needs replay evidence on saved answers and the owner's approval.
-> 3. A model step sends only generated *output instructions*: each declared output's name, description, format and, for a structured output, its complete schema, rendered by `output_protocol`. Check definitions, example data and saved contract names are never sent, and the contract alone decides acceptance. (This replaces 0.1.4's "a contract is never sent to the model"; see `docs/decisions.md`.)
+> 2. The fixed JSON answer parser accepts the whole trimmed answer or a single fenced block. A new recovery rule needs replay evidence on saved answers and the owner's approval.
+> 3. Generated output instructions include captured descriptions, format, Text rules and complete schemas, rendered by `output_protocol`; blocks also name their envelope outputs. Example data and saved contract names are not attached. The contract alone decides acceptance. (This replaces older rendering decisions; see `docs/decisions.md`.)
 > 4. A truncated attempt never provides a block output.
 > 5. Repairs reuse the attempt's captured settings. Nothing raises a token cap automatically.
 
@@ -773,7 +810,7 @@ python -m pip install -e ../modelSpell
 ```
 
 Never commit that change. Releases always use the pinned wheel; reinstall with
-`python -m pip install -e '.[dev,checks]' --force-reinstall` to return to it.
+`python -m pip install -e '.[dev]' --force-reinstall` to return to it.
 
 ### Workshop headless services and Phase 2 integration
 

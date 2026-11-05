@@ -325,10 +325,11 @@ def _task_value(value: Any, where: str, issues: _Issues) -> Any:
 class _Parse:
     """The working state of one load."""
 
-    def __init__(self, folder: Path, name: str, contract_store: ContractStore):
+    def __init__(self, folder: Path, name: str, contract_store: ContractStore, *, internal_contracts=False):
         self.folder = folder
         self.name = name
         self.contract_store = contract_store
+        self.internal_contracts = internal_contracts
         self.issues = _Issues()
         self.views: list[FileView] = []
         self.files: dict[str, str] = {}
@@ -388,7 +389,8 @@ class _Parse:
         location = f"{where}.contract"
         if isinstance(contract, Mapping):
             try:
-                parsed = checks.parse_contract(dict(contract))
+                parser = checks.parse_internal_contract if self.internal_contracts else checks.parse_contract
+                parsed = parser(dict(contract))
             except checks.ContractError as exc:
                 for item in exc.issues:
                     self.issues.add(f"{location}.{item['location']}", item["message"])
@@ -689,12 +691,12 @@ def _folder_problem(folder: Path, name: str, reason: str) -> _Parsed:
     return _Parsed(issues.problem(str(folder)), None, "", None, (), (), (), (), {}, ("folder", reason))
 
 
-def parse_block(folder: Path, name: str, contract_store: ContractStore) -> _Parsed:
+def parse_block(folder: Path, name: str, contract_store: ContractStore, *, internal_contracts=False) -> _Parsed:
     """Load one block folder. Returns the block, or the problem that makes it unusable."""
     folder = Path(folder)
     result = read_file(folder, FILE, BLOCK_FILE_LIMIT)
     file_name = str(folder / FILE)
-    p = _Parse(folder, name, contract_store)
+    p = _Parse(folder, name, contract_store, internal_contracts=internal_contracts)
     p.fingerprints[FILE] = result.fingerprint
     if result.data is None:
         p.views.append(FileView(FILE, None, None, result.reason))

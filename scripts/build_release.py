@@ -9,7 +9,7 @@ archived HEAD tree and the wheel:
 
     RC1  NEWS.md has exactly one `## <version>` section, with bullets of at most 20 words
     RC2  the wheel's name and members (agentwiz/** and the five .dist-info files)
-    RC3  the wheel's METADATA: name, version, license, and the one pinned modelSpell dependency
+    RC3  the wheel's METADATA: name, version, license, pinned modelSpell and required jsonschema
 
 These are release tooling, not tests: the owner's exception to the testing directive T2 (techspec
 0.1.1, Section 11.4). Nothing else about any file's contents is asserted. A failed check prints its
@@ -128,12 +128,16 @@ def check_metadata(src: Path, wheel: Path, version: str) -> list[str]:
         if meta.get_all(field) != [wanted]:
             problems.append(f"METADATA field {field} is {meta.get_all(field)}, expected {wanted!r}")
     runtime = [r.strip() for r in meta.get_all("Requires-Dist") or [] if "extra ==" not in r]
+    validators = [r for r in runtime if re.fullmatch(r'jsonschema\s*(?:>=4\.26,<5|<5,>=4\.26)', r)]
+    if len(validators) != 1:
+        problems.append('METADATA must require exactly jsonschema>=4.26,<5')
+    runtime = [r for r in runtime if r not in validators]
     pyproject = (src / "pyproject.toml").read_text(encoding="utf-8")
     declared = DIRECT_DEP_RE.findall(pyproject)
     if len(declared) != 1:
         problems.append(f"pyproject.toml has {len(declared)} direct-URL dependencies (exactly one required)")
     if len(runtime) != 1:
-        problems.append(f"METADATA has {len(runtime)} runtime Requires-Dist lines (exactly one required): "
+        problems.append(f"METADATA has {len(runtime)} other runtime Requires-Dist lines (exactly modelSpell required): "
                         f"{runtime}")
     if problems:
         return problems
@@ -212,10 +216,18 @@ def build_wheel(src: Path, out: Path, isolation: bool) -> Path:
     return wheels[0]
 
 
-def smoke(wheel: Path, src: Path, scratch: Path, modelspell_wheel: Path | None = None) -> None:
+def smoke(wheel: Path, src: Path, scratch: Path, modelspell_wheel: Path | None = None,
+          dependency_wheels: Path | None = None) -> None:
     env_dir = scratch / "venv"
     venv.EnvBuilder(with_pip=True).create(env_dir)
     py = env_dir / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    # Resolve the required validator and its transitive dependencies separately
+    # from modelSpell's pinned direct URL. Offline runs supply a prepared wheelhouse.
+    validator = [py, '-m', 'pip', 'install', '-q']
+    if dependency_wheels is not None:
+        validator.extend(['--no-index', '--find-links', str(dependency_wheels)])
+    validator.append('jsonschema>=4.26,<5')
+    subprocess.run(validator, check=True)
     if modelspell_wheel is None:
         # --no-index forbids anything from a package index; the pinned modelSpell wheel URL is still fetched.
         subprocess.run([py, "-m", "pip", "install", "-q", "--no-index", str(wheel)], check=True)
@@ -251,6 +263,8 @@ def main() -> None:
                         help="build with the current environment's hatchling (offline builds)")
     parser.add_argument("--modelspell-wheel", type=Path, metavar="PATH",
                         help="with --smoke: install this local copy of the pinned modelSpell wheel (offline)")
+    parser.add_argument('--dependency-wheels', type=Path, metavar='DIRECTORY',
+                        help='with --smoke: offline wheelhouse for jsonschema and its dependencies')
     parser.add_argument("--changed-since", metavar="TAG",
                         help="only report whether shipped files changed since TAG (exit 1 if they did)")
     args = parser.parse_args()
@@ -262,6 +276,8 @@ def main() -> None:
 
     if args.modelspell_wheel is not None and not args.smoke:
         parser.error("--modelspell-wheel requires --smoke")
+    if args.dependency_wheels is not None and not args.smoke:
+        parser.error('--dependency-wheels requires --smoke')
     if args.no_isolation:
         probe = subprocess.run([sys.executable, "-c", "import hatchling"], capture_output=True)
         if probe.returncode != 0:
@@ -281,7 +297,8 @@ def main() -> None:
         if not release_checks(src, wheel):
             fail("release checks failed; nothing was copied to the output directory")
         if args.smoke:
-            smoke(wheel, src, scratch, local)
+            smoke(wheel, src, scratch, local,
+                  args.dependency_wheels.resolve() if args.dependency_wheels is not None else None)
         args.output_dir.mkdir(parents=True, exist_ok=True)
         target = args.output_dir / wheel.name
         shutil.copy2(wheel, target)  # copy, not replace: the temp dir may be on another filesystem

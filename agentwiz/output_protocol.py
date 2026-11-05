@@ -6,8 +6,8 @@ system section and the compact text an output placeholder inserts, so the two ca
 is pure and deterministic — no HTTP, no storage, no transport — and acceptance is not here:
 `checks.check_named_answer` decides what an answer means.
 
-Nothing beyond a name, an author description, a format and the declared schema is sent: no check
-definitions, example data or saved names (0.2.0 decision 4).
+Only captured value requirements are rendered: names, descriptions, schemas and Text rules;
+no examples, saved names, histories or hidden context.
 """
 from __future__ import annotations
 
@@ -18,10 +18,9 @@ from typing import Iterable, Mapping
 from . import checks, jsonio
 
 MODE = "named_json"
-RENDERER_VERSION = 1
+RENDERER_VERSION = 2
 BEGIN = "=== AgentWiz output protocol (generated; do not edit) ==="
 END = "=== end output protocol ==="
-NO_DESCRIPTION = "no description was given"
 _SIMPLE_TYPES = ("object", "array", "string", "integer", "number", "boolean")
 
 
@@ -50,7 +49,7 @@ class Spec:
 
     def purpose(self) -> str:
         text = (self.description or "").strip()
-        return text if text else NO_DESCRIPTION
+        return text
 
     def schema_text(self) -> str | None:
         """The complete declared schema, exactly as a reader would parse it, or None."""
@@ -73,6 +72,42 @@ def _value_rule(spec: Spec) -> str:
             "not a string containing JSON.")
 
 
+def definition_lines(contract: checks.Contract, purpose: str = '') -> list[str]:
+    """The same captured one-value requirements for blocks and Checked request."""
+    lines = []
+    if purpose:
+        lines.append('Purpose: ' + purpose)
+    if contract.description:
+        lines.append('Contract description: ' + contract.description)
+    lines.append('Value requirements:')
+    if contract.format == 'json':
+        if contract.schema is None:
+            lines.append('Any JSON — no field validation.')
+        else:
+            lines.extend(['Schema (JSON Schema 2020-12); the value must satisfy it exactly:',
+                          jsonio.encode_exact(contract.schema)])
+    else:
+        lines.append('Text; literal comparisons and lengths use the decoded string without normalization.')
+        raw = contract.raw
+        for key, phrase in (('min_length', 'Minimum code-point count'),
+                            ('max_length', 'Maximum code-point count'), ('exact', 'Exact text')):
+            if key in raw:
+                lines.append(phrase + ': ' + jsonio.encode_exact(raw[key]))
+        for key, phrase in (('contains', 'Required literal'), ('not_contains', 'Forbidden literal')):
+            for literal in raw.get(key, []):
+                lines.append(phrase + ': ' + jsonio.encode_exact(literal))
+    return lines
+
+
+def single_value_instructions(contract: checks.Contract) -> str:
+    """A direct value, never the named block transport envelope."""
+    reply = ('Return plain text directly, not a JSON string or output-name wrapper.'
+             if contract.format == 'text' else
+             'Return the JSON value directly, without Markdown fences or an output-name wrapper.')
+    return '\n'.join([BEGIN, reply,
+                      *definition_lines(contract), END])
+
+
 def instructions(specs: Iterable[Spec]) -> str:
     """The generated section appended to a block's system instructions."""
     specs = tuple(specs)
@@ -87,21 +122,17 @@ def instructions(specs: Iterable[Spec]) -> str:
                   "Place each output's complete value directly under its own key. A value may be empty "
                   "only where its schema allows that."])
     for spec in specs:
-        lines.extend(["", f"Output {jsonio.encode_exact(spec.name)} ({spec.label()})",
-                      f"Purpose: {spec.purpose()}", _value_rule(spec)])
-        schema = spec.schema_text()
-        if schema is not None:
-            lines.extend(["Schema (JSON Schema 2020-12); the value must satisfy it exactly:", schema])
+        lines.extend(["", f"Output {jsonio.encode_exact(spec.name)} ({spec.label()})", _value_rule(spec),
+                      *definition_lines(spec.contract, spec.description)])
     lines.extend(["", END])
     return "\n".join(lines)
 
 
 def describe(spec: Spec) -> str:
     """What `{{output.<name>}}` inserts: the same declaration, in one line."""
-    text = (f"`{spec.name}` ({spec.label()}, purpose: {spec.purpose()}) — returned under the envelope "
+    text = (f"`{spec.name}` ({spec.label()}) — returned under the envelope "
             f"key {jsonio.encode_exact(spec.name)}")
-    schema = spec.schema_text()
-    return f"{text}, matching: {schema}" if schema is not None else text
+    return text + '\n' + '\n'.join(definition_lines(spec.contract, spec.description))
 
 
 def identity(specs: Iterable[Spec]) -> dict:

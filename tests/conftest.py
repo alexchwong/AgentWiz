@@ -27,19 +27,6 @@ from agentwiz.ui.server import UIServer
 from agentwiz.workspace import open_workspace
 from agentwiz.server_config import ServerSettings
 
-def pytest_collection_modifyitems(config, items):
-    """Tests marked needs_checks skip, with a reason, only where the checks extra is really absent: CI's
-    Python 3.10 jobs (techspec 0.1.3, 18.1). Everywhere else they run; the no-extra path is tested by
-    making checks.schema_support() report the extra as missing."""
-    from agentwiz import checks
-    if checks.schema_support()[0]:
-        return
-    skip = pytest.mark.skip(reason="the checks extra is not installed")
-    for item in items:
-        if "needs_checks" in item.keywords:
-            item.add_marker(skip)
-
-
 PROXY_VARS = [v for n in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY") for v in (n, n.lower())]
 KEY = "sk-SENTINEL-1234567890"
 

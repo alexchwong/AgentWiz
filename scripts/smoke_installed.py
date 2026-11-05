@@ -164,7 +164,24 @@ try:
     check(received and received[-1].get("temperature") == 0.5 and received[-1].get("max_tokens") == 64,
           f"task settings did not arrive under Chat Completions' names: {received[-1:]}")
 
-    # S11 (0.1.3): save a text contract, then a Checked request against it passes. Needs no extra.
+    # Draft contract v2 operations must be present in the installed wheel, including
+    # its required validator and exact-number path; they must not require a model.
+    draft = '{"format":"json","schema":{"type":"number","minimum":9007199254740993}}'
+    projected = json.loads(api('/api/contracts/project', {
+        'format_version': 2, 'definition_text': draft}).read())
+    check(projected['format_version'] == 2 and projected['digest'].startswith('sha256:'),
+          f'contract projection: {projected}')
+    for sample, outcome in [('9007199254740993', 'pass'), ('9007199254740992', 'fail')]:
+        checked = json.loads(api('/api/contracts/check', {
+            'format_version': 2, 'definition_text': draft, 'value_text': sample}).read())
+        check(checked['check']['overall'] == outcome, f'exact contract check: {checked}')
+    edited = json.loads(api('/api/contracts/edit', {
+        'format_version': 2, 'definition_text': draft,
+        'edit': {'op': 'set_description', 'path': None, 'description': 'Smoke value'}}).read())
+    check(edited['description'] == 'Smoke value' and edited['digest'] != projected['digest'],
+          f'contract edit: {edited}')
+
+    # S11 (0.1.3): save a text contract, then a Checked request against it passes.
     saved_contract = json.loads(api("/api/contracts/save", {
         "name": "smoke", "revision": None,
         "text": '{"format": "text", "checks": [{"type": "contains", "value": "pong"}]}'}).read())

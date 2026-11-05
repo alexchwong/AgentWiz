@@ -8,7 +8,7 @@ with its location, in words a user and a model can both act on.
 Pure functions. This module knows nothing of HTTP or files (P5); 0.1.4's step executor reuses it for
 inputs and outputs. Numbers are exact: integers are `int`, numbers with a fraction or an exponent are
 `decimal.Decimal`, and no float is ever used for a checked value. Standard library only, except that the
-schema path imports `jsonschema` lazily, and only when the optional extra `AgentWiz[checks]` is installed.
+schema path imports the required `jsonschema` dependency lazily.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, NamedTuple
 
-from . import jsonio
+from . import contract_schema, jsonio
 from .jsonio import INT_DIGITS_LIMIT, ExactLimit, JSONSyntax, encode_exact
 
 ISSUES_SHOWN = 20
@@ -32,12 +32,10 @@ FORMAT_VERSION = 1
 SCHEMA_RANGE = ">=4.26,<5"
 CLIP = 200                      # a value written into a message is cut at this many characters
 CONTRACT_ISSUES_LIMIT = 100     # a ContractError lists at most this many issues
-EXTRA_HINT = "pip install 'AgentWiz[checks]'"
+EXTRA_HINT = "repair the AgentWiz installation (jsonschema>=4.26,<5 is required)"
 
 FORMATS = ("text", "json")
-CHECK_KEYS = {"exact": ("value",), "contains": ("value",), "not_contains": ("value",),
-              "regex": ("pattern",), "length": ("min", "max"), "json_equals": ("value",)}
-_TOP_LEVEL = ("format_version", "format", "strict", "description", "schema", "checks")
+_TOP_LEVEL = ('format', 'description', 'schema', *contract_schema.TEXT_RULES)
 
 
 class ContractError(ValueError):
@@ -52,17 +50,28 @@ class ContractError(ValueError):
         super().__init__(f"{first['location']}: {first['message']}{more}")
 
 
+class ValidationUnavailable(Exception):
+    """Schema work cannot be dispatched with a damaged validator installation."""
+
+
+def require_validation(contracts) -> None:
+    """Refuse schema-dependent work before reserving a run or dispatching a step."""
+    if any(contract.schema is not None for contract in contracts) and not schema_support()[0]:
+        raise ValidationUnavailable(EXTRA_HINT)
+
+
 @dataclass(frozen=True)
 class Contract:
     format: str                  # "text" | "json"
-    strict: bool
+    strict: bool                 # retained capture layout; user/internal policies always use False
     description: str
     schema: object               # exact-parsed JSON value (object or boolean), or None
-    checks: tuple                # validated check objects (exact-parsed)
-    raw: Mapping                 # the whole object, so a rewrite keeps unknown fields
+    checks: tuple                # retained capture layout; obsolete definition checks are never executed
+    raw: Mapping                 # recognised exact definition
+    policy: str = 'user'          # server-owned capture policy, never parsed from user definitions
 
 
-# --- the optional extra ------------------------------------------------------------------------
+# --- required validator availability -----------------------------------------------------------
 def _jsonschema_version() -> str | None:
     try:
         return importlib.metadata.version("jsonschema")
@@ -82,7 +91,7 @@ def schema_support() -> tuple[bool, str]:
     try:
         importlib.import_module("jsonschema")
         importlib.import_module("referencing")
-    except ImportError:
+    except Exception:  # a broken dependency must not enable schema dispatch
         return False, "jsonschema cannot be imported"
     return True, f"jsonschema {version}"
 
@@ -173,22 +182,6 @@ def _validation_copy(value: Any) -> Any:
     return root
 
 
-def _oversized_numbers(value: Any) -> list[tuple]:
-    """Paths of whole-number decimals whose integer form would exceed 4,300 digits."""
-    found: list[tuple] = []
-    stack = [(value, ())]
-    while stack:
-        item, path = stack.pop()
-        if isinstance(item, Decimal):
-            if _is_whole(item) and _integer_digits(item) > INT_DIGITS_LIMIT:
-                found.append(path)
-        elif isinstance(item, dict):
-            stack.extend((v, path + (k,)) for k, v in reversed(list(item.items())))
-        elif isinstance(item, list):
-            stack.extend((v, path + (i,)) for i, v in reversed(list(enumerate(item))))
-    return found
-
-
 # --- locations and messages ----------------------------------------------------------------------
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 _LINE_LOCATION = re.compile(r"line (\d+), column (\d+)\Z")
@@ -246,122 +239,25 @@ def _line_issue(check: str, line: int, column: int, message: str) -> _Issue:
     return _Issue((1, line, column), f"line {line}, column {column}", message, check)
 
 
-# --- parsing and validating a contract (7.1) -------------------------------------------------------
-def _is_int(value: object) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool)
-
-
-def _check_issues(index: int, check: object, is_json: bool, issues: list[dict]) -> None:
-    where = f"checks[{index}]"
-    if not isinstance(check, dict):
-        issues.append({"location": where, "message": "must be an object"})
-        return
-    kind = check.get("type")
-    if not isinstance(kind, str) or kind not in CHECK_KEYS:
-        issues.append({"location": f"{where}.type",
-                       "message": "must be one of " + ", ".join(CHECK_KEYS)})
-        return
-    for key in check:
-        if key != "type" and key not in CHECK_KEYS[kind]:
-            issues.append({"location": f"{where}.{key}", "message": f"is not a key of a {kind} check"})
-    if kind == "json_equals" and not is_json:
-        issues.append({"location": where, "message": "json_equals needs a contract of format json"})
-    if kind in ("exact", "contains", "not_contains"):
-        value = check.get("value")
-        if not isinstance(value, str):
-            issues.append({"location": f"{where}.value", "message": "must be a string"})
-        elif kind != "exact" and value == "":
-            issues.append({"location": f"{where}.value", "message": "must not be empty"})
-    elif kind == "regex":
-        pattern = check.get("pattern")
-        if not isinstance(pattern, str):
-            issues.append({"location": f"{where}.pattern", "message": "must be a string"})
-        else:
-            try:
-                re.compile(pattern)
-            except re.error as exc:
-                issues.append({"location": f"{where}.pattern",
-                               "message": "is not a valid Python regular expression"
-                                          + (f" (at position {exc.pos})" if exc.pos is not None else "")})
-            except (OverflowError, RecursionError, ValueError):
-                issues.append({"location": f"{where}.pattern",
-                               "message": "is not a valid Python regular expression"})
-    elif kind == "length":
-        bounds = {}
-        for name in ("min", "max"):
-            bound = check.get(name)
-            if bound is not None and (not _is_int(bound) or bound < 0):
-                issues.append({"location": f"{where}.{name}", "message": "must be null or a non-negative integer"})
-            else:
-                bounds[name] = bound
-        if len(bounds) == 2:
-            if bounds["min"] is None and bounds["max"] is None:
-                issues.append({"location": where, "message": "needs min or max"})
-            elif bounds["min"] is not None and bounds["max"] is not None and bounds["min"] > bounds["max"]:
-                issues.append({"location": where, "message": "min must not be greater than max"})
-    elif kind == "json_equals" and "value" not in check:
-        issues.append({"location": f"{where}.value", "message": "is required"})
-
-
 def parse_contract(obj: object) -> Contract:
-    """A Contract from an exact-parsed object. Raises ContractError listing every issue found.
-
-    Applies every rule of 7.1 and 7.3, and, when the checks extra is installed, the schema rules of 7.4.
-    A contract with a schema is still accepted when the extra is missing (its schema check is then
-    `not_run`); refusing to *save* one is the store's rule (contracts.py)."""
-    if not isinstance(obj, dict):
-        raise ContractError([{"location": "contract", "message": "must be a JSON object"}])
-    issues: list[dict] = []
-    if "format_version" in obj:
-        version = obj["format_version"]
-        if not _is_int(version) or version < 1:
-            issues.append({"location": "format_version", "message": "must be an integer of at least 1"})
-        elif version > FORMAT_VERSION:
-            issues.append({"location": "format_version",
-                           "message": f"is greater than {FORMAT_VERSION}: written by a newer AgentWiz"})
-    fmt = obj.get("format")
-    if "format" not in obj:
-        issues.append({"location": "format", "message": 'is required: "text" or "json"'})
-    elif fmt not in FORMATS:
-        issues.append({"location": "format", "message": 'must be "text" or "json"'})
-    is_json = fmt == "json"
-    strict = False
-    if "strict" in obj:
-        if not is_json:
-            issues.append({"location": "strict", "message": 'is allowed only when format is "json"'})
-        elif not isinstance(obj["strict"], bool):
-            issues.append({"location": "strict", "message": "must be true or false"})
-        else:
-            strict = obj["strict"]
-    if "description" in obj and not isinstance(obj["description"], str):
-        issues.append({"location": "description", "message": "must be a string"})
-    schema = None
-    if "schema" in obj:
-        if not is_json:
-            issues.append({"location": "schema", "message": 'is allowed only when format is "json"'})
-        elif obj["schema"] is not None and not isinstance(obj["schema"], (dict, bool)):
-            issues.append({"location": "schema", "message": "must be null, an object or a boolean"})
-        else:
-            schema = obj["schema"]
-    checks = obj.get("checks", [])
-    if not isinstance(checks, list):
-        issues.append({"location": "checks", "message": "must be a list"})
-        checks = []
-    for index, check in enumerate(checks):
-        _check_issues(index, check, is_json, issues)
-    for path in _oversized_numbers(obj):
-        issues.append({"location": _format_path("", path).lstrip("."),
-                       "message": f"a whole number has more than {INT_DIGITS_LIMIT:,} digits"})
-    if schema is not None and not isinstance(schema, bool) and not issues and schema_support()[0]:
-        issues.extend(schema_issues(schema))
-    if issues:
-        raise ContractError(issues)
-    return Contract(format=fmt, strict=strict, description=obj.get("description", ""), schema=schema,
-                    checks=tuple(checks), raw=obj)
+    """Recognise a user definition before it can reach the value validator."""
+    try:
+        contract_schema.validate_user_definition(obj)
+    except contract_schema.DefinitionError as exc:
+        raise ContractError(exc.issues, exc.total) from None
+    return Contract(obj['format'], False, obj.get('description', ''), obj.get('schema'), (), obj)
 
 
 def contract_from_text(text: str) -> Contract:
     """decode_exact, then parse_contract. Reader failures become located contract errors."""
+    if not isinstance(text, str):
+        raise ContractError([{'location': 'contract', 'message': 'source must be text'}])
+    try:
+        size = len(text.encode('utf-8'))
+    except UnicodeEncodeError:
+        raise ContractError([{'location': 'contract', 'message': 'source must be valid Unicode'}]) from None
+    if size > contract_schema.DEFINITION_BYTES:
+        raise ContractError([{'location': 'contract', 'message': 'source exceeds 1 MiB', 'code': 'too_large'}])
     try:
         obj = jsonio.decode_exact(text)
     except JSONSyntax as exc:
@@ -373,6 +269,34 @@ def contract_from_text(text: str) -> Contract:
     except ValueError as exc:
         raise ContractError([{"location": "contract", "message": str(exc)}]) from None
     return parse_contract(obj)
+
+
+def parse_internal_contract(obj: object) -> Contract:
+    """Construct a server-owned rich-schema capture, never a user policy bypass.
+
+    Callers must generate this definition themselves. No policy selector belongs
+    in a contract document, request body or block declaration.
+    """
+    if not isinstance(obj, dict):
+        raise ContractError([{'location': 'contract', 'message': 'must be an object'}])
+    issues = [{'location': key, 'message': 'is not an internal contract member'}
+              for key in obj if key not in ('format', 'description', 'schema')]
+    fmt = obj.get('format')
+    if fmt not in FORMATS:
+        issues.append({'location': 'format', 'message': 'must be text or json'})
+    if 'description' in obj and not isinstance(obj['description'], str):
+        issues.append({'location': 'description', 'message': 'must be a string'})
+    schema = obj.get('schema')
+    if 'schema' in obj:
+        if fmt != 'json' or not isinstance(schema, (dict, bool)):
+            issues.append({'location': 'schema', 'message': 'must be an internal JSON schema'})
+        elif not schema_support()[0]:
+            issues.append({'location': 'schema', 'message': 'validation_unavailable: repair the installation'})
+        elif isinstance(schema, dict):
+            issues.extend(schema_issues(schema))
+    if issues:
+        raise ContractError(issues)
+    return Contract(fmt, False, obj.get('description', ''), schema, (), obj, policy='internal')
 
 
 # --- the schema rules of 7.4: dialect, local references, validity -------------------------------------
@@ -477,7 +401,7 @@ def _walk_schema(root: Any) -> list[dict]:
 
 
 def schema_issues(schema: Any) -> list[dict]:
-    """The schema rules of 7.4, for a schema that is not a plain boolean. Requires the extra; the caller
+    """The internal schema rules, for a schema that is not a plain boolean. The caller
     checks schema_support() first. Messages name locations and rules, never values."""
     jsonschema, _referencing = _libs()
     try:
@@ -561,9 +485,6 @@ def _parse_text(text: str, line_offset: int, entry_check: str) -> tuple[str, Any
 def _parse_answer(contract: Contract, answer: str) -> tuple[str, Any, list[_Issue], list[str]]:
     """The `parse` check: (result, value, issues, notes)."""
     notes: list[str] = []
-    if contract.strict:
-        result, value, issues = _parse_text(answer, 0, "parse")
-        return result, value, issues, notes
     blocks = fenced_blocks(answer)
     if len(blocks) > 1:
         return "fail", _UNPARSED, [_line_issue("parse", blocks[1]["open_line"], 1, "multiple code blocks")], notes
@@ -576,33 +497,6 @@ def _parse_answer(contract: Contract, answer: str) -> tuple[str, Any, list[_Issu
 
 
 # --- the checks (7.5) --------------------------------------------------------------------------------
-def _normalise(text: str) -> str:
-    return re.sub(r"\r\n|\r", "\n", text).strip()
-
-
-def _text_check(check: dict, text: str, name: str) -> list[_Issue]:
-    kind = check["type"]
-    if kind == "exact":
-        if _normalise(text) != _normalise(check["value"]):
-            return [_answer_issue(name, f"exact: the answer does not equal {_show(check['value'])}")]
-    elif kind == "contains":
-        if check["value"] not in text:
-            return [_answer_issue(name, f"contains: the answer does not contain {_show(check['value'])}")]
-    elif kind == "not_contains":
-        if check["value"] in text:
-            return [_answer_issue(name, f"not_contains: the answer contains {_show(check['value'])}")]
-    elif kind == "regex":
-        if re.search(check["pattern"], text) is None:
-            return [_answer_issue(name, f"regex: the answer does not match the pattern {_show(check['pattern'])}")]
-    elif kind == "length":
-        count, low, high = len(text.strip()), check.get("min"), check.get("max")
-        if low is not None and count < low:
-            return [_answer_issue(name, f"length: the trimmed answer has {count} characters; it must have at least {low}")]
-        if high is not None and count > high:
-            return [_answer_issue(name, f"length: the trimmed answer has {count} characters; it must have at most {high}")]
-    return []
-
-
 def _json_kind(value: Any) -> str:
     if value is None:
         return "null"
@@ -617,39 +511,32 @@ def _json_kind(value: Any) -> str:
     return "object"
 
 
-def _differences(expected: Any, found: Any, name: str) -> list[_Issue]:
-    """Deep equality by JSON type (7.5): key order is ignored, arrays compare in order, numbers compare
-    exactly by value (1 equals 1.0), booleans never equal numbers, null equals only null. Each
-    difference is an issue at its own `$` path."""
-    out: list[_Issue] = []
-    stack: list[tuple] = [(expected, found, ())]
-    while stack:
-        want, have, path = stack.pop()
-        kind = _json_kind(want)
-        if kind != _json_kind(have):
-            out.append(_path_issue(name, path, f"json_equals: expected {_show(want)}; found {_show(have)}"))
-        elif kind == "object":
-            for key in want:
-                if key not in have:
-                    out.append(_path_issue(name, path + (key,), f"json_equals: the key is missing; expected {_show(want[key])}"))
-                else:
-                    stack.append((want[key], have[key], path + (key,)))
-            for key in have:
-                if key not in want:
-                    out.append(_path_issue(name, path + (key,), f"json_equals: the key is not expected; found {_show(have[key])}"))
-        elif kind == "array":
-            if len(want) != len(have):
-                out.append(_path_issue(name, path, f"json_equals: the array has {len(have)} items; expected {len(want)}"))
-            stack.extend((w, h, path + (i,)) for i, (w, h) in enumerate(zip(want, have)))
-        elif kind == "number":
-            if want != have:
-                out.append(_path_issue(name, path, f"json_equals: expected {_show(want)}; found {_show(have)}"))
-        elif want != have:
-            out.append(_path_issue(name, path, f"json_equals: expected {_show(want)}; found {_show(have)}"))
-    return out
-
-
 # --- applying the schema ------------------------------------------------------------------------------
+def exact_equal(a: Any, b: Any) -> bool:
+    """Compare JSON values without conflating booleans and exact numbers.
+
+    Objects ignore key order; arrays do not. No serialization, normalization or
+    float conversion is involved in Workshop example expectations.
+    """
+    pending = [(a, b)]
+    while pending:
+        left, right = pending.pop()
+        kind = _json_kind(left)
+        if kind != _json_kind(right):
+            return False
+        if kind == 'object':
+            if left.keys() != right.keys():
+                return False
+            pending.extend((value, right[key]) for key, value in left.items())
+        elif kind == 'array':
+            if len(left) != len(right):
+                return False
+            pending.extend(zip(left, right))
+        elif left != right:
+            return False
+    return True
+
+
 def _navigate(root: Any, parts) -> Any:
     node = root
     for part in parts:
@@ -709,14 +596,16 @@ def _schema_errors(contract: Contract, value: Any) -> tuple[str, list[_Issue]]:
     it makes `schema` not_run; any other exception is the contract's, so the result is contract_error."""
     available, detail = schema_support()
     if not available:
-        return "not_run", [_answer_issue("schema", f"the schema check needs the checks extra: {EXTRA_HINT} ({detail})")]
-    jsonschema, referencing = _libs()
+        return "not_run", [_answer_issue("schema", f"validation_unavailable: {EXTRA_HINT} ({detail})")]
     try:
+        jsonschema, referencing = _libs()
         schema_copy = _validation_copy(contract.schema)
         value_copy = _validation_copy(value)
     except _TooBig as exc:
         return "not_run", [_answer_issue("schema", "a whole number has more than "
                                                    f"{INT_DIGITS_LIMIT:,} digits, so the schema cannot be applied exactly")]
+    except Exception:
+        return 'contract_error', [_answer_issue('schema', 'the schema validator failed internally')]
     issues: list[_Issue] = []
     with decimal.localcontext(exact_context()):
         try:
@@ -762,6 +651,11 @@ def _schema_errors(contract: Contract, value: Any) -> tuple[str, list[_Issue]]:
             return "not_run", [_path_issue("schema", (), "the schema cannot be applied exactly to this value")]
         except RecursionError:
             return "not_run", [_path_issue("schema", (), "the value is nested too deeply for the schema check")]
+        except Exception:
+            return 'contract_error', [_answer_issue('schema', 'the schema validator failed internally')]
+    if contract.policy == 'user':
+        issues = [issue._replace(message='value violates schema.' + issue.message.split(':', 1)[0])
+                  for issue in issues]
     return ("fail" if issues else "pass"), issues
 
 
@@ -810,28 +704,20 @@ def _run(contract: Contract, text: str, parsed: Any, parse_result: str | None,
                 contract_error = contract_error or result == "contract_error"
                 issues.extend(found)
                 entries.append(_entry("schema", "not_run" if result == "contract_error" else result, len(found)))
-    for index, check in enumerate(contract.checks):
-        name, kind = f"checks[{index}]", check["type"]
-        try:
-            if kind == "json_equals":
-                if not have_value:
-                    entries.append(_entry(name, "not_run", 0, kind))
-                    continue
-                with decimal.localcontext(exact_context()):
-                    found = _differences(check["value"], parsed, name)
-            else:
-                found = _text_check(check, text, name)
-        except RecursionError:
-            issues.append(_answer_issue(name, f"{kind}: the value is nested too deeply to compare"))
-            entries.append(_entry(name, "not_run", 1, kind))
-            continue
-        except (re.error, OverflowError):
-            issues.append(_answer_issue(name, f"{kind}: the check could not be applied"))
-            contract_error = True
-            entries.append(_entry(name, "not_run", 1, kind))
-            continue
-        issues.extend(found)
-        entries.append(_entry(name, "fail" if found else "pass", len(found), kind))
+    if contract.format == 'text':
+        rules = []
+        for key in ('min_length', 'max_length', 'exact'):
+            if key in contract.raw:
+                passes = (len(text) >= contract.raw[key] if key == 'min_length' else
+                          len(text) <= contract.raw[key] if key == 'max_length' else text == contract.raw[key])
+                rules.append(('text.' + key, passes))
+        for key in ('contains', 'not_contains'):
+            for index, literal in enumerate(contract.raw.get(key, [])):
+                rules.append((f'text.{key}[{index}]', (literal in text) == (key == 'contains')))
+        for name, passes in rules:
+            found = [] if passes else [_answer_issue(name, 'value violates ' + name)]
+            issues.extend(found)
+            entries.append(_entry(name, 'pass' if passes else 'fail', len(found)))
     return _assemble(entries, issues, notes, contract_error)
 
 
@@ -871,11 +757,11 @@ def check_answer(contract: Contract, answer: str) -> dict:
 
 def check_value(contract: Contract, value: Any) -> dict:
     """Check any value: text (for a text contract), or an already-parsed JSON value (for a JSON
-    contract), such as 0.1.4's tool outputs. The text checks of a JSON contract run on
-    encode_exact(value); its `parse` check passes with a note."""
+    contract), such as tool outputs. JSON's `parse` check passes with a note."""
     if contract.format == "text":
         if not isinstance(value, str):
-            raise TypeError("a text contract checks text")
+            issue = _answer_issue('text.type', 'value must be a string')
+            return _assemble([_entry('text.type', 'fail', 1)], [issue], [], False)
         return _run(contract, value, _UNPARSED, None, [], [])
     return _run(contract, encode_exact(value), value, "pass", [], ["value given already parsed"])
 
@@ -892,7 +778,7 @@ def envelope_contract() -> Contract:
     each output is checked against its own contract."""
     global _ENVELOPE
     if _ENVELOPE is None:
-        _ENVELOPE = parse_contract({"format": "json", "checks": []})
+        _ENVELOPE = parse_contract({"format": "json"})
     return _ENVELOPE
 
 
@@ -994,8 +880,6 @@ def repair_message(contract: Contract | None, result: dict, *, truncated: bool =
         pass
     elif contract.format == "text":
         instruction = "as plain text"
-    elif contract.strict:
-        instruction = "as JSON only, with no other text"
     else:
         instruction = "as JSON, either alone or in a single fenced code block"
     if truncated:

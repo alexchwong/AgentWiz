@@ -934,7 +934,6 @@ def test_workshop_extractor_revision_journey(ui, server, open_page):
     assert len(server.requests)==3
 
 
-@pytest.mark.needs_checks
 def test_workshop_structured_inputs_keep_exact_literals_across_views_and_reload(ui, open_page):
     """The shared field form must not coerce long numbers or merge absence/null/empty values."""
     from test_workshop import send, plan_save
@@ -1022,7 +1021,6 @@ def test_workshop_numbered_revision_selection_keeps_dirty_edits_and_names(ui, op
     assert jsonio.decode_exact(saved['definition_text'])['steps'][0]['prompt']['text'] == 'Saved before switch {{inputs.text}}'
 
 
-@pytest.mark.needs_checks
 def test_workshop_variable_format_exposes_editor_and_confirms_data_loss(ui, open_page):
     """A fresh structured variable is editable immediately; cancelling format loss keeps its schema."""
     page = open_page(ui)
@@ -1157,7 +1155,6 @@ def save_new_revision(page, ui, key):
     return saved_definition(ui, key)
 
 
-@pytest.mark.needs_checks
 def test_workshop_model_role_defaults_and_missing_binding_preserve_intent(ui, server, open_page):
     """Role changes update inherited settings without substituting missing bindings or losing explicit edits."""
     setup_model(ui, server)
@@ -1218,7 +1215,6 @@ def test_workshop_model_role_defaults_and_missing_binding_preserve_intent(ui, se
     expect(temperature).to_have_attribute('placeholder', '0.7')
 
 
-@pytest.mark.needs_checks
 def test_workshop_design_controls_overrides_request_preview_cards_and_assistance(ui, server, open_page):
     """Design's compact controls preserve inheritance, overrides, resets and repairs, preview requests with Copy,
     edit structured outputs inside their own

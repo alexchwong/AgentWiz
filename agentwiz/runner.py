@@ -522,6 +522,7 @@ def run_block(state: Any, loaded: Any, input_texts: Mapping[str, str], observer:
     """Run a loaded, usable block with the submitted input texts (one per declared input; the caller has checked
     the shape). Raises `Busy` or `ShuttingDown` before any run exists; otherwise returns the ended run."""
     block = loaded.block
+    checks.require_validation(copy.parsed for ports in block.contracts.values() for copy in ports.values())
     safe = _Safe(observer)
     checked = check_inputs(block, input_texts)                       # no slot, no lock (BD-03)
     writer = state.register_writer(f"block run {block.name}")        # refused once shutdown has begun

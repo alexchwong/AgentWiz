@@ -30,12 +30,15 @@ to run the smoke. Prepare hatchling and the hash-checked pinned modelSpell wheel
 offline smoke; do not rely on a warm pip cache as proof of preparation.
 
 ```bash
-python scripts/build_release.py --smoke --no-isolation --modelspell-wheel ../agentwiz-prep/wheels/modelspell-0.3.0-py3-none-any.whl
+python scripts/build_release.py --smoke --no-isolation --modelspell-wheel ../agentwiz-prep/wheels/modelspell-0.3.0-py3-none-any.whl --dependency-wheels ../agentwiz-prep/wheels
 ```
 
 `--modelspell-wheel` refuses a file whose name is not the pinned URL's file name or whose sha256 is
 not the pin; the smoke then installs both wheels with `pip install --no-index --no-deps` and runs
-`pip check`. Without it pip fetches the pinned URL. A warm pip cache
+`pip check`. Prepare `jsonschema>=4.26,<5` and its transitive wheels in the directory supplied
+with `--dependency-wheels`; they are installed with `--no-index --find-links`. Without that
+option the validator dependencies are installed from the package index. Without a local modelSpell
+wheel pip fetches the pinned URL. A warm pip cache
 can hide a missing prerequisite, so it is not preparation.
 
 ## Branches and releases
@@ -72,7 +75,7 @@ They are release tooling under the owner's exception to T2, not tests:
 | --- | --- |
 | RC1 | `NEWS.md` has exactly one line `## <version>`; its section has at least one `- ` bullet, each of at most 20 words. |
 | RC2 | The wheel is `agentwiz-<version>-py3-none-any.whl`; every member is under `agentwiz/` or `agentwiz-<version>.dist-info/`; `agentwiz/ui/index.html` is present; the `.dist-info` members are exactly `METADATA`, `WHEEL`, `RECORD`, `entry_points.txt`, `licenses/LICENSE`. |
-| RC3 | `METADATA` has `Name: AgentWiz`, `Version: <version>`, `License-Expression: MIT`, and exactly one runtime `Requires-Dist`, `<name> @ <url>`, agreeing with the single direct-URL dependency in `pyproject.toml`: both names normalise to `modelspell` (Hatchling lowercases it), and the URLs are identical and pin a modelSpell release wheel with its sha256. |
+| RC3 | `METADATA` has `Name: AgentWiz`, `Version: <version>`, `License-Expression: MIT`, the required `jsonschema>=4.26,<5`, and exactly one other runtime dependency: modelSpell's direct URL, identical to the pinned release-wheel URL and sha256 in `pyproject.toml`. |
 
 Each prints `RCn ok` or `RCn FAILED: <reason>`; all three run; on any failure nothing is copied to
 `--output-dir` and the script exits non-zero. Whether NEWS bullets are user-visible stays a human
@@ -95,9 +98,9 @@ Release 0.2.0 also runs S15 in the installed smoke. It creates a captured
 Workshop script starter, publishes it through a bound plan, runs it through the
 normal coordinator, checks the returned count and verifies duplicate Start identity.
 This exercises packaged starter runtime/license resources without requiring the
-optional schema extra. Validate the final installed UI using `tests/test_page.py` and `tests/test_tutorial.py`
+model backend. Validate the final installed UI using `tests/test_page.py` and `tests/test_tutorial.py`
 against an environment where the built wheel replaces the editable package and the
-existing dev/checks dependencies are installed. Use `python -I -m pytest` from outside
+existing dev dependencies are installed. Use `python -I -m pytest` from outside
 the checkout and verify AgentWiz imports from that environment's site-packages. This
 runs the completion journey, narrow/desktop authoring, retained utilities and all
 fourteen tutorial paths against the installed package. These are objective automated

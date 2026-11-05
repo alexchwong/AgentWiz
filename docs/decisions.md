@@ -7,6 +7,16 @@ Historical choices may have been superseded; do not restore retired behavior fro
 
 ## Specification lineage
 
+The owner-authorised *AgentWiz contract overhaul — implementation plan and technical specification*,
+version 1.0 (5 November 2026), supersedes contradictory contract recommendations in discussion v2
+and contract-related plan-v14 directions. It keeps the existing 0.2.0 development version and
+authorises moving `jsonschema>=4.26,<5` into required dependencies, not changing modelSpell or
+adding other runtime dependencies. Its Phase 1 and Phase 2 gates both remain required;
+foundation checks are not evidence of full implementation. On 5 November 2026 the owner requested
+Phase 1A completion and moved cumulative overhaul progress to `../contract_overhaul_handover.md`;
+the release handover retains a pointer rather than a duplicate progress log. This overrides the
+specification's original progress-file destination, not its behaviour or completion requirements.
+
 Usage is documented in `../README.md`; the build reference
 for 0.1.4 is *AgentWiz 0.1.4 — Technical Specification* (version 5), which takes precedence over
 release plan version 13; its Section 24 lists every departure, and `../HANDOVER.md` lists the ones found

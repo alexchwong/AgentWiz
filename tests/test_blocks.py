@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import pytest
 
-from agentwiz import blocks, contracts
+from agentwiz import blocks, checks, contracts, runner
 from conftest import write_block
 
 SENTINEL = "SENTINEL-VALUE-7731"
@@ -71,6 +71,38 @@ def issues_of(problem):
 
 
 # --- #90 -----------------------------------------------------------------------------------------------
+@pytest.mark.parametrize('definition', [
+    {'format': 'json', 'schema': {'type': 'string', 'pattern': 'x'}},
+    {'format': 'json', 'schema': {'oneOf': [{'type': 'string'}]}},
+    {'format': 'text', 'checks': []},
+    {'format': 'json', 'strict': False},
+    {'format': 'json', 'policy': 'internal'},
+])
+def test_public_inline_contracts_cannot_select_rich_or_legacy_policy(ws, store, definition):
+    obj = model_block()
+    obj['outputs']['out']['contract'] = definition
+    write_block(ws, 'b', obj, MODEL_FILES)
+    problem = problem_of(store)
+    assert any(i['location'].startswith('outputs.out.contract') for i in problem.issues)
+
+
+@pytest.mark.parametrize('kind', ['model', 'tool', 'script'])
+def test_schema_output_requires_validator_before_any_block_dispatch(ws, store, monkeypatch, kind):
+    from types import SimpleNamespace
+    obj = model_block() if kind == 'model' else tool_block('b') if kind == 'tool' else script_block('b')
+    output = next(iter(obj['outputs']))
+    obj['outputs'][output]['contract'] = {'format': 'json', 'schema': {'type': 'integer'}}
+    files = MODEL_FILES if kind == 'model' else {'scripts/go.py': "print('hi')\n"} if kind == 'script' else {}
+    write_block(ws, 'b', obj, files)
+    loaded = store.get('b')
+    assert loaded.problem is None
+    monkeypatch.setattr(checks, 'schema_support', lambda: (False, 'damaged'))
+    def no_admission(*args):
+        pytest.fail('admitted work without validator')
+    with pytest.raises(checks.ValidationUnavailable):
+        runner.run_block(SimpleNamespace(register_writer=no_admission), loaded, {})
+
+
 def test_valid_model_tool_and_script_blocks_load_with_exact_hashes(ws, store):
     write_block(ws, "b", model_block(), MODEL_FILES)
     write_block(ws, "t", tool_block())
@@ -274,16 +306,18 @@ def test_every_issue_is_listed_up_to_the_cap_with_the_total(ws, store, monkeypat
     assert len(capped.issues) == 3 and capped.total == 8
 
 
-def test_an_exact_number_in_an_inline_contract_survives_and_unknown_fields_are_notes(ws, store):
+def test_exact_numbers_in_inline_contract_survive_and_unknown_fields_are_rejected(ws, store):
     block = model_block()
-    block["outputs"]["out"]["contract"] = json.loads('{"format": "json", "future": 1}')
-    text = json.dumps(block).replace('"future": 1', '"future": 9007199254740993, "checks": [{"type": "json_equals", "value": 0.10000000000000000001}]')
+    block['outputs']['out']['contract'] = {'format': 'json', 'schema': {'type': 'number',
+        'maximum': 9007199254740993, 'minimum': 0}}
+    text = json.dumps(block).replace('"minimum": 0', '"minimum": 0.10000000000000000001')
     write_block(ws, "b", text, MODEL_FILES)
     loaded = store.get("b")
     assert loaded.problem is None
     copy_ = loaded.block.contracts["outputs"]["out"]
     assert copy_.name is None and "9007199254740993" in copy_.text and "0.10000000000000000001" in copy_.text
-    assert any("future" in note for note in loaded.notes)
+    write_block(ws, 'b', text.replace('"format": "json"', '"format": "json", "future": 1'), MODEL_FILES)
+    assert 'outputs.out.contract.future' in issues_of(problem_of(store))
 
 
 def test_a_saved_contract_named_before_it_exists_becomes_usable_when_saved(ws, store):
@@ -342,9 +376,9 @@ def test_saved_contract_changes_give_the_block_a_new_effective_revision(ws, stor
     seen.append(damaged.revision)
     assert damaged.problem is not None and damaged.problem.code == "unusable"
     (ws / "contracts" / ("c1" + contracts.SUFFIX)).write_text('{"format_version": 1, "format": "text"}')   # repaired
-    repaired = store.get("b")
-    seen.append(repaired.revision)
-    assert repaired.problem is None
+    legacy = store.get("b")
+    seen.append(legacy.revision)
+    assert legacy.problem is not None  # Phase 1A rejects legacy definitions; v2 storage is Phase 1B.
     assert len(set(seen)) == len(seen), seen
 
 

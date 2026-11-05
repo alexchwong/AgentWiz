@@ -4,7 +4,6 @@ import pytest
 from conftest import failure_of, get_state, request, write_block
 from test_blocks import MODEL_FILES, model_block, script_block, tool_block
 
-needs_checks = pytest.mark.needs_checks
 
 
 def test_state_body_carries_roles_blocks_and_scripts(ui):
@@ -62,7 +61,6 @@ def test_a_block_with_a_problem_still_returns_the_files_it_can_read(ui):
     assert detail["step"] is None and detail["inputs"] == []
 
 
-@needs_checks
 def test_a_json_input_carries_its_form(ui):
     block = model_block()
     block["inputs"]["doc"] = {"description": "The doc", "contract": {

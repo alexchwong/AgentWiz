@@ -79,6 +79,7 @@ def field_rows(schema):
         if len(rows) > 100 or len(path) > 10:
             fail('source_only', 409)
         if t == 'object':
+            row['additional_properties'] = node.get('additionalProperties', True)
             if not isinstance(node.get('additionalProperties', True), bool):
                 fail('source_only', 409)
             for name, child in node.get('properties', {}).items():
@@ -137,7 +138,7 @@ def compile_rows(rows):
         fail()
     nodes = {}
     for row in rows:
-        if not isinstance(row, dict) or set(row) - {'path', 'type', 'required', 'nullable', 'description', 'choices', *BOUNDS}:
+        if not isinstance(row, dict) or set(row) - {'path', 'type', 'required', 'nullable', 'description', 'choices', 'additional_properties', *BOUNDS}:
             fail()
         path = row.get('path')
         if not isinstance(path, list) or len(path) > 10 or any(not isinstance(p, str) or (p != '[]' and blocks.IDENT.fullmatch(p) is None) for p in path):
@@ -158,7 +159,10 @@ def compile_rows(rows):
                     fail()
                 node[keyword] = jsonio.decode_exact(row[k])
         if t == 'object':
-            node.update(properties={}, required=[], additionalProperties=False)
+            extra = row.get('additional_properties', False)
+            if type(extra) is not bool:
+                fail()
+            node.update(properties={}, required=[], additionalProperties=extra)
         nodes[key] = (node, row)
     if () not in nodes or not nodes[()][1]['required']:
         fail()
@@ -180,6 +184,11 @@ def compile_rows(rows):
             fail()
     if any((n['type'] == 'array' or n['type'] == ['array', 'null']) and 'items' not in n for n, _ in nodes.values()):
         fail()
+    from .contract_schema import DefinitionError, validate_user_schema
+    try:
+        validate_user_schema(nodes[()][0])
+    except DefinitionError as exc:
+        raise WorkshopError('contract_invalid', 400, exc.issues) from None
     return nodes[()][0]
 
 
@@ -188,7 +197,7 @@ def port(spec):
         fail()
     if not isinstance(spec['name'], str) or blocks.IDENT.fullmatch(spec['name']) is None:
         fail()
-    contract = {'format': spec['format'], 'checks': []}
+    contract = {'format': spec['format']}
     if spec['format'] == 'json':
         contract['schema'] = compile_rows(spec['fields'])
     elif spec['format'] != 'text' or spec['fields'] != []:
@@ -281,7 +290,7 @@ def starter(identifier, key, role=None, server=None, tool=None):
         return draft
     if identifier not in STARTERS:
         fail()
-    text = {'format': 'text', 'checks': []}
+    text = {'format': 'text'}
     obj = {'format_version': 1, 'name': key, 'description': identifier.replace('_', ' '),
            'inputs': {'text': {'contract': text}}, 'outputs': {'out': {'contract': text}}, 'steps': []}
     files, m = {}, {'format_version': 1, 'starter': identifier, 'origin': 'starter', 'effects': 'read-only'}
@@ -306,11 +315,11 @@ def starter(identifier, key, role=None, server=None, tool=None):
         m.update(generated)
         obj['steps'] = [{'id': 'script', 'kind': 'script', 'file': 'scripts/main.py', 'timeout_s': 60}]
         if identifier != 'format_report':
-            obj['outputs']['out']['contract'] = {'format': 'json', 'checks': []}
+            obj['outputs']['out']['contract'] = {'format': 'json'}
     else:
         m['effects'] = 'unknown'
         obj['steps'] = [{'id': 'call', 'kind': 'tool', 'server': server, 'tool': tool, 'arguments': {}, 'output': 'out'}]
-        obj['outputs']['out']['contract'] = {'format': 'json', 'checks': []}
+        obj['outputs']['out']['contract'] = {'format': 'json'}
     m['description_sections'] = {'use': obj['description'], 'exclusions': 'Use for one independent block operation.',
         'effects': 'Review the selected external tool before running.' if identifier == 'call_tool' else 'Produces a returned value for review.',
         'limitations': 'Model answers require correctness review.' if identifier in MODEL_IDS else 'Scripts have ordinary user-level filesystem and network access.' if identifier in SCRIPT_IDS else 'Remote behavior may change.',

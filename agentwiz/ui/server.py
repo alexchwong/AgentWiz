@@ -32,7 +32,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import modelspell
 from modelspell import ModelSpellError
 
-from .. import (__version__, attachments, checks, contracts, history, insertion, jsonio, mcp_ops, model_call, model_step,
+from .. import (__version__, attachments, checks, contract_schema, contract_service, contracts, history, insertion, jsonio, mcp_ops, model_call, model_step,
                 runner, runs, tool_forms, tutorial_topics, workshop)
 from .. import workspace as wsmod
 from .. import workspace_admin
@@ -634,6 +634,13 @@ class Handler(BaseHTTPRequestHandler):
             first = exc.issues[0] if exc.issues else {"location": "contract", "message": "is not valid"}
             self._reply_safely(400, {"error": f"ContractError: {first['location']}: {first['message']}",
                                      "code": "contract_error", "issues": exc.issues, "issue_count": exc.total})
+        except contract_schema.DefinitionError as exc:
+            code = exc.issues[0].get('code', 'contract_invalid') if exc.issues else 'contract_invalid'
+            self._reply_safely(400, {'code': code, 'message': 'the contract definition or edit is invalid',
+                                     'issues': exc.issues, 'issue_count': exc.total})
+        except (contract_service.ValidationUnavailable, checks.ValidationUnavailable):
+            self._reply_safely(503, {'code': 'validation_unavailable',
+                                     'message': 'repair the AgentWiz validator installation'})
         except runs.RepairRefused as exc:
             self._reply_safely(exc.status, {"error": exc.message, "code": exc.code})
         except runs.NoSuchAttempt:
@@ -755,6 +762,7 @@ class Handler(BaseHTTPRequestHandler):
                   "/api/blocks/stop": self._block_stop,
                   "/api/contracts/save": self._contract_save, "/api/contracts/delete": self._contract_delete,
                   "/api/contracts/check": self._contract_check,
+                  "/api/contracts/project": self._contract_project, "/api/contracts/edit": self._contract_edit,
                   "/api/mcp/servers": self._mcp_servers, "/api/mcp/token": self._mcp_token,
                   "/api/mcp/tools": self._mcp_tools, "/api/mcp/call": self._mcp_call,
                   "/api/mcp/cancel": self._mcp_cancel}
@@ -1067,6 +1075,21 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- contracts (techspec 0.1.3, 7.8, 13.3) ----------------------------------------------------
     @staticmethod
+    def _contract_draft_body(body, fields):
+        if (set(body) != {'format_version', *fields} or type(body.get('format_version')) is not int
+                or body['format_version'] != 2):
+            raise contract_schema.DefinitionError([{'location': 'request', 'code': 'invalid',
+                                                    'message': 'requires the version 2 request fields'}])
+
+    def _contract_project(self, body):
+        self._contract_draft_body(body, {'definition_text'})
+        self._send(200, {'format_version': 2, **contract_service.project(body['definition_text'])})
+
+    def _contract_edit(self, body):
+        self._contract_draft_body(body, {'definition_text', 'edit'})
+        self._send(200, {'format_version': 2, **contract_service.apply_edit(body['definition_text'], body['edit'])})
+
+    @staticmethod
     def _contract_name(body: dict) -> str:
         name = body.get("name")
         if not isinstance(name, str):
@@ -1092,6 +1115,10 @@ class Handler(BaseHTTPRequestHandler):
     def _contract_check(self, body: dict) -> None:
         """Check pasted text against contract text, saved or not. No revision: nothing shared is used,
         and no model is called (R4-19)."""
+        if 'format_version' in body:
+            self._contract_draft_body(body, {'definition_text', 'value_text'})
+            return self._send(200, {'format_version': 2,
+                                    **contract_service.check(body['definition_text'], body['value_text'])})
         contract_text, text = body.get("contract_text"), body.get("text")
         if not isinstance(contract_text, str):
             raise BodyError("contract_text must be a string")
@@ -1344,6 +1371,7 @@ class Handler(BaseHTTPRequestHandler):
         if contract_ref is not None:
             entry = state.contract_for_request(*contract_ref)   # 404, 409 stale_revision, 409 contract_unusable
             copy_ = model_step.ContractCopy.of(entry.name, entry.revision, entry.contract)
+            checks.require_validation([copy_.parsed])
         writer = state.register_writer(f"{source} attempt")      # 503 once shutdown has begun (10.10)
         try:
             budget = state.budget

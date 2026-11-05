@@ -2,10 +2,10 @@
 import pytest
 from modelspell import Endpoint
 
-from agentwiz import checks, model_step, runs
+from agentwiz import checks, model_step, output_protocol, runs
 from agentwiz.model_call import RequestSnapshot
 from agentwiz.task_settings import TaskSettings
-from conftest import Reply, answer, delta, DONE, TEXT_CONTRACT
+from conftest import Reply, answer, delta, DONE
 
 SSE = {"Content-Type": "text/event-stream"}
 
@@ -31,7 +31,35 @@ def prepare(store, server, *, save_runs=False, contract=None, prompt="hi", syste
 
 
 def pong_contract():
-    return model_step.ContractCopy.of("c", 4, checks.contract_from_text(TEXT_CONTRACT))
+    return model_step.ContractCopy.of("c", 4, checks.parse_contract({'format': 'text', 'contains': ['pong']}))
+
+
+def test_checked_request_instructions_and_repairs_freeze_the_captured_definition(server):
+    server.reply(answer('wrong'))
+    store = runs.AttemptStore()
+    captured = model_step.ContractCopy.of('reply', 7, checks.parse_contract({
+        'format': 'text', 'description': 'Literal acknowledgement', 'exact': 'pong'}))
+    prepared = prepare(store, server, contract=captured, system='Be brief')
+    record = model_step.run_attempt(store, prepared)
+    generated = output_protocol.single_value_instructions(captured.parsed)
+    assert record['contract']['revision'] == 7 and record['contract']['policy'] == 'user'
+    assert record['messages_sent'][0]['content'] == 'Be brief\n\n' + generated
+    assert server.requests[0]['body']['messages'] == record['messages_sent']
+    repair = model_step.repair_plan(record)
+    assert repair['messages'][:2] == record['input_messages']
+    assert repair['contract'].parsed.raw['exact'] == 'pong'
+    assert 'text.exact' in repair['repair_message']
+
+
+def test_schema_dispatch_refused_before_run_creation(server, monkeypatch):
+    captured = model_step.ContractCopy.of('n', 1, checks.parse_contract({
+        'format': 'json', 'schema': {'type': 'integer'}}))
+    store = runs.AttemptStore()
+    monkeypatch.setattr(checks, 'schema_support', lambda: (False, 'damaged'))
+    monkeypatch.setattr(store, 'new_run', lambda **kwargs: pytest.fail('created a run'))
+    with pytest.raises(checks.ValidationUnavailable):
+        prepare(store, server, contract=captured)
+    assert server.requests == []
 
 
 # 67 ---------------------------------------------------------------------------------------------
@@ -53,7 +81,8 @@ def test_run_attempt_returns_the_committed_record(server):
     assert record["stop_mode"] is None and record["sent"] is None and record["cancel_reason"] is None
     assert record["profile"] == {"name": "p", "modified": True}
     assert record["endpoint"] == {"kind": "openai_compat", "base_url": server.url + "/v1"}
-    assert record["input_messages"] == record["messages_sent"] == [{"role": "system", "content": "be brief"},
+    generated = output_protocol.single_value_instructions(pong_contract().parsed)
+    assert record["input_messages"] == record["messages_sent"] == [{"role": "system", "content": "be brief\n\n" + generated},
                                                                     {"role": "user", "content": "hi"}]
     assert record["contract"]["name"] == "c" and record["contract"]["revision"] == 4
     assert record["parent_id"] is None and record["save_run"] is False

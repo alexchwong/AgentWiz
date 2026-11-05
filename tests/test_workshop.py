@@ -260,22 +260,28 @@ def test_result_specific_review_and_saved_examples(ui):
     assert current['rows'][0]['human_rating'] == 'incorrect'
 
 
-def test_exact_editor_and_unsupported_schema_preservation(ui):
+def test_exact_editor_preservation_and_unsupported_schema_refusal(ui):
     from agentwiz import jsonio
     from test_blocks import model_block, MODEL_FILES
     obj = model_block()
     obj['outputs']['out']['contract'] = {'format': 'json', 'schema': {'type': 'object', 'properties': {
         'id': {'type': 'integer', 'minimum': 9007199254740993},
-        'ratio': {'type': 'number', 'multipleOf': jsonio.decode_exact('0.10000000000000000001')}},
-        'required': ['id'], 'additionalProperties': False}, 'custom_annotation': 'preserve'}
+        'ratio': {'type': 'number', 'minimum': jsonio.decode_exact('0.10000000000000000001')}},
+        'required': ['id'], 'additionalProperties': False}}
     draft = {'key': 'b', 'definition_text': jsonio.encode_exact(obj), 'files': MODEL_FILES, 'metadata': {}}
     result = send(ui, 'preview', draft=draft, edit={'kind': 'contract', 'side': 'outputs', 'port': 'out', 'path': ['id'], 'set': {'description': '"Identifier"'}})
     edited = jsonio.decode_exact(result['draft']['definition_text'])
     assert edited['outputs']['out']['contract']['schema']['properties']['id']['minimum'] == 9007199254740993
-    assert edited['outputs']['out']['contract']['schema']['properties']['ratio']['multipleOf'] == jsonio.decode_exact('0.10000000000000000001')
-    assert edited['outputs']['out']['contract']['custom_annotation'] == 'preserve'
+    assert edited['outputs']['out']['contract']['schema']['properties']['ratio']['minimum'] == jsonio.decode_exact('0.10000000000000000001')
+    assert edited['outputs']['out']['contract']['schema']['additionalProperties'] is False
     plan_save(ui, result['draft'])
     assert send(ui, 'preview', key='b')['contracts']['outputs']['out']['projection']
+    unsupported = draft['definition_text'].replace('"minimum":0.10000000000000000001',
+                                                   '"multipleOf":0.10000000000000000001')
+    refused = failure_of(lambda: send(ui, 'preview', draft={**draft, 'definition_text': unsupported},
+        edit={'kind': 'contract', 'side': 'outputs', 'port': 'out', 'path': ['id'],
+              'set': {'description': '"Identifier"'}}))
+    assert refused.status == 400
 
 
 def test_design_binding_edits_and_located_invalid_draft_refusals(ui):
@@ -469,19 +475,18 @@ def test_visual_forms_keep_exact_values_and_remove_required_members(ui):
     text = '{"n":9007199254740993,"d":0.12345678901234567890123456789,"yes":false,"nil":null,"empty":""}'
     value = send(ui, 'render-value', text=text)
     assert jsonio.decode_exact(send(ui, 'input-value', value=value)['text']) == jsonio.decode_exact(text)
-    source = '{"format":"json","schema":{"type":"object","properties":{"n":{"type":"number","minimum":0.123456789012345678901,"multipleOf":0.000000000000000000001}},"required":["n"]}}'
+    source = '{"format":"json","schema":{"type":"object","properties":{"n":{"type":"number","minimum":0.123456789012345678901,"maximum":0.999999999999999999999}},"required":["n"]}}'
     result = send(ui, 'contract-form', source=source, field_edit={
         'path':['n'], 'addition':False, 'name':'exact', 'type':'Number', 'description':'Amount',
         'required':True, 'nullable':False, 'choices':[], 'bounds':['0.123456789012345678901','']})
     schema = jsonio.decode_exact(result['source_text'])['schema']
     assert schema['required'] == ['exact']
     assert schema['properties']['exact']['minimum'] == jsonio.decode_exact('0.123456789012345678901')
-    assert schema['properties']['exact']['multipleOf'] == jsonio.decode_exact('0.000000000000000000001')
     result = send(ui, 'contract-form', source=result['source_text'], field_edit={'path':['exact'], 'remove':True})
     schema = jsonio.decode_exact(result['source_text'])['schema']
     assert schema['properties'] == {} and schema['required'] == []
     opaque = '{"format":"json","schema":{"type":"object","$defs":{},"properties":{}}}'
-    assert send(ui,'contract-form',source=opaque)['source_only']
+    assert failure_of(lambda: send(ui, 'contract-form', source=opaque)).status == 400
 
 
 def test_display_rename_keeps_description_review_until_behaviour_changes(ui):

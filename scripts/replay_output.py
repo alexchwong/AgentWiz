@@ -17,7 +17,9 @@ def replay(evidence, start=None, end=None, replacement=None):
     if evidence.get('output_plan'):
         try:
             saved = evidence['output_plan']
-            if not isinstance(saved, dict) or saved.get('mode') != 'named_json' or saved.get('renderer') != 1:
+            from agentwiz import output_protocol
+            if (not isinstance(saved, dict) or saved.get('mode') != output_protocol.MODE
+                    or saved.get('renderer') != output_protocol.RENDERER_VERSION):
                 raise ValueError('unsupported plan')
             plan = model_step.OutputPlan.from_record(saved)
             if not plan.outputs or plan.digest() != saved.get('digest'):

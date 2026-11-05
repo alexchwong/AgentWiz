@@ -10,7 +10,7 @@ from agentwiz import workshop_assist
 
 def contracts():
     return {
-        'text': checks.parse_contract({'format': 'text', 'checks': [{'type': 'contains', 'value': 'hello'}]}),
+        'text': checks.parse_contract({'format': 'text', 'contains': ['hello']}),
         'data': checks.parse_contract({'format': 'json', 'schema': {
             'type': 'object', 'properties': {'id': {'type': 'integer'}},
             'required': ['id'], 'additionalProperties': False}}),
@@ -32,7 +32,7 @@ def test_named_outputs_exact_values_and_atomic_failure():
         assert value is checks.NO_VALUE
 
 
-def test_plan_roundtrip_and_instructions_exclude_check_definitions():
+def test_plan_roundtrip_and_instructions_include_captured_requirements():
     declared = contracts()
     plan = OutputPlan(tuple((name, 'Description {{inputs.secret}}', ContractCopy.of(name, 1, contract))
                             for name, contract in declared.items()))
@@ -41,7 +41,7 @@ def test_plan_roundtrip_and_instructions_exclude_check_definitions():
     assert restored.view() == saved
     text = output_protocol.instructions(restored.specs())
     assert '9007199254740993' not in text
-    assert 'contains' not in text and '"checks"' not in text
+    assert 'Required literal: "hello"' in text and '"checks"' not in text
     assert '"integer"' in text and 'Description {{inputs.secret}}' in text
 
 

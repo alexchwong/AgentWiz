@@ -1,5 +1,9 @@
 # NEWS
 ## 0.2.0
+- Contract-overhaul Phase 1A enforces bounded Text/JSON definitions, literal Text rules and exact
+  schema validation; Checked requests render captured requirements. Storage/assets/UI migration
+  remains incomplete; this intermediate development checkout is not a completed overhaul.
+- JSON Schema validation is now included in every installation; the optional checks extra is removed.
 - Workshop Design uses three responsive columns with editable input/output tables and Save in the settings pane.
 - Design now has a model-role dropdown, paired temperature/reasoning controls with visible inherited defaults,
   repairs below Outputs, and revision naming beside Save. Assist and Revision actions share the mode action row.

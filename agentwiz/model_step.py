@@ -48,10 +48,16 @@ class ContractCopy:
 
     @classmethod
     def from_record(cls, saved: dict) -> "ContractCopy":
-        return cls(saved["name"], saved["revision"], saved["text"], checks.contract_from_text(saved["text"]))
+        policy = saved.get('policy', 'user')
+        if policy not in ('user', 'internal'):
+            raise checks.ContractError([{'location': 'policy', 'message': 'unknown captured policy'}])
+        parsed = (checks.parse_internal_contract(jsonio.decode_exact(saved['text'])) if policy == 'internal'
+                  else checks.contract_from_text(saved['text']))
+        return cls(saved["name"], saved["revision"], saved["text"], parsed)
 
     def view(self) -> dict:
-        return {"name": self.name, "revision": self.revision, "text": self.text}
+        return {"name": self.name, "revision": self.revision, "text": self.text,
+                'policy': self.parsed.policy}
 
 
 @dataclass(frozen=True)
@@ -84,7 +90,9 @@ class OutputPlan:
         return {"mode": output_protocol.MODE, "renderer": output_protocol.RENDERER_VERSION,
                 "digest": self.digest(),
                 "outputs": [{"name": name, "description": description, "revision": contract.revision,
-                             "text": contract.text} for name, description, contract in self.outputs]}
+                             "text": contract.text,
+                             'policy': contract.parsed.policy}
+                            for name, description, contract in self.outputs]}
 
     @classmethod
     def from_record(cls, saved: dict) -> "OutputPlan":
@@ -128,8 +136,12 @@ def prepare_first(store: runs.AttemptStore, *, snapshot: RequestSnapshot, system
                   task: TaskSettings, source: str, save_runs: bool, contract: ContractCopy | None = None,
                   arguments: dict | None = None) -> PreparedAttempt:
     """A new run with attempt 1 reserved. The caller must run it, or `store.abandon_run` it."""
+    checks.require_validation([contract.parsed] if contract else [])
     if arguments is None:
         arguments = model_call.task_arguments(task, snapshot.kind, snapshot.provider)
+    if contract is not None:
+        generated = output_protocol.single_value_instructions(contract.parsed)
+        system = system + '\n\n' + generated if system else generated
     messages = build_messages(system, prompt)
     run = store.new_run(source=source, save_runs=save_runs, system=system, prompt=prompt,
                         contract=({"name": contract.name, "revision": contract.revision} if contract else None))
@@ -143,6 +155,7 @@ def repair_plan(record: dict) -> dict:
     envelope repairs against its captured plan; a page attempt repairs against its captured contract."""
     plan = OutputPlan.from_record(record["output_plan"]) if record.get("output_plan") else None
     contract = ContractCopy.from_record(record["contract"]) if record.get("contract") else None
+    checks.require_validation(plan.contracts().values() if plan else [contract.parsed] if contract else [])
     truncated = record["outcome"] == "truncated"
     text = checks.repair_message(None if plan is not None else contract.parsed, record["check"],
                                  truncated=truncated,

@@ -1,5 +1,12 @@
 # AgentWiz 0.2.0 — cumulative Phase 2 handover
 
+## Contract overhaul progress
+
+Cumulative implementation progress for `contract_overhaul_tech_specs.md` now lives in
+`contract_overhaul_handover.md`, as requested by the owner on November 5, 2026.
+That file records Phase 1A and the remaining phases; this release/UI handover is not
+the overhaul completion record.
+
 ## November 5, 2026 — Design settings and action-row follow-up
 
 - Preserved the existing uncommitted three-column/revision work. Design now builds its columns
