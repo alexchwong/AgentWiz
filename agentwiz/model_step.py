@@ -20,6 +20,7 @@ from .errors import report_internal
 from . import __version__, checks, contract_schema, history, jsonio, model_call, output_protocol, runs
 from .model_call import RequestSnapshot, build_messages, classify_outcome, describe_error, result_to_dict
 from .task_settings import TaskSettings, parse_task
+from .workspace import valid_name
 
 BLANK_OUTCOMES = ("empty", "reasoning_only", "truncated_no_answer")
 RECORD_VERSION = 1
@@ -32,6 +33,9 @@ def before_end_point() -> None:
 
 class PageGone(Exception):
     """Raised by a callback when its page can no longer be written to."""
+
+
+_SNAPSHOT_REQUIRED = frozenset({'name', 'revision', 'digest', 'text', 'policy'})
 
 
 class SnapshotUnavailable(Exception):
@@ -68,9 +72,24 @@ class ContractCopy:
     @classmethod
     def from_record(cls, saved: dict) -> "ContractCopy":
         """Restore a captured snapshot without resolving any live file. Its recorded policy is applied and its
-        digest verified; an old record or a changed (redacted) text cannot be restored for execution."""
-        if not isinstance(saved, dict) or not {'digest', 'text', 'policy'} <= set(saved):
+        digest verified; an old record or a changed (redacted) text cannot be restored for execution.
+
+        An old snapshot ({name, revision, text}, with neither digest nor policy) is migration_required. A
+        new-format snapshot must hold exactly name, revision, digest, text and policy (validator optional);
+        anything missing or malformed in it is snapshot_incomplete, never read as an inline capture. Its
+        identity is inline (both null) or a saved reference (a valid name and a positive integer revision);
+        the name is identity metadata only and is never resolved as a file."""
+        if not isinstance(saved, dict) or not {'digest', 'policy'} & set(saved):
             raise SnapshotUnavailable('migration_required')
+        if not _SNAPSHOT_REQUIRED <= set(saved) or not set(saved) <= _SNAPSHOT_REQUIRED | {'validator'}:
+            raise SnapshotUnavailable('snapshot_incomplete')
+        name, revision = saved['name'], saved['revision']
+        if (name, revision) != (None, None) and (
+                not isinstance(name, str) or not valid_name(name)
+                or type(revision) is not int or revision < 1):
+            raise SnapshotUnavailable('snapshot_incomplete')
+        if not isinstance(saved['text'], str) or not isinstance(saved['digest'], str):
+            raise SnapshotUnavailable('snapshot_incomplete')
         policy = saved['policy']
         if policy not in ('user', 'internal'):
             raise SnapshotUnavailable('snapshot_incomplete')
@@ -87,8 +106,7 @@ class ContractCopy:
                 raise SnapshotUnavailable('snapshot_incomplete')
         except (ValueError, TypeError, checks.ContractError):
             raise SnapshotUnavailable('snapshot_incomplete') from None
-        name, revision = saved.get('name'), saved.get('revision')
-        if (name is None) != (revision is None):
+        if policy == 'internal' and name is not None:      # server-owned captures are inline only
             raise SnapshotUnavailable('snapshot_incomplete')
         return cls(name, revision, saved['digest'], saved['text'], parsed)
 

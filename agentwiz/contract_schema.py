@@ -281,6 +281,17 @@ def validate_user_schema(schema):
     recognition.finish()
 
 
+def synthesis_definition(response):
+    """The direct user definition a synthesis `proposal` value yields (spec 14.2), not yet validated: format json,
+    the description when nonblank, and the proposed schema. Acceptance (contract_synthesis_v1) and application
+    both build the candidate here, so a proposal accepted by one is exactly the definition the other uses."""
+    definition = {'format': 'json'}
+    if response.get('description'):
+        definition['description'] = response['description']
+    definition['schema'] = response['schema']
+    return definition
+
+
 def validate_user_definition(obj):
     """Recognize a complete user definition; never discard unknown members."""
     recognition = _Recognition()

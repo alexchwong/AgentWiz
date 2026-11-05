@@ -77,7 +77,13 @@ def head(root):
 
     An executable v3 document is an unmanaged root. An old executable v1 root is also unmanaged here; the
     loader reports it as migration_required and never rewrites it on read."""
-    obj = document(root, 'block.json')
+    return head_document(document(root, 'block.json'))
+
+
+def head_document(obj):
+    """`head` applied to an already decoded root `block.json`: None for an unmanaged executable root, the
+    validated managed head otherwise. Raises WorkshopError. Shared with the reference scan so the managed-head
+    invariants have one interpretation."""
     if not isinstance(obj, dict):
         fail('unusable', 409)
     version = obj.get('format_version')
@@ -720,33 +726,60 @@ def validate_generation(root, metadata):
 
 
 # --- references to saved contracts (spec 10.4) -------------------------------------------------------------
+_SCANNED_EXECUTABLE_VERSIONS = (1, EXECUTABLE_VERSION)
+
+
 def _declared_references(definition, name):
-    """(side, port, revision) of every raw declaration naming contract `name`. Scans raw declarations, without
-    resolving anything; an old string reference counts conservatively, with no revision."""
+    """((side, port, revision) of every raw declaration naming contract `name`, inspectable).
+
+    Scans raw declarations without resolving anything. Every executable format (v1 and v3) requires `inputs`
+    and `outputs` objects whose declarations are objects holding `contract`, so no absent or malformed
+    collection, declaration or contract member is legitimate: each makes the definition not inspectable,
+    because absence of use cannot then be established. Identifiable references are still reported from a
+    broken definition. An old string reference counts conservatively, with no revision; so does a
+    reference-shaped object naming the contract whatever its other members."""
     found = []
     if not isinstance(definition, dict):
-        return found
+        return found, False
+    version = definition.get('format_version')
+    inspectable = type(version) is int and version in _SCANNED_EXECUTABLE_VERSIONS
     for side in ('inputs', 'outputs'):
         ports = definition.get(side)
         if not isinstance(ports, dict):
+            inspectable = False
             continue
         for port, declaration in ports.items():
-            contract = declaration.get('contract') if isinstance(declaration, dict) else None
-            if isinstance(contract, dict) and 'format' not in contract and contract.get('name') == name:
-                revision = contract.get('revision')
-                found.append((side, port, revision if type(revision) is int else None))
-            elif isinstance(contract, str) and contract == name:
-                found.append((side, port, None))
-    return found
+            if not isinstance(declaration, dict) or 'contract' not in declaration:
+                inspectable = False
+                continue
+            contract = declaration['contract']
+            if isinstance(contract, str):
+                if contract == name:
+                    found.append((side, port, None))
+            elif isinstance(contract, dict):
+                pin_like = 'format' not in contract and bool({'name', 'revision', 'digest'} & set(contract))
+                if contract.get('name') == name:
+                    revision = contract.get('revision')
+                    found.append((side, port, revision if type(revision) is int and revision >= 1 else None))
+                elif pin_like and not isinstance(contract.get('name'), str):
+                    inspectable = False                     # a pin whose target cannot be read
+            else:
+                inspectable = False
+    return found, inspectable
 
 
 def reference_scan(blocks_path, name, latest=None):
     """Blockers among current unmanaged definitions and every retained managed generation (current once),
-    and the paths that could not be inspected. Orphaned generations and run records are not inspected."""
+    and the paths that could not be inspected. Orphaned generations and run records are not inspected.
+
+    Fails closed: a root or generation whose structure does not let every declaration be enumerated (a
+    managed head breaking the `head` invariants, a newer or unknown format, a non-object definition, a
+    malformed port collection or declaration) contributes its path to the unreadable list, which refuses
+    deletion with reference_scan_incomplete. Broken files are never rewritten."""
     from .blocks import read_file
     blockers, unreadable = [], []
     path = Path(blocks_path)
-    if not path.exists():
+    if not path.exists() and not path.is_symlink():
         return blockers, unreadable
     if path.is_symlink() or not path.is_dir():
         return blockers, [str(path)]
@@ -754,6 +787,24 @@ def reference_scan(blocks_path, name, latest=None):
         roots = sorted(path.iterdir())
     except OSError:
         return blockers, [str(path)]
+
+    def inspect(definition, where, block, generation, current):
+        found, inspectable = _declared_references(definition, name)
+        if not inspectable:
+            unreadable.append(where)
+        for side, port, revision in found:
+            blockers.append({'block': block, 'generation': generation, 'current': current,
+                             'side': side, 'port': port, 'revision': revision})
+
+    def decoded(folder, rel):
+        result = read_file(folder, rel, 1 << 20)
+        if result.data is None:
+            return None, result.fingerprint == ('missing',)
+        try:
+            return jsonio.decode_exact(result.data.decode('utf-8')), False
+        except (ValueError, UnicodeError):
+            return None, False
+
     for root in roots:
         if not valid_name(root.name):
             continue
@@ -762,43 +813,31 @@ def reference_scan(blocks_path, name, latest=None):
             continue
         if not root.is_dir():
             continue
-        data = read_file(root, 'block.json', 1 << 20)
-        if data.data is None:
-            if data.fingerprint != ('missing',):
-                unreadable.append(str(root / 'block.json'))
+        where = str(root / 'block.json')
+        obj, missing = decoded(root, 'block.json')
+        if obj is None:
+            if not missing:
+                unreadable.append(where)
+            continue
+        version = obj.get('format_version') if isinstance(obj, dict) else None
+        if type(version) is int and version in _SCANNED_EXECUTABLE_VERSIONS:
+            inspect(obj, where, root.name, None, True)
             continue
         try:
-            obj = jsonio.decode_exact(data.data.decode('utf-8'))
-        except (ValueError, UnicodeError):
-            unreadable.append(str(root / 'block.json'))
+            managed = head_document(obj)
+        except WorkshopError:
+            managed = None
+        if managed is None:                                  # unknown, newer or broken root: not inspectable
+            unreadable.append(where)
             continue
-        if not isinstance(obj, dict):
-            unreadable.append(str(root / 'block.json'))
-            continue
-        if obj.get('format_version') == 2:
-            retained = obj.get('retained')
-            if not isinstance(retained, list) or any(not isinstance(i, str) or TOKEN.fullmatch(i) is None for i in retained):
-                unreadable.append(str(root / 'block.json'))
+        for index, ident in enumerate(managed['retained']):
+            rel = f'.workshop/revisions/{ident}/block.json'
+            definition, _missing = decoded(root, rel)        # a retained generation must exist
+            if definition is None:
+                unreadable.append(str(root / rel))
                 continue
-            for index, ident in enumerate(retained):
-                generation = root / '.workshop' / 'revisions' / ident
-                inner = read_file(generation, 'block.json', 1 << 20) if not generation.is_symlink() else None
-                if inner is None or inner.data is None:
-                    unreadable.append(str(generation / 'block.json'))
-                    continue
-                try:
-                    definition = jsonio.decode_exact(inner.data.decode('utf-8'))
-                except (ValueError, UnicodeError):
-                    unreadable.append(str(generation / 'block.json'))
-                    continue
-                for side, port, revision in _declared_references(definition, name):
-                    blockers.append({'block': root.name, 'generation': ident, 'current': index == 0,
-                                     'side': side, 'port': port, 'revision': revision})
-        else:
-            for side, port, revision in _declared_references(obj, name):
-                blockers.append({'block': root.name, 'generation': None, 'current': True,
-                                 'side': side, 'port': port, 'revision': revision})
+            inspect(definition, str(root / rel), root.name, ident, index == 0)
     for row in blockers:
         row['newer_available'] = bool(latest and row['revision'] and row['revision'] < latest)
     blockers.sort(key=lambda r: (r['block'], not r['current'], r['side'], r['port'], r['revision'] or 0))
-    return blockers, unreadable
+    return blockers, sorted(set(unreadable))

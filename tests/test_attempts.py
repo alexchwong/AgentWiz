@@ -696,6 +696,34 @@ def test_a_damaged_contract_is_refused_and_usable_after_repair(ui, server):
     assert rec["check"]["overall"] == "pass"
 
 
+def test_repair_refuses_a_malformed_snapshot_identity_and_never_needs_the_live_file(ui, server):
+    """R3 through HTTP: a captured pin whose identity was altered or dropped refuses preview and repair with
+    snapshot_incomplete before any dispatch; the intact capture repairs after the live contract is gone."""
+    save_contract(ui, "c", TEXT_CONTRACT)
+    configure(ui, server)
+    server.reply(answer("nope"))
+    rec = record_of(checked(ui, "c"))
+    assert rec["check"]["overall"] == "fail" and rec["contract"]["name"] == "c"
+    held = ui.state.store.record_of(rec["id"])
+    good = dict(held["contract"])
+    damaged = [{**good, "name": "../not-a-name"}, {**good, "revision": True}, {**good, "revision": 0},
+               {**good, "revision": "1"}, {**good, "name": None}, {**good, "revision": None},
+               {k: v for k, v in good.items() if k != "name"}, {k: v for k, v in good.items() if k != "revision"}]
+    for bad in damaged:
+        held["contract"] = bad
+        for route in ("/api/repair/preview", "/api/repair"):
+            fail = failure_of(lambda: request(ui, route, {"attempt_id": rec["id"]}))
+            assert (fail.status, fail.body["code"]) == (409, "snapshot_incomplete"), (route, bad)
+    assert len(server.requests) == 1 and ui.state.store.running_count() == 0         # nothing was dispatched
+    held["contract"] = good
+    (ui.workspace.path / "contracts" / "c.json").unlink()                              # the live file is gone
+    server.reply(answer("pong"))
+    repaired = record_of(repair_attempt(ui, rec["id"]))
+    assert repaired["check"]["overall"] == "pass"
+    assert (repaired["contract"]["name"], repaired["contract"]["revision"], repaired["contract"]["digest"]) == \
+        (good["name"], good["revision"], good["digest"])
+
+
 # 99 ---------------------------------------------------------------------------------------------
 def test_checked_request_repair_reason(ui, server):
     """0.1.4, 12.2: a repair of a truncated answer carries the truncation message and `repair_reason`."""

@@ -247,6 +247,70 @@ def test_rich_internal_capture_roundtrip_retains_policy():
         ContractCopy.from_record({**captured.view(), 'text': captured.text.replace('unknown', '[REDACTED]')})
 
 
+_DROP = object()
+_IDENTITY_DAMAGE = {
+    "traversal_name": {"name": "../not-a-name"}, "slash_name": {"name": "a/b"}, "blank_name": {"name": ""},
+    "spaced_name": {"name": "bad name"}, "number_name": {"name": 7},
+    "boolean_revision": {"revision": True}, "zero_revision": {"revision": 0}, "negative_revision": {"revision": -1},
+    "string_revision": {"revision": "2"}, "fractional_revision": {"revision": Decimal("2.5")},
+    "name_without_revision": {"revision": None}, "revision_without_name": {"name": None},
+    "missing_name": {"name": _DROP}, "missing_revision": {"revision": _DROP}, "missing_digest": {"digest": _DROP},
+    "missing_text": {"text": _DROP}, "missing_policy": {"policy": _DROP}, "extra_member": {"family": "General"},
+    "text_not_string": {"text": 1},
+}
+
+
+def _damaged(view, change):
+    out = dict(view)
+    for key, value in change.items():
+        if value is _DROP:
+            out.pop(key)
+        else:
+            out[key] = value
+    return out
+
+
+@pytest.mark.parametrize("case", list(_IDENTITY_DAMAGE))
+def test_snapshot_identity_is_validated_on_restore(case):
+    """R3: a new-format snapshot's identity is inline (both null) or a valid name with a positive integer
+    revision; anything else, including a missing member, is snapshot_incomplete and never becomes an inline
+    capture. Restoring never consults a live contract file."""
+    from agentwiz.model_step import ContractCopy, OutputPlan, SnapshotUnavailable
+    saved = pinned("report", 2, checks.parse_contract({"format": "text", "min_length": 1}))
+    with pytest.raises(SnapshotUnavailable) as raised:
+        ContractCopy.from_record(_damaged(saved.view(), _IDENTITY_DAMAGE[case]))
+    assert raised.value.code == "snapshot_incomplete"
+    record = OutputPlan((("out", "", saved),)).view()
+    record["outputs"][0]["contract"] = _damaged(record["outputs"][0]["contract"], _IDENTITY_DAMAGE[case])
+    for key in ("revision", "text", "policy"):                  # keep the flat copies consistent with it
+        if key in record["outputs"][0]["contract"]:
+            record["outputs"][0][key] = record["outputs"][0]["contract"][key]
+        else:
+            record["outputs"][0].pop(key)
+    with pytest.raises(SnapshotUnavailable) as raised:
+        OutputPlan.from_record(record)
+    assert raised.value.code == "snapshot_incomplete"
+
+
+def test_valid_snapshot_identities_restore_and_old_snapshots_need_migration(tmp_path, monkeypatch):
+    from agentwiz.model_step import ContractCopy, SnapshotUnavailable
+    monkeypatch.chdir(tmp_path)                                 # no contracts folder anywhere near
+    parsed = checks.parse_contract({"format": "text", "min_length": 1})
+    for name, revision in ((None, None), ("report", 1), ("report", 9_007_199_254_740_993)):
+        copy_ = pinned(name, revision, parsed)
+        restored = ContractCopy.from_record(jsonio.decode_exact(jsonio.encode_exact(copy_.view())))
+        assert (restored.name, restored.revision, restored.digest, restored.text) == \
+            (name, revision, copy_.digest, copy_.text)
+    old = {"name": "report", "revision": 1, "text": pinned("report", 1, parsed).text}    # pre-overhaul layout
+    with pytest.raises(SnapshotUnavailable) as raised:
+        ContractCopy.from_record(old)
+    assert raised.value.code == "migration_required"
+    internal = checks.parse_internal_contract({"format": "json", "schema": {"type": "string"}})
+    with pytest.raises(SnapshotUnavailable) as raised:          # server-owned captures are inline only
+        ContractCopy.from_record({**pinned(None, None, internal).view(), "name": "report", "revision": 1})
+    assert raised.value.code == "snapshot_incomplete"
+
+
 def test_new_group_compilation_preserves_extra_properties_and_rejects_bad_choices():
     from agentwiz import workshop_editor
     from agentwiz.workshop import WorkshopError

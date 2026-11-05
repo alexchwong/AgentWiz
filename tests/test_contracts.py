@@ -2,6 +2,7 @@
 C18-C20, C26). Files are read with the exact reader; races are forced with hooks and barriers, never sleeps."""
 import json
 import os
+import shutil
 import stat
 import threading
 from decimal import Decimal
@@ -253,7 +254,96 @@ def test_deletion_scans_references_and_refuses_incomplete_scans(ui):
     assert (stale.status, stale.body["code"]) == (404, "no_such_contract")
 
 
-# C18, C19 ----------------------------------------------------------------------------------------
+_GEN_A, _GEN_B = "a" * 32, "b" * 32
+_SCRIPT_BLOCK = {"format_version": 3, "name": "other", "inputs": {},
+                 "outputs": {"out": {"contract": {"format": "text"}}},
+                 "steps": [{"id": "s", "kind": "script", "file": "scripts/go.py"}]}
+
+
+def _head(current, retained):
+    return {"format_version": 2, "current": current, "retained": retained}
+
+
+def _generation(folder, ident, definition):
+    target = folder / ".workshop" / "revisions" / ident
+    target.mkdir(parents=True, exist_ok=True)
+    text = definition if isinstance(definition, str) else jsonio.encode_exact(definition)
+    (target / "block.json").write_text(text)
+
+
+# Each case leaves a block whose declarations cannot all be enumerated; none of them names the contract.
+_UNINSPECTABLE = {
+    "head_retained_empty": (_head(_GEN_A, []), {_GEN_A: _SCRIPT_BLOCK}),
+    "head_current_not_first": (_head(_GEN_B, [_GEN_A, _GEN_B]), {_GEN_A: _SCRIPT_BLOCK, _GEN_B: _SCRIPT_BLOCK}),
+    "head_retained_duplicate": (_head(_GEN_A, [_GEN_A, _GEN_A]), {_GEN_A: _SCRIPT_BLOCK}),
+    "head_extra_member": ({**_head(_GEN_A, [_GEN_A]), "note": 1}, {_GEN_A: _SCRIPT_BLOCK}),
+    "head_bad_identity": (_head("../x", ["../x"]), {}),
+    "head_retained_too_many": (_head("0" * 32, [f"{i:032x}" for i in range(21)]),
+                               {f"{i:032x}": _SCRIPT_BLOCK for i in range(21)}),
+    "generation_array": (_head(_GEN_A, [_GEN_A]), {_GEN_A: "[1, 2]"}),
+    "generation_missing": (_head(_GEN_A, [_GEN_A, _GEN_B]), {_GEN_A: _SCRIPT_BLOCK}),
+    "generation_is_head": (_head(_GEN_A, [_GEN_A]), {_GEN_A: _head(_GEN_B, [_GEN_B])}),
+    "inputs_not_object": ({**_SCRIPT_BLOCK, "inputs": []}, {}),
+    "outputs_absent": ({k: v for k, v in _SCRIPT_BLOCK.items() if k != "outputs"}, {}),
+    "declaration_not_object": ({**_SCRIPT_BLOCK, "inputs": {"x": "shared"}}, {}),
+    "declaration_without_contract": ({**_SCRIPT_BLOCK, "inputs": {"x": {"description": "d"}}}, {}),
+    "contract_not_object": ({**_SCRIPT_BLOCK, "inputs": {"x": {"contract": ["shared"]}}}, {}),
+    "pin_name_unreadable": ({**_SCRIPT_BLOCK, "inputs": {"x": {"contract": {"name": 7, "revision": 1,
+                                                                             "digest": "sha256:" + "0" * 64}}}}, {}),
+    "newer_root_format": ({**_SCRIPT_BLOCK, "format_version": 4}, {}),
+    "boolean_root_format": ({**_SCRIPT_BLOCK, "format_version": True}, {}),
+    "root_array": ("[]", {}),
+}
+
+
+@pytest.mark.parametrize("case", list(_UNINSPECTABLE))
+def test_deletion_refuses_when_a_definition_cannot_be_enumerated(ui, case):
+    """R1: a structurally uninspectable head or definition makes the scan incomplete; deletion refuses with
+    the contract's bytes and token unchanged, and Used by says the result is not exhaustive."""
+    saved = save_contract(ui, "shared", TEXT_CONTRACT)
+    root, generations = _UNINSPECTABLE[case]
+    folder = write_block(ui, "other", root, {"scripts/go.py": "print(1)"})
+    for ident, definition in generations.items():
+        _generation(folder, ident, definition)
+    path = contract_files(ui) / "shared.json"
+    before = path.read_bytes()
+    used = contract_detail(ui, "shared")["used_by"]
+    assert used["items"] == [] and used["unreadable"] and used["complete"] is False
+    body = {"format_version": 2, "name": "shared", "expected_file_token": saved["file_token"]}
+    refused = failure_of(lambda: request(ui, "/api/contracts/delete", body))
+    assert (refused.status, refused.body["code"]) == (409, "reference_scan_incomplete")
+    assert all(p.startswith(str(folder)) for p in refused.body["unreadable"])
+    assert path.read_bytes() == before and contract_detail(ui, "shared")["file_token"] == saved["file_token"]
+    # Removing the damaged block establishes absence of use again; the positive path still deletes.
+    shutil.rmtree(folder)
+    assert contract_detail(ui, "shared")["used_by"] == {"items": [], "unreadable": [], "complete": True}
+    assert request(ui, "/api/contracts/delete", body)["deleted"] is True
+
+
+def test_reference_scan_reports_identifiable_pins_in_broken_blocks(tmp_path):
+    """A broken definition is reported as uninspectable and still contributes the pins it plainly holds; a
+    well-formed managed head is scanned current-once plus retained, with old string references counted."""
+    from agentwiz.workshop_assets import reference_scan
+    pin = {"name": "shared", "revision": 2, "digest": "sha256:" + "0" * 64}
+    broken = {**_SCRIPT_BLOCK, "name": "broken", "inputs": {"a": {"contract": pin}, "b": "junk"}}
+    write_block(tmp_path, "broken", broken)
+    managed = write_block(tmp_path, "managed", _head(_GEN_A, [_GEN_A, _GEN_B]))
+    _generation(managed, _GEN_A, {**_SCRIPT_BLOCK, "name": "managed"})
+    _generation(managed, _GEN_B, {**_SCRIPT_BLOCK, "format_version": 1, "name": "managed",
+                                  "outputs": {"out": {"contract": "shared"}}})
+    blockers, unreadable = reference_scan(tmp_path / "blocks", "shared", latest=3)
+    assert unreadable == [str(tmp_path / "blocks" / "broken" / "block.json")]
+    assert [(b["block"], b["generation"], b["current"], b["port"], b["revision"], b["newer_available"])
+            for b in blockers] == [("broken", None, True, "a", 2, True), ("managed", _GEN_B, False, "out", None, False)]
+    # Linked generation folders are never followed.
+    (managed / ".workshop" / "revisions" / _GEN_B / "block.json").unlink()
+    (managed / ".workshop" / "revisions" / _GEN_B).rmdir()
+    (managed / ".workshop" / "revisions" / _GEN_B).symlink_to(managed / ".workshop" / "revisions" / _GEN_A)
+    _blockers, unreadable = reference_scan(tmp_path / "blocks", "shared")
+    assert str(managed / ".workshop" / "revisions" / _GEN_B / "block.json") in unreadable
+
+
+# C18, C19----------------------------------------------------------------------------------------
 def test_two_tabs_append_without_a_lost_update(ui, monkeypatch):
     first = save_contract(ui, "race", TEXT_CONTRACT)
     entered, release = threading.Event(), threading.Event()

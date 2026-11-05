@@ -11,7 +11,9 @@ increment (owner request: **Phases 1B and 1C**) started from that commit with a 
 No commit, push, tag, publication, modelSpell modification or additional dependency was made in this
 checkout. (The installed-wheel smoke used a throwaway local clone, as DEVEL requires; see below.)
 
-**Phase 1 (1A, 1B, 1C) is implemented headlessly. The overhaul is not complete: Phase 2 (UI) remains.**
+**Phase 1 (1A, 1B, 1C) is implemented headlessly, and the readiness-review corrective pass (R1–R3, below)
+is implemented and verified; the Phase 1 backend is ready as the foundation for Phase 2. The overhaul is not
+complete: Phase 2 (UI) remains.**
 At the Phase 1 gate the offline suite passes except two browser journeys that drive the replaced
 Workbench Contracts editor; they are pending Phase 2, not passing and not deleted. This checkout is not
 shippable as the finished overhaul: the page's Contracts utility no longer works with the new routes.
@@ -180,6 +182,108 @@ Recommended correction:
   retries. Registry reservation protects cooperating AgentWiz writers, not arbitrary external editors.
   The current pre-replace hook follows the token recheck; tests must not imply detection of every edit
   after that final observation. This review did not establish an additional race defect beyond R1–R3.
+
+## November 5, 2026 — corrective pass (R1–R3) implemented
+
+Started from `e7637e0` (`contract overhaul phase 1 readiness review`) with a clean tree; no later changes
+needed reconciling. Smallest justified changes only; no redesign, compatibility layer, dependency, format
+version or public error-code change. Nothing was committed, pushed or published; changed files were delivered
+as an archive.
+
+### R1 — resolved: the deletion reference scan fails closed
+
+What was wrong: the scan treated "nothing I could find" as "not used". A managed head with `retained: []`, a
+retained generation that was a JSON array, or a definition with malformed `inputs` each yielded no blockers
+and no unreadable paths, so `ContractStore.delete` (which already refuses on any unreadable path) went ahead.
+
+Changes (`agentwiz/workshop_assets.py`):
+
+- `head` is split so its validation is the new pure `head_document(obj)`; `reference_scan` calls the same
+  function, so the scan now enforces the exact managed-head invariants (exact envelope, 1..20 unique valid
+  identities, `current == retained[0]`) instead of its own looser reading.
+- `_declared_references` now returns `(found, inspectable)`. Both executable formats (v1 and v3) require
+  `inputs`/`outputs` objects whose declarations are objects holding `contract`, so there is no legitimately
+  absent collection: a missing or non-object collection, a non-object declaration, a declaration without
+  `contract`, a contract member that is neither a string nor an object, a pin-shaped object whose `name` is
+  not a string, or a format version other than 1/3 makes the definition uninspectable. Identifiable
+  references are still reported from broken definitions (old string references and pins naming the contract;
+  conservatively, also an otherwise-invalid inline object carrying that `name`).
+- Root dispatch: v1/v3 roots are inspected as executables; anything else must pass `head_document` or is
+  unreadable (newer/unknown/boolean versions, non-object roots). A retained generation that is missing,
+  linked (any path component, via `read_file` on the full relative path), undecodable, non-object or itself a
+  head is unreadable. Current-once plus retained scanning, orphan/run exclusion, root symlink refusal, stable
+  blocker ordering, writer registration, registry reservation and the final file-token check are unchanged.
+  The unreadable list is now de-duplicated and sorted.
+- Used by (`state.contract_detail`) gains `used_by.complete` (false whenever anything was unreadable), so
+  Phase 2 cannot present an empty item list as proof of non-use.
+
+### R2 — resolved: synthesis acceptance enforces the complete-definition limit
+
+What was wrong: acceptance validated only the nested schema node; Apply validated the complete definition
+(including the 1 MiB limit). A 1,201,045-byte definition was accepted, stored as a proposal, and then
+refused by Apply as `proposal_expired`, with no repair attempted.
+
+Changes: the candidate construction moved to pure `contract_schema.synthesis_definition(response)` (format
+json, nonblank description, schema). `checks._synthesis_post_validator` (`contract_synthesis_v1`) now runs
+`validate_user_definition` on exactly that candidate, after the closed wrapper passed, identically on
+original and repaired answers; whole-definition issues are located at `outputs.proposal`, others at their
+path, messages value-redacted. `workshop_service.proposal_definition` uses the same builder and still
+revalidates defensively for Apply and Save/provenance. That defensive refusal keeps the existing public
+`proposal_expired` (410) code; after this fix it is reachable only by a proposal that bypassed acceptance
+(not by expiry of a valid one) — recorded here rather than changing the public convention. No caps, models,
+loops or truncation were changed.
+
+### R3 — resolved: snapshot restoration validates identity
+
+What was wrong: `ContractCopy.from_record` checked digest and policy but accepted any name/revision as long
+as both were null or both non-null (`"../not-a-name"`, `revision: true` restored), and a missing identity
+member silently became an inline capture. (Not a traversal: restoration never resolves names as files.)
+
+Changes (`agentwiz/model_step.py`): old snapshots are recognised by having neither `digest` nor `policy`
+(`migration_required`, as the pre-overhaul layout `{name, revision, text}`). A new-format snapshot must hold
+exactly name, revision, digest, text, policy (validator optional); missing or extra members, non-string
+text/digest, an identity that is neither both-null nor a valid `workspace.valid_name` with a positive
+non-boolean integer revision, and an internal-policy capture with a reference identity are all
+`snapshot_incomplete`. Digest, policy and validator verification are unchanged; no live file is consulted
+and no digest is recalculated.
+
+### Tests added (functional regressions; each new group was confirmed to fail against the pre-fix module)
+
+- `tests/test_contracts.py`: `test_deletion_refuses_when_a_definition_cannot_be_enumerated` (18 parametrised
+  damage cases incl. empty/duplicate/oversized retained lists, current not first, bad identities, extra head
+  member, missing/array/head generations, malformed collections/declarations/contracts/pins, newer/boolean
+  versions, array root) through HTTP: 409 `reference_scan_incomplete`, contract bytes and token unchanged,
+  `used_by.complete` false; after removing the damage, Used by is complete and deletion succeeds.
+  `test_reference_scan_reports_identifiable_pins_in_broken_blocks` (blockers from broken and retained v1
+  generations, `newer_available`, linked generation refused). Old code: 16 of 19 failed.
+- `tests/test_contract_overhaul.py`: `test_synthesis_acceptance_applies_the_complete_definition_limit`
+  (oversized schema; under-limit schema pushed over by its description; same schema without description
+  accepted and applied unchanged) and `test_oversized_proposal_is_repaired_once_then_refused` (oversized
+  original → one repair → valid proposal applies and saves as `synthesized`; two invalid answers → no
+  proposal, exactly one repair; Save runs off leaves no runs/comparisons on disk). Old code: 3 of 3 failed.
+- `tests/test_contract_service.py`: `test_snapshot_identity_is_validated_on_restore` (19 cases, via both
+  `ContractCopy` and `OutputPlan`) and `test_valid_snapshot_identities_restore_and_old_snapshots_need_migration`.
+  `tests/test_attempts.py`: `test_repair_refuses_a_malformed_snapshot_identity_and_never_needs_the_live_file`
+  (preview and repair refuse with 409 `snapshot_incomplete`, no dispatch; the intact capture repairs after
+  the live contract file is deleted). Old code: 16 of 22 failed.
+
+### Verification (Linux, Python 3.13.18, public modelSpell 0.3.0, Playwright Chromium via `scripts/dev_setup.sh`)
+
+- Complete offline gate after the last code change: `.venv/bin/python -m pytest -q -m "not live" -r fE`
+  → **894 passed, 2 failed, 10 deselected, 0 errors, 0 skips** (179.44 s). The 2 failures are the documented
+  Phase 2 pending journeys, unchanged in mode: `tests/test_page.py::test_page_contracts` and
+  `tests/test_tutorial.py::test_tutorial_topics`, both stopping at `contracts-save` → `data-state="error"` in
+  the replaced Workbench Contracts editor. No new or unexplained failures; +43 tests over the 851 recorded.
+- Race/hook suites (`test_contracts.py`, `test_contract_overhaul.py`, `test_shutdown.py`) run three times:
+  63 passed each time.
+- `git diff --check`, `compileall -q agentwiz tests scripts` and `pip check` passed.
+- A pre-edit baseline full run was attempted but is **not** valid evidence: it overlapped a focused run
+  (one `WorkspaceInUse` collision) and edits began while it ran. The fresh final run above is the evidence.
+- Not run: installed-wheel smoke (no packaging, prompt or asset changes in this pass), Python 3.10, macOS,
+  live backends.
+
+Disposition: R1, R2 and R3 resolved. Phase 1 sign-off is no longer blocked by the readiness review; the
+Phase 2 carry-forward risks above still apply, and Phase 2A is the next scope.
 
 ## Cumulative implementation
 

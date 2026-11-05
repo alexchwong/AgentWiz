@@ -97,6 +97,80 @@ def test_synthesis_capture_records_the_server_validator_and_repairs_with_it():
         ContractCopy.from_record({**copy_.view(), "validator": "unknown_validator"})
 
 
+def _definition_bytes(definition):
+    return len(json.dumps(definition, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _sized_schema(target):
+    """A supported subset schema (4 nodes, bounded choices) whose complete definition {format, schema} is
+    exactly `target` UTF-8 bytes: the size limit, not the node rules, is what decides."""
+    choices = [f"{i:04d}" + "x" * 2496 for i in range(200)]
+    filler = ["c"]
+    schema = {"type": "object", "properties": {"a": {"type": "string", "enum": choices},
+                                               "b": {"type": "string", "enum": list(choices)},
+                                               "c": {"type": "string", "enum": filler}},
+              "required": [], "additionalProperties": False}
+    while (gap := target - _definition_bytes({"format": "json", "schema": schema})) > 0:
+        room = 4096 - len(filler[-1])
+        if room > 0:
+            filler[-1] += "y" * min(room, gap)
+        else:
+            filler.append(f"{len(filler):04d}")
+    assert _definition_bytes({"format": "json", "schema": schema}) == target
+    return schema
+
+
+_LIMIT = contract_schema.DEFINITION_BYTES
+OVERSIZED = {"description": "", "schema": _sized_schema(1_201_045), "notes": []}
+NEAR = _sized_schema(_LIMIT - 100)
+# 100 bytes under the limit without a description; the 4096-character description pushes it over.
+DESCRIBED_OVER = {"description": "d" * 4096, "schema": NEAR, "notes": []}
+
+
+@pytest.mark.parametrize("value", [OVERSIZED, DESCRIBED_OVER], ids=["schema", "description"])
+def test_synthesis_acceptance_applies_the_complete_definition_limit(value):
+    """R2: a wrapper-valid proposal whose nested schema passes the node rules but whose complete definition
+    exceeds 1 MiB fails acceptance itself (located, value-redacted), exactly as application would refuse it."""
+    contract_schema.validate_user_schema(value["schema"])          # the node rules alone accept it
+    parsed = checks.parse_internal_contract({"format": "json", "schema": workshop_service._SYNTHESIS_WRAPPER},
+                                            validator=workshop_service.SYNTHESIS_VALIDATOR)
+    result, _values = checks.check_named_answer({"proposal": parsed}, json.dumps({"proposal": value}))
+    assert result["overall"] == "fail"
+    assert [(i["location"], "1 MiB" in i["message"]) for i in result["issues"]] == [("outputs.proposal", True)]
+    assert "xxxx" not in json.dumps(result) and "dddd" not in json.dumps(result)
+    with pytest.raises(contract_schema.DefinitionError):
+        workshop_service.proposal_definition(value)
+    under = {**value, "description": ""} if value is DESCRIBED_OVER else None
+    if under is not None:
+        accepted, _ = checks.check_named_answer({"proposal": parsed}, json.dumps({"proposal": under}))
+        assert accepted["overall"] == "pass"
+        assert workshop_service.proposal_definition(under) == {"format": "json", "schema": NEAR}
+
+
+def test_oversized_proposal_is_repaired_once_then_refused(ui, server):
+    """R2 through the runner: the oversized original uses the single repair; a valid repair applies and saves
+    unchanged; a second oversized answer leaves no usable proposal. Save runs is off throughout."""
+    setup_role(ui, server)
+    server.reply(envelope(OVERSIZED), envelope(GOOD))
+    _plan, _started, batch = synthesize(ui, synthesis_body())
+    row = batch["rows"][0]
+    assert row["outcome"] == "complete" and row["repairs"] == 1 and row.get("proposal_id")
+    repair = server.requests[1]["body"]["messages"][-1]["content"]
+    assert "outputs.proposal" in repair and "1 MiB" in repair
+    applied = v2(ui, "synthesis/apply", proposal_id=row["proposal_id"], definition_text=None)
+    assert jsonio.decode_exact(applied["definition_text"]) == {"format": "json", "description": GOOD["description"],
+                                                               "schema": GOOD["schema"]}
+    save_contract(ui, "triage", applied["definition_text"], proposal_id=row["proposal_id"])
+    assert contract_detail(ui, "triage")["origin"] == "synthesized"
+    server.reply(envelope(DESCRIBED_OVER), envelope(OVERSIZED))
+    _plan, _started, batch = synthesize(ui, synthesis_body())
+    row = batch["rows"][0]
+    assert row["outcome"] != "complete" and row["repairs"] == 1 and "proposal_id" not in row
+    assert len(server.requests) == 4                                               # one repair, never more
+    assert not (ui.workspace.path / "runs").exists()
+    assert not (ui.workspace.path / "workshop" / "comparisons").exists()
+
+
 # C23 ----------------------------------------------------------------------------------------------
 def test_synthesis_plan_binding_tickets_kinds_and_staleness(ui, server):
     setup_role(ui, server)

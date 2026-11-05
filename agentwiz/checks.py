@@ -273,18 +273,24 @@ def contract_from_text(text: str) -> Contract:
 
 
 def _synthesis_post_validator(value: Any) -> list[_Issue]:
-    """contract_synthesis_v1: the proposal's nested `schema` must be a valid user-subset node. Runs after the
-    closed wrapper schema passed, on the original value, identically for original and repaired answers."""
+    """contract_synthesis_v1: the complete user definition the proposal would become (its nested `schema` as a
+    user-subset node, its description, and the whole-definition size limit) must be valid, so an accepted
+    proposal is always applicable. Runs after the closed wrapper schema passed, on the original value,
+    identically for original and repaired answers; a failure is an ordinary value failure, so a completed
+    answer gets the existing single repair."""
     if not isinstance(value, Mapping) or 'schema' not in value:
         return []
     try:
-        contract_schema.validate_user_schema(value['schema'])
+        contract_schema.validate_user_definition(contract_schema.synthesis_definition(value))
     except contract_schema.DefinitionError as exc:
         found = []
         for issue in exc.issues:
             location = issue['location']
-            rest = location[len('schema'):] if location.startswith('schema') else '.' + location
-            found.append(_Issue((3, location), '$.schema' + rest, 'value violates the contract subset: '
+            if location == 'contract':                      # the whole prospective definition, e.g. its size
+                path = '$'
+            else:                                           # recogniser locations are relative to the definition
+                path = '$.' + location
+            found.append(_Issue((3, location), path, 'value violates the contract subset: '
                                 + issue['message'], 'schema.subset'))
         return found
     return []

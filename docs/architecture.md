@@ -312,6 +312,9 @@ expectations call `checks.exact_equal` directly.
 `checks.parse_internal_contract(obj, validator=None)` builds server-owned rich captures. `validator` is a
 key of the hard-coded `checks.POST_VALIDATORS` (only `contract_synthesis_v1`), supplied by server code and
 recorded in internal capture metadata; it is never read from a definition, draft or request.
+`contract_synthesis_v1` validates the complete user definition the proposal would become
+(`contract_schema.synthesis_definition`: subset schema, description and the 1 MiB definition limit) inside
+acceptance, so an accepted proposal is always applicable and an oversized one uses the ordinary single repair.
 
 - **Saved containers.** `<workspace>/contracts/<name>.json` holds `format_version` 2, the immutable `name`
   (file stem; casefold collisions refused), mutable `family`, `latest` and oldest-first `revisions`
@@ -322,8 +325,11 @@ recorded in internal capture metadata; it is never read from a definition, draft
 - **Operations.** Save creates (expected token null) or appends `latest+1`; a save equal to the latest
   digest is a no-op (`unchanged:true`). Restore appends a copy of an old revision. Family changes rewrite
   grouping only. Delete requires the file token and a complete raw reference scan of current unmanaged
-  definitions and every retained managed generation (orphans and run records are not scanned); an
-  unreadable definition refuses with `reference_scan_incomplete`.
+  definitions and every retained managed generation (orphans and run records are not scanned); the scan fails
+  closed: a managed head breaking the `head` invariants (shared `head_document`), a missing retained
+  generation, a newer/unknown format or any definition whose port collections, declarations or contract members
+  cannot all be enumerated is unreadable and refuses with `reference_scan_incomplete`. Used by carries
+  `complete: false` in that case, so an empty item list is not evidence of non-use.
 - **Tokens and writes.** `file_token` is `sha256:` of the complete file bytes; explicit get/save/delete and
   Checked request resolution read current bytes, while stat fingerprints only drive re-scans. Writers use a
   same-directory temporary file, file fsync, a recheck of the token, atomic replace and parent fsync. A failed
@@ -335,7 +341,9 @@ recorded in internal capture metadata; it is never read from a definition, draft
   pin's state (existence, usability, digest), never the container's latest or family.
 - **Captures.** `model_step.ContractCopy` holds name/revision (null for inline), digest, exact text and the
   parsed contract with its policy. `from_record` verifies the digest and recorded policy and never resolves a
-  live file: an old record is `migration_required`; a changed (for example redacted) text is
+  live file: an old record (neither `digest` nor `policy`) is `migration_required`; a new-format snapshot must
+  hold exactly name, revision, digest, text and policy (validator optional) with an inline (both null) or valid
+  name/positive-integer revision identity, and anything else, like a changed (for example redacted) text, is
   `snapshot_incomplete`, so it cannot be repaired or re-executed.
 - **Managed generations.** Workshop metadata keeps the `contracts` exact-text map for every port and adds
   `contract_pins` (referenced ports only) and `contracts_digest`; `validate_generation` checks them against

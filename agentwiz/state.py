@@ -774,7 +774,10 @@ class ProcessState:
         blockers, unreadable = self._used_by(name, entry.latest if entry.problem is None else None)
         out = {"format_version": contracts.FORMAT_VERSION, "name": entry.name, "family": entry.family,
                "file_token": entry.token, "problem": entry.problem_view(),
-               "used_by": {"items": blockers, "unreadable": unreadable}, "read_only": self.workspace.read_only}
+               # complete is false whenever some definition could not be inspected: an empty item list is
+               # then not evidence that the contract is unused.
+               "used_by": {"items": blockers, "unreadable": unreadable, "complete": not unreadable},
+               "read_only": self.workspace.read_only}
         if entry.problem is not None:
             return {**out, "latest": None, "revision": None, "revisions": []}
         selected = entry.revisions[-1] if revision is None else entry.revision(revision)

@@ -97,13 +97,10 @@ def synthesis_request(body):
 
 
 def proposal_definition(response):
-    """The draft definition a validated synthesis response yields: a direct subset schema, never saved."""
-    from .contract_schema import validate_user_definition
-    definition = {'format': 'json'}
-    if response.get('description'):
-        definition['description'] = response['description']
-    definition['schema'] = response['schema']
-    validate_user_definition(definition)
+    """The draft definition a validated synthesis response yields: a direct subset schema, never saved. Built by
+    the same `contract_schema.synthesis_definition` that acceptance validated; validated again defensively."""
+    definition = contract_schema.synthesis_definition(response)
+    contract_schema.validate_user_definition(definition)
     return definition
 
 
@@ -1133,6 +1130,8 @@ class Service:
         try:
             definition = proposal_definition(proposal['response'])
         except contract_schema.DefinitionError:
+            # Defensive only: contract_synthesis_v1 already refused this definition at acceptance, so only a
+            # proposal that bypassed acceptance reaches here. It keeps the existing public expiry code.
             fail('proposal_expired', 410)
         text = jsonio.encode_exact(definition, indent=2)
         return {'proposal_id': proposal_id, 'definition_text': text, 'projection': contract_service.project(text),
