@@ -207,8 +207,7 @@ def _checked_stop(ui, backend):
 
 
 CONTRACT = json.dumps({"format": "json", "schema": {"type": "object", "required": ["answer"],
-                                                      "properties": {"answer": {"type": "string"}}},
-                       "checks": []})
+                                                      "properties": {"answer": {"type": "string"}}}})
 
 
 def test_live_checked_request_openrouter(ui):
@@ -219,12 +218,12 @@ def test_live_checked_request_openrouter(ui):
 
 def _checked_contract(ui, backend):
     model = _additional_backend(ui, backend)
-    saved = save_contract(ui, "live_answer", CONTRACT)["contract"]
+    saved = save_contract(ui, "live_answer", CONTRACT)
     prompt = 'Reply with a JSON object with one key, "answer", whose value is the word pong. Nothing else.'
     evs = events(_call(ui, "/api/complete", {
         "source": "checked_request", "prompt": prompt, "system": "", "revision": get_state(ui)["revision"],
         "task": {"temperature": 0.2, "max_tokens": 512},
-        "contract": {"name": saved["name"], "revision": saved["revision"]}}, raw=True))
+        "contract": {"name": saved["name"], "revision": saved["revision"], "digest": saved["digest"]}}, raw=True))
     record, lines = final_of(evs)["record"], []
     for _ in range(3):
         check = record["check"]

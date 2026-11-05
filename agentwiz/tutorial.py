@@ -15,10 +15,28 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from . import tutorial_topics
-from .tutorial_topics import CONTRACT, ROLE, ROLE_MODEL, ROLE_PROFILE, TOPICS
+from .tutorial_topics import (CONTRACT, CONTRACT_FAMILY, CONTRACT_LABEL, CONTRACT_NAME, ROLE, ROLE_MODEL,
+                              ROLE_PROFILE, TOPICS)
 from .workspace import open_workspace
 
 BLOCKS_SOURCE = Path(__file__).with_name("tutorial_support") / "blocks"
+
+
+def ensure_contract(state) -> None:
+    """Idempotent: reuse `fields` when its revision 1 is the packaged definition; create it when missing. Runs only
+    against the tutorial's own temporary workspace; an existing different file is left for the learner to see."""
+    from .contract_schema import contract_digest
+    from .contracts import StoreError
+    from .jsonio import decode_exact
+    try:
+        detail = state.contract_detail(CONTRACT_NAME, 1)
+    except StoreError as exc:
+        if exc.code != "no_such_contract":
+            return
+        state.save_contract(CONTRACT_NAME, CONTRACT_FAMILY, None, CONTRACT, CONTRACT_LABEL)
+        return
+    if detail.get("digest") != contract_digest(decode_exact(CONTRACT)):
+        return
 
 
 class TutorialBusy(Exception):
@@ -122,7 +140,7 @@ class Tutorial:
                 self.child.tutorial_session = self
                 state = self.child.state
                 state.save_mcp_servers(servers, state.view()["mcp"]["revision"])
-                state.save_contract("fields", CONTRACT, None)
+                ensure_contract(state)
                 self._seed(state, self.workspace)
                 self.topic = TOPICS[0].id
                 self.closed.clear()
@@ -170,8 +188,8 @@ class Tutorial:
             self.last_seen = time.monotonic()
             state.apply_config({"kind": "openai_compat",
                                 "model": topic.model}, state.view()["revision"])
-            if topic.seed_contract and not any(c["name"] == "fields" for c in state.view()["contracts"]["items"]):
-                state.save_contract("fields", CONTRACT, None)
+            if topic.seed_contract:
+                ensure_contract(state)
             return self.info()
 
     # --- ending ------------------------------------------------------------------------------------------

@@ -35,6 +35,9 @@ DEFAULTS = {
     "fast": {"description": "Routine generation, extraction and classification", "location": "local"},
     "assistant": {"description": "Create, improve and explain Workshop blocks", "location": "local"},
     "reasoning": {"description": "Tasks needing a more capable reasoning model", "location": "local"},
+    # Unassigned by default: no implicit profile or fallback. Editable like any other definition.
+    "write_contract": {"description": "Create and revise reusable contracts", "location": "cloud",
+                       "family": "Workshop"},
 }
 
 

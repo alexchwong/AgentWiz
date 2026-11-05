@@ -24,7 +24,7 @@ def replay(evidence, start=None, end=None, replacement=None):
             plan = model_step.OutputPlan.from_record(saved)
             if not plan.outputs or plan.digest() != saved.get('digest'):
                 raise ValueError('incomplete plan')
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, model_step.SnapshotUnavailable):
             return {'status': 'unsupported_evidence', 'reason': 'invalid_output_plan'}
     if evidence.get('redacted') or not isinstance(evidence.get('raw_answer'), str) or (plan is None and not isinstance(evidence.get('contract_text'), str)):
         return {'status': 'unassessable', 'reason': 'incomplete_or_redacted'}

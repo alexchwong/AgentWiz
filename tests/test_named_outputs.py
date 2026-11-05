@@ -3,6 +3,7 @@ from decimal import Decimal
 
 import pytest
 
+from conftest import pinned
 from agentwiz import checks, jsonio, output_protocol, roles, task_settings, templates
 from agentwiz.model_step import ContractCopy, OutputPlan
 from agentwiz import workshop_assist
@@ -34,7 +35,7 @@ def test_named_outputs_exact_values_and_atomic_failure():
 
 def test_plan_roundtrip_and_instructions_include_captured_requirements():
     declared = contracts()
-    plan = OutputPlan(tuple((name, 'Description {{inputs.secret}}', ContractCopy.of(name, 1, contract))
+    plan = OutputPlan(tuple((name, 'Description {{inputs.secret}}', pinned(name, 1, contract))
                             for name, contract in declared.items()))
     saved = plan.view()
     restored = OutputPlan.from_record(jsonio.decode_exact(jsonio.encode_exact(saved)))

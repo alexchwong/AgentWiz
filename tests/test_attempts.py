@@ -9,7 +9,7 @@ import pytest
 
 from agentwiz import history, model_step, runs
 from agentwiz.ui import server as server_module
-from conftest import (DONE, JSON_CONTRACT_NO_SCHEMA, TEXT_CONTRACT, Reply, answer, complete, configure, contract_item,
+from conftest import (contract_pin, contract_token, DONE, JSON_CONTRACT, JSON_CONTRACT_NO_SCHEMA, TEXT_CONTRACT, Reply, answer, complete, configure, contract_item,
                       delta, failure_of, file_stat, final_of, get_state, iter_events, json_answer, poll_attempt,
                       read_run_files, read_until, record_of, repair_attempt, request, run_folders, save_contract,
                       status_of, stop_attempt, switch_history, wait_until)
@@ -18,14 +18,14 @@ SSE = {"Content-Type": "text/event-stream"}
 
 
 def checked(ui, name, prompt="hi", **kw):
-    return complete(ui, prompt, source="checked_request", contract=(name, contract_item(ui, name)["revision"]), **kw)
+    return complete(ui, prompt, source="checked_request", contract=contract_pin(ui, name), **kw)
 
 
 def start_checked(ui, name, prompt="hi", **kw):
     """The open stream of a Checked request, for tests that act while it runs."""
     rev = get_state(ui)["revision"]
     return request(ui, "/api/complete", {"source": "checked_request", "prompt": prompt, "system": "", "revision": rev,
-                                         "contract": {"name": name, "revision": contract_item(ui, name)["revision"]},
+                                         "contract": dict(zip(("name", "revision", "digest"), contract_pin(ui, name))),
                                          **kw}, raw=True)
 
 
@@ -45,7 +45,7 @@ def new_folder(ui, known):
 
 # 68 ---------------------------------------------------------------------------------------------
 def test_identity_and_run_files(ui, server):
-    save_contract(ui, "needs_numbers", JSON_CONTRACT_NO_SCHEMA)
+    save_contract(ui, "needs_numbers", JSON_CONTRACT)          # ratio has maximum 1: a structural rule
     configure(ui, server)
     switch_history(ui, True)
     good = '{"id": 9007199254740993, "ratio": 0.10000000000000000001}'
@@ -76,13 +76,15 @@ def test_identity_and_run_files(ui, server):
     assert sorted(f.name for f in files["folder"].iterdir()) == ["request-1.json", "request-2.json", "request-3.json",
                                                                  "run.json"]
     assert files["run"]["run_id"] == run_id and files["run"]["steps"] == ["request"]
-    assert files["run"]["contract"] == {"name": "needs_numbers", "revision": one["contract"]["revision"]}
+    assert files["run"]["contract"] == {"name": "needs_numbers", "revision": one["contract"]["revision"],
+                                        "digest": one["contract"]["digest"]}
     for name, before in stats.items():
         assert file_stat(files["folder"] / name) == before                  # each file written once
     for number in (1, 2, 3):
         saved = files["attempts"][number]
         assert saved["id"] == f"{run_id}-{number}" and saved["redacted"] is False
-        assert "0.10000000000000000001" in saved["contract"]["text"]        # exactly, in every record
+        assert saved["contract"]["text"] == one["contract"]["text"]         # the same captured definition
+        assert saved["contract"]["digest"] == one["contract"]["digest"] and saved["contract"]["policy"] == "user"
     assert files["attempts"][3]["check"]["overall"] == "pass"
     assert all(oct(os.stat(files["folder"] / n).st_mode & 0o777) == "0o600" for n in files["attempts"] and
                ("run.json", "request-1.json"))
@@ -472,12 +474,12 @@ def test_polling_envelope_for_unknown_attempts(ui):
 
 # 74 ---------------------------------------------------------------------------------------------
 def test_repair_preview_and_send(ui, server):
-    save_contract(ui, "c", JSON_CONTRACT_NO_SCHEMA)
+    save_contract(ui, "c", JSON_CONTRACT)
     configure(ui, server, kind="openai_compat", model="the-model")
     good = '{"id": 9007199254740993, "ratio": 0.10000000000000000001}'
     server.reply(json_answer('{"id": 1, "ratio": 2}'), json_answer('{"id": 3, "ratio": 4}'), json_answer(good))
     first = record_of(complete(ui, "extract", system="be exact", source="checked_request",
-                               contract=("c", contract_item(ui, "c")["revision"]), task={"temperature": 0.25}))
+                               contract=contract_pin(ui, "c"), task={"temperature": 0.25}))
     assert first["check"]["overall"] == "fail"
     preview = request(ui, "/api/repair/preview", {"attempt_id": first["id"]})
     assert preview["parent_id"] == first["id"] and preview["attempt"] == 2
@@ -485,16 +487,18 @@ def test_repair_preview_and_send(ui, server):
     assert preview["messages"][2]["content"] == first["result"]["text"]
     assert preview["messages"][3]["content"] == preview["repair_message"]
     assert preview["repair_message"].startswith("The previous answer did not satisfy the required output contract.")
-    assert "$.id" in preview["repair_message"]
+    assert "$.ratio" in preview["repair_message"]
     assert preview["settings"] == {"kind": "openai_compat", "base_url": server.url + "/v1", "model": "the-model",
                                    "provider": "", "task": {"temperature": 0.25}}
-    assert preview["contract"] == {"name": "c", "revision": first["contract"]["revision"]}
+    assert preview["contract"] == {"name": "c", "revision": first["contract"]["revision"],
+                                   "digest": first["contract"]["digest"]}
     assert request(ui, "/api/repair/preview", {"attempt_id": first["id"]}) == preview      # nothing was reserved
 
     # Everything the screen could change is changed; the repair still uses the captured settings.
     configure(ui, server, model="another-model")
     request(ui, "/api/task_settings/save", {"task": {"temperature": 0.9}, "revision": get_state(ui)["task"]["revision"]})
-    save_contract(ui, "c", TEXT_CONTRACT, contract_item(ui, "c")["revision"])
+    save_contract(ui, "c", JSON_CONTRACT_NO_SCHEMA, contract_token(ui, "c"))      # appends revision 2
+    assert contract_item(ui, "c")["latest"] == 2
     second = record_of(repair_attempt(ui, first["id"], raw=False))
     sent = server.requests[-1]["body"]
     assert sent["model"] == "the-model" and sent["temperature"] == 0.25
@@ -639,7 +643,7 @@ def test_source_and_contract_rules_refuse_before_anything_is_created(ui, server)
     save_contract(ui, "c", TEXT_CONTRACT)
     configure(ui, server)
     rev = get_state(ui)["revision"]
-    ref = {"name": "c", "revision": contract_item(ui, "c")["revision"]}
+    ref = dict(zip(("name", "revision", "digest"), contract_pin(ui, "c")))
 
     def post(**body):
         fail = failure_of(lambda: request(ui, "/api/complete", {"prompt": "hi", "revision": rev, **body}))
@@ -654,30 +658,41 @@ def test_source_and_contract_rules_refuse_before_anything_is_created(ui, server)
     assert post(source="checked_request", contract={"name": "c", "revision": "1"}) == 400
     assert post(source="checked_request", contract={"name": "c", "revision": True}) == 400
     assert post(source="checked_request", contract={"name": "../c", "revision": 1}) == 400
+    assert post(source="checked_request", contract={"name": "c", "revision": 1}) == 400          # no digest
+    assert post(source="checked_request", contract={**ref, "revision": "latest"}) == 400        # never "latest"
+    assert post(source="checked_request", contract={**ref, "digest": "sha256:XYZ"}) == 400
+    assert post(source="checked_request", contract={**ref, "extra": 1}) == 400
     assert post(source="nope") == 400 and post() == 400
     assert server.requests == [] and ui.state.store.running_count() == 0 and ui.state.budget.in_flight == 0
-    # Missing and stale contracts.
-    assert post(source="checked_request", contract={"name": "missing", "revision": 1}) == 404
-    assert post(source="checked_request", contract={"name": "c", "revision": ref["revision"] + 99}) == 409
+    # Missing contracts and revisions; a selected digest that no longer matches.
+    assert post(source="checked_request", contract={**ref, "name": "missing"}) == 404
+    assert post(source="checked_request", contract={**ref, "revision": ref["revision"] + 99}) == 404
+    assert post(source="checked_request", contract={**ref, "digest": "sha256:" + "0" * 64}) == 409
     assert server.requests == [] and not (ui.workspace.path / "runs").exists()
+    # Appending a newer revision does not invalidate the reviewed older pin (spec 13.1).
+    save_contract(ui, "c", '{"format": "text", "contains": ["other"]}', contract_token(ui, "c"))
+    server.reply(answer("pong"))
+    rec = record_of(complete(ui, "hi", source="checked_request", contract=tuple(ref.values())))
+    assert rec["contract"]["revision"] == ref["revision"] == 1 and rec["check"]["overall"] == "pass"
+    assert "pong" in rec["contract"]["text"] and "AgentWiz output protocol" in rec["messages_sent"][0]["content"]
 
 
 def test_a_damaged_contract_is_refused_and_usable_after_repair(ui, server):
     save_contract(ui, "c", TEXT_CONTRACT)
     configure(ui, server)
+    good_digest = contract_pin(ui, "c")[2]
     path = ui.workspace.path / "contracts" / "c.json"
     good = path.read_bytes()
     path.write_bytes(b"{ damaged")
     os.utime(path, ns=(os.stat(path).st_mtime_ns + 5_000_000_000,) * 2)
-    revision = contract_item(ui, "c")["revision"]
-    fail = failure_of(lambda: complete(ui, "hi", source="checked_request", contract=("c", revision)))
+    pin = ("c", 1, good_digest)
+    fail = failure_of(lambda: complete(ui, "hi", source="checked_request", contract=pin))
     assert (fail.status, fail.body["code"]) == (409, "contract_unusable")
     assert server.requests == [] and ui.state.store.running_count() == 0
     path.write_bytes(good)
     os.utime(path, ns=(os.stat(path).st_mtime_ns + 10_000_000_000,) * 2)
     server.reply(answer("pong"))
-    revision = contract_item(ui, "c")["revision"]
-    rec = record_of(complete(ui, "hi", source="checked_request", contract=("c", revision)))
+    rec = record_of(complete(ui, "hi", source="checked_request", contract=pin))
     assert rec["check"]["overall"] == "pass"
 
 

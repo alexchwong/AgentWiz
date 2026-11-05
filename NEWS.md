@@ -1,8 +1,13 @@
 # NEWS
 ## 0.2.0
-- Contract-overhaul Phase 1A enforces bounded Text/JSON definitions, literal Text rules and exact
-  schema validation; Checked requests render captured requirements. Storage/assets/UI migration
-  remains incomplete; this intermediate development checkout is not a completed overhaul.
+- Contracts are Text, JSON with a small schema vocabulary, or Any JSON; literal Text rules and exact
+  numbers; legacy `checks`/`strict` definitions are refused.
+- Saved contracts keep every revision in one file per name, with families, restore-as-new and
+  stale-edit protection; deletion is refused while blocks use them. Version 1 contract files are not converted.
+- Blocks are `format_version` 3 and pin saved contracts by name, revision and digest; runs and repairs keep
+  their own copies. Version 1 block files are refused with `migration_required`.
+- Contract synthesis through the new `write_contract` role produces a reviewable draft (backend; editor UI pending).
+- The browser Contracts editor is being rebuilt; this development checkout is not a completed overhaul.
 - JSON Schema validation is now included in every installation; the optional checks extra is removed.
 - Workshop Design uses three responsive columns with editable input/output tables and Save in the settings pane.
 - Design now has a model-role dropdown, paired temperature/reasoning controls with visible inherited defaults,

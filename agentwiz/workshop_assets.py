@@ -14,7 +14,7 @@ import stat
 import tempfile
 from pathlib import Path, PurePosixPath
 
-from . import checks, jsonio
+from . import checks, contract_schema, jsonio
 from .workspace import valid_name, write_atomic_bytes
 from .workshop import TOKEN, WorkshopError
 
@@ -69,13 +69,23 @@ def document(root, name, limit=1 << 20):
         fail('unusable', 409)
 
 
+EXECUTABLE_VERSION = 3
+
+
 def head(root):
+    """The managed head of a block root, or None for an unmanaged root holding an executable definition.
+
+    An executable v3 document is an unmanaged root. An old executable v1 root is also unmanaged here; the
+    loader reports it as migration_required and never rewrites it on read."""
     obj = document(root, 'block.json')
     if not isinstance(obj, dict):
         fail('unusable', 409)
-    if obj.get('format_version') == 1:
+    version = obj.get('format_version')
+    if type(version) is not int:
+        fail('unusable', 409)
+    if version in (1, EXECUTABLE_VERSION):
         return None
-    if obj.get('format_version') != 2:
+    if version != 2:
         fail('newer_format', 409)
     if set(obj) != {'format_version', 'current', 'retained'}:
         fail('unusable', 409)
@@ -142,14 +152,43 @@ def decode_files(raw):
     return files
 
 
+class SnapshotContracts:
+    """The private resolver of a historical preview: a generation's own captured definitions, validated
+    against its pins and parsed under user policy. Never used for current execution or new publication."""
+
+    def __init__(self, metadata):
+        self.metadata = metadata
+
+    def resolve(self, name, revision, digest):
+        from .contracts import Revision
+        for side in ('inputs', 'outputs'):
+            for port, pin in self.metadata.get('contract_pins', {}).get(side, {}).items():
+                if pin == {'name': name, 'revision': revision, 'digest': digest}:
+                    text = self.metadata['contracts'][side][port]
+                    try:
+                        obj = jsonio.decode_exact(text)
+                        parsed = checks.parse_contract(obj)
+                    except (ValueError, checks.ContractError):
+                        return None, ('snapshot_incomplete', 'the captured definition cannot be read')
+                    if contract_schema.contract_digest(obj) != digest:
+                        return None, ('digest_mismatch', 'the captured definition does not match its pin')
+                    return Revision(revision, '', '', 'manual', digest, parsed), None
+        return None, ('no_such_contract', 'the generation captured no definition for this pin')
+
+    def pin_state(self, name, revision, digest):
+        found, refused = self.resolve(name, revision, digest)
+        return ('ok', digest) if found is not None else (refused[0],)
+
+
 class Capture:
-    def __init__(self, files, key, contracts, metadata=None, *, internal_contracts=False):
+    def __init__(self, files, key, contracts, metadata=None, *, internal_contracts=False, validators=None):
         from . import blocks
         self.directory = tempfile.TemporaryDirectory(prefix='agentwiz-capture-')
         self.root = Path(self.directory.name)
         try:
             write_files(self.root, files)
-            self.parsed = blocks.parse_block(self.root, key, contracts, internal_contracts=internal_contracts)
+            self.parsed = blocks.parse_block(self.root, key, contracts, internal_contracts=internal_contracts,
+                                             validators=validators)
             self.files = files
             self.metadata = metadata or {}
             self.digest = fingerprint(files)
@@ -237,15 +276,30 @@ class Assets:
         fail('stale', 409)
 
     def contracts(self):
-        # Loader resolves all references against a coherent state-owned copy.
+        # Loader resolves all references against one coherent snapshot of the parsed entries.
         with self.state._lock:
             self.state.contracts.rescan()
-            return copy.deepcopy(self.state.contracts)
+            return self.state.contracts.snapshot()
+
+    @contextlib.contextmanager
+    def registry(self):
+        """The logical contract-registry write reservation (spec 11): a busy flag claimed under C6, which is
+        released before any I/O. A competing registry writer is refused at once with busy (409)."""
+        identity = ('contract_registry', '')
+        with self.lock:
+            if identity in self.reservations:
+                fail('busy', 409)
+            self.reservations.add(identity)
+        try:
+            yield
+        finally:
+            with self.lock:
+                self.reservations.discard(identity)
 
     def validate(self, draft):
         return self._validate(draft)
 
-    def _validate(self, draft, *, internal_contracts=False):
+    def _validate(self, draft, *, internal_contracts=False, validators=None):
         if not isinstance(draft, dict) or set(draft) - {'key', 'definition_text', 'files', 'metadata', 'base_digest', 'root_sources'}:
             fail()
         key = key_name(draft.get('key'))
@@ -256,7 +310,9 @@ class Assets:
             obj = jsonio.decode_exact(text)
         except ValueError:
             fail()
-        if not isinstance(obj, dict) or obj.get('format_version') != 1 or obj.get('name') != key:
+        if isinstance(obj, dict) and type(obj.get('format_version')) is int and obj['format_version'] < EXECUTABLE_VERSION:
+            fail('migration_required', 400)
+        if not isinstance(obj, dict) or obj.get('format_version') != EXECUTABLE_VERSION or obj.get('name') != key:
             fail()
         files = decode_files(draft.get('files', {}))
         sources = draft.get('root_sources', {})
@@ -292,7 +348,8 @@ class Assets:
             fail()
         if any(relative(p) not in files or p == 'block.json' for p in support):
             fail()
-        captured = Capture(files, key, self.contracts(), metadata, internal_contracts=internal_contracts)
+        captured = Capture(files, key, self.contracts(), metadata, internal_contracts=internal_contracts,
+                           validators=validators)
         self.check_references(captured)
         if captured.parsed.block is not None and set(files) != set(captured.parsed.paths) | set(support):
             captured.close()
@@ -362,14 +419,18 @@ class Assets:
         else:
             physical, release = self.pin(key)
         try:
-            parsed = blocks.parse_block(physical, key, self.contracts())
-            if parsed.problem:
-                fail('unusable', 409)
             metadata = document(physical, 'workshop.json') if h else {'format_version': 1, 'origin': 'manual', 'effects': 'unknown'}
             if metadata.get('format_version') != 1:
                 fail('newer_format', 409)
             if h:
                 validate_generation(physical, metadata)
+            # A historical generation is read with its own captured definitions, so a damaged or later live
+            # contract file does not prevent viewing it. The restored draft keeps its original references;
+            # publication validates them against the live store again.
+            resolver = SnapshotContracts(metadata) if revision is not None else self.contracts()
+            parsed = blocks.parse_block(physical, key, resolver)
+            if parsed.problem:
+                fail('migration_required', 400) if parsed.problem.code == 'migration_required' else fail('unusable', 409)
             paths = set(parsed.paths)
             selected = metadata.get('support', []) if support is None else support
             if parsed.kind == 'script' and not h and support is None:
@@ -384,13 +445,6 @@ class Assets:
             if any(read(physical, p) != b for p, b in files.items()):
                 fail('stale', 409)
             metadata = {**metadata, 'support': selected}
-            if revision is not None and metadata.get('contracts'):
-                definition = jsonio.decode_exact(files['block.json'].decode('utf-8'))
-                for side, ports in metadata['contracts'].items():
-                    for name, text in ports.items():
-                        definition[side][name]['contract'] = jsonio.decode_exact(text)
-                files['block.json'] = jsonio.encode_exact(definition).encode('utf-8')
-                metadata['restore_contracts'] = True
             return {'key': key, 'definition_text': files.pop('block.json').decode('utf-8'),
                     'files': wire_files(files), 'metadata': metadata,
                     'base_digest': self.identity(key)}
@@ -446,7 +500,14 @@ class Assets:
                 if hashlib.sha256(read(self.root(key), path)).hexdigest() != expected_digest:
                     fail('source_changed', 409)
         try:
-            with self.reserve(key):
+            with self.registry(), self.reserve(key):
+                if capture is not None and capture.parsed.contract_pins:
+                    # Recheck the references against the live store under the registry reservation, so a
+                    # concurrent contract deletion cannot remove a revision this publication pins.
+                    live = self.contracts()
+                    for pin in capture.parsed.contract_pins:
+                        if live.resolve(pin.name, pin.revision, pin.digest)[0] is None:
+                            fail('reference_invalid', 409)
                 if self.identity(key) != expected:
                     fail('stale', 409)
                 check_root_sources()
@@ -477,6 +538,15 @@ class Assets:
                     for ident, value in generations:
                         files = decode_files(value['files'])
                         files['block.json'] = value['definition_text'].encode('utf-8')
+                        if ident != revision and 'contract_pins' not in value['metadata']:
+                            # The converted original root gets its own captured maps, so its history stays
+                            # readable through the snapshot resolver like every other generation.
+                            with Capture(files, key, self.contracts()) as original:
+                                if original.parsed.block is not None:
+                                    contracts_map, pins = captured_maps(original.parsed.block)
+                                    value = {**value, 'metadata': {**value['metadata'], 'contracts': contracts_map,
+                                             'contract_pins': pins,
+                                             'contracts_digest': contract_maps_digest(contracts_map, pins)}}
                         m = {'display_name': key, 'origin': 'manual', 'effects': 'unknown',
                              'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                              'parent': old['current'] if old else generations[0][0] if len(generations) == 2 and ident == revision else None,
@@ -580,6 +650,58 @@ class Assets:
             writer.release()
 
 
+def contract_maps_digest(contracts, pins):
+    return hashlib.sha256(jsonio.encode_exact({'contracts': contracts, 'contract_pins': pins}).encode('utf-8')).hexdigest()
+
+
+def captured_maps(block):
+    """Generation metadata maps for a parsed block: every port's exact captured text, and the exact pin of
+    every referenced port only."""
+    contracts = {side: {d.name: block.contracts[side][d.name].text for d in getattr(block, side)}
+                 for side in ('inputs', 'outputs')}
+    pins = {side: {d.name: d.reference.view() for d in getattr(block, side) if d.reference is not None}
+            for side in ('inputs', 'outputs')}
+    return contracts, pins
+
+
+def validate_contract_maps(definition, metadata):
+    """Every declared port in `contracts`, exactly the referenced ports in `contract_pins`, each pin equal to
+    its declaration and its captured text's digest, each inline snapshot equal to the asset's definition."""
+    contracts, pins = metadata.get('contracts'), metadata.get('contract_pins')
+    if not isinstance(contracts, dict) or not isinstance(pins, dict):
+        fail('unusable', 409)
+    if set(contracts) != {'inputs', 'outputs'} or set(pins) != {'inputs', 'outputs'}:
+        fail('unusable', 409)
+    if metadata.get('contracts_digest') != contract_maps_digest(contracts, pins):
+        fail('source_changed', 409)
+    for side in ('inputs', 'outputs'):
+        declared = definition.get(side)
+        if not isinstance(declared, dict) or not isinstance(contracts[side], dict) or not isinstance(pins[side], dict):
+            fail('unusable', 409)
+        if set(contracts[side]) != set(declared):
+            fail('unusable', 409)
+        referenced = {n for n, d in declared.items() if isinstance(d, dict) and isinstance(d.get('contract'), dict)
+                      and 'format' not in d['contract']}
+        if set(pins[side]) != referenced:
+            fail('unusable', 409)
+        for port, text in contracts[side].items():
+            try:
+                captured = jsonio.decode_exact(text)
+                digest = contract_schema.contract_digest(captured)
+            except (TypeError, ValueError):
+                fail('unusable', 409)
+            declaration = declared[port].get('contract') if isinstance(declared[port], dict) else None
+            if port in referenced:
+                if pins[side][port] != declaration or digest != declaration.get('digest'):
+                    fail('source_changed', 409)
+            else:
+                try:
+                    if not isinstance(declaration, dict) or digest != contract_schema.contract_digest(declaration):
+                        fail('source_changed', 409)
+                except ValueError:
+                    fail('source_changed', 409)
+
+
 def validate_generation(root, metadata):
     if metadata.get('format_version') != 1:
         fail('newer_format', 409)
@@ -589,3 +711,94 @@ def validate_generation(root, metadata):
     files = {relative(p): read(root, relative(p)) for p in assets}
     if any(hashlib.sha256(b).hexdigest() != assets[p] for p, b in files.items()) or fingerprint(files) != metadata.get('asset_digest'):
         fail('source_changed', 409)
+    try:
+        definition = jsonio.decode_exact(files['block.json'].decode('utf-8'))
+    except (KeyError, ValueError, UnicodeError):
+        fail('unusable', 409)
+    if isinstance(definition, dict) and definition.get('format_version') == EXECUTABLE_VERSION:
+        validate_contract_maps(definition, metadata)
+
+
+# --- references to saved contracts (spec 10.4) -------------------------------------------------------------
+def _declared_references(definition, name):
+    """(side, port, revision) of every raw declaration naming contract `name`. Scans raw declarations, without
+    resolving anything; an old string reference counts conservatively, with no revision."""
+    found = []
+    if not isinstance(definition, dict):
+        return found
+    for side in ('inputs', 'outputs'):
+        ports = definition.get(side)
+        if not isinstance(ports, dict):
+            continue
+        for port, declaration in ports.items():
+            contract = declaration.get('contract') if isinstance(declaration, dict) else None
+            if isinstance(contract, dict) and 'format' not in contract and contract.get('name') == name:
+                revision = contract.get('revision')
+                found.append((side, port, revision if type(revision) is int else None))
+            elif isinstance(contract, str) and contract == name:
+                found.append((side, port, None))
+    return found
+
+
+def reference_scan(blocks_path, name, latest=None):
+    """Blockers among current unmanaged definitions and every retained managed generation (current once),
+    and the paths that could not be inspected. Orphaned generations and run records are not inspected."""
+    from .blocks import read_file
+    blockers, unreadable = [], []
+    path = Path(blocks_path)
+    if not path.exists():
+        return blockers, unreadable
+    if path.is_symlink() or not path.is_dir():
+        return blockers, [str(path)]
+    try:
+        roots = sorted(path.iterdir())
+    except OSError:
+        return blockers, [str(path)]
+    for root in roots:
+        if not valid_name(root.name):
+            continue
+        if root.is_symlink():
+            unreadable.append(str(root))
+            continue
+        if not root.is_dir():
+            continue
+        data = read_file(root, 'block.json', 1 << 20)
+        if data.data is None:
+            if data.fingerprint != ('missing',):
+                unreadable.append(str(root / 'block.json'))
+            continue
+        try:
+            obj = jsonio.decode_exact(data.data.decode('utf-8'))
+        except (ValueError, UnicodeError):
+            unreadable.append(str(root / 'block.json'))
+            continue
+        if not isinstance(obj, dict):
+            unreadable.append(str(root / 'block.json'))
+            continue
+        if obj.get('format_version') == 2:
+            retained = obj.get('retained')
+            if not isinstance(retained, list) or any(not isinstance(i, str) or TOKEN.fullmatch(i) is None for i in retained):
+                unreadable.append(str(root / 'block.json'))
+                continue
+            for index, ident in enumerate(retained):
+                generation = root / '.workshop' / 'revisions' / ident
+                inner = read_file(generation, 'block.json', 1 << 20) if not generation.is_symlink() else None
+                if inner is None or inner.data is None:
+                    unreadable.append(str(generation / 'block.json'))
+                    continue
+                try:
+                    definition = jsonio.decode_exact(inner.data.decode('utf-8'))
+                except (ValueError, UnicodeError):
+                    unreadable.append(str(generation / 'block.json'))
+                    continue
+                for side, port, revision in _declared_references(definition, name):
+                    blockers.append({'block': root.name, 'generation': ident, 'current': index == 0,
+                                     'side': side, 'port': port, 'revision': revision})
+        else:
+            for side, port, revision in _declared_references(obj, name):
+                blockers.append({'block': root.name, 'generation': None, 'current': True,
+                                 'side': side, 'port': port, 'revision': revision})
+    for row in blockers:
+        row['newer_available'] = bool(latest and row['revision'] and row['revision'] < latest)
+    blockers.sort(key=lambda r: (r['block'], not r['current'], r['side'], r['port'], r['revision'] or 0))
+    return blockers, unreadable

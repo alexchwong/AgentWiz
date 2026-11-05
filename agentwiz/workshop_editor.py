@@ -291,7 +291,7 @@ def starter(identifier, key, role=None, server=None, tool=None):
     if identifier not in STARTERS:
         fail()
     text = {'format': 'text'}
-    obj = {'format_version': 1, 'name': key, 'description': identifier.replace('_', ' '),
+    obj = {'format_version': blocks.FORMAT_VERSION, 'name': key, 'description': identifier.replace('_', ' '),
            'inputs': {'text': {'contract': text}}, 'outputs': {'out': {'contract': text}}, 'steps': []}
     files, m = {}, {'format_version': 1, 'starter': identifier, 'origin': 'starter', 'effects': 'read-only'}
     if identifier in MODEL_IDS:
@@ -348,8 +348,9 @@ def edit(draft, operation):
                 original = obj[side].get(e['original'], {})
                 contract = jsonio.decode_exact(e['source']) if e['source'] else {'format': e['format']}
                 if e['format'] == 'shared':
-                    if not isinstance(contract, str):
-                        fail()
+                    # A saved contract is held by its exact pin; replacing one is an explicit edit.
+                    if not isinstance(contract, dict) or set(contract) != {'name', 'revision', 'digest'}:
+                        fail('reference_invalid', 400)
                 elif isinstance(contract, dict):
                     contract['format'] = e['format']
                 else:
@@ -417,8 +418,8 @@ def edit(draft, operation):
         if operation['side'] not in ('inputs', 'outputs'):
             fail()
         contract = obj[operation['side']][operation['port']]['contract']
-        if not isinstance(contract, dict):
-            fail()
+        if not isinstance(contract, dict) or 'format' not in contract:
+            fail('inline_copy_required', 409)
         if contract.get('schema') is None:
             contract['schema'] = {'type':'object','properties':{},'additionalProperties':False}
         schema = contract['schema']
@@ -493,7 +494,7 @@ def edit(draft, operation):
         if side not in ('inputs', 'outputs') or name not in obj[side]:
             fail()
         contract = obj[side][name]['contract']
-        if not isinstance(contract, dict):
+        if not isinstance(contract, dict) or 'format' not in contract:
             fail('inline_copy_required', 409)
         if 'source_text' in operation:
             replacement = jsonio.decode_exact(operation['source_text'])
@@ -511,9 +512,29 @@ def edit(draft, operation):
                 node[key] = jsonio.decode_exact(source)
             checks.parse_contract(contract)
         result['definition_text'] = jsonio.encode_exact(obj)
+    elif operation.get('kind') == 'make_local_copy':
+        # Explicit only: replace one failed reference with the definition this draft's generation captured.
+        from .contract_schema import contract_digest
+        side, name = operation.get('side'), operation.get('port')
+        if side not in ('inputs', 'outputs') or name not in obj.get(side, {}):
+            fail()
+        reference = obj[side][name].get('contract')
+        if not isinstance(reference, dict) or 'format' in reference:
+            fail('not_a_reference', 409)
+        captured = result.get('metadata', {}).get('contracts', {}).get(side, {}).get(name)
+        if not isinstance(captured, str):
+            fail('no_captured_definition', 409)
+        definition = jsonio.decode_exact(captured)
+        if contract_digest(definition) != reference.get('digest'):
+            fail('digest_mismatch', 409)
+        checks.parse_contract(definition)
+        obj[side][name]['contract'] = definition
+        result['definition_text'] = jsonio.encode_exact(obj)
     elif operation.get('kind') == 'rename_field':
         side, name = operation['side'], operation['port']
         contract = obj[side][name]['contract']
+        if not isinstance(contract, dict) or 'format' not in contract:
+            fail('inline_copy_required', 409)
         field_rows(contract['schema'])
         path = operation['path']
         destination = operation['name']

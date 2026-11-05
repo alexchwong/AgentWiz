@@ -69,6 +69,7 @@ class Contract:
     checks: tuple                # retained capture layout; obsolete definition checks are never executed
     raw: Mapping                 # recognised exact definition
     policy: str = 'user'          # server-owned capture policy, never parsed from user definitions
+    validator: str | None = None  # internal only: a server-owned post-validator ID (see POST_VALIDATORS)
 
 
 # --- required validator availability -----------------------------------------------------------
@@ -271,12 +272,38 @@ def contract_from_text(text: str) -> Contract:
     return parse_contract(obj)
 
 
-def parse_internal_contract(obj: object) -> Contract:
+def _synthesis_post_validator(value: Any) -> list[_Issue]:
+    """contract_synthesis_v1: the proposal's nested `schema` must be a valid user-subset node. Runs after the
+    closed wrapper schema passed, on the original value, identically for original and repaired answers."""
+    if not isinstance(value, Mapping) or 'schema' not in value:
+        return []
+    try:
+        contract_schema.validate_user_schema(value['schema'])
+    except contract_schema.DefinitionError as exc:
+        found = []
+        for issue in exc.issues:
+            location = issue['location']
+            rest = location[len('schema'):] if location.startswith('schema') else '.' + location
+            found.append(_Issue((3, location), '$.schema' + rest, 'value violates the contract subset: '
+                                + issue['message'], 'schema.subset'))
+        return found
+    return []
+
+
+# Server-owned, hard-coded mapping. A recorded internal capture names an ID; an unknown ID is refused and no
+# function is ever serialised or chosen by HTTP, a draft or a model.
+POST_VALIDATORS = {'contract_synthesis_v1': _synthesis_post_validator}
+
+
+def parse_internal_contract(obj: object, *, validator: str | None = None) -> Contract:
     """Construct a server-owned rich-schema capture, never a user policy bypass.
 
     Callers must generate this definition themselves. No policy selector belongs
-    in a contract document, request body or block declaration.
+    in a contract document, request body or block declaration. `validator` is a
+    server-supplied POST_VALIDATORS ID, never read from the definition.
     """
+    if validator is not None and validator not in POST_VALIDATORS:
+        raise ContractError([{'location': 'validator', 'message': 'unknown internal validator'}])
     if not isinstance(obj, dict):
         raise ContractError([{'location': 'contract', 'message': 'must be an object'}])
     issues = [{'location': key, 'message': 'is not an internal contract member'}
@@ -296,7 +323,8 @@ def parse_internal_contract(obj: object) -> Contract:
             issues.extend(schema_issues(schema))
     if issues:
         raise ContractError(issues)
-    return Contract(fmt, False, obj.get('description', ''), schema, (), obj, policy='internal')
+    return Contract(fmt, False, obj.get('description', ''), schema, (), obj, policy='internal',
+                    validator=validator)
 
 
 # --- the schema rules of 7.4: dialect, local references, validity -------------------------------------
@@ -704,6 +732,17 @@ def _run(contract: Contract, text: str, parsed: Any, parse_result: str | None,
                 contract_error = contract_error or result == "contract_error"
                 issues.extend(found)
                 entries.append(_entry("schema", "not_run" if result == "contract_error" else result, len(found)))
+                if contract.validator is not None:
+                    if result != "pass":
+                        entries.append(_entry("schema.subset", "not_run", 0))
+                    else:
+                        try:
+                            extra = POST_VALIDATORS[contract.validator](parsed)
+                        except Exception:  # noqa: BLE001 - an internal failure is never a pass
+                            contract_error = True
+                            extra = [_answer_issue("schema.subset", "the internal post-validator failed")]
+                        issues.extend(extra)
+                        entries.append(_entry("schema.subset", "fail" if extra else "pass", len(extra)))
     if contract.format == 'text':
         rules = []
         for key in ('min_length', 'max_length', 'exact'):

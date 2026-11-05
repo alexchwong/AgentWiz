@@ -36,11 +36,12 @@ JSON Schema validation is included in the standard installation.
 
 Working from a clone? See DEVEL.md for the developer setup.
 
-**Development checkout:** the contract overhaul is between phases. The backend now rejects legacy
-contract `checks`, `strict` and unsupported schema keywords. Saved-contract storage, packaged
-examples/tutorials and browser editing are not all migrated yet; do not treat this checkout as a
-finished upgrade or automatically migrate a user workspace. See `contract_overhaul_handover.md`
-for cumulative progress and the current validation status.
+**Development checkout:** the contract overhaul has completed its headless phases (new definitions,
+revisioned saved contracts, pinned references, synthesis and migrated packaged assets). The browser
+editor (Workshop → Contracts, port editors and synthesis UI) is not built yet, and the old Workbench
+Contracts editor in this checkout no longer works with the new routes. Old version 1 contract files and
+block files are refused with `migration_required`; nothing migrates a workspace automatically. See
+`contract_overhaul_handover.md` for status and validation evidence.
 
 Prefer to do it by hand? Download the wheel from the release page (the wheel, not the source zip),
 then run:
@@ -476,103 +477,102 @@ how much it returns; under WSL2, use the address where Docker publishes port 876
 
 ## Contracts
 
-A contract says what an answer should look like. Checks compare an answer with it deterministically
-and report every problem with its location, in words both you and a model can act on. They check
-format, structure and stated values; they cannot judge whether an answer is right.
+A contract describes one value: the text or JSON a port carries. Checks compare a value with it
+deterministically and report every problem with its location. They check **structure** — types,
+required fields, allowed choices, lengths and bounds — not whether a value is correct, complete or safe
+to act on. A pass is labelled as a structure pass, never as a correctness or privacy certificate.
 
-A contract is a JSON object. The **Contracts** tab edits it as JSON text and saves it as
-`<workspace>/contracts/<name>.json`. You can also edit those files with any editor: AgentWiz notices
-changes, and a file you repair is usable again without a restart. Names follow the profile-name rule.
+There are three kinds, and each can be written inline in a block or saved and reused:
 
 ```json
-{
-  "format_version": 1,
-  "format": "json",
-  "strict": false,
-  "description": "Fields pulled from a report",
-  "schema": {"type": "object", "required": ["id", "ratio"],
-             "properties": {"id": {"type": "integer"}, "ratio": {"type": "number", "maximum": 1}}},
-  "checks": [
-    {"type": "contains", "value": "\"id\""},
-    {"type": "json_equals", "value": {"id": 9007199254740993, "ratio": 0.10000000000000000001}}
-  ]
-}
+{"format": "text", "description": "A short reply", "min_length": 1, "max_length": 2000,
+ "contains": ["Acknowledged"], "not_contains": ["CONFIDENTIAL"]}
 ```
 
-| Field | Rule |
-| --- | --- |
-| `format_version` | 1. The editor may leave it out; the server writes it. A greater number means a newer file, which AgentWiz will not use or overwrite. |
-| `format` | `"text"` or `"json"`. Required. |
-| `strict` | `true` or `false` (default `false`). JSON contracts only; see below. |
-| `description` | Shown in lists; never checked. |
-| `schema` | `null`, or a JSON Schema (Draft 2020-12). JSON contracts only. |
-| `checks` | A list of checks. An unknown `type` or key is refused, because a mistyped key would otherwise do nothing. |
+```json
+{"format": "json", "description": "A classification",
+ "schema": {"type": ["string", "null"], "enum": ["routine", "urgent", null]}}
+```
 
-Unknown top-level fields are kept when AgentWiz rewrites the file, and a save names them, so a
-mistyped field is visible.
+```json
+{"format": "json", "description": "Anything"}
+```
 
-**Reading an answer.** Reasoning is never checked, only the answer text. A text contract checks the
-whole text. A JSON contract first parses the answer. If it contains exactly one fenced code block
-(three or more backticks or tildes, as in CommonMark), that block is parsed; with `strict` the whole
-answer, trimmed, is parsed and a fence is a parse failure. Two or more fenced blocks fail the parse,
-located at the second. The other checks run on the whole answer text, not on the extracted block.
+- **Text** rules (all optional, all applied together): `min_length`, `max_length` (code points),
+  `exact` (including the empty string), `contains`, `not_contains` (up to 100 distinct literals each).
+  Comparison uses the decoded text exactly: no trimming, case folding or newline/Unicode normalisation.
+  A non-string value fails `text.type`. Contradictory rules (inverted bounds, a literal both required and
+  forbidden, an `exact` value another rule rejects) are refused.
+- **JSON with a schema** uses a small JSON Schema vocabulary: every node has `type` — `string`,
+  `integer`, `number`, `boolean`, `array`, `object`, or `[T, "null"]` in that order — and may have a
+  `description`. Strings may have `enum`, `minLength`, `maxLength`; numbers `minimum`, `maximum`;
+  arrays a required `items` plus `minItems`, `maxItems`; objects a required `properties`, optional
+  `required` and a boolean `additionalProperties` (omitted means extra properties are allowed).
+  Property names are identifiers. At most 100 nodes and depth 10. Everything else (`$ref`, `pattern`,
+  `format`, `oneOf`, `const`, `default`, …) is refused at its location rather than ignored.
+- **Any JSON** (no `schema`) accepts any JSON value and is shown as **Any JSON — no field validation**.
 
-| Check | Keys | Passes when |
-| --- | --- | --- |
-| `exact` | `value` | the answer equals it, after normalising line endings and trimming both |
-| `contains` / `not_contains` | `value` (not empty) | the answer does / does not contain it, case-sensitive |
-| `regex` | `pattern` | Python's `re.search` finds it, unanchored; flags only inline, such as `(?i)` |
-| `length` | `min`, `max` | the trimmed answer has that many Unicode code points; at least one bound set |
-| `json_equals` | `value` | the parsed JSON equals it: objects ignore key order, arrays do not, `1` equals `1.0`, `true` never equals `1` (JSON contracts only) |
+Required and nullable are independent: `required` says a property must be present; `[T, "null"]` says
+it may be an explicit `null`. A nullable choice lists its strings and then one final `null`.
 
-**Numbers are exact.** Integers and decimals are kept digit for digit and compared by value; no
-number is ever converted to a float. `9007199254740993` and `9007199254740992` are different, and
-so are `0.10000000000000000001` and `0.1`. The page never parses a contract's numbers: the contract
-travels as text. The limits are integers of at most 4,300 digits and a 2,100-digit decimal
-precision. Beyond them a check reports **not run**, never an approximation.
+**Numbers are exact.** Integers and decimals are kept digit for digit; `2`, `2.0` and `2e0` are the same
+integer, `true` is not a number, and no value is converted to a float. Identifiers such as record numbers
+belong in strings.
 
-**JSON Schema** uses the required validator (see **Install**). It is Draft 2020-12 only, and:
+**Reading an answer.** A JSON value is parsed from the whole answer or from its single fenced code block;
+there is no other recovery. Text is checked as written.
 
-- References (`$ref`, `$dynamicRef`) must be local, starting with `#`; nothing is ever fetched.
-- Every `$schema` in the schema must name Draft 2020-12; a subschema declaring another draft is refused.
-- `format` is an annotation and is not asserted. `pattern` uses Python's regular expressions, which
-  differ from the ECMA-262 dialect JSON Schema specifies.
-- `1` and `1.0` are treated alike (`"type": "integer"` accepts `1.0`), as JSON Schema specifies.
-- A reference to a local target that does not exist is not refused when you save; it makes the
-  result `contract_error` when an answer is checked.
-- Without the extra, a contract with a schema cannot be saved. One already in a file still loads and
-  is usable, but its schema check is **not run**, so the result is `incomplete`, or `fail` if
-  something else failed. It never passes.
+**Saved contracts.** A saved contract is `<workspace>/contracts/<name>.json`: a stable name, a family for
+grouping, and every revision oldest first. Saving an edit appends a new revision; saving an unchanged
+definition does nothing; **Restore** appends a copy of an older revision; changing the family does not
+create a revision. Revisions are never rewritten, and each has a digest of its definition that AgentWiz
+checks every time it reads the file — a file whose history was changed by hand is listed as unusable.
+Every change states the file token it was based on, so an edit from a stale tab is refused rather than
+overwriting another. A contract that blocks still use (current or retained Workshop revisions) cannot be
+deleted; the refusal lists them. Old version 1 contract files are listed as `migration_required`: recreate
+them as new contracts.
 
-**Results.** Each check gives `pass`, `fail` or `not_run`. The overall result:
+**Pinned references.** A block refers to a saved contract by `{"name", "revision", "digest"}`, never by
+name alone or "latest". Appending a newer revision does not change any block; switching a block to it is
+an explicit block edit. Runs and repairs keep their own copy of every contract they used, so a later edit
+or deletion never changes them.
 
-| Overall | Meaning |
-| --- | --- |
-| `pass` | Every check ran and passed. |
-| `fail` | At least one check failed. |
-| `incomplete` | Nothing failed, but at least one check could not run: the schema extra is missing, a number was too large to check exactly, or the answer could not be parsed. |
-| `contract_error` | The contract itself could not be applied, for example a reference that does not resolve. This is never the model's fault, and Repair is not offered. |
+**Contract synthesis** asks the role `write_contract` (unassigned by default; assign it in Roles) for a
+proposed JSON contract with its assumptions listed separately. The proposal is a draft to review: it is
+never saved or attached automatically, it gets one repair if its schema is outside the vocabulary, and
+saving it records only which prompt, role and model produced it.
 
-Issues are listed by location (`answer`, then `line 3, column 7`, then `$.items[2].name`). The first
-20 are shown with the total count; the repair message lists the same 20.
+**Results.** Each check gives `pass`, `fail` or `not_run`; overall `pass`, `fail`, `incomplete` (a check
+could not run, for example a number beyond the exact limits) or `contract_error` (the contract itself
+could not be applied — never the model's fault, and never repaired). Issues are listed by location; the
+first 20 are shown with the total count, and value messages name the rule, not your data.
 
-**Check text.** The Contracts tab can check pasted text against the contract in its editor, saved
-or not, with no model involved. Use it to try a contract on an answer you already have. For example,
-with the contract above, `{"id": 9007199254740993, "ratio": 1.5}` fails with an issue at `$.ratio`.
+### Common tasks
 
-**Damaged contracts.** A file that cannot be read, is not valid, or is from a newer AgentWiz is
-listed with its problem. You can open it, read its text and delete it, but not select it for a
-request, check against it, or save over it from the page. Repair it with an editor; AgentWiz picks
-the change up.
+Five illustrative starters (`agentwiz/contract_examples.py`; synthetic data, not a regulatory or clinical
+standard) show the vocabulary: **Identifier occurrences** (a list of kind/value/source/offsets),
+**Clinical observations** (status, nullable value/unit/comparator, as reported), **Classification** (one
+choice), **Invoice** (header, lines, total) and **Action items** (task, nullable owner and due fields).
+The same building blocks cover de-identification, medications, grounded summaries, transaction matching,
+legal obligations, compliance evidence, security or safety triage, letters, translation, table
+extraction, variable key/value records (a list of `{key, value}` groups), tool-action proposals, search
+results, artifact references and suggested corrections — as task-specific groups, lists, text and
+choices.
 
-A regular expression in a contract is yours and runs on model answers. A pathological one can take a
-long time on a long answer, holding that request.
+Limits to plan for: source spans need an immutable source and a separate half-open code-point offset
+check; dates are strings with no date assertion; arithmetic (totals, reconciliation) needs deterministic
+code; key/value slots need their own consistency checks; real tool arguments keep their tool's own
+schema; and an empty extraction list must not stand for an input that failed to process. Until multi-block
+workflows exist, run those checks as separate script blocks or example assertions — a structurally valid
+but wrong value passes its contract and only an example expectation or review rejects it.
 
 ## Checked requests and repair
 
-The **Checked request** tab is Chat with a contract. Choose a contract (only usable ones are listed;
-Send stays disabled, with the reason, until one is chosen), type a system prompt and an input, and
-press **Send**. When the answer completes, it is checked, and the tab shows the overall result, each
+The **Checked request** tab is Chat with a contract. Choose a saved contract (only usable ones are
+listed, with their latest revision number; Send stays disabled, with the reason, until one is chosen),
+type a system prompt and an input, and press **Send**. The request carries the exact revision and digest
+shown; if that revision has since been changed or removed the request is refused before sending, while a
+newer appended revision does not affect it. When the answer completes, it is checked, and the tab shows the overall result, each
 check, and the first 20 issues.
 
 - **What is checked.** Only answers whose outcome is *Complete* or *Truncated answer*. Blank,
@@ -619,10 +619,10 @@ mistyped key never silently does nothing.
 
 | Key | Meaning |
 | --- | --- |
-| `format_version` | `1`. A greater number means the block was written for a newer AgentWiz. |
+| `format_version` | `3`. Version 1 blocks are refused with `migration_required`; a greater number means a newer AgentWiz. |
 | `name` | The folder name (1 to 64 letters, digits, `.`, `_`, `-`). |
 | `description` | Optional text shown in the list. |
-| `inputs` | Object: input name to `{"contract": ..., "description": ...}`. The contract is an inline contract object or the name of a saved contract. Names follow `[A-Za-z_][A-Za-z0-9_]{0,63}`. May be empty. |
+| `inputs` | Object: input name to `{"contract": ..., "description": ...}`. The contract is an inline definition or an exact saved-contract pin `{"name", "revision", "digest"}`. Names follow `[A-Za-z_][A-Za-z0-9_]{0,63}`. May be empty. |
 | `outputs` | Same shape, at least one. |
 | `steps` | A list of **exactly one** step. |
 | `budget` | `{"max_seconds": 1..86400 (default 1800), "max_model_tokens": integer >= 1 or absent}`. |
@@ -665,8 +665,8 @@ A script step runs a Python file (see **Script steps**):
 - **The input form** comes from the input contracts: a text area for a `text` input; for a `json`
   input, a generated form when its schema is a simple object schema (numbers are kept exactly as you
   type them), otherwise a JSON editor. Values travel as text.
-- **Revisions.** Each block has a revision that changes when its files, or a saved contract it names,
-  change. The page runs a block only at the revision it showed. If the block changed since, the run is
+- **Revisions.** Each block has a revision that changes when its files change, or when a revision it
+  pins changes, disappears or becomes unusable (a newer appended revision does not count). The page runs a block only at the revision it showed. If the block changed since, the run is
   refused (`stale`), the tab reloads the block and keeps the input texts whose names still exist, and
   nothing is sent. Run again.
 - **The trace** shows the run's state and outcome, the step, each attempt with its outcome, check and
@@ -996,8 +996,10 @@ changed what it shows):
 - **Chat** (updated in 0.1.3): send a message and reuse an answer.
 - **Use a document** (updated in 0.1.3): preview an example and copy it into a conversation.
 - **Call a tool** (updated in 0.1.3): run a prepared local tool and use its result.
-- **Define a contract** (updated in 0.1.3): save reusable response requirements.
-- **Repair a response** (updated in 0.1.3): preview and send a follow-up using contract feedback.
+- **Define a contract** (updated in 0.2.0): save reusable structural requirements; a wrong number of the
+  right type still passes — exact values belong in Workshop example expectations.
+- **Repair a response** (updated in 0.2.0): an answer missing a required field fails; preview and send a
+  follow-up using contract feedback.
 - **Run a model block** (updated in 0.2.0): see the role `fast` mapped to a profile, then run a block
   whose first answer fails its contract and whose repair passes.
 - **Run a tool block** (updated in 0.2.0): run a block that sends two exact numbers to a tool and

@@ -1,6 +1,7 @@
 """Offline replay preserves exact recovered values and the truncation gate."""
 import subprocess
 
+from conftest import pinned
 from agentwiz import jsonio
 
 
@@ -42,8 +43,8 @@ def _plan():
     from agentwiz import checks
     from agentwiz.model_step import ContractCopy, OutputPlan
     return OutputPlan((
-        ('note', 'A short note', ContractCopy.of('note', 1, checks.parse_contract({'format': 'text'}))),
-        ('data', 'The numbers', ContractCopy.of('data', 1, checks.parse_contract({'format': 'json', 'schema': {
+        ('note', 'A short note', pinned('note', 1, checks.parse_contract({'format': 'text'}))),
+        ('data', 'The numbers', pinned('data', 1, checks.parse_contract({'format': 'json', 'schema': {
             'type': 'object', 'properties': {'id': {'type': 'integer'}}, 'required': ['id'],
             'additionalProperties': False}})))),).view()
 

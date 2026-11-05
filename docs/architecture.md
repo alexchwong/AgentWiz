@@ -35,7 +35,11 @@ Paths in this table are relative to the repository root.
 | `agentwiz/__main__.py` | yes | Command line (`agentwiz`, `python -m agentwiz`); opens the workspace before binding; exit statuses 1, 2, 3. |
 | `agentwiz/model_call.py` | yes | Settings and key validation, message building, task arguments (`task_arguments`: route support, `require_parameters`, `check_settings`), the LM Studio model lookup, the call (`call_model(..., cancel=)`, passed to `modelspell.complete`), outcome classification, error descriptions. No HTTP. |
 | `agentwiz/checks.py` | yes | **0.1.3.** Contract parsing and validation, answer parsing, every check, results, the repair message. Pure functions that accept any value. `jsonschema` is imported lazily, only here. No HTTP. |
-| `agentwiz/contracts.py` | yes | **0.1.3.** Contract files in `<workspace>/contracts/`: reading, re-scanning by fingerprint, revisions, writing. Called from `state.py` under the state lock. No HTTP. |
+| `agentwiz/contracts.py` | yes | Saved contract containers (`format_version` 2) in `<workspace>/contracts/`: parsing with digest recomputation, re-scanning by fingerprint, exact pin resolution, file tokens, append/no-op/restore/family/delete and safe atomic publication. Takes no lock; `state.py` calls writers under a registered writer and the registry reservation. No HTTP. |
+| `agentwiz/contract_schema.py` | yes | The authoritative user-contract recognizer, structural limits and the canonical contract digest. No storage, HTTP or validator. |
+| `agentwiz/contract_service.py` | yes | Headless draft projection, targeted edits and sample checks. Never writes. |
+| `agentwiz/contract_examples.py` | yes | Five illustrative starter definitions with synthetic valid, invalid and structurally-valid-but-wrong values. |
+| `agentwiz/prompts/write_contract.md` | yes | Packaged synthesis prompt (`write_contract`, version 1). |
 | `agentwiz/runs.py` | yes | **0.1.3.** `CancelToken`; runs; the attempt store: identity, records, end point, commit, summaries, retention, save status, deletion reservation. No HTTP. |
 | `agentwiz/model_step.py` | yes | **0.1.3.** `run_attempt`, the headless model-step function, and the hook `before_end_point`. No HTTP. |
 | `agentwiz/history.py` | yes | **0.1.3.** The run-history writer (run folders, redaction), listing, reading and deleting saved runs; `remove_tree`. No HTTP. |
@@ -295,50 +299,67 @@ plain JSON only (no `Decimal`; a contract travels as `{"name", "revision", "text
 
 ## Contracts and checks
 
-### Contract overhaul — Phase 1A (implementation in progress)
+### Contract overhaul — Phases 1A–1C (headless; Phase 2 UI pending)
 
-`contract_schema` is the authoritative recognizer for the new user vocabulary and owns the
-canonical exact-number digest. `contract_service.project` and `apply_edit` validate complete
-definitions and apply targeted edits to exact-parsed copies without filesystem writes. Group
-extra-property policy, required membership, ordered Choices and exact numeric bounds survive
-unrelated edits. Source is parsed in full; advanced editing does not widen this vocabulary.
+`contract_schema` is the authoritative recognizer for the user vocabulary and owns the canonical
+exact-number digest (`contract_digest`). `checks.parse_contract` and `contract_from_text` always apply user
+policy: legacy `checks`, `strict`, inline versions, policy markers and rich schemas are refused with locations.
+Source is one exact JSON definition, limited to 1 MiB before decoding. The fixed answer parser accepts whole
+JSON or the existing single fenced block; it performs no extraction, coercion or quote repair. Text rules run on
+decoded, unnormalized strings (`text.*` diagnostics); JSON value diagnostics redact actual values. Workshop
+expectations call `checks.exact_equal` directly.
 
-The session-authenticated, workspace-gated `/api/contracts/project` and `/api/contracts/edit`
-routes require strict version-2 envelopes and carry definitions/bounds as text. Version-2 sample
-checks use `definition_text` and `value_text`; schema validator unavailability returns 503 with
-`validation_unavailable`. These draft operations do not save or dispatch work. Text diagnostics
-use `text.*` rule names, literal equality and code-point lengths; nonstring Text values fail.
+`checks.parse_internal_contract(obj, validator=None)` builds server-owned rich captures. `validator` is a
+key of the hard-coded `checks.POST_VALIDATORS` (only `contract_synthesis_v1`), supplied by server code and
+recorded in internal capture metadata; it is never read from a definition, draft or request.
 
-`checks.parse_internal_contract` accepts rich server-owned assistance schemas, not legacy checks
-or a user-selectable policy. Only the complete server-generated assistance definition enters the
-private internal capture path; caller edit/duplicate options cannot modify it under that policy.
-Internal capture records retain their policy for repair. Workshop expectations call
-`checks.exact_equal` directly, distinguishing booleans from numbers and preserving Decimal values.
-Renderer version 2 renders captured descriptions, exact schemas and new Text constraints.
+- **Saved containers.** `<workspace>/contracts/<name>.json` holds `format_version` 2, the immutable `name`
+  (file stem; casefold collisions refused), mutable `family`, `latest` and oldest-first `revisions`
+  (`revision`, `label`, `created_at`, `origin`, `digest`, `contract`, optional minimal `basis`). Revisions
+  are contiguous and never rewritten by AgentWiz; each stored digest is recomputed on load and a mismatch
+  makes the file unusable (`digest_mismatch`). Version 1 files are listed as `migration_required` and never
+  converted. Files over 32 MiB, links and non-regular files are listed as unusable and never written.
+- **Operations.** Save creates (expected token null) or appends `latest+1`; a save equal to the latest
+  digest is a no-op (`unchanged:true`). Restore appends a copy of an old revision. Family changes rewrite
+  grouping only. Delete requires the file token and a complete raw reference scan of current unmanaged
+  definitions and every retained managed generation (orphans and run records are not scanned); an
+  unreadable definition refuses with `reference_scan_incomplete`.
+- **Tokens and writes.** `file_token` is `sha256:` of the complete file bytes; explicit get/save/delete and
+  Checked request resolution read current bytes, while stat fingerprints only drive re-scans. Writers use a
+  same-directory temporary file, file fsync, a recheck of the token, atomic replace and parent fsync. A failed
+  parent fsync after replacement reports `publication:"durability_uncertain"`; an ambiguous replace is
+  settled by rereading, never retried.
+- **References.** Executable block definitions are `format_version` 3 (2 is the managed head; 1 is
+  `migration_required`). A saved contract is referenced only by an exact `{"name","revision","digest"}`
+  pin. All ports resolve against one `ContractStore.snapshot()`. A block's effective revision follows each
+  pin's state (existence, usability, digest), never the container's latest or family.
+- **Captures.** `model_step.ContractCopy` holds name/revision (null for inline), digest, exact text and the
+  parsed contract with its policy. `from_record` verifies the digest and recorded policy and never resolves a
+  live file: an old record is `migration_required`; a changed (for example redacted) text is
+  `snapshot_incomplete`, so it cannot be repaired or re-executed.
+- **Managed generations.** Workshop metadata keeps the `contracts` exact-text map for every port and adds
+  `contract_pins` (referenced ports only) and `contracts_digest`; `validate_generation` checks them against
+  the generation's executable definition. Historical previews read captured definitions through a private
+  snapshot resolver; restored drafts keep their references, and the explicit `make_local_copy` edit replaces
+  one reference with its captured definition.
+- **Synthesis.** `contract_synthesize` is a Workshop service action: a server-built ephemeral internal block
+  (role `write_contract`, packaged prompt, one closed wrapper output `proposal`, one repair, 1800 s budget)
+  runs through the existing plan/ticket/batch/Stop machinery. Proposals live in the bounded proposal store
+  with kind `contract` and a source-draft digest; Save with `proposal_id` derives `synthesized` or
+  `derived_from_synthesis` and a minimal server-captured basis.
 
-`checks.parse_contract` and `contract_from_text` enforce the user recognizer on every public path.
-Source is one exact JSON definition, limited to 1 MiB before decoding. Legacy `checks`, `strict`,
-inline version/policy markers and rich schemas are rejected. The fixed answer parser accepts whole
-JSON or the existing single fenced block; it performs no extraction, coercion or quote repair.
-Text rules execute on decoded, unnormalized strings. JSON value diagnostics redact actual values.
-Schema-dependent block and Checked request dispatch refuses before admission when validation is
-unavailable. Unexpected validator failures never pass. Checked requests append the shared renderer's
-direct-value instructions; recorded messages and repairs retain those exact instructions and the
-captured contract revision. All new user/internal capture records explicitly record their policy.
+| Contract route (version 2 envelopes) | Behavior |
+| --- | --- |
+| GET `/api/contracts` | Listing with name/family/latest/latest_digest/problem, families, read_only, validation. |
+| GET `/api/contracts/<name>[?revision=N]` | Identity, file_token, the selected numbered revision and exact `definition_text`, revision summaries, Used by. |
+| POST `/api/contracts/project`, `/edit`, `/check` | Draft projection, targeted edit, Contract check; never write or dispatch. |
+| POST `/api/contracts/save`, `/family`, `/restore`, `/delete` | Persistence with `expected_file_token`; refused in read-only workspaces. |
+| POST `/api/contracts/synthesis/plan`, `/start`, `/apply` | Synthesis plan, ticketed start, draft-bound application (no write). |
 
-**Not yet migrated:** the saved registry, executable format, managed generation
-metadata, Checked request selection, synthesis and shared browser editor still need the overhaul.
-The legacy storage description below documents unfinished paths, not supported compatibility.
-Its v1 saved definitions no longer pass the public parser. Until Phase 1B replaces storage and
-Phase 1C/2 migrate assets/UI, the checkout is not shippable and the full offline gate is not green.
-The new project/edit endpoints must not be mistaken for completed versioned persistence. Cumulative
-progress and actual validation evidence are in `../contract_overhaul_handover.md`.
+Checked requests send `contract:{name,revision,digest}`; a newer appended revision does not invalidate the
+reviewed pin. The editable Contracts utility in the page, the shared `contracts.js` editor and the Workshop
+Contracts library are Phase 2 work; until then the page's contract editor still targets the replaced routes.
 
-- **File format.** `<workspace>/contracts/<name>.json`, `format_version` 1, written with
-  `jsonio.encode_file_exact` (indented, ASCII, numbers digit for digit) through `workspace.write_atomic`.
-  Unknown top-level fields are kept. Revisions come from one process-wide counter, so a deleted and
-  recreated contract never repeats one. Files are re-scanned on `/api/state`, every contract route
-  and when `/api/complete` names a contract (inode, mtime in nanoseconds and size).
 - **Validation copy.** `jsonschema` picks its validator class from `$schema`, in `check_schema` and
   while following `$ref`, so extending its `integer` check does not reach every path. AgentWiz
   therefore validates a **copy** of the schema and of the value in which every whole-number decimal is
@@ -383,18 +404,20 @@ the aggregate passes (`NO_VALUE` otherwise). `executor._publish` stages every ou
 together, so a failed, truncated or stopped attempt publishes none. A repair resends the whole envelope; its
 message names failed output paths and rules, never interpolated values.
 
-`model_step.OutputPlan` is the captured plan: each output's name, description, contract revision and exact
-contract text. It is built from the block at preparation, stored on the attempt as `output_plan`
+`model_step.OutputPlan` is the captured plan: each output's name, description and contract snapshot
+(name/revision/digest/text/policy). It is built from the block at preparation, stored on the attempt as `output_plan`
 (`mode`, `renderer`, `digest`, `outputs`) and rebuilt from the parent *record* for a repair, so a repair is
 judged by what the reviewed attempt promised, never by the contracts as they are now. Records without
-`output_plan` read as Workbench or historical attempts and are not re-validated. `scripts/replay_output.py`
+`output_plan` read as Workbench or historical attempts and are not re-validated; a plan without the snapshot
+fields cannot be restored (`migration_required`). `scripts/replay_output.py`
 replays a captured plan with the same checker and answers `unsupported_evidence` for a plan with another mode
 or renderer, no outputs, a digest that does not match its contracts, or an unreadable contract.
 
 **Generated instructions.** `output_protocol` is pure: no HTTP, storage or transport. `instructions(specs)`
 renders the system section (marker lines `BEGIN`/`END`, the key rules, then one block per output) and
 `describe(spec)` renders `{{output.NAME}}`, from the same `Spec`, so they cannot disagree. `RENDERER_VERSION`
-names the wording and `digest(specs)` hashes the renderer, names, descriptions and contract text; both are
+names the wording and `digest(specs)` hashes the renderer, names, descriptions, canonical contract digests,
+policies and the exact rendered requirements; both are
 recorded with each attempt and with each reviewed Workshop candidate, and only replay reads the version back, to
 refuse a renderer it does not know. The section is composed in
 `runner.model_messages` and is never written to `block.json` or `prompts/*.md`. Prompt scanning
@@ -410,8 +433,9 @@ rescanned.
   (`blocks.BLOCK_FILE_LIMIT`, `FILE_LIMIT`); only the files `block.json` references are hashed or
   fingerprinted. The store lists the first `LIST_LIMIT` (200) blocks, caches `CACHE_LIMIT` (400), and
   keeps every name's revision in a small table so eviction never changes a revision. A revision comes
-  from one process-wide counter and covers the block's own files **and** the revisions and usability
-  of the saved contracts it names.
+  from one process-wide counter and covers the block's own files **and** the state of each exact saved-contract
+  pin it holds (an appended revision or family change does not change it). Executable `format_version` 1 is
+  `migration_required`.
 - **Admission.** `POST /api/blocks/run` checks, in order, body and size, the block at the revision the
   page showed (404 `no_such_block`, 409 `stale_revision`, 409 `block_unusable`), the `inputs` shape,
   then the runner: **inputs are checked before any slot is taken** (BD-03), then non-blocking
@@ -501,7 +525,8 @@ Implementation (0.2.0): `agentwiz/tutorial_topics.py` holds `TOPICS`, `public()`
 `/api/tutorial` returns the topic list and `/api/tutorial/step` takes `{"topic": <id>}` (400 for an
 unknown ID, `{"busy": true}` while a model request, a tool call or a block run is running). A session
 seeds its temporary workspace with the profile `tutorial-json`, `roles.json` (`fast` to that profile)
-and the four example blocks, and re-saves the `fields` contract. Assistance topics select their packaged model
+and the four example blocks, and creates (or reuses, when its revision 1 is the packaged definition) the
+version 2 `fields` contract in family Tutorial, which the example blocks pin by name/revision/digest. Assistance topics select their packaged model
 through a topic-local profile in that same temporary workspace. Exit closes the child through
 `UIServer.server_close(wait=False)` once; an outstanding cleanup makes the session the manager's one
 pending session (state, workspace and `TemporaryDirectory` kept until it drains); `Tutorial.shutdown_all()`
@@ -547,11 +572,11 @@ is outermost and is never held during a `wait=True` drain. Budgets: 8 model requ
 | Run cancellation tokens | One per run, with their own lock; `cancel()` idempotent; each stop action runs exactly once, outside every lock. Order: state lock, store lock, token lock; a token's lock is never held while taking another. |
 | modelSpell handles | One per run, registered as the token's stop action; `cancel()` never blocks. |
 | Attempt numbers | Reserved under the store's lock together with the repair checks, so a step's attempts form one chain. |
-| Contracts | Changed only through `contracts.py`, called from `state.py` under the state lock; re-read before each change; written atomically; external changes noticed by fingerprint; revisions from one process-wide counter. |
+| Contracts | Changed only through `contracts.py`, called from `state.py` with a registered writer and the logical contract-registry reservation (a busy flag claimed under C6, which is released before any I/O; a competing registry writer gets 409 `busy`). Block publication takes the same reservation. No C1/C6 lock is held during validation or file work; the shared cache is refreshed briefly under C1 afterwards. Current bytes and token rechecked immediately before replacement. |
 | The history switch | `workspace.json` changed under the state lock with the history revision, re-read first, written atomically. |
 | Run folders | New files, each written once, without the state or store lock; the writer never recreates a folder; deletion reserved under the store's lock, files removed with no lock held, outcome settled under the store's lock. |
 | Records in memory | 100 records and 256 MiB of full records, 1,000 settled summaries plus pending envelopes, run metadata while needed; uncommitted attempts never dropped. |
-| Revisions | Five: configuration, task settings, MCP, one per contract, and history. A change to one never makes a page's view of another stale. |
+| Revisions | Configuration, task settings, MCP and history revisions; contracts use numbered revisions plus file tokens. A change to one never makes a page's view of another stale. |
 
 **What frees a budget slot:** the model call completes or raises (including modelSpell's 900 s
 per-read timeout); Stop, which cancels the run's modelSpell handle and ends the call at any stage,
@@ -703,9 +728,9 @@ The page and the terminal receive only text that cannot contain a credential:
 | MCP failures (`MCPError`) | AgentWiz's description (failure class, HTTP status or JSON-RPC code, server name, era) with `reason`, `http_status`, `jsonrpc_code`; `server_text` (the server's own message, cut at 2,000 characters, labelled "the server says:" in the page) only when no token is held for the operation's identity. A `tool_error` result is tool output and is shown as content. | nothing |
 | `BadArguments` | 400 `{"code": "bad_arguments"}`, naming the rule broken, never the text | nothing |
 | `ModelSpellError` | `describe_error(exc, base_url)`: 400 on non-streaming routes, an `error` event while streaming | nothing |
-| `ContractError` and contract problems | 400 `{"code": "contract_error", "issues": [{"location", "message"}]}` on save and check; a contract file's problem is `{"file", "code" (`unreadable`, `invalid`, `newer_format`), "message"}`. Messages name rules and locations, never values. | nothing |
+| Contract refusals (`contracts.StoreError`) | `{"format_version": 2, "code", "message", "issues"?, "issue_count"?, …}`: 400 `invalid`, `contract_invalid`, `unsupported_keyword`, `reference_invalid`, `too_large`, `migration_required`; 404 `no_such_contract`, `no_such_revision`; 409 `stale_contract` (with current `file_token`), `contract_exists`, `contract_unusable`, `digest_mismatch`, `contract_in_use` (with `blockers`), `reference_scan_incomplete` (with `unreadable`), `read_only`, `busy`, `proposal_stale`; 410 `proposal_expired`; 503 `validation_unavailable`. A file's problem is `{"file", "code", "message"}`. Messages name rules and locations, never values. | nothing |
 | Run-file problems | `problems` of `GET /api/runs/<id>`: file, code (`unreadable`, `invalid`), location and rule, never values | nothing |
-| New refusals | 404 `no_such_contract`, `no_such_attempt`, `no_such_run`; 409 `exists`, `contract_unusable`, `run_stopped`, `not_latest`, `not_repairable`, `run_active`, `not_deletable` (and `stale_revision`, `read_only` for contracts and the history switch); 410 `not_held`; 500 `delete_failed` with AgentWiz's text and the system's error text | nothing |
+| New refusals | 404 `no_such_attempt`, `no_such_run`; 409 `run_stopped`, `not_latest`, `not_repairable`, `run_active`, `not_deletable`, `migration_required` / `snapshot_incomplete` (a capture that cannot be restored), `stale_revision` and `read_only` for the history switch; 410 `not_held`; 500 `delete_failed` with AgentWiz's text and the system's error text | nothing |
 | Errors inside an attempt | The committed record's `error`: `{"class", "status", "description", "hint"}`, AgentWiz's own text from `describe_error`, never backend text | nothing (an unexpected exception: `[AgentWiz] internal error in /api/complete: <Class>`) |
 | `ReadOnly` | 409 `{"error": "profiles are read-only: <file>: <problem>", "code": "read_only"}` (or "the workspace is read-only: …") | nothing |
 | `NoSuchProfile` | 404 `{"error": "no such profile", "code": "no_such_profile"}`; profile names are not echoed | nothing |
@@ -881,8 +906,9 @@ Preview also returns `valid` and declared `input_ports`, and projects independen
 even when another part of the definition is invalid. Save/Start planning rejects invalid drafts with
 409 `block_invalid` and bounded `issues` (location/rule), rather than misclassifying them as file
 read failures. Design-form output renames update the step binding; input reference errors remain
-located validation issues requiring a deliberate correction. Shared-contract choices submit names,
-never an inline `format: shared` contract.
+located validation issues requiring a deliberate correction. Shared-contract choices submit an exact
+`{name, revision, digest}` pin (400 `reference_invalid` otherwise), never a name alone or an inline
+`format: shared` contract.
 
 Test retains selected-example identity and typed inputs across views. Example additions/edits stay
 in page memory with an explicit unsaved state until collection persistence succeeds. Saving a new
@@ -925,9 +951,10 @@ A source selector uses `key` and optional durable `revision`; drafts use `draft`
 `starter_parameters` regenerates a current version only after an actual edit.
 `contract` identifies side/port/path and exact `set` values, or `source_text`.
 `description` explicitly reviews the six semantic sections against the current basis.
-Historical selectors inline captured contracts for replay/restore. Save exposes
-that restoration in a required acknowledgement. Live definitions retain named
-contract dependencies.
+Historical selectors read captured contracts through a private snapshot resolver and
+restore drafts that keep their original pins; publication resolves them against the
+live store again. `make_local_copy` (side/port) explicitly replaces one pin with the
+generation's captured definition. Nothing is inlined silently.
 
 Examples contain id/version/label, named input source texts, expectation,
 origin/verified and optional held_out. An expectation is `whole_output` with a

@@ -3,6 +3,8 @@ from decimal import Decimal
 
 import pytest
 
+from conftest import pinned
+
 from agentwiz import checks, contract_schema, contract_service as service, jsonio
 
 
@@ -231,13 +233,18 @@ def test_rich_internal_capture_roundtrip_retains_policy():
     from agentwiz.model_step import ContractCopy, OutputPlan
     parsed = checks.parse_internal_contract({'format': 'json', 'schema': {'oneOf': [
         {'type': 'integer'}, {'const': 'unknown'}]}})
-    captured = ContractCopy.of(None, None, parsed)
+    captured = pinned(None, None, parsed)
     plan = OutputPlan((('proposal', '', captured),))
     restored = OutputPlan.from_record(plan.view())
     assert restored.outputs[0][2].parsed.policy == 'internal'
     assert checks.check_named_answer(restored.contracts(), '{"proposal":"unknown"}')[0]['overall'] == 'pass'
-    with pytest.raises(checks.ContractError):
+    from agentwiz.model_step import SnapshotUnavailable
+    with pytest.raises(SnapshotUnavailable):
         ContractCopy.from_record({**captured.view(), 'policy': 'arbitrary'})
+    with pytest.raises(SnapshotUnavailable):                                   # an old record: no snapshot fields
+        ContractCopy.from_record({'name': None, 'revision': None, 'text': captured.text})
+    with pytest.raises(SnapshotUnavailable):                                   # redaction changed the text
+        ContractCopy.from_record({**captured.view(), 'text': captured.text.replace('unknown', '[REDACTED]')})
 
 
 def test_new_group_compilation_preserves_extra_properties_and_rejects_bad_choices():

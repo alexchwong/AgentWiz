@@ -1,5 +1,5 @@
-"""Saved contracts and the check route through HTTP: techspec 0.1.3 tests #64 and #65 (Part A, 7.8),
-with the route-level halves of #62 and #63. Files are read with the exact reader (X1)."""
+"""Saved contract containers and the version 2 contract routes (overhaul spec 9, 11, 13; C07, C09, C10, C15,
+C18-C20, C26). Files are read with the exact reader; races are forced with hooks and barriers, never sleeps."""
 import json
 import os
 import stat
@@ -8,232 +8,352 @@ from decimal import Decimal
 
 import pytest
 
-from agentwiz import checks, jsonio
+from agentwiz import contracts, jsonio
+from agentwiz.contract_schema import contract_digest
 from agentwiz.workspace import open_workspace
-from conftest import (JSON_CONTRACT, JSON_CONTRACT_NO_SCHEMA, TEXT_CONTRACT, HTTPFailure, configure, contract_files,
+from conftest import (JSON_CONTRACT, JSON_CONTRACT_NO_SCHEMA, TEXT_CONTRACT, contract_detail, contract_files,
                       contract_item, failure_of, file_stat, get_state, mcp_state, request, save_contract, status_of,
-                      write_ws_file)
+                      write_block, write_ws_file)
+
+EXACT = '{"format": "json", "schema": {"type": "number", "minimum": 0.10000000000000000001, "maximum": 9007199254740993}}'
 
 
-
-def read_contract_file(ui, name):
+def read_container(ui, name):
     return jsonio.decode_file_exact((contract_files(ui) / f"{name}.json").read_bytes())
 
 
-def edit_on_disk(ui, name, text):
-    """What an editor does: change the file's content (and push its modification time on)."""
+def edit_on_disk(ui, name, data):
+    """What an editor does: change the bytes (and push the modification time on)."""
     path = contract_files(ui) / f"{name}.json"
-    before = os.stat(path).st_mtime_ns
-    path.write_bytes(text.encode("utf-8"))
+    before = os.stat(path).st_mtime_ns if path.exists() else 0
+    path.write_bytes(data if isinstance(data, bytes) else data.encode("utf-8"))
     os.utime(path, ns=(before + 5_000_000_000, before + 5_000_000_000))
 
 
-# 64 ---------------------------------------------------------------------------------------------
-def test_contract_storage(ui):
-    state = get_state(ui)
-    assert state["contracts"]["items"] == [] and state["contracts"]["read_only"] is False
-    assert state["contracts"]["path"] == str(ui.workspace.path / "contracts")
-    assert state["contracts"]["checks"]["available"] is True and "jsonschema" in state["contracts"]["checks"]["detail"]
-    assert not (ui.workspace.path / "contracts").exists()                      # created by the first save
-
-    created = save_contract(ui, "fields_v1", JSON_CONTRACT)                     # revision null: create
-    first = created["contract"]
-    assert created["notes"] == [] and first["name"] == "fields_v1" and first["problem"] is None
-    assert [c["name"] for c in created["contracts"]["items"]] == ["fields_v1"]
-    assert contract_item(ui, "fields_v1") == {"name": "fields_v1", "revision": first["revision"], "format": "json",
-                                              "description": "Fields pulled from a report", "problem": None}
-
-    assert failure_of(lambda: save_contract(ui, "fields_v1", JSON_CONTRACT)).body["code"] == "exists"
-    assert status_of(lambda: save_contract(ui, "fields_v1", JSON_CONTRACT)) == 409
-
-    # Exact numbers go page -> server -> file -> page as values (R4-13).
-    file_obj = read_contract_file(ui, "fields_v1")
-    equals = next(c for c in file_obj["checks"] if c["type"] == "json_equals")["value"]
-    assert equals == {"id": 9007199254740993, "ratio": Decimal("0.10000000000000000001")}
-    assert str(equals["ratio"]) == "0.10000000000000000001" and isinstance(equals["id"], int)
-    stored = request(ui, "/api/contracts/fields_v1")
-    assert jsonio.decode_exact(stored["text"]) == file_obj and stored["text"] == first["text"]
-    assert stored["revision"] == first["revision"] and stored["problem"] is None
-
-    # The file's format: format_version first, indented, ASCII, newline at the end, mode 0600.
-    raw = (contract_files(ui) / "fields_v1.json").read_bytes()
-    assert raw.startswith(b'{\n  "format_version": 1,\n  "format": "json",') and raw.endswith(b"}\n") and raw.isascii()
-    assert stat.S_IMODE(os.stat(contract_files(ui) / "fields_v1.json").st_mode) == 0o600
-    assert sorted(p.name for p in contract_files(ui).iterdir()) == ["fields_v1.json"]      # no temporary files left
-
-    # Update with the revision; a stale one is refused.
-    updated = save_contract(ui, "fields_v1", JSON_CONTRACT.replace("Fields pulled", "Values pulled"), first["revision"])
-    assert updated["contract"]["revision"] != first["revision"]
-    assert contract_item(ui, "fields_v1")["description"] == "Values pulled from a report"
-    stale = failure_of(lambda: save_contract(ui, "fields_v1", TEXT_CONTRACT, first["revision"]))
-    assert (stale.status, stale.body["code"]) == (409, "stale_revision")
-    assert failure_of(lambda: save_contract(ui, "nobody", TEXT_CONTRACT, 3)).body["code"] == "no_such_contract"
-    assert read_contract_file(ui, "fields_v1")["description"] == "Values pulled from a report"
-
-    # A save that changes nothing keeps the revision and the file (R4-25): even reformatted.
-    current = updated["contract"]["revision"]
-    before = file_stat(contract_files(ui) / "fields_v1.json")
-    reformatted = JSON_CONTRACT.replace("Fields pulled", "Values pulled").replace("{\n  ", "{ ", 1)
-    same = save_contract(ui, "fields_v1", reformatted, current)
-    assert same["contract"]["revision"] == current
-    assert file_stat(contract_files(ui) / "fields_v1.json") == before
-
-    # Unknown top-level fields survive a save and are named in `notes`.
-    kept = save_contract(ui, "fields_v1", '{"format": "text", "future": {"a": [1.50]}, "other": 1}', current)
-    assert kept["notes"] == ['unknown top-level fields kept: "future", "other"']
-    assert read_contract_file(ui, "fields_v1")["future"] == {"a": [Decimal("1.50")]}
-
-    # Deleting and recreating never repeats a revision; a stale delete is refused.
-    seen = {first["revision"], current, kept["contract"]["revision"]}
-    assert failure_of(lambda: request(ui, "/api/contracts/delete", {"name": "fields_v1", "revision": current})
-                      ).body["code"] == "stale_revision"
-    request(ui, "/api/contracts/delete", {"name": "fields_v1", "revision": kept["contract"]["revision"]})
-    assert contract_item(ui, "fields_v1") is None and not (contract_files(ui) / "fields_v1.json").exists()
-    assert failure_of(lambda: request(ui, "/api/contracts/delete", {"name": "fields_v1", "revision": 1})
-                      ).body["code"] == "no_such_contract"
-    for _ in range(3):
-        revision = save_contract(ui, "again", TEXT_CONTRACT)["contract"]["revision"]
-        assert revision not in seen
-        seen.add(revision)
-        request(ui, "/api/contracts/delete", {"name": "again", "revision": revision})
+def container(name, family="General", definitions=(('{"format": "text"}', "first"),)):
+    revisions = []
+    for index, (text, label) in enumerate(definitions, 1):
+        obj = jsonio.decode_exact(text)
+        revisions.append({"revision": index, "label": label, "created_at": "2026-11-05T05:00:00Z",
+                          "origin": "manual", "digest": contract_digest(obj), "contract": obj})
+    return jsonio.encode_file_exact({"format_version": 2, "name": name, "family": family,
+                                     "latest": len(revisions), "revisions": revisions})
 
 
-def test_contract_changes_on_disk_are_noticed(ui):
-    first = save_contract(ui, "watched", TEXT_CONTRACT)["contract"]
-    assert contract_item(ui, "watched")["revision"] == first["revision"]
-    edit_on_disk(ui, "watched", '{"format_version": 1, "format": "text", "description": "by hand"}')
-    item = contract_item(ui, "watched")
-    assert item["description"] == "by hand" and item["revision"] != first["revision"] and item["problem"] is None
-    stale = failure_of(lambda: save_contract(ui, "watched", TEXT_CONTRACT, first["revision"]))
-    assert (stale.status, stale.body["code"]) == (409, "stale_revision")
-    assert request(ui, "/api/contracts/watched")["text"].count("by hand") == 1
-
-    # A new file appears without a restart; a removed one disappears; names that are not contracts are ignored.
-    (contract_files(ui) / "dropped_in.json").write_text('{"format_version": 1, "format": "text"}')
-    (contract_files(ui) / "notes.txt").write_text("not a contract")
-    (contract_files(ui) / ".hidden.json").write_text('{"format_version": 1, "format": "text"}')
-    (contract_files(ui) / "bad name.json").write_text('{"format_version": 1, "format": "text"}')
-    assert [c["name"] for c in get_state(ui)["contracts"]["items"]] == ["dropped_in", "watched"]
-    (contract_files(ui) / "dropped_in.json").unlink()
-    assert [c["name"] for c in get_state(ui)["contracts"]["items"]] == ["watched"]
+# C09 ---------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("text", [TEXT_CONTRACT, JSON_CONTRACT, JSON_CONTRACT_NO_SCHEMA, EXACT,
+                                  '{"format": "text", "exact": "", "min_length": 0}'])
+def test_every_contract_kind_saves_and_reloads_exactly(ui, text):
+    saved = save_contract(ui, "kind", text, label="Initial")
+    assert (saved["revision"], saved["unchanged"], saved["publication"]) == (1, False, "committed")
+    assert saved["digest"] == contract_digest(jsonio.decode_exact(text))
+    detail = contract_detail(ui, "kind")
+    assert jsonio.decode_exact(detail["definition_text"]) == jsonio.decode_exact(text)
+    assert detail["digest"] == saved["digest"] and detail["file_token"] == saved["file_token"]
+    assert detail["latest"] == detail["revision"] == 1 and detail["label"] == "Initial"
+    raw = (contract_files(ui) / "kind.json").read_bytes()
+    assert raw.startswith(b'{\n  "format_version": 2,') and raw.endswith(b"}\n") and raw.isascii()
+    assert stat.S_IMODE(os.stat(contract_files(ui) / "kind.json").st_mode) == 0o600
+    assert stat.S_IMODE(os.stat(contract_files(ui)).st_mode) == 0o700
+    assert sorted(p.name for p in contract_files(ui).iterdir()) == ["kind.json"]          # no temporary files
 
 
-def test_damaged_contracts_are_listed_never_written_and_repairable(ui):
+def test_append_noop_restore_family_and_collisions(ui):
+    first = save_contract(ui, "order_line", JSON_CONTRACT, family="Commercial", label="Initial definition")
+    assert contract_item(ui, "order_line") == {
+        "name": "order_line", "family": "Commercial", "latest": 1, "latest_digest": first["digest"], "format": "json",
+        "kind": "json", "description": "Fields pulled from a report", "problem": None}
+    assert failure_of(lambda: save_contract(ui, "order_line", JSON_CONTRACT, family="Commercial")).body["code"] \
+        == "contract_exists"
+    assert failure_of(lambda: save_contract(ui, "Order_Line", JSON_CONTRACT)).body["code"] == "contract_exists"
+
+    # Equal digest is a no-op: even reformatted and with an equivalent numeric spelling.
+    same = JSON_CONTRACT.replace('"maximum": 1', '"maximum": 1.0').replace("{\n  ", "{ ", 1)
+    before = (contract_files(ui) / "order_line.json").read_bytes()
+    noop = save_contract(ui, "order_line", same, first["file_token"], "Commercial", "ignored")
+    assert noop["unchanged"] is True and noop["revision"] == 1 and noop["file_token"] == first["file_token"]
+    assert (contract_files(ui) / "order_line.json").read_bytes() == before
+
+    # A change appends, never mutates an earlier record.
+    second = save_contract(ui, "order_line", JSON_CONTRACT.replace("Fields pulled", "Values pulled"),
+                           first["file_token"], "Commercial", "Reworded")
+    assert (second["revision"], second["unchanged"]) == (2, False)
+    stored = read_container(ui, "order_line")
+    assert stored["latest"] == 2 and [r["revision"] for r in stored["revisions"]] == [1, 2]
+    assert jsonio.decode_file_exact(before)["revisions"][0] == stored["revisions"][0]
+    stale = failure_of(lambda: save_contract(ui, "order_line", TEXT_CONTRACT, first["file_token"], "Commercial"))
+    assert (stale.status, stale.body["code"], stale.body["file_token"]) == (409, "stale_contract", second["file_token"])
+    bundled = failure_of(lambda: save_contract(ui, "order_line", TEXT_CONTRACT, second["file_token"], "Other"))
+    assert (bundled.status, bundled.body["code"]) == (400, "invalid")                  # family is a separate save
+
+    # Restore appends a copy; restoring the latest is unchanged.
+    restored = request(ui, "/api/contracts/restore", {"format_version": 2, "name": "order_line",
+                       "expected_file_token": second["file_token"], "revision": 1, "label": "Back"})
+    assert (restored["revision"], restored["digest"]) == (3, first["digest"])
+    again = request(ui, "/api/contracts/restore", {"format_version": 2, "name": "order_line",
+                    "expected_file_token": restored["file_token"], "revision": 1, "label": "Again"})
+    assert again["unchanged"] is True and again["revision"] == 3
+    missing = failure_of(lambda: request(ui, "/api/contracts/restore", {"format_version": 2, "name": "order_line",
+                         "expected_file_token": restored["file_token"], "revision": 9, "label": ""}))
+    assert (missing.status, missing.body["code"]) == (404, "no_such_revision")
+
+    # Family is grouping only: identities and digests are unchanged, the file token changes.
+    moved = request(ui, "/api/contracts/family", {"format_version": 2, "name": "order_line",
+                    "expected_file_token": restored["file_token"], "family": "Orders"})
+    assert moved["unchanged"] is False and moved["file_token"] != restored["file_token"]
+    assert [r["digest"] for r in moved["revisions"]] == [first["digest"], second["digest"], first["digest"]]
+    assert get_state(ui)["contracts"]["families"] == ["General", "Orders"]
+    assert contract_detail(ui, "order_line", 2)["digest"] == second["digest"]          # immutable numbered selection
+    assert contract_detail(ui, "order_line")["revision"] == 3                          # latest at this read
+
+
+def test_restart_keeps_identities_and_tokens_follow_bytes(ui):
+    first = save_contract(ui, "keep", EXACT)
+    second = save_contract(ui, "keep", TEXT_CONTRACT, first["file_token"])
+    ui.state.contracts = contracts.ContractStore(ui.workspace.path)        # a fresh process cache
+    detail = contract_detail(ui, "keep", 1)
+    assert detail["digest"] == first["digest"] and "0.10000000000000000001" in detail["definition_text"]
+    # Whitespace-only and history/family edits change the file token, never a digest.
+    data = (contract_files(ui) / "keep.json").read_bytes()
+    edit_on_disk(ui, "keep", data.replace(b'\n  "family"', b'\n    "family"'))
+    reformatted = contract_detail(ui, "keep")
+    assert reformatted["file_token"] != second["file_token"] and reformatted["digest"] == second["digest"]
+    stale = failure_of(lambda: save_contract(ui, "keep", JSON_CONTRACT, second["file_token"]))
+    assert (stale.status, stale.body["code"]) == (409, "stale_contract")
+    # A valid hand-appended revision is accepted on the next read.
+    stored = read_container(ui, "keep")
+    obj = {"format": "text", "description": "by hand"}
+    stored["revisions"].append({"revision": 3, "label": "hand", "created_at": "2026-11-05T06:00:00Z",
+                                "origin": "manual", "digest": contract_digest(obj), "contract": obj})
+    stored["latest"] = 3
+    edit_on_disk(ui, "keep", jsonio.encode_file_exact(stored))
+    assert contract_item(ui, "keep")["latest"] == 3 and contract_item(ui, "keep")["description"] == "by hand"
+
+
+# C07, C10 -----------------------------------------------------------------------------------------
+def test_damaged_old_and_newer_files_are_listed_never_written(ui):
     folder = contract_files(ui)
     folder.mkdir()
-    cases = {"broken": ("{ not json", "invalid"),
-             "no_version": ('{"format": "text"}', "invalid"),
-             "bad_field": ('{"format_version": 1, "format": "text", "checks": [{"type": "nope"}]}', "invalid"),
-             "toobig": ('{"format_version": 1, "format": "json", "checks": [{"type": "json_equals", "value": ' + "9" * 5000 + "}]}", "invalid"),
-             "newer": ('{"format_version": 2, "format": "text"}', "newer_format"),
-             "array": ("[1]", "invalid")}
-    for name, (text, _code) in cases.items():
-        (folder / f"{name}.json").write_text(text)
+    good = container("x")
+    changed_history = jsonio.decode_file_exact(container("tampered"))
+    changed_history["revisions"][0]["contract"] = {"format": "text", "min_length": 1}           # digest now stale
+    cases = {"broken": (b"{ not json", "invalid"),
+             "old": (b'{"format_version": 1, "format": "text"}', "migration_required"),
+             "newer": (b'{"format_version": 3, "name": "newer"}', "newer_format"),
+             "duplicate": (good.replace(b'"family": "General"', b'"family": "General", "family": "General"'), "invalid"),
+             "nonfinite": (good.replace(b'"latest": 1', b'"latest": NaN'), "invalid"),
+             "misnamed": (good, "invalid"),
+             "gap": (good.replace(b'"revision": 1', b'"revision": 2'), "invalid"),
+             "rich": (container("rich", definitions=(('{"format": "json", "schema": {"type": "string", "pattern": "x"}}', ""),)), "invalid"),
+             "tampered": (jsonio.encode_file_exact(changed_history), "digest_mismatch"),
+             "badtime": (good.replace(b'05:00:00Z', b'25:00:00Z').replace(b'"x"', b'"badtime"'), "invalid")}
+    for name, (data, _code) in cases.items():
+        (folder / f"{name}.json").write_bytes(data)
     (folder / "binary.json").write_bytes(b"\xff\xfe{")
-    items = {c["name"]: c for c in get_state(ui)["contracts"]["items"]}
+    items = {c["name"]: c for c in request(ui, "/api/contracts")["items"]}
     assert set(items) == set(cases) | {"binary"}
-    for name, (text, code) in cases.items():
-        problem = items[name]["problem"]
-        assert problem["code"] == code and problem["file"] == str(folder / f"{name}.json") and problem["message"]
-        assert items[name]["format"] is None
-    assert items["binary"]["problem"]["message"] == "the file is not UTF-8 text"
-    assert "9999" not in json.dumps(items) and "nope" not in json.dumps(items)           # rules, never values
-    assert items["bad_field"]["problem"]["message"].startswith("checks[0].type")
-
-    opened = request(ui, "/api/contracts/broken")                                          # it can be opened
-    assert opened["text"] == "{ not json" and opened["problem"]["code"] == "invalid"
-    assert request(ui, "/api/contracts/binary")["text"] == "��{"                  # decoded with replacement
-    before = {n: (folder / f"{n}.json").read_bytes() for n in cases}
-    for name in cases:                                                                      # and is never written
-        fail = failure_of(lambda: save_contract(ui, name, TEXT_CONTRACT, items[name]["revision"]))
-        assert (fail.status, fail.body["code"]) == (409, "contract_unusable")
-        assert fail.body["problem"]["code"] == cases[name][1] and "file" in fail.body["problem"]
-        assert (folder / f"{name}.json").read_bytes() == before[name]
-
-    edit_on_disk(ui, "broken", '{"format_version": 1, "format": "text"}')                  # repaired on disk: no restart
-    repaired = contract_item(ui, "broken")
-    assert repaired["problem"] is None and repaired["format"] == "text"
-    assert save_contract(ui, "broken", TEXT_CONTRACT, repaired["revision"])["contract"]["problem"] is None
-    request(ui, "/api/contracts/delete", {"name": "newer", "revision": items["newer"]["revision"]})   # damaged ones can be deleted
-    assert contract_item(ui, "newer") is None and not (folder / "newer.json").exists()
+    for name, (_data, code) in cases.items():
+        assert items[name]["problem"]["code"] == code, (name, items[name])
+        assert items[name]["latest"] is None and items[name]["problem"]["file"] == str(folder / f"{name}.json")
+    detail = contract_detail(ui, "broken")                                              # inspectable, no projection
+    assert detail["problem"]["code"] == "invalid" and detail["revisions"] == [] and "definition_text" not in detail
+    for name in cases:
+        token = contract_detail(ui, name)["file_token"]
+        before = (folder / f"{name}.json").read_bytes()
+        fail = failure_of(lambda: save_contract(ui, name, TEXT_CONTRACT, token))
+        assert (fail.status, fail.body["code"]) == (409, "contract_unusable") and fail.body["problem"]["code"]
+        assert (folder / f"{name}.json").read_bytes() == before
+    # A wholly malformed file is deleted only through the token check and reference scan.
+    deleted = request(ui, "/api/contracts/delete", {"format_version": 2, "name": "broken",
+                                                    "expected_file_token": contract_detail(ui, "broken")["file_token"]})
+    assert deleted["deleted"] is True and not (folder / "broken.json").exists()
 
 
-def test_valid_replacement_never_overwrites_a_damaged_or_newer_file(ui):
+def test_oversized_and_invalid_source_are_refused_before_writing(ui):
+    assert failure_of(lambda: save_contract(ui, "x", "{ nope")).body["issues"][0]["location"] == "line 1, column 3"
+    rich = failure_of(lambda: save_contract(ui, "x", '{"format": "json", "schema": {"type": "string", "$ref": "#/x"}}'))
+    assert (rich.status, rich.body["code"]) == (400, "unsupported_keyword")
+    legacy = failure_of(lambda: save_contract(ui, "x", '{"format": "text", "strict": true}'))
+    assert legacy.status == 400 and legacy.body["issues"][0]["location"] == "strict"
+    big = failure_of(lambda: save_contract(ui, "x", '{"format": "text", "exact": "' + "a" * (1 << 20) + '"}'))
+    assert (big.status, big.body["code"]) == (400, "too_large")
+    dup = failure_of(lambda: save_contract(ui, "x", '{"format": "text", "format": "text"}'))
+    assert dup.status == 400
+    assert not contract_files(ui).exists()
+    for bad in ("", ".x", "../x", "a/b", "a" * 65, "é", "with space"):
+        assert status_of(lambda: save_contract(ui, bad, TEXT_CONTRACT)) == 400, bad
+
+
+def test_container_limit_refuses_an_append_without_change(ui, monkeypatch):
+    first = save_contract(ui, "limited", TEXT_CONTRACT)
+    monkeypatch.setattr(contracts, "CONTAINER_LIMIT", len((contract_files(ui) / "limited.json").read_bytes()) + 10)
+    before = (contract_files(ui) / "limited.json").read_bytes()
+    fail = failure_of(lambda: save_contract(ui, "limited", JSON_CONTRACT, first["file_token"]))
+    assert (fail.status, fail.body["code"]) == (400, "too_large")
+    assert (contract_files(ui) / "limited.json").read_bytes() == before
+
+
+# C26 ---------------------------------------------------------------------------------------------
+def test_request_envelopes_are_strict(ui):
+    base = {"format_version": 2, "name": "x", "family": "General", "expected_file_token": None,
+            "definition_text": TEXT_CONTRACT, "label": ""}
+    for body in ({**base, "format_version": 1}, {**base, "format_version": True}, {**base, "extra": 1},
+                 {k: v for k, v in base.items() if k != "label"}, {**base, "expected_file_token": "latest"},
+                 {**base, "name": 5}, {**base, "definition_text": 5}, {**base, "family": " padded"},
+                 {**base, "label": "x" * 121}, {**base, "family": "a\nb"},
+                 {"name": "x", "text": TEXT_CONTRACT, "revision": None}):
+        assert status_of(lambda: request(ui, "/api/contracts/save", body)) == 400, body
+    for route, body in (("/api/contracts/family", {"name": "x", "expected_file_token": None, "family": "F"}),
+                        ("/api/contracts/restore", {"name": "x", "expected_file_token": "sha256:" + "0" * 64,
+                                                    "revision": True, "label": ""}),
+                        ("/api/contracts/delete", {"name": "x"}),
+                        ("/api/contracts/check", {"definition_text": TEXT_CONTRACT, "value_text": "x", "x": 1})):
+        assert status_of(lambda: request(ui, route, {"format_version": 2, **body})) == 400, route
+    for name in ("nobody", "..", "a%2Fb", "x" * 100):
+        fail = failure_of(lambda: request(ui, f"/api/contracts/{name}"))
+        assert (fail.status, fail.body["code"]) == (404, "no_such_contract"), name
+    save_contract(ui, "x", TEXT_CONTRACT)
+    for query in ("revision=0", "revision=true", "revision=1&revision=2", "other=1"):
+        assert status_of(lambda: request(ui, "/api/contracts/x?" + query)) == 400, query
+    assert failure_of(lambda: request(ui, "/api/contracts/x?revision=2")).body["code"] == "no_such_revision"
+    assert status_of(lambda: request(ui, "/api/contracts/x", token=False)) == 403
+    assert status_of(lambda: request(ui, "/api/contracts", token=False)) == 403
+    assert status_of(lambda: request(ui, "/api/contracts/save", {**base, "name": "y"}, token=False)) == 403
+    listing = request(ui, "/api/contracts")
+    assert listing["format_version"] == 2 and listing["read_only"] is False
+    assert listing["validation"]["available"] is True
+
+
+# C15 (deletion) -----------------------------------------------------------------------------------
+def test_deletion_scans_references_and_refuses_incomplete_scans(ui):
+    saved = save_contract(ui, "shared", TEXT_CONTRACT)
+    pin = {"name": "shared", "revision": 1, "digest": saved["digest"]}
+    block = {"format_version": 3, "name": "user", "inputs": {}, "outputs": {"out": {"contract": pin}},
+             "steps": [{"id": "s", "kind": "script", "file": "scripts/go.py"}]}
+    write_block(ui, "user", block, {"scripts/go.py": "print(1)"})
+    newer = save_contract(ui, "shared", JSON_CONTRACT, saved["file_token"])
+    used = contract_detail(ui, "shared")["used_by"]
+    assert used["unreadable"] == []
+    assert used["items"] == [{"block": "user", "generation": None, "current": True, "side": "outputs",
+                              "port": "out", "revision": 1, "newer_available": True}]
+    body = {"format_version": 2, "name": "shared", "expected_file_token": newer["file_token"]}
+    refused = failure_of(lambda: request(ui, "/api/contracts/delete", body))
+    assert (refused.status, refused.body["code"]) == (409, "contract_in_use")
+    assert refused.body["blockers"][0]["block"] == "user" and (contract_files(ui) / "shared.json").exists()
+    # A block definition that cannot be inspected makes absence of use unknown.
+    (ui.workspace.path / "blocks" / "user" / "block.json").write_text("{ damaged")
+    incomplete = failure_of(lambda: request(ui, "/api/contracts/delete", body))
+    assert (incomplete.status, incomplete.body["code"]) == (409, "reference_scan_incomplete")
+    assert incomplete.body["unreadable"] == [str(ui.workspace.path / "blocks" / "user" / "block.json")]
+    # Historical run snapshots and unrelated blocks do not block deletion.
+    write_block(ui, "user", {**block, "outputs": {"out": {"contract": {"format": "text"}}}}, {"scripts/go.py": "x"})
+    deleted = request(ui, "/api/contracts/delete", body)
+    assert deleted["deleted"] is True and contract_item(ui, "shared") is None
+    stale = failure_of(lambda: request(ui, "/api/contracts/delete", body))
+    assert (stale.status, stale.body["code"]) == (404, "no_such_contract")
+
+
+# C18, C19 ----------------------------------------------------------------------------------------
+def test_two_tabs_append_without_a_lost_update(ui, monkeypatch):
+    first = save_contract(ui, "race", TEXT_CONTRACT)
+    entered, release = threading.Event(), threading.Event()
+    original = contracts.before_contract_replace
+
+    calls = []
+
+    def hold(name):                       # runs in the server's handler thread: hold only the first writer
+        calls.append(name)
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(10)
+        original(name)
+
+    monkeypatch.setattr(contracts, "before_contract_replace", hold)
+    results = {}
+
+    def save(label, text):
+        results[label] = failure_of(lambda: save_contract(ui, "race", text, first["file_token"])) \
+            if label == "tab-b" else save_contract(ui, "race", text, first["file_token"])
+
+    a = threading.Thread(target=save, args=("tab-a", '{"format": "text", "description": "one"}'), name="tab-a")
+    a.start()
+    assert entered.wait(10)
+    save("tab-b", '{"format": "text", "description": "two"}')        # a competing registry writer: refused now
+    assert (results["tab-b"].status, results["tab-b"].body["code"]) == (409, "busy")
+    release.set()
+    a.join(10)
+    assert results["tab-a"]["revision"] == 2
+    late = failure_of(lambda: save_contract(ui, "race", '{"format": "text", "description": "two"}',
+                                            first["file_token"]))
+    assert (late.status, late.body["code"]) == (409, "stale_contract")      # the stale tab must refresh and review
+    stored = read_container(ui, "race")
+    assert [r["contract"].get("description") for r in stored["revisions"]] == [None, "one"]
+
+
+def test_faults_before_and_after_replacement(ui, monkeypatch):
+    first = save_contract(ui, "fault", TEXT_CONTRACT)
+    before = (contract_files(ui) / "fault.json").read_bytes()
+
+    def broken(name):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(contracts, "before_contract_replace", broken)
+    fail = failure_of(lambda: save_contract(ui, "fault", JSON_CONTRACT, first["file_token"]))
+    assert (fail.status, fail.body["code"]) == (500, "write_failed")
+    assert (contract_files(ui) / "fault.json").read_bytes() == before                 # the original is intact
+    assert sorted(p.name for p in contract_files(ui).iterdir()) == ["fault.json"]
+    monkeypatch.setattr(contracts, "before_contract_replace", lambda name: None)
+    monkeypatch.setattr(contracts, "after_contract_replace", broken)
+    uncertain = save_contract(ui, "fault", JSON_CONTRACT, first["file_token"])
+    assert (uncertain["revision"], uncertain["publication"]) == (2, "durability_uncertain")
+    monkeypatch.setattr(contracts, "after_contract_replace", lambda name: None)
+    repeat = save_contract(ui, "fault", JSON_CONTRACT, uncertain["file_token"])       # no duplicate append
+    assert repeat["unchanged"] is True and contract_item(ui, "fault")["latest"] == 2
+
+
+# C20 ---------------------------------------------------------------------------------------------
+def test_links_and_non_regular_files_are_refused(ui, tmp_path):
     folder = contract_files(ui)
     folder.mkdir()
-    for name, text in (("damaged", "{ nope"), ("future", '{"format_version": 2, "format": "text", "x": 1}')):
-        (folder / f"{name}.json").write_text(text)
-        item = contract_item(ui, name)
-        bytes_before, stat_before = (folder / f"{name}.json").read_bytes(), file_stat(folder / f"{name}.json")
-        fail = failure_of(lambda: save_contract(ui, name, TEXT_CONTRACT, item["revision"]))
-        assert (fail.status, fail.body["code"]) == (409, "contract_unusable")
-        assert (folder / f"{name}.json").read_bytes() == bytes_before
-        assert file_stat(folder / f"{name}.json") == stat_before
-        assert contract_item(ui, name)["revision"] == item["revision"]                      # nothing was touched
-        edit_on_disk(ui, name, '{"format_version": 1, "format": "text"}')                  # once repaired...
-        again = save_contract(ui, name, TEXT_CONTRACT, contract_item(ui, name)["revision"])  # ...the same save works
-        assert read_contract_file(ui, name)["checks"][0]["value"] == "pong" and again["contract"]["problem"] is None
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(container("linked"))
+    (folder / "linked.json").symlink_to(outside)
+    (folder / "dir.json").mkdir()
+    items = {c["name"]: c for c in request(ui, "/api/contracts")["items"]}
+    assert items["linked"]["problem"]["code"] == "unusable" and items["dir"]["problem"]["code"] == "unusable"
+    fail = failure_of(lambda: save_contract(ui, "linked", TEXT_CONTRACT, None))
+    assert fail.status == 409
+    assert outside.read_bytes() == container("linked")
+    # A linked contracts folder is never followed for writing.
+    os.rename(folder, tmp_path / "real")
+    os.symlink(tmp_path / "real", folder)
+    fail = failure_of(lambda: save_contract(ui, "new", TEXT_CONTRACT))
+    assert (fail.status, fail.body["code"]) == (409, "contract_unusable")
+    assert not (tmp_path / "real" / "new.json").exists()
 
 
-def test_contract_save_validation(ui):
-    fail = failure_of(lambda: save_contract(ui, "x", '{"format": "text", "strict": true, "checks": [{"type": "nope"}]}'))
-    assert (fail.status, fail.body["code"]) == (400, "contract_error")
-    assert {i["location"] for i in fail.body["issues"]} == {"strict", "checks[0].type"}
-    assert fail.body["issue_count"] == 2 and fail.body["error"].startswith("ContractError: ")
-    assert failure_of(lambda: save_contract(ui, "x", "{ nope")).body["issues"][0]["location"] == "line 1, column 3"
-    assert not contract_files(ui).exists()                                                  # nothing was written
-    for bad_name in ("", ".x", "../x", "a/b", "a" * 65, "é", "with space"):
-        assert status_of(lambda: save_contract(ui, bad_name, TEXT_CONTRACT)) == 400, bad_name
-    for body in ({"text": TEXT_CONTRACT, "revision": None}, {"name": "x", "revision": None},
-                 {"name": 5, "text": TEXT_CONTRACT, "revision": None}, {"name": "x", "text": 5, "revision": None},
-                 {"name": "x", "text": TEXT_CONTRACT, "revision": "1"}, {"name": "x", "text": TEXT_CONTRACT, "revision": True}):
-        assert status_of(lambda: request(ui, "/api/contracts/save", body)) == 400, body
-    assert status_of(lambda: request(ui, "/api/contracts/delete", {"name": "x"})) == 400
-    assert status_of(lambda: request(ui, "/api/contracts/delete", {"revision": 1})) == 400
-    # A name that cannot exist is "no such contract", never a path.
-    for name in ("nobody", "..", "a%2Fb", "", "x" * 100):
-        assert status_of(lambda: request(ui, f"/api/contracts/{name}")) == 404, name
-    assert status_of(lambda: request(ui, "/api/contracts/x", token=False)) == 403
-    assert status_of(lambda: request(ui, "/api/contracts/save", {"name": "x", "text": TEXT_CONTRACT,
-                                                                   "revision": None}, token=False)) == 403
-
-
-def test_contract_routes_are_atomic_across_threads(ui):
-    save_contract(ui, "race", TEXT_CONTRACT)
-    current = contract_item(ui, "race")["revision"]
-    texts = ['{"format": "text", "description": "one"}', '{"format": "text", "description": "two"}']
-    barrier, results = threading.Barrier(2), {}
-
-    def save(text):
-        barrier.wait()
-        results[text] = status_of(lambda: save_contract(ui, "race", text, current))
-
-    threads = [threading.Thread(target=save, args=(t,)) for t in texts]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(10)
-    assert sorted(results.values()) == [200, 409]
-    winner = next(t for t, s in results.items() if s == 200)
-    assert read_contract_file(ui, "race")["description"] == json.loads(winner)["description"]
-
-
-def test_read_only_workspace_refuses_contract_changes(make_ui, tmp_path):
+def test_read_only_workspace_allows_viewing_and_checking_only(make_ui, tmp_path):
     root = tmp_path / "ro_ws"
     write_ws_file(root / "ro" / "workspace.json", "{ not json")
     workspace = open_workspace(root, "ro")
     make_ui.opened.append(workspace)
     ui = make_ui(workspace=workspace)
-    assert get_state(ui)["contracts"]["read_only"] is True
+    assert request(ui, "/api/contracts")["read_only"] is True
     fail = failure_of(lambda: save_contract(ui, "x", TEXT_CONTRACT))
     assert (fail.status, fail.body["code"]) == (409, "read_only")
-    assert not contract_files(ui).exists()
-    (contract_files(ui)).mkdir()
-    (contract_files(ui) / "there.json").write_text('{"format_version": 1, "format": "text"}')
-    revision = contract_item(ui, "there")["revision"]                                       # it can still be listed
-    assert request(ui, "/api/contracts/there")["problem"] is None
-    fail = failure_of(lambda: request(ui, "/api/contracts/delete", {"name": "there", "revision": revision}))
-    assert (fail.status, fail.body["code"]) == (409, "read_only")
+    contract_files(ui).mkdir()
+    (contract_files(ui) / "there.json").write_bytes(container("there"))
+    detail = contract_detail(ui, "there")
+    assert detail["problem"] is None and detail["read_only"] is True
+    for route, body in (("/api/contracts/delete", {"name": "there", "expected_file_token": detail["file_token"]}),
+                        ("/api/contracts/family", {"name": "there", "expected_file_token": detail["file_token"],
+                                                   "family": "Other"}),
+                        ("/api/contracts/restore", {"name": "there", "expected_file_token": detail["file_token"],
+                                                    "revision": 1, "label": ""})):
+        fail = failure_of(lambda: request(ui, route, {"format_version": 2, **body}))
+        assert (fail.status, fail.body["code"]) == (409, "read_only"), route
+    assert request(ui, "/api/contracts/check", {"format_version": 2, "definition_text": TEXT_CONTRACT,
+                                                "value_text": "pong"})["check"]["overall"] == "pass"
     assert (contract_files(ui) / "there.json").exists()
 
 
@@ -241,89 +361,24 @@ def test_write_failure_is_reported(ui):
     contract_files(ui).parent.mkdir(parents=True, exist_ok=True)
     contract_files(ui).write_text("a file where the folder should be")
     fail = failure_of(lambda: save_contract(ui, "x", TEXT_CONTRACT))
-    assert (fail.status, fail.body["code"]) == (500, "write_failed") and "could not write" in fail.body["error"]
+    assert (fail.status, fail.body["code"]) == (409, "contract_unusable")
 
 
-# the route-level half of 62 ---------------------------------------------------------------------
-def test_schema_rules_through_the_routes(ui):
-    refused = '{"format": "json", "schema": {"$ref": "http://example.com/x.json"}}'
-    fail = failure_of(lambda: save_contract(ui, "remote", refused))
-    assert (fail.status, fail.body["code"]) == (400, "contract_error")
-    assert fail.body["issues"][0]["location"] == 'schema["$ref"]'
-    draft7 = ('{"format": "json", "schema": {"$ref": "#/$defs/x", "$defs": {"x": {"$schema": '
-              '"http://json-schema.org/draft-07/schema#", "dependencies": {"a": ["b"]}}}}}')
-    assert failure_of(lambda: save_contract(ui, "draft7", draft7)).body["code"] == "contract_error"
-    assert not contract_files(ui).exists()
-    # At load: the same text in a file is a problem, not a usable contract.
-    contract_files(ui).mkdir()
-    (contract_files(ui) / "draft7.json").write_text(draft7.replace('{"format"', '{"format_version": 1, "format"', 1))
-    assert contract_item(ui, "draft7")["problem"]["code"] == "invalid"
-    # In the Contracts tab's check.
-    fail = failure_of(lambda: request(ui, "/api/contracts/check", {"contract_text": draft7, "text": "{}"}))
-    assert (fail.status, fail.body["code"]) == (400, "contract_error")
-    # A resource declaring 2020-12 is accepted everywhere.
-    ok = draft7.replace("http://json-schema.org/draft-07/schema#", "https://json-schema.org/draft/2020-12/schema")
-    ok = ok.replace(', "dependencies": {"a": ["b"]}', "")
-    assert save_contract(ui, "fine", ok)["contract"]["problem"] is None
-    assert request(ui, "/api/contracts/check", {"contract_text": ok, "text": "{}"})["check"]["overall"] == "pass"
-    # An unresolvable local reference saves, and fails when applied.
-    missing = '{"format": "json", "schema": {"$ref": "#/$defs/missing"}}'
-    assert save_contract(ui, "dangling", missing)["contract"]["problem"] is None
-    assert request(ui, "/api/contracts/check", {"contract_text": missing, "text": "{}"})["check"]["overall"] == "contract_error"
-
-
-# the route-level half of 63 ---------------------------------------------------------------------
-def test_schema_without_extra_through_the_routes(ui, monkeypatch):
-    schema_text = '{"format": "json", "schema": {"type": "object", "required": ["x"]}}'
-    monkeypatch.setattr(checks, "schema_support", lambda: (False, "jsonschema is not installed"))
-    fail = failure_of(lambda: save_contract(ui, "needs_extra", schema_text))
-    assert (fail.status, fail.body["code"]) == (400, "contract_error")
-    assert fail.body['issues'][0]['location'] == 'schema'
-    assert 'validation_unavailable' in fail.body['issues'][0]['message']
-    assert 'repair the AgentWiz installation' in fail.body['issues'][0]['message']
-    assert not contract_files(ui).exists()
-    assert save_contract(ui, "plain", JSON_CONTRACT_NO_SCHEMA)["contract"]["problem"] is None   # no schema: no extra needed
-    state = get_state(ui)["contracts"]["checks"]
-    assert state["available"] is False and state["detail"] == "jsonschema is not installed"
-
-    # A schema contract already in the workspace loads; its schema check is not_run, never pass.
-    (contract_files(ui) / "has_schema.json").write_text(schema_text.replace('{"format"', '{"format_version": 1, "format"', 1))
-    assert contract_item(ui, "has_schema")["problem"] is None
-    result = request(ui, "/api/contracts/check", {"contract_text": schema_text, "text": '{"x": 1}'})["check"]
-    assert result["overall"] == "incomplete"
-    assert [e["result"] for e in result["checks"]] == ["pass", "not_run"]
-    assert request(ui, "/api/contracts/check", {"contract_text": schema_text, "text": "nope"})["check"]["overall"] == "fail"
-
-
-# 65 ---------------------------------------------------------------------------------------------
+# the sample check (spec 13): no model call, save or acceptance --------------------------------------
 def test_contract_check_route(ui, server):
+    from conftest import configure
     configure(ui, server)
-    state_before = get_state(ui)
-    pasted = request(ui, "/api/contracts/check",
-                     {"contract_text": JSON_CONTRACT_NO_SCHEMA, "text": '{"id": 9007199254740993, "ratio": 1.5}'})
-    check = pasted["check"]
-    assert check["overall"] == "fail"
-    assert [(i["location"], i["check"]) for i in check["issues"]] == [("$.ratio", "checks[0]")]
-    assert check["issues"][0]["message"] == "json_equals: expected 0.10000000000000000001; found 1.5"
-    ok = request(ui, "/api/contracts/check",
-                 {"contract_text": JSON_CONTRACT_NO_SCHEMA, "text": '{"id": 9007199254740993, "ratio": 0.10000000000000000001}'})
-    assert ok["check"]["overall"] == "pass"
-    assert request(ui, "/api/contracts/check", {"contract_text": TEXT_CONTRACT, "text": "pong"})["check"]["overall"] == "pass"
-    assert server.requests == []                                                           # no backend was called
-    assert get_state(ui)["revision"] == state_before["revision"] and not contract_files(ui).exists()   # nothing saved
-
-    fail = failure_of(lambda: request(ui, "/api/contracts/check",
-                                      {"contract_text": '{"format": "json", "checks": [{"type": "regex", "pattern": "(("}]}',
-                                       "text": "x"}))
-    assert (fail.status, fail.body["code"]) == (400, "contract_error")
-    assert [i["location"] for i in fail.body["issues"]] == ["checks[0].pattern"]
-    for body in ({"text": "x"}, {"contract_text": TEXT_CONTRACT}, {"contract_text": 1, "text": "x"},
-                 {"contract_text": TEXT_CONTRACT, "text": 1}):
-        assert status_of(lambda: request(ui, "/api/contracts/check", body)) == 400
-    assert status_of(lambda: request(ui, "/api/contracts/check", {"contract_text": TEXT_CONTRACT, "text": "x"},
-                                     token=False)) == 403
-    huge = request(ui, "/api/contracts/check", {"contract_text": '{"format": "json"}', "text": "7" * 5000})["check"]
-    assert huge["overall"] == "incomplete" and huge["checks"][0] == {"check": "parse", "result": "not_run", "issues": 1}
+    def check(definition, value):
+        return request(ui, "/api/contracts/check", {"format_version": 2, "definition_text": definition,
+                                                    "value_text": value})
+    result = check(JSON_CONTRACT, '{"id": 9007199254740993, "ratio": 1.5}')
+    assert result["label"] == "Contract check" and result["check"]["overall"] == "fail"
+    assert [(i["location"], i["check"]) for i in result["check"]["issues"]] == [("$.ratio", "schema")]
+    assert "1.5" not in json.dumps(result["check"]["issues"])                       # values are redacted
+    assert check(JSON_CONTRACT, '{"id": 9007199254740993, "ratio": 0.10000000000000000001}')["check"]["overall"] == "pass"
+    assert check(TEXT_CONTRACT, '"pong"')["check"]["overall"] == "pass"              # Text: literal, not parsed
+    assert check(JSON_CONTRACT_NO_SCHEMA, "7" * 5000)["check"]["overall"] == "incomplete"
+    assert server.requests == [] and not contract_files(ui).exists()
 
 
 def test_mcp_routes_still_refuse_unreadable_numbers(ui):

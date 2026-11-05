@@ -12,7 +12,7 @@ def test_state_body_carries_roles_blocks_and_scripts(ui):
     assert {k: roles[k] for k in ("map", "revision", "read_only", "path", "problem")} == {
         "map": {}, "revision": 1, "read_only": False,
         "path": str(ui.workspace.path / "roles.json"), "problem": None}
-    assert set(roles["definitions"]) == {"fast", "assistant", "reasoning"}
+    assert set(roles["definitions"]) == {"fast", "assistant", "reasoning", "write_contract"}
     assert roles["defaults"] == roles["definitions"]
     assert {u["role"] for u in roles["unresolved"]} == set(roles["definitions"])
     assert state["blocks"] == {"path": str(ui.workspace.path / "blocks"), "active_runs": 0}
@@ -38,7 +38,9 @@ def test_listing_and_detail(ui):
     assert all(f["sha256"] and f["unavailable"] is None for f in detail["files"])
     assert detail["inputs"] == [{"name": "text", "description": "", "format": "text",
                                  "contract_text": detail["contracts"]["inputs"]["text"]["text"],
+                                 "reference": None, "digest": detail["contracts"]["inputs"]["text"]["digest"],
                                  "form": None, "form_notes": []}]
+    assert detail["contracts"]["inputs"]["text"]["name"] is None                  # an inline capture
     assert detail["outputs"][0]["name"] == "out" and detail["outputs"][0]["format"] == "text"
     assert "description" not in detail["outputs"][0]
     assert detail["step"] == {"id": "s", "kind": "model", "role": "fast", "max_repairs": 2,

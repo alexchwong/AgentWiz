@@ -313,13 +313,21 @@ def test_design_binding_edits_and_located_invalid_draft_refusals(ui):
         assert failure.body['issues'][0]['location'] == 'steps[0].prompt'
     ports['inputs'][0]['format'] = 'shared'
     failure = failure_of(lambda: send(ui, 'preview', draft=draft, edit=operation))
-    assert failure.status == 400 and failure.body['code'] == 'invalid'
-    request(ui, '/api/contracts/save', {'name': 'shared_text', 'text': '{"format":"text"}', 'revision': None})
-    ports['inputs'][0].update(name='text', source='"shared_text"')
+    assert failure.status == 400 and failure.body['code'] == 'reference_invalid'
+    ports['inputs'][0].update(name='text', source='"shared_text"')               # a name alone is not a pin
+    failure = failure_of(lambda: send(ui, 'preview', draft=draft, edit=operation))
+    assert failure.status == 400 and failure.body['code'] == 'reference_invalid'
+    from conftest import save_contract
+    saved = save_contract(ui, 'shared_text', '{"format":"text"}')
+    pin = {'name': 'shared_text', 'revision': saved['revision'], 'digest': saved['digest']}
+    ports['inputs'][0].update(name='text', source=jsonio.encode_exact(pin))
     shared = send(ui, 'preview', draft=draft, edit=operation)
     assert shared['valid']
-    assert jsonio.decode_exact(shared['draft']['definition_text'])['inputs']['text']['contract'] == 'shared_text'
-    plan_save(ui, shared['draft'])
+    assert jsonio.decode_exact(shared['draft']['definition_text'])['inputs']['text']['contract'] == pin
+    result = plan_save(ui, shared['draft'])
+    metadata = request(ui, '/api/workshop/blocks/' + shared['draft']['key'] + '/revisions')['revisions'][0]['metadata']
+    assert metadata['contract_pins']['inputs'] == {'text': pin} and metadata['contract_pins']['outputs'] == {}
+    assert set(metadata['contracts']['inputs']) == {'text'} and result['revision_number'] >= 1
 
 
 def test_marker_write_failure_dispatches_nothing(ui, monkeypatch):
@@ -378,11 +386,13 @@ def test_legacy_conversion_confirmation_and_retention(ui):
     assert 'legacy_conversion' in {r['kind'] for r in plan['required_confirmations']}
     refusal = failure_of(lambda: send(ui, 'save', **body, expected_plan=plan['expected_plan'], confirmations=[]))
     assert refusal.status == 409
-    assert json.loads((ui.workspace.path / 'blocks/b/block.json').read_text())['format_version'] == 1
+    assert json.loads((ui.workspace.path / 'blocks/b/block.json').read_text())['format_version'] == 3
     saved = plan_save(ui, draft, draft['base_digest'])
     revisions = request(ui, '/api/workshop/blocks/b/revisions')
     assert len(revisions['revisions']) == 2
     assert [r['revision_number'] for r in revisions['revisions']] == [2, 1]
+    original = send(ui, 'preview', key='b', revision=revisions['revisions'][1]['id'])      # history stays readable
+    assert original['valid'] and set(revisions['revisions'][1]['metadata']['contracts']['outputs']) == {'out'}
     assert (ui.workspace.path / 'blocks/b/prompts/user.md').read_text() == MODEL_FILES['prompts/user.md']
     for i in range(20):
         draft = send(ui, 'preview', key='b', display_name='revision-' + str(i))['draft']
@@ -393,7 +403,7 @@ def test_legacy_conversion_confirmation_and_retention(ui):
 
 def test_custom_script_support_versions_are_frozen(ui):
     from agentwiz import jsonio
-    obj = {'format_version': 1, 'name': 'helper', 'inputs': {}, 'outputs': {'out': {'contract': {'format': 'json'}}},
+    obj = {'format_version': 3, 'name': 'helper', 'inputs': {}, 'outputs': {'out': {'contract': {'format': 'json'}}},
            'steps': [{'id': 'run', 'kind': 'script', 'file': 'scripts/main.py', 'timeout_s': 5}]}
     files = {'scripts/main.py': 'from pathlib import Path\nimport helper\nprint(\'{"out":\' + str(helper.N + int(Path(__file__).with_name("data.txt").read_text())) + "}")\n',
              'scripts/helper.py': 'N = 2\n', 'scripts/data.txt': '3'}
@@ -435,7 +445,7 @@ def test_captured_runtime_upgrade_preserves_starter_controls(ui, monkeypatch, tm
 
 def test_generated_source_requires_ack_and_compatibility_enforces_review(ui):
     from agentwiz import jsonio
-    obj = {'format_version': 1, 'name': 'generated', 'inputs': {}, 'outputs': {'out': {'contract': {'format': 'json'}}},
+    obj = {'format_version': 3, 'name': 'generated', 'inputs': {}, 'outputs': {'out': {'contract': {'format': 'json'}}},
            'steps': [{'id': 'run', 'kind': 'script', 'file': 'scripts/main.py', 'timeout_s': 5}]}
     draft = {'key': 'generated', 'definition_text': jsonio.encode_exact(obj),
              'files': {'scripts/main.py': 'print(\'{"out":3}\')\n'},

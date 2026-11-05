@@ -411,9 +411,11 @@ class ProcessState:
 
     def _contracts_view_locked(self) -> dict:
         available, detail = checks.schema_support()
-        return {"items": [entry.list_view() for entry in self.contracts.entries()],
+        return {"format_version": contracts.FORMAT_VERSION,
+                "items": [entry.list_view() for entry in self.contracts.entries()],
+                "families": self.contracts.families(),
                 "read_only": self.workspace.read_only, "path": str(self.contracts.path),
-                "checks": {"available": available, "detail": detail}}
+                "validation": {"available": available, "detail": detail}}
 
     def _history_view_locked(self) -> dict:
         return {"save_runs": self._save_runs and not self.workspace.read_only, "revision": self._history_revision,
@@ -748,48 +750,75 @@ class ProcessState:
                 raise NoSuchBlock()
             return blocks.detail(loaded)
 
-    # --- contracts (techspec 0.1.3, 7.8) ------------------------------------------------------
-    def get_contract(self, name: object) -> dict:
-        """One contract with its text as stored; 404 (NoSuchContract) if there is none."""
+    # --- contracts (overhaul spec 9-13) ---------------------------------------------------------
+    def contracts_listing(self) -> dict:
         with self._lock:
             self.contracts.rescan()
-            entry = self.contracts.get(name) if isinstance(name, str) else None
-            if entry is None:
-                raise contracts.NoSuchContract()
-            return entry.full_view()
+            return self._contracts_view_locked()
 
-    @_writes("contract save")
-    def save_contract(self, name: str, text: str, revision: int | None) -> tuple[dict, dict, list[str]]:
-        """Create (revision None) or update a contract under the state lock. Returns the state view, the
-        contract's view and the notes. Raises the contracts.* exceptions the server maps, StaleRevision,
-        ReadOnly, SettingsError (a bad name) and WriteFailed."""
-        with self._lock:
-            try:
-                entry, notes = self.contracts.save(name, text, revision, self.workspace.read_only)
-            except contracts.StaleContract as exc:
-                raise StaleRevision(exc.current) from None
-            except contracts.WorkspaceReadOnly:
-                raise ReadOnly(list(self.workspace.problems), True) from None
-            except contracts.BadName as exc:
-                raise SettingsError(str(exc)) from None
-            except OSError as exc:
-                raise WriteFailed(str(self.contracts.path / (name + contracts.SUFFIX)),
-                                  exc.strerror or type(exc).__name__) from None
-            return self._view_locked(), entry.full_view(), notes
+    def _used_by(self, name: str, latest: int | None) -> tuple[list, list]:
+        from .workshop_assets import reference_scan
+        return reference_scan(self.workspace.path / blocks.DIRECTORY, name, latest)
 
-    @_writes("contract delete")
-    def delete_contract(self, name: str, revision: int) -> dict:
+    def contract_detail(self, name: object, revision: int | None = None) -> dict:
+        """One contract read from its current bytes: identity, file token, the selected numbered revision (the
+        latest at this read by default), its exact definition text, revision summaries and Used by. A file with
+        a problem returns its metadata and problem but no editable projection. Raises contracts.StoreError."""
+        if not wsmod.valid_name(name):
+            raise contracts.StoreError("no_such_contract", 404, "no such contract")
+        entry = contracts.ContractStore(self.workspace.path).read_current(name)     # never the stat cache
+        if entry is None:
+            raise contracts.StoreError("no_such_contract", 404, "no such contract")
         with self._lock:
+            self.contracts.rescan()
+        blockers, unreadable = self._used_by(name, entry.latest if entry.problem is None else None)
+        out = {"format_version": contracts.FORMAT_VERSION, "name": entry.name, "family": entry.family,
+               "file_token": entry.token, "problem": entry.problem_view(),
+               "used_by": {"items": blockers, "unreadable": unreadable}, "read_only": self.workspace.read_only}
+        if entry.problem is not None:
+            return {**out, "latest": None, "revision": None, "revisions": []}
+        selected = entry.revisions[-1] if revision is None else entry.revision(revision)
+        if selected is None:
+            raise contracts.StoreError("no_such_revision", 404, "no such revision")
+        return {**out, "latest": entry.latest, "revision": selected.revision, "digest": selected.digest,
+                "label": selected.label, "origin": selected.origin, "created_at": selected.created_at,
+                "basis": selected.basis, "definition_text": selected.definition_text(),
+                "revisions": [r.summary() for r in entry.revisions]}
+
+    def _contract_write(self, label: str, operation):
+        """Writer registration first, then the logical registry reservation (claimed under C6, which is released
+        at once); the filesystem work holds neither C1 nor C6. The shared cache is refreshed briefly after."""
+        if self.workspace.read_only:
+            raise contracts.StoreError("read_only", 409, "the workspace is read-only")
+        with self.writing(label):
             try:
-                self.contracts.delete(name, revision, self.workspace.read_only)
-            except contracts.StaleContract as exc:
-                raise StaleRevision(exc.current) from None
-            except contracts.WorkspaceReadOnly:
-                raise ReadOnly(list(self.workspace.problems), True) from None
+                with self.workshop.assets.registry():
+                    before_write(label)
+                    result = operation(contracts.ContractStore(self.workspace.path))
             except OSError as exc:
-                raise WriteFailed(str(self.contracts.path / (name + contracts.SUFFIX)),
-                                  exc.strerror or type(exc).__name__) from None
-            return self._view_locked()
+                raise WriteFailed(str(self.contracts.path), exc.strerror or type(exc).__name__) from None
+            finally:
+                with self._lock:
+                    self.contracts.rescan()
+            return result
+
+    def save_contract(self, name: str, family: str, expected_token: str | None, definition_text: str, label: str,
+                      *, origin: str = "manual", basis: dict | None = None) -> dict:
+        return self._contract_write("contract save", lambda store: store.save(
+            name, family, expected_token, definition_text, label, origin=origin, basis=basis,
+            read_only=self.workspace.read_only))
+
+    def set_contract_family(self, name: str, expected_token: str, family: str) -> dict:
+        return self._contract_write("contract family", lambda store: store.set_family(
+            name, expected_token, family, read_only=self.workspace.read_only))
+
+    def restore_contract(self, name: str, expected_token: str, revision: int, label: str) -> dict:
+        return self._contract_write("contract restore", lambda store: store.restore(
+            name, expected_token, revision, label, read_only=self.workspace.read_only))
+
+    def delete_contract(self, name: str, expected_token: str) -> dict:
+        return self._contract_write("contract delete", lambda store: store.delete(
+            name, expected_token, lambda n: self._used_by(n, None), read_only=self.workspace.read_only))
 
     # --- MCP library, tokens and snapshots (Sections 9.1, 9.2) ------------------------------
     def _refresh_mcp_locked(self, initial: bool = False) -> None:
@@ -905,20 +934,20 @@ class ProcessState:
             return mcp_client.Snapshot(server, config.url, config.idle_timeout_s, config.call_deadline_s,
                                        config.discovery_deadline_s, token)
 
-    # --- contracts for a request (techspec 5.2, step 2) ---------------------------------------
-    def contract_for_request(self, name: str, revision: int) -> contracts.Entry:
-        """The usable contract a Checked request names, at that revision. NoSuchContract (404), StaleRevision
-        (409) or ContractUnusable (409)."""
-        with self._lock:
-            self.contracts.rescan()
-            entry = self.contracts.get(name) if isinstance(name, str) else None
-            if entry is None:
-                raise contracts.NoSuchContract()
-            if entry.problem is not None:
-                raise contracts.ContractUnusable(entry.problem)
-            if entry.revision != revision:
-                raise StaleRevision(entry.revision)
-            return entry
+    # --- contracts for a request (overhaul spec 13.1) ----------------------------------------
+    def contract_for_request(self, name: str, revision: int, digest: str):
+        """The exact pinned revision a Checked request reviewed, read from the current bytes. A newer appended
+        revision does not invalidate it; a missing revision, an unusable file or a different digest refuses
+        before dispatch. Raises contracts.StoreError."""
+        if not wsmod.valid_name(name):
+            raise contracts.StoreError("no_such_contract", 404, "no such contract")
+        entry = contracts.ContractStore(self.workspace.path).read_current(name)
+        found, refused = contracts.resolve_pin(entry, name, revision, digest)
+        if found is None:
+            code, message = refused
+            status = 404 if code in ("no_such_contract", "no_such_revision") else 409
+            raise contracts.StoreError(code, status, message)
+        return found
 
     # --- run history (techspec 10.1) -------------------------------------------------------------
     def credentials(self) -> list[str]:

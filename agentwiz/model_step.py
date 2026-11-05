@@ -17,7 +17,7 @@ from typing import Callable
 from modelspell import Endpoint, ModelSpellError
 
 from .errors import report_internal
-from . import __version__, checks, history, jsonio, model_call, output_protocol, runs
+from . import __version__, checks, contract_schema, history, jsonio, model_call, output_protocol, runs
 from .model_call import RequestSnapshot, build_messages, classify_outcome, describe_error, result_to_dict
 from .task_settings import TaskSettings, parse_task
 
@@ -34,30 +34,70 @@ class PageGone(Exception):
     """Raised by a callback when its page can no longer be written to."""
 
 
+class SnapshotUnavailable(Exception):
+    """A record's captured contract cannot be restored faithfully: `code` is "migration_required" for an old
+    record without the snapshot fields, "snapshot_incomplete" for one whose text no longer matches its digest
+    (for example after credential redaction). Viewing stays possible; repair and re-execution do not."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
 @dataclass(frozen=True)
 class ContractCopy:
-    """A contract as an attempt uses it: the record's `{"name", "revision", "text"}` and the parsed contract."""
-    name: str
-    revision: int
+    """A contract as an attempt uses it: its stable identity (name/revision, both None for an inline copy),
+    canonical digest, exact definition text and the parsed contract, whose policy is server-owned."""
+    name: str | None
+    revision: int | None
+    digest: str
     text: str
     parsed: checks.Contract
 
     @classmethod
-    def of(cls, name: str, revision: int, parsed: checks.Contract) -> "ContractCopy":
-        return cls(name, revision, jsonio.encode_exact(dict(parsed.raw), indent=2), parsed)
+    def inline(cls, parsed: checks.Contract) -> "ContractCopy":
+        return cls(None, None, contract_schema.contract_digest(parsed.raw),
+                   jsonio.encode_exact(dict(parsed.raw), indent=2), parsed)
+
+    @classmethod
+    def reference(cls, name: str, revision: int, digest: str, parsed: checks.Contract) -> "ContractCopy":
+        if contract_schema.contract_digest(parsed.raw) != digest:
+            raise checks.ContractError([{'location': 'digest', 'message': 'does not match the definition'}])
+        return cls(name, revision, digest, jsonio.encode_exact(dict(parsed.raw), indent=2), parsed)
 
     @classmethod
     def from_record(cls, saved: dict) -> "ContractCopy":
-        policy = saved.get('policy', 'user')
+        """Restore a captured snapshot without resolving any live file. Its recorded policy is applied and its
+        digest verified; an old record or a changed (redacted) text cannot be restored for execution."""
+        if not isinstance(saved, dict) or not {'digest', 'text', 'policy'} <= set(saved):
+            raise SnapshotUnavailable('migration_required')
+        policy = saved['policy']
         if policy not in ('user', 'internal'):
-            raise checks.ContractError([{'location': 'policy', 'message': 'unknown captured policy'}])
-        parsed = (checks.parse_internal_contract(jsonio.decode_exact(saved['text'])) if policy == 'internal'
-                  else checks.contract_from_text(saved['text']))
-        return cls(saved["name"], saved["revision"], saved["text"], parsed)
+            raise SnapshotUnavailable('snapshot_incomplete')
+        validator = saved.get('validator')
+        try:
+            obj = jsonio.decode_exact(saved['text'])
+            if policy == 'internal':
+                parsed = checks.parse_internal_contract(obj, validator=validator)
+            else:
+                if validator is not None:
+                    raise SnapshotUnavailable('snapshot_incomplete')
+                parsed = checks.parse_contract(obj)
+            if contract_schema.contract_digest(obj) != saved['digest']:
+                raise SnapshotUnavailable('snapshot_incomplete')
+        except (ValueError, TypeError, checks.ContractError):
+            raise SnapshotUnavailable('snapshot_incomplete') from None
+        name, revision = saved.get('name'), saved.get('revision')
+        if (name is None) != (revision is None):
+            raise SnapshotUnavailable('snapshot_incomplete')
+        return cls(name, revision, saved['digest'], saved['text'], parsed)
 
     def view(self) -> dict:
-        return {"name": self.name, "revision": self.revision, "text": self.text,
-                'policy': self.parsed.policy}
+        out = {"name": self.name, "revision": self.revision, "digest": self.digest, "text": self.text,
+               'policy': self.parsed.policy}
+        if self.parsed.validator is not None:
+            out['validator'] = self.parsed.validator
+        return out
 
 
 @dataclass(frozen=True)
@@ -86,18 +126,34 @@ class OutputPlan:
                      for name, description, contract in self.outputs)
 
     def view(self) -> dict:
-        """The record form: names, descriptions and exact contract text, and nothing about the run."""
+        """The record form: names, descriptions and exact contract snapshots, and nothing about the run."""
         return {"mode": output_protocol.MODE, "renderer": output_protocol.RENDERER_VERSION,
                 "digest": self.digest(),
-                "outputs": [{"name": name, "description": description, "revision": contract.revision,
-                             "text": contract.text,
+                "outputs": [{"name": name, "description": description, "contract": contract.view(),
+                             # flat copies kept for readers of earlier record layouts
+                             "revision": contract.revision, "text": contract.text,
                              'policy': contract.parsed.policy}
                             for name, description, contract in self.outputs]}
 
     @classmethod
     def from_record(cls, saved: dict) -> "OutputPlan":
-        return cls(tuple((item["name"], item.get("description", ""),
-                          ContractCopy.from_record(item)) for item in saved["outputs"]))
+        """The captured plan; never the live block or contract file. Raises SnapshotUnavailable."""
+        if not isinstance(saved, dict) or not isinstance(saved.get('outputs'), list):
+            raise SnapshotUnavailable('migration_required')
+        if saved.get('renderer') != output_protocol.RENDERER_VERSION:
+            raise SnapshotUnavailable('migration_required')
+        outputs = []
+        for item in saved['outputs']:
+            if not isinstance(item, dict) or not isinstance(item.get('contract'), dict):
+                raise SnapshotUnavailable('migration_required')
+            # The flat copies must agree with the snapshot they mirror; a changed copy is not trusted.
+            if any(key in item and item[key] != item['contract'].get(key) for key in ('revision', 'text', 'policy')):
+                raise SnapshotUnavailable('snapshot_incomplete')
+            outputs.append((item["name"], item.get("description", ""), ContractCopy.from_record(item['contract'])))
+        plan = cls(tuple(outputs))
+        if saved.get('digest') != plan.digest():
+            raise SnapshotUnavailable('snapshot_incomplete')
+        return plan
 
     def digest(self) -> str:
         return output_protocol.digest(self.specs())
@@ -144,7 +200,8 @@ def prepare_first(store: runs.AttemptStore, *, snapshot: RequestSnapshot, system
         system = system + '\n\n' + generated if system else generated
     messages = build_messages(system, prompt)
     run = store.new_run(source=source, save_runs=save_runs, system=system, prompt=prompt,
-                        contract=({"name": contract.name, "revision": contract.revision} if contract else None))
+                        contract=({"name": contract.name, "revision": contract.revision, "digest": contract.digest}
+                                  if contract else None))
     return PreparedAttempt(run, 1, None, snapshot, task, arguments, messages, list(messages), contract)
 
 

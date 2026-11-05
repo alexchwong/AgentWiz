@@ -286,3 +286,19 @@ build; this entry restates them and records nothing further.
   settings. Roles formats 1 and 2 stay readable; the file is written as format 3.
 - **Assistance sampling.** Added at the owner's request: the Workshop assistance request has its own Temperature and
   Reasoning controls, separate from the settings of the block it proposes.
+
+### 5 November 2026 — contract overhaul Phases 1B and 1C
+
+Build reference: `contract_overhaul_tech_specs.md` version 1.0 (owner-authorised; it supersedes the contract
+portions of plan v14 and discussion v2). Executable definitions move to `format_version` 3; format 2 stays the
+Workshop managed head. Local implementation choices recorded here, none changing a specified format or route:
+
+- **Family on append.** A save naming a different family for an existing contract is refused (400 `invalid`)
+  instead of being bundled into the append; the family route is the only grouping change.
+- **Setup refusal code.** Synthesis with an unassigned or incompatible `write_contract` role refuses at plan or
+  start with 409 `role_unresolved` (not repairable, nothing admitted).
+- **Wrong proposal kind.** A contract API given a block proposal, or the reverse, answers 400 `invalid`.
+- **Legacy string references** are counted conservatively by the deletion reference scan (revision null) so an
+  old block cannot be silently orphaned; they still fail to load.
+- **Checked request page body.** The existing tab now sends the concrete latest `revision` and `digest` it lists;
+  the reviewed revision selector and preview remain Phase 2B work.

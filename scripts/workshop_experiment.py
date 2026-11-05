@@ -18,7 +18,7 @@ def fixture(role):
     contract = {'format': 'json', 'schema': {'type': 'object', 'properties': {
         'order': {'type': 'object', 'properties': {'id': {'type': 'integer'}, 'quantity': {'type': 'integer'}},
                   'required': ['id'], 'additionalProperties': False}}, 'required': ['order'], 'additionalProperties': False}}
-    definition = {'format_version': 1, 'name': 'experiment_extract', 'description': 'Held-out nested exact extraction',
+    definition = {'format_version': 3, 'name': 'experiment_extract', 'description': 'Held-out nested exact extraction',
         'inputs': {'source': {'contract': {'format': 'json', 'schema': {'type': 'object', 'properties': {
             'message': {'type': 'string'}}, 'required': ['message'], 'additionalProperties': False}}}},
         'outputs': {'out': {'contract': contract}}, 'steps': [{'id': 'extract', 'kind': 'model', 'role': role,

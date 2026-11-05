@@ -5,16 +5,17 @@
 Specification: `contract_overhaul_tech_specs.md`, version 1.0, November 5, 2026.
 Baseline: `ada01c82b82f1c83ca1ca702c6d15574bc5757fc`; package remains 0.2.0.
 
-The owner requested completion of **Phase 1A only** in this increment, and this dedicated file
-as the cumulative progress record. It supersedes the overhaul entry formerly in `HANDOVER.md`,
-not the unrelated release/UI handover. Existing uncommitted foundation work was preserved.
-No commit, push, tag, publication, modelSpell modification or additional dependency was made.
+This dedicated file is the cumulative progress record; it supersedes the overhaul entry formerly in
+`HANDOVER.md`, not the unrelated release/UI handover. Phase 1A was committed as `841844f`. The latest
+increment (owner request: **Phases 1B and 1C**) started from that commit with a clean tree.
+No commit, push, tag, publication, modelSpell modification or additional dependency was made in this
+checkout. (The installed-wheel smoke used a throwaway local clone, as DEVEL requires; see below.)
 
-**Phase 1A implementation is complete. Phase 1 as a whole and the overhaul are not complete.**
-The focused backend checks pass. The complete offline gate is not green because remaining
-storage/fixture/tutorial/browser consumers still depend on rejected legacy definitions. This
-intermediate checkout is not shippable. Do not reintroduce compatibility or automatic workspace
-migration to hide those failures.
+**Phase 1 (1A, 1B, 1C) is implemented headlessly. The overhaul is not complete: Phase 2 (UI) remains.**
+At the Phase 1 gate the offline suite passes except two browser journeys that drive the replaced
+Workbench Contracts editor; they are pending Phase 2, not passing and not deleted. This checkout is not
+shippable as the finished overhaul: the page's Contracts utility no longer works with the new routes.
+Do not reintroduce compatibility or automatic workspace migration.
 
 ## Cumulative implementation
 
@@ -57,7 +58,124 @@ migration to hide those failures.
   claimed. Relevant exact-editor tests now preserve supported bounds and reject unsupported source.
 - User schema value messages redact actual values and enum choices while retaining rule/location.
 
-## Verification of this increment
+### Phase 1B — persistence, references and captures
+
+- `contracts.py` replaced (not adapted): version 2 flat containers per stable name; `family` is grouping
+  only; contiguous oldest-first revisions; stored digests recomputed on every load (`digest_mismatch`
+  makes a file unusable, never re-blessed); calendar-checked UTC `created_at`; minimal `basis` rules;
+  32 MiB container limit checked before parsing. Version 1 files are listed as `migration_required`;
+  newer ones as `newer_format`; links and non-regular files as `unusable`. Nothing is overwritten.
+- Operations: create (expected token null), append, no-op on equal digest (`unchanged:true`, no
+  rewrite), restore-as-new, family-only rewrite, reference-scanned delete. `file_token` is SHA-256 of
+  the complete bytes; explicit get/save/delete and Checked request resolution read current bytes;
+  stat fingerprints only drive re-scans. Casefold name collisions refused.
+- Writes: same-directory temp file, fsync, token recheck immediately before replace, atomic replace,
+  parent fsync; private modes 0700/0600; an ambiguous replace is settled by rereading; a failed parent
+  fsync returns `publication:"durability_uncertain"` with the real new identity. Hooks
+  `before_contract_replace`, `after_contract_replace`, `before_contract_delete` exist for tests.
+- Logical registry reservation `Assets.registry()`: a busy flag claimed and released under C6, never
+  held as a lock across I/O; contract save/family/restore/delete and Workshop block publication take it
+  after writer registration; a competing registry writer gets 409 `busy`. Publication rechecks its pins
+  against the live store under the reservation. C1 is held only for the brief cache refresh.
+- Executable definitions are `format_version` 3. Version 1 → `migration_required` (never rewritten);
+  version 2 in an executable position is a managed head (`invalid`). `workshop_assets.head` classifies
+  v3 (and v1) roots as unmanaged. All producers (starters, assistance, synthesis, tutorial, scripts,
+  test builders) write v3.
+- References are exactly `{name, revision, digest}`; strings, `latest`, partial or mixed shapes are
+  `reference_invalid`. `Declared.reference` replaces `contract_name`; `Loaded.contract_pins` replaces
+  `contract_names`. Ports resolve from one `ContractStore.snapshot()`. Effective-revision signatures use
+  each pin's state, never latest/family/process counters (no name-only fallback).
+- `ContractCopy` carries name/revision (null inline), digest, exact text, parsed contract and policy, plus a
+  server validator ID for internal synthesis captures. `from_record` verifies policy and digest and never
+  resolves live files: old records → `migration_required`; changed/redacted text → `snapshot_incomplete`
+  (both refuse repair; viewing is unaffected). `OutputPlan.view/from_record` nest the snapshot and reject
+  disagreeing flat copies; plan identity covers canonical digests, policy/validator and rendered text.
+- Generation metadata adds `contract_pins` (referenced ports only) and `contracts_digest`, validated with
+  the assets for v3 generations (exact port sets, pins equal declarations and captured digests, inline
+  snapshots equal the asset definition). The converted original root of a legacy conversion also gets
+  its maps. Historical preview uses a private `SnapshotContracts` resolver (user policy, captured texts);
+  restored drafts keep pins and publication re-resolves them. The silent `restore_contracts` inlining and
+  its confirmation were removed; the explicit `make_local_copy` edit replaces one pin with its captured
+  definition after a digest check.
+- Used by / deletion: raw scan of current unmanaged definitions and every retained generation (current
+  once, orphans and runs ignored); unreadable definitions refuse with `reference_scan_incomplete`; rows
+  give block, generation, current flag, side, port, revision and `newer_available`, sorted.
+
+### Phase 1C — services, synthesis and migration
+
+- Version 2 HTTP API per spec 13: list, get (`?revision=` immutable selection), project, edit, save
+  (optional `proposal_id`), family, restore, delete, check (`label:"Contract check"`), plus
+  synthesis plan/start/apply. Strict members, no boolean integers, bounded issues, value-redacted
+  messages; `contracts.StoreError` maps codes/statuses; `model_step.SnapshotUnavailable` maps to 409.
+  Read-only workspaces allow list/get/project/check only.
+- Checked request takes `contract:{name,revision,digest}`, resolves from current bytes, refuses missing
+  revisions (404) and changed digests/unusable files (409) before dispatch; an appended newer revision
+  does not invalidate the pin. The page's Checked request tab now sends the concrete latest revision and
+  digest it lists (two-line consumer update; selector/preview remain Phase 2B).
+- Synthesis: unassigned default role `write_contract` (cloud, family Workshop); packaged prompt
+  `agentwiz/prompts/write_contract.md` (`write_contract` v1) with delimited untrusted task/output/schema
+  data. Server-built ephemeral internal block (closed wrapper output `proposal`, max_tokens default 4096
+  with assistance task controls, one repair, 1800 s) runs through the existing plan/ticket/start/batch/
+  Stop machinery. Server-owned post-validator `contract_synthesis_v1` (hard-coded
+  `checks.POST_VALIDATORS`, recorded only in internal captures) applies the subset recognizer inside
+  acceptance, identically on repair. Proposals use the bounded store with kind `contract` and a
+  source-draft digest; apply is idempotent, never writes, and refuses stale sources (`proposal_stale`) and
+  block proposals; block apply refuses contract proposals. Save with `proposal_id` derives
+  `synthesized`/`derived_from_synthesis` and a minimal server-captured basis. Unassigned role → 409
+  `role_unresolved` before admission.
+- `agentwiz/contract_examples.py`: five illustrative starters with valid, invalid and
+  structurally-valid-but-wrong synthetic values.
+- Migration (inventory with `rg`, classified): tutorial `fields` is a v2 container (family Tutorial,
+  revision 1; idempotent `tutorial.ensure_contract`); `extract_fields`/`echo_numbers` pin it with a digest
+  computed by `contract_digest`; `word_count`/`wait_for_stop` are v3; stand-ins now fail on a missing
+  required field / wrong type; contract and repair topics `updated_in` 0.2.0. Starters, assistance,
+  `scripts/workshop_experiment.py`, `scripts/smoke_installed.py`, `tests/test_live.py` and every test
+  builder use v3 / new definitions. Unrelated `format_version: 1` envelopes and diagnostic `checks`
+  result arrays were classified and left unchanged; `docs/decisions.md` history was left as history.
+- Docs: README (Contracts rewritten incl. common-task mapping and limits, block keys, Checked request,
+  tutorial list, development note), NEWS, `docs/architecture.md` (component map, contract section, routes,
+  locking, errors, loader, Workshop history) and a dated `docs/decisions.md` entry recording local choices
+  (family-on-append refusal, `role_unresolved`, wrong-kind `invalid`, conservative legacy string scan).
+
+### Tests added or migrated (1B/1C)
+
+`test_contracts.py` rewritten for v2 (C07, C09, C10, C15, C18, C19, C20, C26); new
+`test_contract_overhaul.py` (C15/C18 retained-generation deletion and publication race, C16 restore/local
+copy/tampered maps, C22–C25 synthesis and starters, C30 headless tutorial); `test_blocks.py` pin cases and
+C14; Checked request pin/refusal and repair-capture cases in `test_attempts.py`; shutdown cases for every
+contract writer in `test_shutdown.py`; page/tutorial expectation updates for the new default role, v3 builder
+and pins. Rejection tests deliberately keep old formats.
+
+## Verification of the 1B/1C increment
+
+Environment: Linux, Python 3.13.13, public modelSpell 0.3.0, Playwright Chromium from `scripts/dev_setup.sh`.
+
+- Baseline at `841844f` before edits: `.venv/bin/python -m pytest -q -m "not live"` → 758 passed, 61 failed,
+  2 errors (as recorded for Phase 1A).
+- Final complete offline run (after the last code change): `.venv/bin/python -m pytest -q -m "not live"` →
+  **851 passed, 2 failed, 10 deselected, 0 errors, 0 skips** in 151.68 s. This is the Phase 1 gate as the
+  specification defines it, **not** the final offline gate (Phase 2C requires zero failures).
+- Pending Phase 2 (not passing, not deleted): `tests/test_page.py::test_page_contracts` and
+  `tests/test_tutorial.py::test_tutorial_topics`, both stopped at the old Workbench Contracts editor
+  (`contracts-save` → `data-state="error"`). A scratch probe (not added to the repository) drove every other
+  tutorial topic — repair, model/tool/script blocks, Workshop design and all five assistance topics — to its
+  expected state in Chromium: 1 passed.
+- Race/hook suites (`test_contracts.py`, `test_contract_overhaul.py`, `test_shutdown.py`) rerun three times:
+  41 passed each time.
+- `git diff --check`, `compileall` (agentwiz, tests, scripts) and `pip check` passed.
+- Installed wheel: following DEVEL, the working changes were copied into a throwaway local clone with its
+  remote removed and committed only there; `python scripts/build_release.py --smoke` (online pinned
+  modelSpell fetch, not the offline wheelhouse procedure) → RC1–RC3 ok, **smoke ok**. The first attempt
+  failed on a stale smoke assertion (`contracts.checks` renamed to `validation`); the smoke script was
+  migrated and rerun. Wheel SHA-256 `9fe524f1f7d3ab05be8d98b9b54db8e02937b45f942632fd6e42518b107bd5b3`
+  contains `agentwiz/prompts/write_contract.md` and `agentwiz/contract_examples.py`. The smoke now also
+  checks the packaged synthesis prompt via the expected `role_unresolved` refusal.
+- Defects found and fixed during this increment: replay script crashed on the new snapshot exception;
+  a converted legacy root's original generation lacked contract maps (history would have been unusable);
+  synthesis start rejected its own ticket members; unassigned synthesis role surfaced as 500.
+- Not verified locally: Python 3.10 (no interpreter available), macOS, live backends, offline-wheelhouse smoke.
+
+## Verification of the Phase 1A increment (historical)
 
 Environment: Linux, Python 3.13.13, public modelSpell 0.3.0.
 
@@ -88,23 +206,16 @@ Environment: Linux, Python 3.13.13, public modelSpell 0.3.0.
 - No installed-wheel, live-provider, macOS or Python 3.10 validation was performed in this increment.
   Earlier wheel evidence below applies only to that earlier foundation snapshot.
 
-## Remaining authorised project work (not performed in this increment)
+## Remaining authorised project work
 
-1. **Phase 1B:** v2 contract containers, stable identities, immutable contiguous append/no-op/restore,
-   family updates, exact file tokens, registry reservations, safe atomic/fsynced publication and
-   symlink protection. Replace—not adapt as compatibility—the legacy store and routes.
-2. **Phase 1B:** executable definitions **v3**, exact name/revision/digest references and dependency
-   signatures, coherent store resolution, immutable full captures/history/repair integration,
-   Used by and retained-definition deletion protection, historical local-copy conversion.
-3. **Phase 1C:** complete headless HTTP services; `write_contract` role/prompt; synthesis through
-   existing runner/ticket/admission/Stop machinery; bounded draft-bound proposals and minimal
-   provenance; domain fixtures; migrate every active packaged/generated/test/tutorial asset.
-4. **Phase 2A:** packaged shared `contracts.js`, explicit asset route, readable/source editor and
+Phases 1A–1C are done (above). Remaining, in specification order:
+
+1. **Phase 2A:** packaged shared `contracts.js`, explicit asset route, readable/source editor and
    inline/saved block-port integration, preserving exact numbers and enforcing the same subset.
-5. **Phase 2B:** Workshop Blocks/Contracts library, search/families/revisions/restore/Used by,
+2. **Phase 2B:** Workshop Blocks/Contracts library, search/families/revisions/restore/Used by,
    dirty/stale-save handling, sample/synthesis workflows, concrete Checked request pin selection,
    tutorials and browser journeys.
-6. **Phase 2C:** full acceptance coverage, green offline gate, browser verification, installed prompt/
+3. **Phase 2C:** full acceptance coverage, green offline gate, browser verification, installed prompt/
    JS/dependency smoke, final owning docs/diff review and accurate final handover.
 
 **Version correction:** the previous progress paragraph accidentally swapped executable and metadata
@@ -112,7 +223,11 @@ versions. Specification §4 requires saved contracts v2, executable blocks v3, m
 generation metadata v1 with added fields, new contract HTTP envelopes v2, existing Workshop
 envelopes v1 and renderer v2. Do not mechanically increment unrelated formats.
 
-No owner design decision blocks these phases. The next implementation scope is Phase 1B, not UI.
+No owner design decision blocks these phases. The next implementation scope is Phase 2A. Phase 2 must
+replace the Workbench Contracts utility (which still posts the removed v1 bodies), add `contracts.js` and
+its authenticated asset route, the Workshop Blocks | Contracts library, port Inline | Saved contract
+editors with Make local copy / Select newer, the Checked request revision selector and preview, and the
+synthesis UI; then migrate `test_page_contracts` and the tutorial contract topic.
 
 ## Earlier foundation report — preserved historical evidence
 

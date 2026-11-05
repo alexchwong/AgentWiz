@@ -442,13 +442,13 @@ def configure(ui, backend, kind="openai_compat", **fields) -> dict:
 
 
 def complete(ui, prompt, system="", revision=None, raw=False, task=None, source="chat", contract=None):
-    """POST /api/complete. `contract` is (name, revision) and goes with source="checked_request"."""
+    """POST /api/complete. `contract` is (name, revision, digest) and goes with source="checked_request"."""
     rev = get_state(ui)["revision"] if revision is None else revision
     body = {"source": source, "prompt": prompt, "system": system, "revision": rev}
     if task is not None:
         body["task"] = task
     if contract is not None:
-        body["contract"] = {"name": contract[0], "revision": contract[1]}
+        body["contract"] = {"name": contract[0], "revision": contract[1], "digest": contract[2]}
     resp = request(ui, "/api/complete", body, raw=True)
     return resp if raw else events(resp, ui)
 
@@ -976,27 +976,33 @@ def cancel(ui, op_id):
     return request(ui, "/api/mcp/cancel", {"operation_id": op_id})
 
 
-# --- contract helpers (techspec 0.1.3, 18.2) ----------------------------------------------------
+# --- contract helpers (overhaul spec 5, 9, 10) ---------------------------------------------------
+def pinned(name, revision, parsed):
+    """A captured contract copy: inline when name is None, otherwise an exact pin with its computed digest."""
+    from agentwiz.contract_schema import contract_digest
+    from agentwiz.model_step import ContractCopy
+    if name is None:
+        return ContractCopy.inline(parsed)
+    return ContractCopy.reference(name, revision, contract_digest(parsed.raw), parsed)
+
+
 # Contract texts are written as literal text, never built from Python floats, so that exact numbers
 # reach AgentWiz digit for digit.
-TEXT_CONTRACT = '{"format": "text", "checks": [{"type": "contains", "value": "pong"}]}'
+TEXT_CONTRACT = '{"format": "text", "contains": ["pong"]}'
 JSON_CONTRACT = """{
   "format": "json",
   "description": "Fields pulled from a report",
   "schema": {"type": "object", "required": ["id", "ratio"],
-             "properties": {"id": {"type": "integer"}, "ratio": {"type": "number", "maximum": 1}}},
-  "checks": [{"type": "contains", "value": "\\"id\\""},
-             {"type": "json_equals", "value": {"id": 9007199254740993, "ratio": 0.10000000000000000001}}]
+             "properties": {"id": {"type": "integer"}, "ratio": {"type": "number", "maximum": 1}}}
 }"""
-JSON_CONTRACT_NO_SCHEMA = """{
-  "format": "json",
-  "checks": [{"type": "json_equals", "value": {"id": 9007199254740993, "ratio": 0.10000000000000000001}}]
-}"""
+JSON_CONTRACT_NO_SCHEMA = '{"format": "json", "description": "Any JSON value"}'
 
 
-def save_contract(ui, name, text, revision=None):
-    """POST /api/contracts/save; returns the response body."""
-    return request(ui, "/api/contracts/save", {"name": name, "text": text, "revision": revision})
+def save_contract(ui, name, text, token=None, family="General", label="", **extra):
+    """POST /api/contracts/save (version 2). `token` is the expected file token; None creates."""
+    return request(ui, "/api/contracts/save", {"format_version": 2, "name": name, "family": family,
+                                               "expected_file_token": token, "definition_text": text,
+                                               "label": label, **extra})
 
 
 def contract_files(ui) -> Path:
@@ -1004,8 +1010,22 @@ def contract_files(ui) -> Path:
 
 
 def contract_item(ui, name) -> dict:
-    """The named contract's entry in /api/state, or None."""
-    return next((c for c in get_state(ui)["contracts"]["items"] if c["name"] == name), None)
+    """The named contract's row in GET /api/contracts, or None."""
+    return next((c for c in request(ui, "/api/contracts")["items"] if c["name"] == name), None)
+
+
+def contract_detail(ui, name, revision=None) -> dict:
+    return request(ui, f"/api/contracts/{name}" + (f"?revision={revision}" if revision is not None else ""))
+
+
+def contract_pin(ui, name, revision=None) -> tuple:
+    """(name, revision, digest) of the selected (default latest) revision, as a page would review it."""
+    detail = contract_detail(ui, name, revision)
+    return (name, detail["revision"], detail["digest"])
+
+
+def contract_token(ui, name) -> str:
+    return contract_detail(ui, name)["file_token"]
 
 
 # --- block runs (techspec 0.1.4, 20.1) ------------------------------------------------------------------------------

@@ -140,7 +140,8 @@ try:
     check(initial["roles"]["map"] == {} and initial["scripts"]["limit"] == 4,
           f"roles/scripts: {initial['roles']} {initial['scripts']}")
     # S4 (0.1.3): contracts and history are present, empty and off
-    check(initial["contracts"]["items"] == [] and "checks" in initial["contracts"], f"contracts: {initial['contracts']}")
+    check(initial["contracts"]["items"] == [] and initial["contracts"]["format_version"] == 2
+          and initial["contracts"]["validation"]["available"] is True, f"contracts: {initial['contracts']}")
     check(initial["history"]["save_runs"] is False and initial["history"]["read_only"] is False,
           f"history: {initial['history']}")
 
@@ -183,9 +184,21 @@ try:
 
     # S11 (0.1.3): save a text contract, then a Checked request against it passes.
     saved_contract = json.loads(api("/api/contracts/save", {
-        "name": "smoke", "revision": None,
-        "text": '{"format": "text", "checks": [{"type": "contains", "value": "pong"}]}'}).read())
-    ref = {"name": "smoke", "revision": saved_contract["contract"]["revision"]}
+        "format_version": 2, "name": "smoke", "family": "General", "expected_file_token": None,
+        "definition_text": '{"format": "text", "contains": ["pong"]}', "label": "Smoke"}).read())
+    check(saved_contract["revision"] == 1 and saved_contract["digest"].startswith("sha256:"),
+          f"contract save: {saved_contract}")
+    ref = {"name": "smoke", "revision": saved_contract["revision"], "digest": saved_contract["digest"]}
+    # The packaged synthesis prompt is read before the (unassigned) write_contract role is resolved, so a missing
+    # prompt would be an internal error rather than this setup refusal.
+    try:
+        api("/api/contracts/synthesis/plan", {"format_version": 2, "task_description": "Classify a message.",
+                                              "output_name": "label", "definition_text": None,
+                                              "role": "write_contract"})
+        check(False, "synthesis plan without an assigned role was accepted")
+    except urllib.error.HTTPError as exc:
+        refusal = json.loads(exc.read())
+        check(exc.code == 409 and refusal.get("code") == "role_unresolved", f"synthesis setup refusal: {refusal}")
     events = [json.loads(line) for line in api("/api/complete", {
         "source": "checked_request", "prompt": "ping", "system": "", "revision": state["revision"],
         "contract": ref}).read().splitlines() if line]
@@ -266,7 +279,7 @@ try:
     block_dir = Path(expected_path) / "blocks" / "echo_script"
     (block_dir / "scripts").mkdir(parents=True)
     (block_dir / "block.json").write_text(json.dumps({
-        "format_version": 1, "name": "echo_script", "inputs": {"a": {"contract": {"format": "text"}}},
+        "format_version": 3, "name": "echo_script", "inputs": {"a": {"contract": {"format": "text"}}},
         "outputs": {"x": {"contract": {"format": "text"}}, "y": {"contract": {"format": "json"}}},
         "steps": [{"id": "run", "kind": "script", "file": "scripts/go.py", "timeout_s": 20}]}))
     (block_dir / "scripts" / "go.py").write_text(

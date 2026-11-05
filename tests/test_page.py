@@ -15,7 +15,7 @@ from playwright.sync_api import expect
 
 from agentwiz import history, jsonio
 from agentwiz.ui import server as server_module
-from conftest import (DONE, JSON_CONTRACT_NO_SCHEMA, Reply, answer, configure, delta, group_gone, iter_events,
+from conftest import (DONE, JSON_CONTRACT, JSON_CONTRACT_NO_SCHEMA, Reply, answer, configure, delta, group_gone, iter_events,
                       json_answer, read_until, request, run_block, run_folders, save_contract, save_profile,
                       save_roles, simple_tool, text_result, upload, wait_until, add_server, write_block, get_state)
 from test_runner import setup_model
@@ -392,7 +392,7 @@ def test_page_contracts(ui, open_page):
 
 # 86 --------------------------------------------------------------------------------------------------
 def test_page_checked_request_repair(ui, server, open_page):
-    save_contract(ui, "c", JSON_CONTRACT_NO_SCHEMA)
+    save_contract(ui, "c", JSON_CONTRACT)                       # ratio has maximum 1: a structural failure
     server.reply(json_answer('{"id": 9007199254740993, "ratio": 1.5}'),
                  json_answer('{"id": 9007199254740993, "ratio": 0.10000000000000000001}'))
     configure(ui, server)
@@ -416,7 +416,9 @@ def test_page_checked_request_repair(ui, server, open_page):
     assert [attempts.nth(i).get_attribute("data-repair-reason") for i in range(2)] == ["", "check_failed"]   # #86
     has(page, "checked-repair", "data-repair", "not_repairable")
     sent = server.requests[-1]["body"]["messages"]
-    assert [m["role"] for m in sent] == ["user", "assistant", "user"]
+    assert [m["role"] for m in sent] == ["system", "user", "assistant", "user"]      # the generated contract section
+    assert "AgentWiz output protocol" in sent[0]["content"]
+    assert server.requests[0]["body"]["messages"][0] == sent[0]                     # the repair reuses the capture
 
 
 # 87 --------------------------------------------------------------------------------------------------
@@ -510,7 +512,7 @@ def test_page_raises_no_script_errors(ui, open_page, context):
 
 
 # --- Part G: the Blocks tab and the Roles dialog (techspec 0.1.4, tests #108-#111) --------------------------------
-OBJ_BLOCK = {"format_version": 1, "name": "b", "description": "shows the exact numbers",
+OBJ_BLOCK = {"format_version": 3, "name": "b", "description": "shows the exact numbers",
              "inputs": {"text": {"contract": {"format": "text"}}, "obj": {"contract": {"format": "json"}}},
              "outputs": {"out": {"contract": {"format": "json"}}},
              "steps": [{"id": "s", "kind": "model", "role": "fast", "system": {"file": "prompts/system.md"},
@@ -613,8 +615,9 @@ def test_page_blocks_stop_and_reattach(ui, server, open_page, spawned):
 # 110 -----------------------------------------------------------------------------------------------------
 def test_page_blocks_stale_and_problem(ui, server, open_page):
     profile_and_role(ui, server)
-    saved = save_contract(ui, "tc", '{"format": "text"}')["contract"]
-    block = {**OBJ_BLOCK, "inputs": {"text": {"contract": "tc"}, "obj": {"contract": {"format": "json"}}}}
+    saved = save_contract(ui, "tc", '{"format": "text"}')
+    pin = {"name": "tc", "revision": 1, "digest": saved["digest"]}
+    block = {**OBJ_BLOCK, "inputs": {"text": {"contract": pin}, "obj": {"contract": {"format": "json"}}}}
     folder = write_block(ui, "b", block, OBJ_FILES)
     write_block(ui, "broken", "{ this is not json")
     server.reply(json_answer('{"out":'+EXACT+'}'))
@@ -631,9 +634,11 @@ def test_page_blocks_stale_and_problem(ui, server, open_page):
     tid(page, "blocks-run").click()
     has(page, "blocks-status", "data-outcome", "complete")
     assert server.requests[0]["body"]["messages"][1]["content"] == "Edited: hello 1"
-    # the saved contract an input uses changes: the old form is stale, the reloaded form reflects the new contract
-    request(ui, "/api/contracts/save", {"name": "tc", "revision": saved["revision"],
-                                        "text": '{"format": "text", "checks": [{"type": "contains", "value": "X"}]}'})
+    # a newer revision of the saved contract does not move the block's pin; an explicit new pin makes the shown
+    # form stale, and the reloaded form reflects the newly pinned revision
+    newer = save_contract(ui, "tc", '{"format": "text", "contains": ["X"]}', saved["file_token"])
+    block["inputs"]["text"]["contract"] = {"name": "tc", "revision": newer["revision"], "digest": newer["digest"]}
+    write_block(ui, "b", block, OBJ_FILES | {"prompts/user.md": "Edited: {{inputs.text}} {{inputs.obj.id}}"})
     tid(page, "blocks-run").click()
     has(page, "blocks-status", "data-state", "stale")
     assert len(server.requests) == 1
@@ -674,7 +679,7 @@ def test_page_roles(ui, server, open_page):
     tid(page, "roles-save").click()
     has(page, "roles-dialog", "data-state", "stale")
     expect(page.locator('[data-test="roles-row"]')).to_have_count(1)
-    expect(tid(page, "roles-selection").locator('option')).to_have_count(4)
+    expect(tid(page, "roles-selection").locator('option')).to_have_count(5)    # four defaults (write_contract) + slow
     assert get_state(ui)["roles"]["map"] == {"fast": "p", "slow": "p"}
     # the profile is deleted: its roles are unresolved
     request(ui, "/api/profiles/delete", {"name": "p", "revision": get_state(ui)["revision"]})
@@ -793,7 +798,7 @@ def test_roles_filter_profiles_and_preserve_unsaved_edits(ui, server, open_page)
     expect(row.locator('[data-key="profile"]')).to_have_value("cloud")
     tid(page, "roles-defaults").click()
     expect(page.locator('[data-test="roles-row"]')).to_have_count(1)
-    expect(tid(page, "roles-selection").locator('option')).to_have_count(3)
+    expect(tid(page, "roles-selection").locator('option')).to_have_count(4)
     tid(page, "roles-save").click()
     has(page, "roles-dialog", "data-state", "saved")
     saved = get_state(ui)["roles"]

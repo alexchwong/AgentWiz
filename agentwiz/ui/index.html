@@ -1243,7 +1243,8 @@ function makeRequestTab(frag, source) {
     if (checked) {
       const c = selectedContract();
       if (!c) { display("idle", "Choose a usable contract first.", "error"); return; }
-      body.contract = { name: c.name, revision: c.revision };
+      // The concrete numbered revision and digest this page shows; never a literal "latest" (spec 13.1).
+      body.contract = { name: c.name, revision: c.latest, digest: c.latest_digest };
     }
     const payload = JSON.stringify(body);
     if (state.limits && new TextEncoder().encode(payload).length > state.limits.request_bytes) {
@@ -1296,7 +1297,7 @@ function makeRequestTab(frag, source) {
         const keep = contractSel.value, items = ((state.contracts && state.contracts.items) || []).filter((c) => !c.problem);
         contractSel.replaceChildren();
         if (!items.length) contractSel.add(new Option("(no usable contracts)", ""));
-        for (const c of items) contractSel.add(new Option(`${c.name} (${c.format})`, c.name));
+        for (const c of items) contractSel.add(new Option(`${c.name} r${c.latest} (${c.format})`, c.name));
         if (items.some((c) => c.name === keep)) contractSel.value = keep;
       }
       refreshControls();

@@ -12,7 +12,7 @@ FAST = {"idle_timeout_s": 60, "call_deadline_s": 60, "discovery_deadline_s": 60}
 
 
 def tool_block(name="t", output="json", arguments=None, inputs=None):
-    return {"format_version": 1, "name": name,
+    return {"format_version": 3, "name": name,
             "inputs": inputs or {"n": {"contract": {"format": "text"}}},
             "outputs": {"out": {"contract": {"format": output}}},
             "steps": [{"id": "call", "kind": "tool", "server": "docs", "tool": "lookup",

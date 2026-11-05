@@ -13,7 +13,7 @@ from conftest import (DONE, Reply, answer, block_answer, configure, delta, event
 from test_blocks import MODEL_FILES, model_block
 
 SSE = {"Content-Type": "text/event-stream"}
-CONTAINS_OK = {"contract": {"format": "text", "checks": [{"type": "contains", "value": "OK"}]}}
+CONTAINS_OK = {"contract": {"format": "text", "contains": ["OK"]}}
 
 
 def setup_model(ui, server, name="b", **over):
@@ -110,7 +110,7 @@ def test_no_repair_follows_a_blank_or_error_outcome(ui, server, reply, failure):
 
 def test_a_contract_that_cannot_decide_is_never_repaired(ui, server):
     pytest.importorskip("jsonschema")
-    schema = {"format": "json", "schema": {"type": "object"}}
+    schema = {"format": "json", "schema": {"type": "object", "properties": {}}}
     setup_model(ui, server, outputs={"out": {"contract": schema}})
     server.reply(block_answer(out={}))
     assert result_of(run_block(ui, "b", {"text": "x"}))["outcome"] == "complete"
@@ -149,7 +149,7 @@ def test_a_truncated_answer_whose_check_passes_is_not_accepted(ui, server):
 # --- #95 -------------------------------------------------------------------------------------------------
 def test_rejected_runs_name_the_location_and_send_nothing(ui, server):
     block = model_block("b")
-    block["inputs"] = {"text": {"contract": {"format": "text", "checks": [{"type": "length", "min": 3}]}},
+    block["inputs"] = {"text": {"contract": {"format": "text", "min_length": 3}},
                        "obj": {"contract": {"format": "json"}}}
     setup_model(ui, server, inputs=block["inputs"])
     server.reply(answer("never"))

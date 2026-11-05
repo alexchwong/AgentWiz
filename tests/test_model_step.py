@@ -5,7 +5,7 @@ from modelspell import Endpoint
 from agentwiz import checks, model_step, output_protocol, runs
 from agentwiz.model_call import RequestSnapshot
 from agentwiz.task_settings import TaskSettings
-from conftest import Reply, answer, delta, DONE
+from conftest import pinned, Reply, answer, delta, DONE
 
 SSE = {"Content-Type": "text/event-stream"}
 
@@ -31,13 +31,13 @@ def prepare(store, server, *, save_runs=False, contract=None, prompt="hi", syste
 
 
 def pong_contract():
-    return model_step.ContractCopy.of("c", 4, checks.parse_contract({'format': 'text', 'contains': ['pong']}))
+    return pinned("c", 4, checks.parse_contract({'format': 'text', 'contains': ['pong']}))
 
 
 def test_checked_request_instructions_and_repairs_freeze_the_captured_definition(server):
     server.reply(answer('wrong'))
     store = runs.AttemptStore()
-    captured = model_step.ContractCopy.of('reply', 7, checks.parse_contract({
+    captured = pinned('reply', 7, checks.parse_contract({
         'format': 'text', 'description': 'Literal acknowledgement', 'exact': 'pong'}))
     prepared = prepare(store, server, contract=captured, system='Be brief')
     record = model_step.run_attempt(store, prepared)
@@ -52,7 +52,7 @@ def test_checked_request_instructions_and_repairs_freeze_the_captured_definition
 
 
 def test_schema_dispatch_refused_before_run_creation(server, monkeypatch):
-    captured = model_step.ContractCopy.of('n', 1, checks.parse_contract({
+    captured = pinned('n', 1, checks.parse_contract({
         'format': 'json', 'schema': {'type': 'integer'}}))
     store = runs.AttemptStore()
     monkeypatch.setattr(checks, 'schema_support', lambda: (False, 'damaged'))

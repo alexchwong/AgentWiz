@@ -9,14 +9,25 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
-# The example contract every topic that needs "fields" uses (saved into the tutorial's temporary workspace).
+# The example contract every topic that needs "fields" uses, saved into the tutorial's temporary workspace as
+# revision 1 of the version 2 container `fields` in family Tutorial. It checks structure only: a wrong number of
+# the right type passes it, and only an exact Workshop example expectation can reject it.
 CONTRACT = '''{
-  "format_version": 1, "format": "json", "strict": false,
-  "description": "Tutorial exact-number fields", "schema": null,
-  "checks": [{"type": "json_equals", "value": {
-    "id": 9007199254740993, "ratio": 0.10000000000000000001
-  }}]
+  "format": "json",
+  "description": "Tutorial exact-number fields",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "id": {"type": "integer", "description": "The record id, copied exactly"},
+      "ratio": {"type": "number", "description": "The ratio, copied exactly"}
+    },
+    "required": ["id", "ratio"],
+    "additionalProperties": false
+  }
 }'''
+CONTRACT_NAME = "fields"
+CONTRACT_FAMILY = "Tutorial"
+CONTRACT_LABEL = "Tutorial example"
 
 ROLE = "fast"                 # the role the example model block uses
 ROLE_PROFILE = "tutorial-json"  # the seeded profile it is mapped to
@@ -51,12 +62,13 @@ TOPICS: tuple[Topic, ...] = (
     Topic("tool", "Call a tool", "A local echo tool and its arguments are ready. Run calls it; Copy lets you use its "
           "result in a conversation.", "mcp-tools", "0.1.3", "complete", False,
           _page("mcp-tools.tutorialPrepare", ["tutorial", "echo"]), "mcp-run"),
-    Topic("contract", "Define a contract", "A contract describes the response you want. Save the filled example to "
-          "learn where reusable requirements live; Check can apply it to text.", "contracts", "0.1.3", "complete",
+    Topic("contract", "Define a contract", "A contract describes the structure of the value you want. Save the filled "
+          "example to learn where reusable requirements live; Check can apply it to text. A wrong number of the right "
+          "type still passes: exact values belong in Workshop example expectations.", "contracts", "0.2.0", "complete",
           False, _page("contracts.tutorialPrepare", [CONTRACT, '{"id":1,"ratio":0.5}']), "contracts-save"),
     Topic("repair", "Repair a response", "Send asks for structured data using the selected contract. Preview repair "
           "shows a follow-up request; Send repair continues the same run with feedback.", "checked-request",
-          "0.1.3", "json-repair", True,
+          "0.2.0", "json-repair", True,
           _page("checked-request.tutorialPrepare", ["Extract the id and ratio as JSON."]), "checked-send"),
     Topic("model-block", "Run a model block",
           "A block is a saved step. This one asks a model (through the role fast) for the id and ratio in a report, "

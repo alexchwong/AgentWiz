@@ -6,7 +6,7 @@ import pytest
 
 from agentwiz.server_config import ServerConfigError, ServerSettings, initialize, load
 from conftest import (Reply, answer, complete, failure_of, get_state, request, save_profile,
-                      save_roles, write_ws_file, save_contract, JSON_CONTRACT_NO_SCHEMA, json_answer,
+                      save_roles, write_ws_file, save_contract, JSON_CONTRACT, json_answer,
                       record_of, configure)
 
 
@@ -95,10 +95,11 @@ def test_legacy_profiles_use_machine_endpoint_after_restart(make_ui, server, tmp
 
 def test_repair_refuses_changed_server_before_dispatch(ui, server, make_server):
     configure(ui, server)
-    saved = save_contract(ui, "c", JSON_CONTRACT_NO_SCHEMA)
-    revision = next(c["revision"] for c in saved["contracts"]["items"] if c["name"] == "c")
+    saved = save_contract(ui, "c", JSON_CONTRACT)               # ratio maximum 1 fails this answer
     server.reply(json_answer('{"id":1,"ratio":2}'))
-    record = record_of(complete(ui, "extract", source="checked_request", contract=("c", revision)))
+    record = record_of(complete(ui, "extract", source="checked_request",
+                                contract=("c", saved["revision"], saved["digest"])))
+    assert record["check"]["overall"] == "fail"
     other = make_server()
     configure(ui, other)
     for route in ("/api/repair/preview", "/api/repair"):

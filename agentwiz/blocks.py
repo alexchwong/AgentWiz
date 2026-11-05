@@ -12,8 +12,9 @@ nothing (P7). Messages name locations and rules, never values.
 `BlockStore` is called from `state.py` under the state lock, as `contracts.ContractStore` is. It lists the
 folders directly under `blocks/`, loads a block on demand, fingerprints exactly the files the last load
 referenced, and gives each block an **effective revision** from one process-wide counter: it changes whenever
-the block's own referenced files (by content) or any saved contract it names (by revision and usability)
-change, so a revision is never repeated (P11). Knows nothing of HTTP. Standard library only.
+the block's own referenced files (by content) or the state of any exact contract pin it holds (the pinned
+revision's existence, usability and digest) change, so a revision is never repeated (P11). Appending a newer
+revision to a referenced contract, or changing its family, does not change a pin's state. Knows nothing of HTTP. Standard library only.
 """
 from __future__ import annotations
 
@@ -32,14 +33,14 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from . import checks, jsonio, templates, tool_forms
-from .contracts import ContractStore
+from .contracts import DIGEST_RE, ContractStore
 from .model_step import ContractCopy
 from .task_settings import OVERRIDABLE, TaskSettingError, TaskSettings, parse_task
 from .workspace import NAME_RE, NAME_RULE, valid_name
 
 DIRECTORY = "blocks"
 FILE = "block.json"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 3               # executable definitions; 2 is the Workshop managed head
 BLOCK_FILE_LIMIT = 1 << 20      # block.json
 FILE_LIMIT = 4 << 20            # each referenced prompt or script file
 LIST_LIMIT = 200                # blocks shown in the listing (never limits which blocks can be opened or run)
@@ -73,11 +74,22 @@ class Budget:
 
 
 @dataclass(frozen=True)
+class Reference:
+    """An exact saved-contract pin: never "latest", never a name alone."""
+    name: str
+    revision: int
+    digest: str
+
+    def view(self) -> dict:
+        return {"name": self.name, "revision": self.revision, "digest": self.digest}
+
+
+@dataclass(frozen=True)
 class Declared:
     name: str
     description: str
     contract: checks.Contract | None      # an inline contract, parsed
-    contract_name: str | None             # a saved contract's name
+    reference: Reference | None = None    # a saved contract's exact pin
 
 
 @dataclass(frozen=True)
@@ -151,7 +163,7 @@ class Loaded:
     notes: tuple[str, ...]
     # what the last load referenced, for fingerprints and revisions
     paths: tuple[str, ...]
-    contract_names: tuple[str, ...]
+    contract_pins: tuple[Reference, ...]
     sig: tuple
     content: tuple
 
@@ -256,7 +268,7 @@ class _Issues:
 
     def code(self) -> str:
         kinds = {kind for kind, _loc, _msg in self.items}
-        for code in ("invalid", "unreadable", "unusable"):
+        for code in ("migration_required", "invalid", "unreadable", "unusable"):
             if code in kinds:
                 return code
         return "invalid"
@@ -325,18 +337,20 @@ def _task_value(value: Any, where: str, issues: _Issues) -> Any:
 class _Parse:
     """The working state of one load."""
 
-    def __init__(self, folder: Path, name: str, contract_store: ContractStore, *, internal_contracts=False):
+    def __init__(self, folder: Path, name: str, contract_store: ContractStore, *, internal_contracts=False,
+                 validators=None):
         self.folder = folder
         self.name = name
         self.contract_store = contract_store
         self.internal_contracts = internal_contracts
+        self.validators = dict(validators or {})
         self.issues = _Issues()
         self.views: list[FileView] = []
         self.files: dict[str, str] = {}
         self.texts: dict[str, str] = {}
         self.paths: list[str] = [FILE]
         self.fingerprints: dict[str, tuple] = {}
-        self.contract_names: list[str] = []
+        self.contract_pins: list[Reference] = []
         self.notes: list[str] = []
         self.captured: dict[str, dict[str, ContractCopy]] = {"inputs": {}, "outputs": {}}
         self.declared_inputs: set[str] = set()
@@ -387,38 +401,65 @@ class _Parse:
             return None
         contract = declaration["contract"]
         location = f"{where}.contract"
-        if isinstance(contract, Mapping):
+        if isinstance(contract, Mapping) and ("format" in contract or not
+                                              {"name", "revision", "digest"} & set(contract)):
             try:
-                parser = checks.parse_internal_contract if self.internal_contracts else checks.parse_contract
-                parsed = parser(dict(contract))
+                if self.internal_contracts:
+                    parsed = checks.parse_internal_contract(dict(contract),
+                                                            validator=self.validators.get((section, name)))
+                else:
+                    parsed = checks.parse_contract(dict(contract))
             except checks.ContractError as exc:
                 for item in exc.issues:
                     self.issues.add(f"{location}.{item['location']}", item["message"])
                 return None
-            unknown = [k for k in parsed.raw if k not in checks._TOP_LEVEL]
-            if unknown:
-                self.notes.append(f"{location}: unknown top-level fields kept: " + ", ".join(unknown))
-            copy_ = ContractCopy(None, None, jsonio.encode_exact(dict(parsed.raw), indent=2), parsed)  # type: ignore[arg-type]
-            self.captured[section][name] = copy_
+            self.captured[section][name] = ContractCopy.inline(parsed)
             return Declared(name, description, parsed, None)
-        if isinstance(contract, str):
-            if not valid_name(contract):
-                self.issues.add(location, f"must be a saved contract's name ({NAME_RULE}) or an inline contract")
+        if isinstance(contract, Mapping):
+            reference = self.reference(contract, location)
+            if reference is None:
                 return None
-            if contract not in self.contract_names:
-                self.contract_names.append(contract)
-            entry = self.contract_store.get(contract)
-            if entry is None:
-                self.issues.add(location, "the saved contract does not exist", "unusable")
-            elif entry.problem is not None or entry.contract is None:
-                code = entry.problem.code if entry.problem else "invalid"
-                msg = entry.problem.message if entry.problem else "the contract cannot be used"
-                self.issues.add(location, f"the saved contract has a problem ({code}: {msg})", "unusable")
+            if self.internal_contracts:
+                self.issues.add(location, "a server-owned definition holds inline contracts only")
+                return None
+            if reference not in self.contract_pins:
+                self.contract_pins.append(reference)
+            revision, refused = self.contract_store.resolve(reference.name, reference.revision, reference.digest)
+            if refused is not None:
+                self.issues.add(location, f"the pinned saved contract cannot be used ({refused[0]}: {refused[1]})",
+                                "unusable")
             else:
-                self.captured[section][name] = ContractCopy.of(entry.name, entry.revision, entry.contract)
-            return Declared(name, description, None, contract)
-        self.issues.add(location, "must be an inline contract (an object) or the name of a saved contract")
+                self.captured[section][name] = ContractCopy.reference(reference.name, reference.revision,
+                                                                      reference.digest, revision.contract)
+            return Declared(name, description, None, reference)
+        if isinstance(contract, str):
+            self.issues.add(location, "reference_invalid: a saved contract is referenced by an exact "
+                            '{"name", "revision", "digest"} pin, not by its name alone')
+            return None
+        self.issues.add(location, "must be an inline contract or an exact saved-contract reference")
         return None
+
+    def reference(self, value: Mapping, location: str) -> Reference | None:
+        """An exact pin: exactly name, revision and digest; no format, family, "latest" or null revision."""
+        keys = set(value)
+        if keys != {"name", "revision", "digest"}:
+            for key in sorted(keys - {"name", "revision", "digest"}):
+                self.issues.add(f"{location}.{key}", "reference_invalid: is not a member of a saved-contract reference")
+            for key in sorted({"name", "revision", "digest"} - keys):
+                self.issues.add(f"{location}.{key}", "reference_invalid: is required in a saved-contract reference")
+            return None
+        name, revision, digest = value["name"], value["revision"], value["digest"]
+        ok = True
+        if not valid_name(name):
+            self.issues.add(f"{location}.name", f"reference_invalid: must be a saved contract's name ({NAME_RULE})")
+            ok = False
+        if not _is_int(revision) or revision < 1:
+            self.issues.add(f"{location}.revision", "reference_invalid: must be a positive revision number")
+            ok = False
+        if not isinstance(digest, str) or DIGEST_RE.match(digest) is None:
+            self.issues.add(f"{location}.digest", "reference_invalid: must be sha256: and 64 lowercase hexadecimal characters")
+            ok = False
+        return Reference(name, revision, digest) if ok else None
 
     def declarations(self, section: str, value: object, minimum: int, limit: int) -> tuple[Declared, ...]:
         if not isinstance(value, Mapping):
@@ -680,7 +721,7 @@ class _Parsed:
     views: tuple[FileView, ...]
     notes: tuple[str, ...]
     paths: tuple[str, ...]
-    contract_names: tuple[str, ...]
+    contract_pins: tuple[Reference, ...]
     fingerprints: dict
     content: tuple
 
@@ -691,12 +732,17 @@ def _folder_problem(folder: Path, name: str, reason: str) -> _Parsed:
     return _Parsed(issues.problem(str(folder)), None, "", None, (), (), (), (), {}, ("folder", reason))
 
 
-def parse_block(folder: Path, name: str, contract_store: ContractStore, *, internal_contracts=False) -> _Parsed:
-    """Load one block folder. Returns the block, or the problem that makes it unusable."""
+def parse_block(folder: Path, name: str, contract_store: ContractStore, *, internal_contracts=False,
+                validators=None) -> _Parsed:
+    """Load one block folder. Returns the block, or the problem that makes it unusable.
+
+    `contract_store` is anything with `resolve(name, revision, digest)`: the live store's coherent snapshot,
+    or the private snapshot resolver of a historical preview. `internal_contracts` and `validators` are
+    keyword-only and set only by server code constructing its own assistance or synthesis capture."""
     folder = Path(folder)
     result = read_file(folder, FILE, BLOCK_FILE_LIMIT)
     file_name = str(folder / FILE)
-    p = _Parse(folder, name, contract_store, internal_contracts=internal_contracts)
+    p = _Parse(folder, name, contract_store, internal_contracts=internal_contracts, validators=validators)
     p.fingerprints[FILE] = result.fingerprint
     if result.data is None:
         p.views.append(FileView(FILE, None, None, result.reason))
@@ -715,7 +761,7 @@ def parse_block(folder: Path, name: str, contract_store: ContractStore, *, inter
                    tuple((rel, p.fingerprints.get(rel, ())) for rel in p.paths if rel not in p.files),
                    problem.code if problem else None, problem.total if problem else 0)
         return _Parsed(problem, block, description, kind, tuple(p.views), tuple(p.notes), tuple(p.paths),
-                       tuple(p.contract_names), dict(p.fingerprints), content)
+                       tuple(p.contract_pins), dict(p.fingerprints), content)
 
     try:
         obj = jsonio.decode_file_exact(result.data)
@@ -735,6 +781,14 @@ def parse_block(folder: Path, name: str, contract_store: ContractStore, *, inter
         p.issues.add("format_version", f"is greater than {FORMAT_VERSION}: written for a newer AgentWiz")
         problem = p.issues.problem(file_name)
         return finish(problem=BlockProblem(problem.file, "newer_format", problem.issues, problem.total))
+    elif version == 2:
+        p.issues.add("format_version", "2 is a Workshop managed head, not an executable definition")
+        return finish(problem=p.issues.problem(file_name))
+    elif version < FORMAT_VERSION:
+        p.issues.add("format_version", f"executable format {version} is no longer run or published: rewrite it as "
+                     f"format_version {FORMAT_VERSION} with the new contract definitions; it is never converted "
+                     "automatically", "migration_required")
+        return finish(problem=p.issues.problem(file_name))
     for key in obj:
         if key not in _TOP_KEYS:
             p.issues.add(key, "is not a key of a block file")
@@ -807,7 +861,7 @@ class _Seen:
     sig: tuple
     content: tuple
     paths: tuple[str, ...]
-    contract_names: tuple[str, ...]
+    contract_pins: tuple[Reference, ...]
 
 
 class BlockStore:
@@ -836,17 +890,15 @@ class BlockStore:
             return "none"
         return "dir"
 
-    def _contract_sig(self, names: tuple[str, ...]) -> tuple:
-        out = []
-        for name in names:
-            entry = self._contracts.get(name)
-            out.append((name, None, False) if entry is None else (name, entry.revision, entry.problem is None))
-        return tuple(out)
+    def _contract_sig(self, pins: tuple[Reference, ...]) -> tuple:
+        """Exact pins and each pinned revision's state; never the container's latest or a process counter."""
+        return tuple((pin.name, pin.revision, pin.digest, self._contracts.pin_state(pin.name, pin.revision, pin.digest))
+                     for pin in pins)
 
     def _signature(self, name: str, seen: _Seen) -> tuple:
         folder = self.path / name
         fingerprints = tuple(_fingerprint(folder, rel) for rel in seen.paths)
-        return (fingerprints, self._contract_sig(seen.contract_names))
+        return (fingerprints, self._contract_sig(seen.contract_pins))
 
     def _forget(self, name: str) -> None:
         self._table.pop(name, None)
@@ -878,25 +930,25 @@ class BlockStore:
                     release = None
                 parsed = _folder_problem(folder, name, "managed revision is unavailable or unsupported")
             else:
-                parsed = parse_block(folder, name, self._contracts)
+                parsed = parse_block(folder, name, self._contracts.snapshot())
         elif state == "link":
             parsed = _folder_problem(folder, name, "a symbolic link is not followed")
         else:
-            parsed = parse_block(folder, name, self._contracts)
-        contract_names = parsed.contract_names
-        content = (parsed.content, self._contract_sig(contract_names))
+            parsed = parse_block(folder, name, self._contracts.snapshot())
+        contract_pins = parsed.contract_pins
+        content = (parsed.content, self._contract_sig(contract_pins))
         if seen is not None and seen.content == content:
             revision = seen.revision
         else:
             revision = _next_revision()
         block = dataclasses.replace(parsed.block, revision=revision) if parsed.block is not None else None
         fingerprints = tuple(parsed.fingerprints.get(rel, _fingerprint(folder, rel)) for rel in parsed.paths)
-        sig = (fingerprints, self._contract_sig(contract_names))
+        sig = (fingerprints, self._contract_sig(contract_pins))
         loaded = Loaded(name, revision, block, parsed.problem, parsed.description, parsed.kind, parsed.views,
-                        parsed.notes, parsed.paths, contract_names, sig, content, metadata, folder)
+                        parsed.notes, parsed.paths, contract_pins, sig, content, metadata, folder)
         if release:
             weakref.finalize(loaded, release)
-        self._table[name] = _Seen(revision, sig, content, parsed.paths, contract_names)
+        self._table[name] = _Seen(revision, sig, content, parsed.paths, contract_pins)
         self._remember(name, loaded)
         return loaded
 
@@ -957,7 +1009,9 @@ def _declared_view(block: Block, section: str, declared: Declared, with_form: bo
     parsed = declared.contract if declared.contract is not None else (copy_.parsed if copy_ is not None else None)
     row = {"name": declared.name, "description": declared.description,
            "format": parsed.format if parsed is not None else None,
-           "contract_text": copy_.text if copy_ is not None else None}
+           "contract_text": copy_.text if copy_ is not None else None,
+           "reference": declared.reference.view() if declared.reference is not None else None,
+           "digest": copy_.digest if copy_ is not None else None}
     if with_form:
         form, notes = (tool_forms.form_spec(parsed.schema)
                        if parsed is not None and parsed.format == "json" and parsed.schema is not None

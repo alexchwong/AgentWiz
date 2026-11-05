@@ -14,10 +14,19 @@ from agentwiz import blocks, checks, contracts, runner
 from conftest import write_block
 
 SENTINEL = "SENTINEL-VALUE-7731"
+PIN_ABSENT = {"name": "no_such_contract", "revision": 1, "digest": "sha256:" + "0" * 64}
+
+
+def pin_of(store_or_contracts, name, revision=None):
+    contract_store = getattr(store_or_contracts, "_contracts", store_or_contracts)
+    contract_store.rescan()
+    entry = contract_store.get(name)
+    found = entry.revisions[-1] if revision is None else entry.revision(revision)
+    return {"name": name, "revision": found.revision, "digest": found.digest}
 
 
 def model_block(name="b", **over):
-    block = {"format_version": 1, "name": name, "description": "d",
+    block = {"format_version": 3, "name": name, "description": "d",
              "inputs": {"text": {"contract": {"format": "text"}}},
              "outputs": {"out": {"contract": {"format": "text"}}},
              "steps": [{"id": "s", "kind": "model", "role": "fast", "system": {"file": "prompts/system.md"},
@@ -30,14 +39,14 @@ MODEL_FILES = {"prompts/system.md": "You are terse.", "prompts/user.md": "Say {{
 
 
 def tool_block(name="t"):
-    return {"format_version": 1, "name": name, "inputs": {"n": {"contract": {"format": "text"}}},
+    return {"format_version": 3, "name": name, "inputs": {"n": {"contract": {"format": "text"}}},
             "outputs": {"out": {"contract": {"format": "json"}}},
             "steps": [{"id": "call", "kind": "tool", "server": "docs", "tool": "lookup",
                        "arguments": {"id": "{{inputs.n}}", "extra": ["a", "{{inputs.n}}"]}, "output": "out"}]}
 
 
 def script_block(name="sc"):
-    return {"format_version": 1, "name": name, "inputs": {"a": {"contract": {"format": "text"}}},
+    return {"format_version": 3, "name": name, "inputs": {"a": {"contract": {"format": "text"}}},
             "outputs": {"x": {"contract": {"format": "text"}}, "y": {"contract": {"format": "json"}}},
             "steps": [{"id": "run", "kind": "script", "file": "scripts/go.py", "timeout_s": 5}]}
 
@@ -193,10 +202,22 @@ CASES = {
     "steps placeholder": (lambda b: STEP(b).update(prompt={"text": "{{steps.a.b}}"}), "invalid", "steps[0].prompt"),
     "malformed placeholder": (lambda b: STEP(b).update(prompt={"text": "{{ inputs.text }}"}), "invalid",
                               "steps[0].prompt"),
-    "format_version 2": (lambda b: b.update(format_version=2), "newer_format", "format_version"),
+    "format_version 1": (lambda b: b.update(format_version=1), "migration_required", "format_version"),
+    "format_version 2": (lambda b: b.update(format_version=2), "invalid", "format_version"),
+    "format_version 4": (lambda b: b.update(format_version=4), "newer_format", "format_version"),
     "format_version true": (lambda b: b.update(format_version=True), "invalid", "format_version"),
-    "a missing saved contract": (lambda b: b["outputs"]["out"].update(contract="no_such_contract"), "unusable",
+    "a missing saved contract": (lambda b: b["outputs"]["out"].update(contract=PIN_ABSENT), "unusable",
                                  "outputs.out.contract"),
+    "a string reference": (lambda b: b["outputs"]["out"].update(contract="no_such_contract"), "invalid",
+                           "outputs.out.contract"),
+    "a reference without digest": (lambda b: b["outputs"]["out"].update(contract={"name": "c", "revision": 1}),
+                                   "invalid", "outputs.out.contract.digest"),
+    "a latest reference": (lambda b: b["outputs"]["out"].update(contract={**PIN_ABSENT, "revision": "latest"}),
+                           "invalid", "outputs.out.contract.revision"),
+    "a reference with a family": (lambda b: b["outputs"]["out"].update(contract={**PIN_ABSENT, "family": "x"}),
+                                  "invalid", "outputs.out.contract.family"),
+    "a reference with a format": (lambda b: b["outputs"]["out"].update(contract={**PIN_ABSENT, "format": "text"}),
+                                  "invalid", "outputs.out.contract.name"),
 }
 
 
@@ -320,17 +341,19 @@ def test_exact_numbers_in_inline_contract_survive_and_unknown_fields_are_rejecte
     assert 'outputs.out.contract.future' in issues_of(problem_of(store))
 
 
-def test_a_saved_contract_named_before_it_exists_becomes_usable_when_saved(ws, store):
+def test_a_saved_contract_pinned_before_it_exists_becomes_usable_when_saved(ws, store):
+    from agentwiz.contract_schema import contract_digest
+    pin = {"name": "later", "revision": 1, "digest": contract_digest({"format": "text"})}
     block = model_block()
-    block["outputs"]["out"]["contract"] = "later"
+    block["outputs"]["out"]["contract"] = pin
     write_block(ws, "b", block, MODEL_FILES)
     first = store.get("b")
     assert first.problem.code == "unusable"
-    store._contracts.save("later", '{"format": "text"}', None, False)
+    store._contracts.save("later", "General", None, '{"format": "text"}', "")
     second = store.get("b")                                               # no restart
     assert second.problem is None and second.revision != first.revision
     copy_ = second.block.contracts["outputs"]["out"]
-    assert copy_.name == "later" and copy_.revision == store._contracts.get("later").revision
+    assert (copy_.name, copy_.revision, copy_.digest) == ("later", 1, pin["digest"])
 
 
 # --- #91 -----------------------------------------------------------------------------------------------
@@ -362,24 +385,41 @@ def test_a_revision_is_never_repeated_after_delete_and_recreate(ws, store):
     assert len(set(seen)) == len(seen)
 
 
-def test_saved_contract_changes_give_the_block_a_new_effective_revision(ws, store):
+def test_pins_survive_appends_and_detect_changed_history(ws, store):
+    """C14: a pin is unaffected by a later append or family change; a hand edit of the pinned revision with a
+    recomputed local digest still disagrees with the block's independent pin; damage makes it unusable."""
+    from agentwiz.contract_schema import contract_digest
+    from agentwiz import jsonio
+    contract_store = store._contracts
+    saved = contract_store.save("c1", "General", None, '{"format": "text", "min_length": 1}', "first")
     block = model_block()
-    block["outputs"]["out"]["contract"] = "c1"
-    store._contracts.save("c1", '{"format": "text"}', None, False)
+    block["outputs"]["out"]["contract"] = pin_of(contract_store, "c1")
     write_block(ws, "b", block, MODEL_FILES)
-    seen = [store.get("b").revision]
-    entry = store._contracts.get("c1")
-    store._contracts.save("c1", '{"format": "json"}', entry.revision, False)           # edited
-    seen.append(store.get("b").revision)
-    (ws / "contracts" / ("c1" + contracts.SUFFIX)).write_text("{damaged")             # damaged
+    first = store.get("b")
+    assert first.problem is None
+    appended = contract_store.save("c1", "General", saved["file_token"], '{"format": "json"}', "second")
+    moved = contract_store.set_family("c1", appended["file_token"], "Other")
+    after = store.get("b")
+    assert after.revision == first.revision and after.block.contracts["outputs"]["out"].revision == 1
+    path = ws / "contracts" / ("c1" + contracts.SUFFIX)
+    good = path.read_bytes()
+    container = jsonio.decode_file_exact(good)
+    container["revisions"][0]["contract"] = {"format": "text", "min_length": 2}
+    container["revisions"][0]["digest"] = contract_digest(container["revisions"][0]["contract"])
+    path.write_bytes(jsonio.encode_file_exact(container))
+    os.utime(path, ns=(os.stat(path).st_mtime_ns + 5_000_000_000,) * 2)
+    changed = store.get("b")
+    assert changed.problem is not None and changed.problem.code == "unusable"
+    assert "digest_mismatch" in json.dumps(changed.problem.view())
+    path.write_bytes(b"{damaged")
+    os.utime(path, ns=(os.stat(path).st_mtime_ns + 10_000_000_000,) * 2)
     damaged = store.get("b")
-    seen.append(damaged.revision)
-    assert damaged.problem is not None and damaged.problem.code == "unusable"
-    (ws / "contracts" / ("c1" + contracts.SUFFIX)).write_text('{"format_version": 1, "format": "text"}')   # repaired
-    legacy = store.get("b")
-    seen.append(legacy.revision)
-    assert legacy.problem is not None  # Phase 1A rejects legacy definitions; v2 storage is Phase 1B.
-    assert len(set(seen)) == len(seen), seen
+    assert damaged.problem.code == "unusable" and damaged.revision != changed.revision
+    path.write_bytes(good)
+    os.utime(path, ns=(os.stat(path).st_mtime_ns + 15_000_000_000,) * 2)
+    restored = store.get("b")
+    assert restored.problem is None and moved["family"] == "Other"
+    assert len({first.revision, changed.revision, damaged.revision, restored.revision}) == 4
 
 
 def test_reload_notices_an_edit_that_kept_size_and_mtime(ws, store):

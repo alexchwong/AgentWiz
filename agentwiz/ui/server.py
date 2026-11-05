@@ -16,6 +16,7 @@ import dataclasses
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import socket
 import sys
@@ -623,17 +624,11 @@ class Handler(BaseHTTPRequestHandler):
             self._reply_safely(404, {"error": "no such MCP server", "code": "no_such_server"})
         except mcp_ops.NoSuchOperation:
             self._reply_safely(404, {"error": "no such tool operation", "code": "no_such_operation"})
-        except contracts.NoSuchContract:  # contract names are not echoed
-            self._reply_safely(404, {"error": "no such contract", "code": "no_such_contract"})
-        except contracts.ContractExists:
-            self._reply_safely(409, {"error": "a contract with that name already exists", "code": "exists"})
-        except contracts.ContractUnusable as exc:  # names a file, a code and a rule; never a value
-            self._reply_safely(409, {"error": f"the existing contract has a problem and cannot be replaced: {exc}",
-                                     "code": "contract_unusable", "problem": dataclasses.asdict(exc.problem)})
-        except contracts.ContractInvalid as exc:  # locations and rules, never values
-            first = exc.issues[0] if exc.issues else {"location": "contract", "message": "is not valid"}
-            self._reply_safely(400, {"error": f"ContractError: {first['location']}: {first['message']}",
-                                     "code": "contract_error", "issues": exc.issues, "issue_count": exc.total})
+        except contracts.StoreError as exc:  # codes, locations and rules; contract names/values are not echoed
+            self._reply_safely(exc.status, {"format_version": 2, "error": exc.message, **exc.body()})
+        except model_step.SnapshotUnavailable as exc:
+            self._reply_safely(409, {"error": "the captured contract snapshot cannot be restored for execution",
+                                     "code": exc.code})
         except contract_schema.DefinitionError as exc:
             code = exc.issues[0].get('code', 'contract_invalid') if exc.issues else 'contract_invalid'
             self._reply_safely(400, {'code': code, 'message': 'the contract definition or edit is invalid',
@@ -715,8 +710,19 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/tutorial":
             session = self.server.tutorial_session
             return self._send(200, session.info() if session else {"active": False})
+        if path == "/api/contracts":
+            return self._send(200, self.server.state.contracts_listing())
         if path.startswith("/api/contracts/"):
-            return self._send(200, self.server.state.get_contract(path[len("/api/contracts/"):]))
+            query = parse_qs(urlparse(self.path).query)
+            revision = None
+            if set(query) - {"revision"}:
+                raise contracts.StoreError("invalid", 400, "unknown query parameter")
+            if "revision" in query:
+                text = query["revision"]
+                if len(text) != 1 or not re.fullmatch(r"[1-9][0-9]{0,8}", text[0]):
+                    raise contracts.StoreError("invalid", 400, "revision must be a positive integer")
+                revision = int(text[0])
+            return self._send(200, self.server.state.contract_detail(unquote(path[len("/api/contracts/"):]), revision))
         if path == "/api/blocks":
             query = parse_qs(urlparse(self.path).query)
             listing = self.server.state.block_listing(reload=query.get("reload") == ["1"])
@@ -761,8 +767,12 @@ class Handler(BaseHTTPRequestHandler):
                   "/api/task_settings/save": self._task_save, "/api/roles/save": self._roles_save, "/api/blocks/run": self._block_run,
                   "/api/blocks/stop": self._block_stop,
                   "/api/contracts/save": self._contract_save, "/api/contracts/delete": self._contract_delete,
-                  "/api/contracts/check": self._contract_check,
+                  "/api/contracts/check": self._contract_check, "/api/contracts/family": self._contract_family,
+                  "/api/contracts/restore": self._contract_restore,
                   "/api/contracts/project": self._contract_project, "/api/contracts/edit": self._contract_edit,
+                  "/api/contracts/synthesis/plan": self._synthesis_plan,
+                  "/api/contracts/synthesis/start": self._synthesis_start,
+                  "/api/contracts/synthesis/apply": self._synthesis_apply,
                   "/api/mcp/servers": self._mcp_servers, "/api/mcp/token": self._mcp_token,
                   "/api/mcp/tools": self._mcp_tools, "/api/mcp/call": self._mcp_call,
                   "/api/mcp/cancel": self._mcp_cancel}
@@ -1073,62 +1083,115 @@ class Handler(BaseHTTPRequestHandler):
             raise BodyError("the block name must follow the name rule")
         return name
 
-    # --- contracts (techspec 0.1.3, 7.8, 13.3) ----------------------------------------------------
+    # --- contracts (overhaul spec 13) -------------------------------------------------------------
+    @staticmethod
+    def _v2(body, required, optional=()):
+        """A version 2 contract request: exactly the listed members, no boolean integer substitutes."""
+        if (not isinstance(body, dict) or type(body.get('format_version')) is not int or body['format_version'] != 2
+                or not set(required) <= set(body) or set(body) - {'format_version', *required, *optional}):
+            raise contracts.StoreError('invalid', 400, 'requires exactly the version 2 request members')
+        return body
+
     @staticmethod
     def _contract_draft_body(body, fields):
-        if (set(body) != {'format_version', *fields} or type(body.get('format_version')) is not int
-                or body['format_version'] != 2):
-            raise contract_schema.DefinitionError([{'location': 'request', 'code': 'invalid',
-                                                    'message': 'requires the version 2 request fields'}])
+        Handler._v2(body, fields)
+
+    @staticmethod
+    def _name_field(body):
+        if not wsmod.valid_name(body.get('name')):
+            raise contracts.StoreError('invalid', 400, 'name must follow the name rule')
+        return body['name']
+
+    @staticmethod
+    def _token_field(body, nullable=False):
+        token = body.get('expected_file_token')
+        if token is None and nullable:
+            return None
+        if not isinstance(token, str) or contracts.DIGEST_RE.match(token) is None:
+            raise contracts.StoreError('invalid', 400, 'expected_file_token must be a sha256 file token'
+                                       + (' or null' if nullable else ''))
+        return token
+
+    @staticmethod
+    def _text_field(body, key):
+        if not isinstance(body.get(key), str):
+            raise contracts.StoreError('invalid', 400, f'{key} must be text')
+        return body[key]
 
     def _contract_project(self, body):
-        self._contract_draft_body(body, {'definition_text'})
+        self._v2(body, {'definition_text'})
         self._send(200, {'format_version': 2, **contract_service.project(body['definition_text'])})
 
     def _contract_edit(self, body):
-        self._contract_draft_body(body, {'definition_text', 'edit'})
+        self._v2(body, {'definition_text', 'edit'})
         self._send(200, {'format_version': 2, **contract_service.apply_edit(body['definition_text'], body['edit'])})
 
-    @staticmethod
-    def _contract_name(body: dict) -> str:
-        name = body.get("name")
-        if not isinstance(name, str):
-            raise BodyError("name must be a string")
-        return name
-
     def _contract_save(self, body: dict) -> None:
-        name = self._contract_name(body)
-        text = body.get("text")
-        if not isinstance(text, str):
-            raise BodyError("text must be a string")
-        revision = body.get("revision")
-        if revision is not None and (not isinstance(revision, int) or isinstance(revision, bool)):
-            raise BodyError("revision must be an integer, or null to create a contract")
-        view, contract, notes = self.server.state.save_contract(name, text, revision)
-        self._send(200, {**self._state_body(view), "contract": contract, "notes": notes})
+        self._v2(body, {'name', 'family', 'expected_file_token', 'definition_text', 'label'}, {'proposal_id'})
+        name = self._name_field(body)
+        token = self._token_field(body, nullable=True)
+        family, label = self._text_field(body, 'family'), self._text_field(body, 'label')
+        text = self._text_field(body, 'definition_text')
+        origin, basis = 'manual', None
+        if 'proposal_id' in body:
+            contracts.parse_definition(text)               # located issues before the proposal is consulted
+            origin, basis = self.server.state.workshop.synthesis_origin(body['proposal_id'], text)
+        result = self.server.state.save_contract(name, family, token, text, label, origin=origin, basis=basis)
+        self._send(200, {'format_version': 2, **result})
+
+    def _contract_family(self, body: dict) -> None:
+        self._v2(body, {'name', 'expected_file_token', 'family'})
+        result = self.server.state.set_contract_family(self._name_field(body), self._token_field(body),
+                                                       self._text_field(body, 'family'))
+        self._send(200, {'format_version': 2, **result})
+
+    def _contract_restore(self, body: dict) -> None:
+        self._v2(body, {'name', 'expected_file_token', 'revision', 'label'})
+        revision = body['revision']
+        if type(revision) is not int or revision < 1:
+            raise contracts.StoreError('invalid', 400, 'revision must be a positive integer')
+        result = self.server.state.restore_contract(self._name_field(body), self._token_field(body), revision,
+                                                    self._text_field(body, 'label'))
+        self._send(200, {'format_version': 2, **result})
 
     def _contract_delete(self, body: dict) -> None:
-        name = self._contract_name(body)
-        revision = _revision(body)
-        self._send(200, self._state_body(self.server.state.delete_contract(name, revision)))
+        self._v2(body, {'name', 'expected_file_token'})
+        result = self.server.state.delete_contract(self._name_field(body), self._token_field(body))
+        self._send(200, {'format_version': 2, **result})
 
     def _contract_check(self, body: dict) -> None:
-        """Check pasted text against contract text, saved or not. No revision: nothing shared is used,
-        and no model is called (R4-19)."""
-        if 'format_version' in body:
-            self._contract_draft_body(body, {'definition_text', 'value_text'})
-            return self._send(200, {'format_version': 2,
-                                    **contract_service.check(body['definition_text'], body['value_text'])})
-        contract_text, text = body.get("contract_text"), body.get("text")
-        if not isinstance(contract_text, str):
-            raise BodyError("contract_text must be a string")
-        if not isinstance(text, str):
-            raise BodyError("text must be a string")
-        try:
-            contract = checks.contract_from_text(contract_text)
-        except checks.ContractError as exc:
-            raise contracts.ContractInvalid(exc.issues, exc.total) from None
-        self._send(200, {"check": checks.check_answer(contract, text)})
+        """A Contract check of pasted text: no model call, save or acceptance (spec 13)."""
+        self._v2(body, {'definition_text', 'value_text'})
+        self._send(200, {'format_version': 2, 'label': 'Contract check',
+                         **contract_service.check(body['definition_text'], body['value_text'])})
+
+    # --- contract synthesis (overhaul spec 14.3) ------------------------------------------------------
+    _SYNTHESIS = ('task_description', 'output_name', 'definition_text', 'role')
+    _SYNTHESIS_OPTIONAL = ('settings_text', 'max_tokens')
+
+    def _synthesis_body(self, body, extra=()):
+        self._v2(body, self._SYNTHESIS + tuple(extra), self._SYNTHESIS_OPTIONAL)
+        return {k: v for k, v in body.items() if k != 'format_version'}
+
+    def _synthesis_plan(self, body):
+        result = self.server.state.workshop.synthesis_plan(self._synthesis_body(body))
+        self._send(200, {'format_version': 2, **result})
+
+    def _synthesis_start(self, body):
+        self._v2(body, self._SYNTHESIS + ('expected_plan', 'ticket'), self._SYNTHESIS_OPTIONAL + ('confirmations',))
+        clean = {k: v for k, v in body.items() if k != 'format_version'}
+        if 'confirmations' in body:
+            clean['confirmations'] = body['confirmations']
+        result = self.server.state.workshop.synthesis_start(clean)
+        self._send(200, {'format_version': 2, **result})
+
+    def _synthesis_apply(self, body):
+        self._v2(body, {'proposal_id', 'definition_text'})
+        text = body['definition_text']
+        if text is not None and not isinstance(text, str):
+            raise contracts.StoreError('invalid', 400, 'definition_text must be text or null')
+        result = self.server.state.workshop.synthesis_apply(body['proposal_id'], text)
+        self._send(200, {'format_version': 2, **result})
 
     # --- MCP (Sections 9, 10.7) -------------------------------------------------------------
     def _mcp_servers(self, body: dict) -> None:
@@ -1358,10 +1421,13 @@ class Handler(BaseHTTPRequestHandler):
                 raise BodyError("a Chat request takes no contract")
         else:
             ref = body.get("contract")
-            if (not isinstance(ref, dict) or not wsmod.valid_name(ref.get("name"))
-                    or not isinstance(ref.get("revision"), int) or isinstance(ref.get("revision"), bool)):
-                raise BodyError("a Checked request needs contract: {name, revision}")
-            contract_ref = (ref["name"], ref["revision"])
+            # The concrete pin the page reviewed: never "latest" (spec 13.1).
+            if (not isinstance(ref, dict) or set(ref) != {"name", "revision", "digest"}
+                    or not wsmod.valid_name(ref.get("name"))
+                    or type(ref.get("revision")) is not int or ref["revision"] < 1
+                    or not isinstance(ref.get("digest"), str) or contracts.DIGEST_RE.match(ref["digest"]) is None):
+                raise BodyError("a Checked request needs contract: {name, revision, digest}")
+            contract_ref = (ref["name"], ref["revision"], ref["digest"])
         snapshot = state.snapshot(revision)                     # 409 on a stale revision
         if snapshot.model.strip() == "":
             raise SettingsError("choose a model in Model settings")
@@ -1369,8 +1435,8 @@ class Handler(BaseHTTPRequestHandler):
         arguments = model_call.task_arguments(task, snapshot.kind, snapshot.provider)
         copy_ = None
         if contract_ref is not None:
-            entry = state.contract_for_request(*contract_ref)   # 404, 409 stale_revision, 409 contract_unusable
-            copy_ = model_step.ContractCopy.of(entry.name, entry.revision, entry.contract)
+            found = state.contract_for_request(*contract_ref)   # 404, 409 digest_mismatch / contract_unusable
+            copy_ = model_step.ContractCopy.reference(contract_ref[0], found.revision, found.digest, found.contract)
             checks.require_validation([copy_.parsed])
         writer = state.register_writer(f"{source} attempt")      # 503 once shutdown has begun (10.10)
         try:
@@ -1461,7 +1527,8 @@ class Handler(BaseHTTPRequestHandler):
         contract = plan["contract"]
         self._send(200, {"parent_id": record["id"], "attempt": number, "messages": plan["messages"],
                          "settings": plan["settings"],
-                         "contract": {"name": contract.name, "revision": contract.revision},
+                         "contract": {"name": contract.name, "revision": contract.revision,
+                                      "digest": contract.digest},
                          "repair_message": plan["repair_message"], "repair_reason": plan["repair_reason"]})
 
     def _repair(self, body: dict) -> None:

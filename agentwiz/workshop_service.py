@@ -10,7 +10,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import blocks, checks, history, jsonio, model_step, runner, runs, task_settings as ts, templates
+from . import blocks, checks, contract_schema, history, jsonio, model_step, runner, runs, task_settings as ts, templates
 from . import workshop_editor as editor
 from .state import RoleUnresolved
 from .workshop import WorkshopError
@@ -19,6 +19,92 @@ from .workspace import write_atomic_bytes
 
 PREVIEW_LIMIT = 32 << 20
 MANIFEST_LIMIT = 64 << 20
+
+# Contract synthesis (overhaul spec 14). Server-owned; the caller never chooses a policy or validator.
+SYNTHESIS_ROLE = 'write_contract'
+SYNTHESIS_PROMPT_ID = 'write_contract'
+SYNTHESIS_PROMPT_VERSION = 1
+SYNTHESIS_VALIDATOR = 'contract_synthesis_v1'
+SYNTHESIS_TASK_LIMIT = 16384
+SYNTHESIS_FIELDS = {'task_description', 'output_name', 'definition_text', 'role'}
+SYNTHESIS_OPTIONAL = {'settings_text', 'max_tokens'}
+_SYNTHESIS_WRAPPER = {
+    'type': 'object',
+    'properties': {
+        'description': {'type': 'string', 'maxLength': 4096},
+        'schema': {'type': 'object'},
+        'notes': {'type': 'array', 'items': {'type': 'string', 'maxLength': 2048}, 'maxItems': 20},
+    },
+    'required': ['description', 'schema', 'notes'],
+    'additionalProperties': False,
+}
+
+
+def synthesis_prompt():
+    return (Path(__file__).parent / 'prompts' / 'write_contract.md').read_text(encoding='utf-8')
+
+
+def source_digest(definition_text):
+    """The draft a synthesis is bound to; a null definition is a new empty draft and is bound too."""
+    return digest({'definition_text': definition_text})
+
+
+def synthesis_request(body):
+    """Validate a synthesis body and build the complete ephemeral internal definition on the server."""
+    from . import contract_service, workshop_assist
+    from .contract_schema import IDENT, DefinitionError
+    if not isinstance(body, dict) or not SYNTHESIS_FIELDS <= set(body) or set(body) - SYNTHESIS_FIELDS - SYNTHESIS_OPTIONAL:
+        fail()
+    task = body['task_description']
+    if not isinstance(task, str) or not task.strip() or len(task) > SYNTHESIS_TASK_LIMIT \
+            or any(0xD800 <= ord(c) <= 0xDFFF for c in task):
+        fail()
+    name = body['output_name']
+    if not isinstance(name, str) or IDENT.fullmatch(name) is None:
+        fail()
+    if body['role'] != SYNTHESIS_ROLE:
+        fail()
+    current = 'none'
+    if body['definition_text'] is not None:
+        try:
+            projected = contract_service.project(body['definition_text'])
+        except DefinitionError as exc:
+            raise WorkshopError('contract_invalid', 400, exc.issues) from None
+        if projected['format'] != 'json':
+            # Text is authored with the readable form; synthesis is for schema-backed JSON.
+            raise WorkshopError('invalid', 400, [{'location': 'definition_text', 'message': 'synthesis needs a JSON contract'}])
+        definition = jsonio.decode_exact(body['definition_text'])
+        current = jsonio.encode_exact(definition['schema']) if 'schema' in definition else 'none'
+    if 'max_tokens' in body and (type(body['max_tokens']) is not int or not 1 <= body['max_tokens'] <= 1 << 20):
+        fail()
+    task_settings = workshop_assist._assist_task({k: body[k] for k in ('settings_text', 'max_tokens') if k in body})
+    prompt = synthesis_prompt()
+    text = {'format': 'text'}
+    definition = {'format_version': blocks.FORMAT_VERSION, 'name': 'contract_synthesis',
+                  'description': 'Contract synthesis',
+                  'inputs': {'task_description': {'contract': text}, 'output_name': {'contract': text},
+                             'current_schema': {'contract': text}},
+                  'outputs': {'proposal': {'description': 'The proposed contract',
+                                           'contract': {'format': 'json', 'schema': _SYNTHESIS_WRAPPER}}},
+                  'steps': [{'id': 'synthesize', 'kind': 'model', 'role': SYNTHESIS_ROLE, 'system': {'text': ''},
+                             'prompt': {'text': prompt}, 'response_mode': 'named_json', 'task': task_settings,
+                             'repair': {'max_repairs': 1}}],
+                  'budget': {'max_seconds': 1800}}
+    return {'draft': {'key': definition['name'], 'definition_text': jsonio.encode_exact(definition), 'files': {},
+                      'metadata': {'format_version': 1, 'origin': 'manual', 'prompt_id': SYNTHESIS_PROMPT_ID,
+                                   'prompt_version': SYNTHESIS_PROMPT_VERSION}},
+            'inputs': {'task_description': task, 'output_name': name, 'current_schema': current}}
+
+
+def proposal_definition(response):
+    """The draft definition a validated synthesis response yields: a direct subset schema, never saved."""
+    from .contract_schema import validate_user_definition
+    definition = {'format': 'json'}
+    if response.get('description'):
+        definition['description'] = response['description']
+    definition['schema'] = response['schema']
+    validate_user_definition(definition)
+    return definition
 
 
 def before_trial_dispatch(batch_id, row):
@@ -38,7 +124,7 @@ def load_capture(capture, key):
     if p.problem is not None:
         fail('unusable', 409)
     return blocks.Loaded(key, 1, p.block, None, p.description, p.kind, p.views, p.notes,
-                         p.paths, p.contract_names, (), (), capture.metadata, capture.root)
+                         p.paths, p.contract_pins, (), (), capture.metadata, capture.root)
 
 
 def exact_equal(a, b):
@@ -140,9 +226,12 @@ class Service:
             for side in ('inputs', 'outputs'):
                 for name, declaration in definition.get(side, {}).items():
                     raw = declaration.get('contract') if isinstance(declaration, dict) else None
-                    if isinstance(raw, str):
-                        entry = contract_store.get(raw)
-                        raw = jsonio.decode_exact(entry.text) if entry and entry.problem is None else None
+                    if isinstance(raw, dict) and 'format' not in raw:
+                        try:
+                            found, _refused = contract_store.resolve(raw.get('name'), raw.get('revision'), raw.get('digest'))
+                        except (TypeError, AttributeError):
+                            found = None
+                        raw = dict(found.contract.raw) if found is not None else None
                     if isinstance(raw, dict):
                         try:
                             result['contracts'][side][name] = editor.contract_view(jsonio.encode_exact(raw))
@@ -164,7 +253,9 @@ class Service:
                 'limits': {k:str(v) for k,v in definition.get('budget',{}).items() if v is not None}}
             for side in ('inputs', 'outputs'):
                 result['design'][side] = [{'name': name, 'description': declaration.get('description', ''),
-                    'format': (declaration['contract'].get('format') if isinstance(declaration['contract'], dict) else 'shared'),
+                    'format': (declaration['contract'].get('format', 'shared') if isinstance(declaration['contract'], dict) else 'shared'),
+                    'reference': ({k: declaration['contract'].get(k) for k in ('name', 'revision', 'digest')}
+                                  if isinstance(declaration['contract'], dict) and 'format' not in declaration['contract'] else None),
                     'source': jsonio.encode_exact(declaration['contract'])} for name, declaration in definition.get(side, {}).items()]
             if p.block:
                 result['contracts'] = {side: {name: editor.contract_view(c.text) for name, c in ports.items()}
@@ -360,7 +451,19 @@ class Service:
     def prepare(self, action, body):
         captures = []
         original = body
-        if action == 'assist':
+        validators = None
+        if action == 'contract_synthesize':
+            if not checks.schema_support()[0]:
+                fail('validation_unavailable', 503)
+            # Entirely server-built: nothing from the caller is merged into the definition.
+            body = synthesis_request({k: v for k, v in body.items() if k not in ('expected_plan', 'confirmations', 'ticket')})
+            validators = {('outputs', 'proposal'): SYNTHESIS_VALIDATOR}
+            try:
+                self.state.resolve_role(SYNTHESIS_ROLE)
+            except RoleUnresolved as exc:
+                # A setup failure, shown before anything is admitted; never repaired.
+                raise WorkshopError('role_unresolved', 409, [{'location': 'role', 'message': str(exc)}]) from None
+        elif action == 'assist':
             from . import workshop_assist
             if not checks.schema_support()[0]:
                 fail('validation_unavailable', 503)
@@ -419,8 +522,6 @@ class Service:
                     descriptor['previous_starter_version'] = previous_metadata.get('starter_version')
                     descriptor['previous_runtime_digest'] = previous_metadata.get('runtime_digest')
                     descriptor['runtime_updated'] = previous_metadata.get('runtime_digest') != draft.get('metadata', {}).get('runtime_digest')
-            if draft.get('metadata', {}).get('restore_contracts'):
-                confirmations.append('restore_contracts')
             if c.parsed.kind == 'script':
                 confirmations.append('support_set')
             source_hash = fingerprint({p: b for p, b in c.files.items() if p != 'block.json'})
@@ -429,12 +530,13 @@ class Service:
                 if not self.reviewed(draft['key'], source_hash):
                     confirmations.append('generated_source')
             descriptor['draft'] = draft
-        elif action in ('test', 'batches', 'assist'):
+        elif action in ('test', 'batches', 'assist', 'contract_synthesize'):
             candidates = body.get('candidates') if action == 'batches' else [body]
             if not isinstance(candidates, list) or not 1 <= len(candidates) <= 2:
                 fail()
             descriptor['candidates'] = []
             examples = body.get('examples') if action == 'batches' else [{'id': 'one_off', 'version': 1, 'inputs': body.get('inputs', {}), 'expectation': {'kind': 'review', 'criterion': ''}, 'verified': False}]
+            internal = action in ('assist', 'contract_synthesize')
             if action == 'batches' and 'example_selection' in body:
                 selection = body['example_selection']
                 collection = self.collection(selection['key'])
@@ -448,10 +550,10 @@ class Service:
                 # The private policy is only for the complete ephemeral definition
                 # generated above. Do not apply caller edit/duplicate/source options
                 # to that server-owned definition before granting internal policy.
-                draft = copy.deepcopy(body['draft']) if action == 'assist' else self.source(candidate)
+                draft = copy.deepcopy(body['draft']) if internal else self.source(candidate)
                 if captures and draft['key'] != jsonio.decode_exact(captures[0].files['block.json'].decode())['name']:
                     fail('different_block', 400)
-                c = (self.assets._validate(draft, internal_contracts=True) if action == 'assist'
+                c = (self.assets._validate(draft, internal_contracts=True, validators=validators) if internal
                      else self.assets.validate(draft))
                 captures.append(c)
                 if c.parsed.problem:
@@ -523,6 +625,8 @@ class Service:
         elif action == 'proposals/apply':
             from . import workshop_assist
             proposal = self.proposal(body['proposal_id'])
+            if proposal.get('kind') != 'block':
+                fail('invalid', 400)
             descriptor['proposal'] = proposal
             candidate = workshop_assist.apply({**proposal['request'], 'draft': body.get('draft')}, proposal['response'])
             if 'draft' in candidate:
@@ -546,6 +650,10 @@ class Service:
         else:
             fail()
         # Private credential identities participate in binding but are never returned.
+        if action == 'contract_synthesize':
+            descriptor['synthesis'] = {k: v for k, v in original.items() if k not in ('expected_plan', 'confirmations', 'ticket')}
+            descriptor['synthesis']['source_digest'] = source_digest(original.get('definition_text'))
+            descriptor['synthesis']['prompt'] = {'id': SYNTHESIS_PROMPT_ID, 'version': SYNTHESIS_PROMPT_VERSION}
         if action == 'assist':
             descriptor['assistance'] = {k: v for k, v in original.items() if k not in ('expected_plan', 'confirmations', 'ticket')}
             descriptor['assistance']['capabilities'] = selected['capabilities']
@@ -581,10 +689,11 @@ class Service:
             draft = plan['descriptor']['draft']
             metadata = copy.deepcopy(draft.get('metadata', {}))
             metadata['format_version'] = 1
-            metadata.pop('restore_contracts', None)
             if 'source_review' in plan['descriptor']:
                 metadata['source_review'] = plan['descriptor']['source_review']
-            metadata['contracts'] = {side: {n: c.text for n, c in ports.items()} for side, ports in captures[0].parsed.block.contracts.items()}
+            from .workshop_assets import captured_maps, contract_maps_digest
+            metadata['contracts'], metadata['contract_pins'] = captured_maps(captures[0].parsed.block)
+            metadata['contracts_digest'] = contract_maps_digest(metadata['contracts'], metadata['contract_pins'])
             self.reject_credentials({'definition': draft['definition_text'], 'files': {p: b.decode('utf-8', errors='replace') for p, b in decode_files(draft['files']).items()}, 'metadata': metadata})
             result = self.assets.publish(draft, body.get('expected_identity'), metadata, captures[0])
             result['effective_revision'] = self.state.block_loaded(draft['key'], reload=True).revision
@@ -740,6 +849,16 @@ class Service:
                     batch['preview_bytes'] += len(text.encode())
                 with self.lock:
                     batch['active_run'] = None
+                if batch['action'] == 'contract_synthesize' and record['outcome'] == 'complete':
+                    response = jsonio.decode_exact(record['outputs']['proposal']['text'])
+                    proposal_id = row['run_id']
+                    with self.lock:
+                        self.proposals[proposal_id] = {'kind': 'contract', 'response': response,
+                            'base_digest': batch['plan']['synthesis']['source_digest'],
+                            'provenance': synthesis_provenance(batch['plan'])}
+                        while len(self.proposals) > 200:
+                            self.proposals.pop(next(iter(self.proposals)))
+                    row['proposal_id'] = proposal_id
                 if batch['action'] == 'assist' and record['outcome'] == 'complete':
                     response_text = record['outputs']['proposal']['text']
                     if len(response_text.encode()) > 512 << 10:
@@ -748,7 +867,7 @@ class Service:
                     request = batch['plan']['assistance']
                     proposal_id = row['run_id']
                     with self.lock:
-                        self.proposals[proposal_id] = {'request': request, 'response': response, 'base_digest': digest(request.get('draft'))}
+                        self.proposals[proposal_id] = {'kind': 'block', 'request': request, 'response': response, 'base_digest': digest(request.get('draft'))}
                         while len(self.proposals) > 200:
                             self.proposals.pop(next(iter(self.proposals)))
                     row['proposal_id'] = proposal_id
@@ -909,8 +1028,13 @@ class Service:
             batch = self.batch(result['workshop']['batch_id'])
             if batch.get('redacted'):
                 fail('proposal_expired', 410)
+            response = jsonio.decode_exact(result['outputs']['proposal']['text'])
+            if batch.get('action') == 'contract_synthesize':
+                return {'kind': 'contract', 'response': response,
+                        'base_digest': batch['plan']['synthesis']['source_digest'],
+                        'provenance': synthesis_provenance(batch['plan'])}
             request = batch['plan']['assistance']
-            return {'request': request, 'response': jsonio.decode_exact(result['outputs']['proposal']['text']),
+            return {'kind': 'block', 'request': request, 'response': response,
                     'base_digest': digest(request.get('draft'))}
         except (KeyError, ValueError, WorkshopError):
             fail('proposal_expired', 410)
@@ -983,6 +1107,47 @@ class Service:
         if not checks.schema_support()[0]:
             fail('validation_unavailable', 503)
         return self.start('assist', body)
+
+    # --- contract synthesis (overhaul spec 14) ----------------------------------------------------------
+    def synthesis_plan(self, body):
+        plan = self.plan('contract_synthesize', body)
+        candidate = plan['descriptor']['candidates'][0]
+        return {'plan': plan, 'destination': candidate.get('destination'),
+                'source_draft_digest': plan['descriptor']['synthesis']['source_digest']}
+
+    def synthesis_start(self, body):
+        return self.start('contract_synthesize', body)
+
+    def contract_proposal(self, proposal_id):
+        proposal = self.proposal(proposal_id)
+        if proposal.get('kind') != 'contract':
+            fail('invalid', 400)
+        return proposal
+
+    def synthesis_apply(self, proposal_id, definition_text):
+        """Bind to the source draft and return a reviewable draft. No write; the proposal is not consumed."""
+        from . import contract_service
+        proposal = self.contract_proposal(proposal_id)
+        if source_digest(definition_text) != proposal['base_digest']:
+            fail('proposal_stale', 409)
+        try:
+            definition = proposal_definition(proposal['response'])
+        except contract_schema.DefinitionError:
+            fail('proposal_expired', 410)
+        text = jsonio.encode_exact(definition, indent=2)
+        return {'proposal_id': proposal_id, 'definition_text': text, 'projection': contract_service.project(text),
+                'notes': list(proposal['response'].get('notes', []))}
+
+    def synthesis_origin(self, proposal_id, definition_text):
+        """(origin, basis) for a Save naming a proposal: equal digest means synthesized, otherwise derived.
+        The basis is built from server-captured provenance only."""
+        proposal = self.contract_proposal(proposal_id)
+        try:
+            derived = contract_schema.contract_digest(proposal_definition(proposal['response']))
+        except contract_schema.DefinitionError:
+            fail('proposal_expired', 410)
+        submitted = contract_schema.contract_digest(jsonio.decode_exact(definition_text))
+        return ('synthesized' if submitted == derived else 'derived_from_synthesis'), dict(proposal['provenance'])
 
     def apply(self, body):
         from . import workshop_assist
@@ -1100,3 +1265,13 @@ class Service:
         redacted, changed = history.redact(value, self.state.credentials())
         if changed:
             fail('credential_in_asset', 409)
+
+
+def synthesis_provenance(plan):
+    """Minimal basis: prompt identity, role and destination. No task text, notes or records."""
+    destination = plan['candidates'][0].get('destination') or {}
+    basis = {'prompt_id': SYNTHESIS_PROMPT_ID, 'prompt_version': SYNTHESIS_PROMPT_VERSION, 'role': SYNTHESIS_ROLE,
+             'provider_kind': destination.get('kind') or 'unknown', 'model': destination.get('model') or 'unknown'}
+    if isinstance(destination.get('provider'), str) and destination['provider'].strip():
+        basis['provider'] = destination['provider'][:256]
+    return basis

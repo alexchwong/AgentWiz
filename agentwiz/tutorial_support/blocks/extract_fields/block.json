@@ -1,12 +1,13 @@
 {
-  "format_version": 1,
+  "format_version": 3,
   "name": "extract_fields",
   "description": "Pull the id and ratio out of a short report.",
-  "inputs": {"report": {"contract": {"format": "text", "checks": [{"type": "length", "min": 1, "max": null}]},
+  "inputs": {"report": {"contract": {"format": "text", "min_length": 1},
                         "description": "A sentence that mentions an id and a ratio."}},
-  "outputs": {"fields": {"contract": "fields",
+  "outputs": {"fields": {"contract": {"name": "fields", "revision": 1,
+                                      "digest": "sha256:8afc6fa232e7013ac1d62c4d094b6abd11365183c0b4a94d4686a6bf0e267568"},
                          "description": "The id and the ratio, copied exactly as written."},
-              "note": {"contract": {"format": "text"},
+              "note": {"contract": {"format": "text", "min_length": 1},
                        "description": "One sentence saying which id the report mentions."}},
   "steps": [
     {"id": "extract", "kind": "model", "role": "fast",

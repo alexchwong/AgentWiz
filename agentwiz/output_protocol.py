@@ -15,7 +15,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import Iterable, Mapping
 
-from . import checks, jsonio
+from . import checks, contract_schema, jsonio
 
 MODE = "named_json"
 RENDERER_VERSION = 2
@@ -136,13 +136,16 @@ def describe(spec: Spec) -> str:
 
 
 def identity(specs: Iterable[Spec]) -> dict:
-    """What the generated instructions depend on, for a captured plan's freshness digest."""
+    """What the generated instructions and acceptance depend on, for a captured plan's freshness digest: the
+    renderer version, each output's canonical contract digest, policy and the exact rendered requirements."""
     described = tuple(specs)
     return {"mode": MODE, "renderer": RENDERER_VERSION,
             "outputs": [{"name": spec.name,
                          "description": hashlib.sha256(spec.description.encode("utf-8")).hexdigest(),
-                         "contract": hashlib.sha256(
-                             jsonio.encode_exact(dict(spec.contract.raw)).encode("utf-8")).hexdigest()}
+                         "contract": contract_schema.contract_digest(spec.contract.raw),
+                         "policy": spec.contract.policy, "validator": spec.contract.validator,
+                         "rendered": hashlib.sha256("\n".join(
+                             definition_lines(spec.contract, spec.description)).encode("utf-8")).hexdigest()}
                         for spec in described]}
 
 
