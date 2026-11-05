@@ -12,9 +12,6 @@ from .workshop_assets import fail, fingerprint, wire_files
 
 TYPES = {'Text': 'string', 'Choice': 'string', 'Whole number': 'integer', 'Number': 'number',
          'Yes/No': 'boolean', 'List': 'array', 'Group': 'object'}
-LOCAL = {'type', 'properties', 'required', 'additionalProperties', 'items', 'enum', 'description',
-         'title', 'default', 'examples', 'const', 'minimum', 'maximum', 'minLength', 'maxLength',
-         'minItems', 'maxItems', 'pattern', 'format', 'multipleOf', '$schema', '$id', '$comment'}
 BOUNDS = {'minimum': 'minimum', 'maximum': 'maximum', 'min_length': 'minLength',
           'max_length': 'maxLength', 'min_items': 'minItems', 'max_items': 'maxItems'}
 SECTIONS = ('use', 'exclusions', 'effects', 'limitations', 'missing_data', 'failures')
@@ -55,19 +52,24 @@ def input_value(node):
 
 
 def field_rows(schema):
+    """Readable rows of a user-subset schema, in stored property order.
+
+    The central recogniser decides what a user schema may contain; this only projects a schema it accepted, so
+    there is no second keyword allowlist here. Anything else (an internal assistance schema, a hand-edited
+    unsupported node) raises WorkshopError and is never projected or overwritten from a partial reading.
+    """
+    from .contract_schema import DefinitionError, validate_user_schema
+    try:
+        validate_user_schema(schema)
+    except DefinitionError as exc:
+        raise WorkshopError('contract_invalid', 400, exc.issues) from None
     rows = []
+
     def visit(node, path, required=True):
-        if not isinstance(node, dict) or set(node) - LOCAL:
-            fail('source_only', 409)
-        t = node.get('type')
-        nullable = isinstance(t, list) and len(t) == 2 and 'null' in t
-        if nullable:
-            t = next(x for x in t if x != 'null')
-        if t not in TYPES.values():
-            fail('source_only', 409)
-        if 'enum' in node and (t != 'string' or not all(isinstance(v, str) or (v is None and nullable) for v in node['enum'])):
-            fail('source_only', 409)
-        row = {'path': path, 'type': 'Choice' if 'enum' in node else next(k for k, v in TYPES.items() if v == t),
+        t = node['type']
+        nullable = isinstance(t, list)
+        base = t[0] if nullable else t
+        row = {'path': path, 'type': 'Choice' if 'enum' in node else next(k for k, v in TYPES.items() if v == base),
                'required': required, 'nullable': nullable, 'description': node.get('description', '')}
         if 'enum' in node:
             row['choices'] = [v for v in node['enum'] if v is not None]
@@ -76,35 +78,20 @@ def field_rows(schema):
                 row[k] = jsonio.encode_exact(node[keyword])
         row['source_text'] = jsonio.encode_exact(node)
         rows.append(row)
-        if len(rows) > 100 or len(path) > 10:
-            fail('source_only', 409)
-        if t == 'object':
+        if base == 'object':
             row['additional_properties'] = node.get('additionalProperties', True)
-            if not isinstance(node.get('additionalProperties', True), bool):
-                fail('source_only', 409)
-            for name, child in node.get('properties', {}).items():
-                if blocks.IDENT.fullmatch(name) is None:
-                    fail('source_only', 409)
+            for name, child in node['properties'].items():
                 visit(child, path + [name], name in node.get('required', []))
-        if t == 'array':
-            visit(node.get('items'), path + ['[]'])
+        if base == 'array':
+            visit(node['items'], path + ['[]'])
     visit(schema, [])
     return rows
 
 
 def contract_view(text):
-    contract = checks.parse_contract(jsonio.decode_exact(text))
-    obj = jsonio.decode_exact(text)
-    result = {'format': contract.format, 'source_text': text, 'projection': typed(obj), 'source_only': False, 'blank_schema': obj.get('schema') is None}
-    if contract.format == 'json':
-        try:
-            result['fields'] = field_rows(obj.get('schema'))
-        except Exception as exc:
-            from .workshop import WorkshopError
-            if not isinstance(exc, WorkshopError):
-                raise
-            result['source_only'] = True
-    return result
+    """The shared headless projection of one port's exact user definition (overhaul spec 12)."""
+    from . import contract_service
+    return {**contract_service.project(text), 'source_text': text}
 
 
 def empty_groups(definition):
@@ -414,74 +401,6 @@ def edit(draft, operation):
             else:
                 obj['budget'].pop(key, None)
         result['definition_text'] = jsonio.encode_exact(obj)
-    elif operation.get('kind') == 'property_form':
-        if operation['side'] not in ('inputs', 'outputs'):
-            fail()
-        contract = obj[operation['side']][operation['port']]['contract']
-        if not isinstance(contract, dict) or 'format' not in contract:
-            fail('inline_copy_required', 409)
-        if contract.get('schema') is None:
-            contract['schema'] = {'type':'object','properties':{},'additionalProperties':False}
-        schema = contract['schema']
-        field_rows(schema)
-        path = operation['path']
-        node = schema
-        parent = None
-        for part in path:
-            parent = node
-            node = node['items'] if part == '[]' else node['properties'][part]
-        if operation.get('remove'):
-            if not path or path[-1] == '[]':
-                fail()
-            del parent['properties'][path[-1]]
-            parent['required'] = [k for k in parent.get('required', []) if k != path[-1]]
-            checks.parse_contract(contract)
-            result['definition_text'] = jsonio.encode_exact(obj)
-            return result
-        name = operation['name']
-        if operation['addition']:
-            parent = node
-            if not blocks.IDENT.fullmatch(name) or name in parent.get('properties', {}):
-                fail()
-            node = {}
-            parent.setdefault('properties', {})[name] = node
-        elif path and path[-1] != '[]' and name != path[-1]:
-            if not blocks.IDENT.fullmatch(name) or name in parent['properties']:
-                fail()
-            parent['properties'] = {name if k == path[-1] else k:v for k,v in parent['properties'].items()}
-            parent['required'] = [name if k == path[-1] else k for k in parent.get('required', [])]
-        typ = TYPES[operation['type']]
-        if node.get('properties') and typ != 'object' or 'items' in node and typ != 'array':
-            fail('field_has_children', 409)
-        if operation['type'] != 'Choice':
-            node.pop('enum', None)
-        previous_type = node.get('type')
-        node.update(type=[typ,'null'] if operation['nullable'] else typ, description=operation['description'])
-        if typ == 'object':
-            if previous_type not in ('object', ['object', 'null']):
-                node.setdefault('additionalProperties', False)
-            node.setdefault('properties', {})
-            if 'additional_properties' in operation:
-                if type(operation['additional_properties']) is not bool:
-                    fail()
-                node['additionalProperties'] = operation['additional_properties']
-        if typ == 'array':
-            node.setdefault('items', {'type':'string'})
-        if 'bounds' in operation:
-            names = {'integer':('minimum','maximum'),'number':('minimum','maximum'),
-                     'string':('minLength','maxLength'),'array':('minItems','maxItems')}.get(typ, ())
-            for bound, text in zip(names,operation['bounds']):
-                if text:
-                    node[bound] = jsonio.decode_exact(text)
-                else:
-                    node.pop(bound,None)
-        if operation['type'] == 'Choice':
-            node['enum'] = operation['choices'] + ([None] if operation['nullable'] else [])
-        if parent and 'properties' in parent:
-            required = [k for k in parent.get('required', []) if k != name]
-            parent['required'] = required + ([name] if operation['required'] else [])
-        checks.parse_contract(contract)
-        result['definition_text'] = jsonio.encode_exact(obj)
     elif operation.get('kind') == 'starter_parameters':
         if classification(result) != 'starter':
             fail('custom_source', 409)
@@ -489,29 +408,6 @@ def edit(draft, operation):
         result['files'] = wire_files(files)
         result['metadata'].update(meta)
         result.pop('root_sources', None)
-    elif operation.get('kind') == 'contract':
-        side, name = operation['side'], operation['port']
-        if side not in ('inputs', 'outputs') or name not in obj[side]:
-            fail()
-        contract = obj[side][name]['contract']
-        if not isinstance(contract, dict) or 'format' not in contract:
-            fail('inline_copy_required', 409)
-        if 'source_text' in operation:
-            replacement = jsonio.decode_exact(operation['source_text'])
-            checks.parse_contract(replacement)
-            obj[side][name]['contract'] = replacement
-        else:
-            field_rows(contract.get('schema'))  # Whole-port fallback is authoritative.
-            node = contract['schema']
-            for segment in operation.get('path', []):
-                node = node['items'] if segment == '[]' else node['properties'][segment]
-            allowed = {'description', 'minimum', 'maximum', 'minLength', 'maxLength', 'minItems', 'maxItems', 'enum'}
-            for key, source in operation.get('set', {}).items():
-                if key not in allowed or not isinstance(source, str):
-                    fail()
-                node[key] = jsonio.decode_exact(source)
-            checks.parse_contract(contract)
-        result['definition_text'] = jsonio.encode_exact(obj)
     elif operation.get('kind') == 'make_local_copy':
         # Explicit only: replace one failed reference with the definition this draft's generation captured.
         from .contract_schema import contract_digest
@@ -529,25 +425,6 @@ def edit(draft, operation):
             fail('digest_mismatch', 409)
         checks.parse_contract(definition)
         obj[side][name]['contract'] = definition
-        result['definition_text'] = jsonio.encode_exact(obj)
-    elif operation.get('kind') == 'rename_field':
-        side, name = operation['side'], operation['port']
-        contract = obj[side][name]['contract']
-        if not isinstance(contract, dict) or 'format' not in contract:
-            fail('inline_copy_required', 409)
-        field_rows(contract['schema'])
-        path = operation['path']
-        destination = operation['name']
-        if not path or not isinstance(destination, str) or blocks.IDENT.fullmatch(destination) is None:
-            fail()
-        node = contract['schema']
-        for segment in path[:-1]:
-            node = node['items'] if segment == '[]' else node['properties'][segment]
-        old = path[-1]
-        if old not in node.get('properties', {}) or destination in node['properties']:
-            fail()
-        node['properties'] = {destination if key == old else key: value for key, value in node['properties'].items()}
-        node['required'] = [destination if key == old else key for key in node.get('required', [])]
         result['definition_text'] = jsonio.encode_exact(obj)
     elif operation.get('kind') == 'description':
         if set(operation['sections']) != set(SECTIONS) or not all(isinstance(v, str) for v in operation['sections'].values()):

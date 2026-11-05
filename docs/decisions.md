@@ -302,3 +302,23 @@ Workshop managed head. Local implementation choices recorded here, none changing
   old block cannot be silently orphaned; they still fail to load.
 - **Checked request page body.** The existing tab now sends the concrete latest `revision` and `digest` it lists;
   the reviewed revision selector and preview remain Phase 2B work.
+
+### 5 November 2026 — contract overhaul Phase 2 (UI)
+
+Same build reference. Local implementation choices, none changing a specified file format or existing route:
+
+- **Generated-section preview route.** Spec 8 requires the Checked request preview to show the exact generated
+  section and its revision, and spec 13 lists no route that renders it. Added POST `/api/contracts/instructions`
+  (version 2 envelope, `{name, revision, digest}`), resolved exactly like the send and rendered by the same
+  `single_value_instructions`; it never writes.
+- **Workshop navigation.** The `contracts` fragment and `tab-contracts`/`panel-contracts` identifiers are kept and
+  moved under a Workshop **Blocks | Contracts** sub-navigation, so old in-session links and tutorial targets land
+  in Workshop → Contracts without a compatibility layer.
+- **Dirty navigation.** Save / Discard / Stay guards actions that replace the open contract draft (opening another
+  contract, New, Duplicate, a revision switch, Open contract from a port) and page unload. Switching sections keeps
+  the draft in page memory, as Block drafts already behave, so no guard is needed there.
+- **Retired editor paths.** The Workshop `contract-form` route and the `property_form`, `contract` and
+  `rename_field` draft edits were removed after their tests moved to the shared contract editor; `field_rows`
+  now defers to the central recognizer instead of its own keyword list.
+- **Change type.** A format or field type change that would drop rules, choices, bounds or children previews the
+  current and replacement definitions and needs **Change type**; non-lossy changes apply directly.

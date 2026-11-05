@@ -6,14 +6,21 @@
   stale-edit protection; deletion is refused while blocks use them. Version 1 contract files are not converted.
 - Blocks are `format_version` 3 and pin saved contracts by name, revision and digest; runs and repairs keep
   their own copies. Version 1 block files are refused with `migration_required`.
-- Contract synthesis through the new `write_contract` role produces a reviewable draft (backend; editor UI pending).
-- The browser Contracts editor is being rebuilt; this development checkout is not a completed overhaul.
+- Workshop → Contracts replaces the Workbench Contracts tab; `#contracts` opens it.
+- The contract library searches, filters by family, shows revisions and restores old ones as new revisions.
+- A readable Text/Structured JSON/Any JSON editor; advanced source is optional and follows the same rules.
+- Contract saves show a review of changes first; stale saves keep the draft.
+- Used by lists blocks pinning a contract; deletion is refused while any do.
+- Block ports choose Inline or a pinned saved contract revision; newer revisions are never adopted automatically.
+- Ports offer Select newer, Make local copy and Save inline as reusable.
+- Checked request selects Latest or a numbered revision and previews the exact generated contract section.
+- The new `write_contract` role drafts JSON contracts with stated assumptions; applying and saving stay separate steps.
 - JSON Schema validation is now included in every installation; the optional checks extra is removed.
 - Workshop Design uses three responsive columns with editable input/output tables and Save in the settings pane.
 - Design now has a model-role dropdown, paired temperature/reasoning controls with visible inherited defaults,
   repairs below Outputs, and revision naming beside Save. Assist and Revision actions share the mode action row.
 - Block revisions have stable per-block numbers, optional names and an inline selector; restoring saves a new revision.
-- Structured-variable editors appear immediately after format selection; destructive contract replacement asks first.
+- Structured-variable editors appear immediately after format selection; a contract type change that drops content previews it first.
 - Model-server connections now come from `config/model-servers.ini`; OpenRouter keys have a separate session-only button and environment fallback.
 - Model blocks return one named JSON envelope: several independently checked outputs, published together or not at all.
 - Each model step now sends generated output instructions; `{{output.name}}` describes an output inside prompts.
@@ -25,7 +32,7 @@
 - 0.1.x model blocks naming a step output now load as invalid; README shows the one-line rewrite.
 - Workshop reports located block validation errors instead of misleading file-permission failures.
 - Test retains usable inputs and separates one-off input from pending or saved examples.
-- Output renames preserve step bindings; shared contracts use saved-name choices.
+- Output renames preserve step bindings.
 - Roles show one editor at a time, with location and family filters, suggested families and custom family creation.
 - Browsing preserves unsaved edits; Save all changes saves every role.
 - Starter roles (`fast`, `assistant`, `reasoning`) have a guided editor with model details and setup links.

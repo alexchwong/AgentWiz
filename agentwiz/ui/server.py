@@ -34,7 +34,7 @@ import modelspell
 from modelspell import ModelSpellError
 
 from .. import (__version__, attachments, checks, contract_schema, contract_service, contracts, history, insertion, jsonio, mcp_ops, model_call, model_step,
-                runner, runs, tool_forms, tutorial_topics, workshop)
+                output_protocol, runner, runs, tool_forms, tutorial_topics, workshop)
 from .. import workspace as wsmod
 from .. import workspace_admin
 from ..errors import ShuttingDown, report_internal  # noqa: F401  (re-exported; defined in errors.py since 0.1.4)
@@ -47,6 +47,9 @@ from ..state import (SHUTDOWN_GRACE_S, BlockUnusable, DefaultConflict, NoSuchBlo
 from ..workspace import NAME_RE, Workspace
 
 INDEX = Path(__file__).with_name("index.html")
+# The one static script the page loads besides itself (overhaul spec 15.4): an explicit allowlist entry, never
+# path-based file serving. It is read once, like the page, and needs the session token like every route.
+ASSETS = {"/assets/contracts.js": (Path(__file__).with_name("contracts.js"), "text/javascript; charset=utf-8")}
 JSON = "application/json"
 UPLOAD_LIMIT = 52_428_800          # 50 MiB; the JSON cap is insertion.REQUEST_LIMIT. Tests may lower both.
 UPLOAD_ROUTE = "/api/attachments/extract"
@@ -202,6 +205,7 @@ class UIServer(ThreadingHTTPServer):
         self.page_timeout = page_timeout
         self.grace_s = SHUTDOWN_GRACE_S               # tests lower it; the tutorial's Exit uses it for its bounded waits
         self.index = INDEX.read_bytes()
+        self.assets = {route: (path.read_bytes(), ctype) for route, (path, ctype) in ASSETS.items()}
         super().__init__(("127.0.0.1", port), Handler)
 
     def server_bind(self) -> None:
@@ -697,6 +701,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(403, {"error": "missing or invalid session token"})
         if path == "/":
             return self._send(200, self.server.index, "text/html; charset=utf-8")
+        if path in self.server.assets:
+            return self._send(200, *self.server.assets[path])
         if path == WORKSPACES_ROUTE:
             return self._workspaces_get()
         if path == WORKSPACES_ROUTE + "/launch":
@@ -770,6 +776,7 @@ class Handler(BaseHTTPRequestHandler):
                   "/api/contracts/check": self._contract_check, "/api/contracts/family": self._contract_family,
                   "/api/contracts/restore": self._contract_restore,
                   "/api/contracts/project": self._contract_project, "/api/contracts/edit": self._contract_edit,
+                  "/api/contracts/instructions": self._contract_instructions,
                   "/api/contracts/synthesis/plan": self._synthesis_plan,
                   "/api/contracts/synthesis/start": self._synthesis_start,
                   "/api/contracts/synthesis/apply": self._synthesis_apply,
@@ -891,26 +898,6 @@ class Handler(BaseHTTPRequestHandler):
             result = {'available': value is not checks.NO_VALUE}
             if result['available']:
                 result.update(value=typed(value), text=jsonio.encode_exact(value))
-        elif path == 'contract-form':
-            from ..workshop_editor import contract_view
-            result = contract_view(body['source'])
-            result['blank_schema'] = jsonio.decode_exact(body['source']).get('schema') is None
-            if 'field_edit' in body:
-                from ..workshop_editor import edit
-                definition = {'inputs':{'value':{'contract':jsonio.decode_exact(body['source'])}}}
-                draft = {'definition_text':jsonio.encode_exact(definition)}
-                changed = edit(draft, {**body['field_edit'],'kind':'property_form','side':'inputs','port':'value'})
-                raw = jsonio.decode_exact(changed['definition_text'])['inputs']['value']['contract']
-                result = contract_view(jsonio.encode_exact(raw))
-            elif 'description' in body:
-                if result['source_only']:
-                    raise workshop.WorkshopError('source_only', 409)
-                obj = jsonio.decode_exact(body['source'])
-                node = obj['schema']
-                for segment in body['path']:
-                    node = node['items'] if segment == '[]' else node['properties'][segment]
-                node['description'] = body['description']
-                result = contract_view(jsonio.encode_exact(obj))
         elif path == 'preview':
             result = service.preview(body)
         elif path == 'plans':
@@ -1164,6 +1151,19 @@ class Handler(BaseHTTPRequestHandler):
         self._v2(body, {'definition_text', 'value_text'})
         self._send(200, {'format_version': 2, 'label': 'Contract check',
                          **contract_service.check(body['definition_text'], body['value_text'])})
+
+    def _contract_instructions(self, body: dict) -> None:
+        """The exact direct-value section a Checked request would append for this pinned revision (spec 8, 13.1).
+        Resolved like the send itself, so a missing revision or changed digest refuses here too."""
+        self._v2(body, {'name', 'revision', 'digest'})
+        name, revision, digest = self._name_field(body), body['revision'], body['digest']
+        if type(revision) is not int or revision < 1:
+            raise contracts.StoreError('invalid', 400, 'revision must be a positive integer')
+        if not isinstance(digest, str) or contracts.DIGEST_RE.match(digest) is None:
+            raise contracts.StoreError('invalid', 400, 'digest must be a sha256 contract digest')
+        found = self.server.state.contract_for_request(name, revision, digest)
+        self._send(200, {'format_version': 2, 'name': name, 'revision': found.revision, 'digest': found.digest,
+                         'text': output_protocol.single_value_instructions(found.contract)})
 
     # --- contract synthesis (overhaul spec 14.3) ------------------------------------------------------
     _SYNTHESIS = ('task_description', 'output_name', 'definition_text', 'role')

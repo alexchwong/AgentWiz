@@ -65,7 +65,7 @@ TOPICS: tuple[Topic, ...] = (
     Topic("contract", "Define a contract", "A contract describes the structure of the value you want. Save the filled "
           "example to learn where reusable requirements live; Check can apply it to text. A wrong number of the right "
           "type still passes: exact values belong in Workshop example expectations.", "contracts", "0.2.0", "complete",
-          False, _page("contracts.tutorialPrepare", [CONTRACT, '{"id":1,"ratio":0.5}']), "contracts-save"),
+          False, _page("contracts.tutorialPrepare", [CONTRACT, '{"id":1,"ratio":0.5}', "my-fields"]), "contracts-save"),
     Topic("repair", "Repair a response", "Send asks for structured data using the selected contract. Preview repair "
           "shows a follow-up request; Send repair continues the same run with feedback.", "checked-request",
           "0.2.0", "json-repair", True,

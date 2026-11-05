@@ -479,3 +479,21 @@ def test_mcp_routes_still_refuse_unreadable_numbers(ui):
     fail = failure_of(lambda: request(ui, "/api/mcp/call", {"server": "s", "tool": "t", "revision": mcp_state(ui)["revision"],
                                                           "arguments_text": '{"n": '}))
     assert (fail.status, fail.body["code"]) == (400, "bad_arguments") and "line 1, column" in fail.body["error"]
+
+
+def test_instructions_route_renders_the_pinned_revision_exactly_as_a_checked_request_would(ui):
+    """Spec 8 / 13.1: the Checked request preview's generated section comes from the same renderer and the same
+    pin resolution as the send; a changed digest or a missing revision refuses, and members are strict."""
+    from agentwiz import output_protocol
+    first = save_contract(ui, "pinned", '{"format":"json","schema":{"type":"integer","minimum":9007199254740993}}')
+    save_contract(ui, "pinned", '{"format":"text","min_length":1}', token=first["file_token"])
+    body = {"format_version": 2, "name": "pinned", "revision": 1, "digest": first["digest"]}
+    shown = request(ui, "/api/contracts/instructions", body)
+    assert (shown["revision"], shown["digest"]) == (1, first["digest"])          # an older pin stays usable
+    assert shown["text"].startswith(output_protocol.BEGIN) and "9007199254740993" in shown["text"]
+    refused = failure_of(lambda: request(ui, "/api/contracts/instructions", {**body, "digest": "sha256:" + "0" * 64}))
+    assert refused.status == 409 and refused.body["code"] == "digest_mismatch"
+    assert failure_of(lambda: request(ui, "/api/contracts/instructions", {**body, "revision": 3})).status == 404
+    for bad in ({**body, "revision": True}, {**body, "revision": "latest"}, {**body, "extra": 1},
+                {k: v for k, v in body.items() if k != "digest"}, {**body, "format_version": 1}):
+        assert failure_of(lambda: request(ui, "/api/contracts/instructions", bad)).status == 400, bad

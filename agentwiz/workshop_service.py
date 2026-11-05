@@ -232,7 +232,7 @@ class Service:
                     if isinstance(raw, dict):
                         try:
                             result['contracts'][side][name] = editor.contract_view(jsonio.encode_exact(raw))
-                        except (checks.ContractError, WorkshopError):
+                        except (checks.ContractError, contract_schema.DefinitionError, WorkshopError):
                             pass
             step = next(iter(definition.get('steps', [])), {})
             def asset_text(value):

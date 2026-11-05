@@ -48,6 +48,22 @@ def test_access_state_and_page(ui):
     assert "top_k" in state["supported"]["off"]
 
 
+def test_contract_script_is_an_authenticated_allowlisted_asset(ui):
+    """Overhaul spec 15.4: the page's one extra script is served from an explicit allowlist entry, with the session
+    token (header or the page's same-origin `t` query), as JavaScript. Nothing else under /assets is served."""
+    token = ui.url.split("?t=", 1)[1]
+    for suffix in ("/assets/contracts.js", "/assets/contracts.js?t=wrong"):
+        assert status_of(lambda: urllib.request.urlopen(base(ui) + suffix, timeout=10)) == 403
+    script = urllib.request.urlopen(base(ui) + "/assets/contracts.js?t=" + token, timeout=10)
+    assert script.status == 200 and script.headers["Content-Type"] == "text/javascript; charset=utf-8"
+    body = script.read()
+    assert b"window.AgentWizContracts" in body
+    assert request(ui, "/assets/contracts.js", raw=True).read() == body              # the header token works too
+    for path in ("/assets/", "/assets/index.html", "/assets/../index.html", "/assets/contracts.js/x",
+                 "/assets/%2e%2e/ui/server.py", "/agentwiz/ui/contracts.js", "/contracts.js"):
+        assert status_of(lambda: request(ui, path)) == 404, path
+
+
 def test_startup_without_hostname_resolution(make_ui, monkeypatch):
     def no_dns(*args, **kwargs):
         raise AssertionError("loopback startup must not resolve hostnames")

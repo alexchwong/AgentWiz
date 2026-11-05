@@ -305,6 +305,7 @@ def test_page_hidden_tab_keeps_running(ui, server, open_page):
     say(page, "chat", "hi")
     expect(tid(page, "chat-output")).to_have_text("par", timeout=WAIT)
     has(page, "tab-chat", "data-state", "running")
+    tid(page, "tab-workshop").click()                                # Contracts is a Workshop section (overhaul 15.1)
     tid(page, "tab-contracts").click()
     has(page, "tab-contracts", "aria-selected", "true")
     expect(tid(page, "panel-chat")).to_be_hidden()
@@ -361,33 +362,283 @@ def test_page_mcp_tools(ui, make_fake_mcp, open_page):
     assert structured.startswith("[tool s.exact ") and structured.endswith('{"n":9007199254740993}')
 
 
-# 85 --------------------------------------------------------------------------------------------------
-def test_page_contracts(ui, open_page):
-    page = open_page(ui, "contracts")
-    tid(page, "contracts-new-json").click()
-    tid(page, "contracts-name").fill("fields_v1")
-    tid(page, "contracts-advanced").click()
-    tid(page, "contracts-editor").fill(JSON_CONTRACT_NO_SCHEMA)
+# 85 / overhaul C27-C29: Workshop → Contracts, the shared editor, ports and synthesis -----------------------------------
+def editor_row(page, path, prefix="contracts"):
+    return page.locator(f'[data-test="{prefix}-row"][data-path="{path}"]')
+
+
+def row_detail(page, path, prefix="contracts"):
+    """The selected row's controls; opened with More when they are not shown yet."""
+    detail = page.locator(f'[data-test="{prefix}-row-detail"][data-path="{path}"]')
+    if detail.count() == 0:
+        tid(editor_row(page, path, prefix), f"{prefix}-row-more").click()
+    expect(detail).to_have_count(1)
+    return detail
+
+
+def add_field(page, parent, name, kind, prefix="contracts"):
+    detail = row_detail(page, parent, prefix)
+    tid(detail, f"{prefix}-new-name").fill(name)
+    tid(detail, f"{prefix}-new-type").select_option(kind)
+    tid(detail, f"{prefix}-add-property").click()
+    expect(editor_row(page, "/".join(x for x in (parent, name) if x), prefix)).to_have_count(1)
+
+
+def change(locator, value):
+    """Fill a control and commit it (the editor applies a targeted edit on change)."""
+    locator.fill(value)
+    locator.dispatch_event("change")
+
+
+def save_contract_from_page(page, state="saved"):
     tid(page, "contracts-save").click()
-    has(page, "contracts-editor", "data-state", "saved")
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    has(page, "contracts-status", "data-state", state)
+
+
+def new_block(page, key, starter="write_text"):
+    dialog = tid(page, "ws-dialog")
+    tid(page, "ws-new-block").click()
+    tid(dialog, "ws-field-block-key").fill(key)
+    tid(dialog, "ws-choice-start-with").select_option(starter)
+    tid(dialog, "ws-create-draft").click()
+
+
+BIG = "9007199254740993"
+FINE = "0.10000000000000000001"
+
+
+def test_page_contract_library_builds_nested_exact_contracts_and_refuses_invalid_source(ui, open_page):
+    """C27: a List of Group with a nullable Choice and exact bounds, built in the readable editor; advanced source
+    passes the same recogniser; the saved definition keeps every literal exactly across reload and Check sample."""
+    page = open_page(ui, "contracts")
+    has(page, "tab-workshop", "aria-selected", "true")
+    expect(tid(page, "panel-contracts")).to_be_visible()
+    has(page, "contracts-editor", "data-format", "text")                          # a new draft starts as Text
+    tid(page, "contracts-name").fill("order_lines")
+    tid(page, "contracts-format").select_option("structured")
+    has(page, "contracts-editor", "data-format", "structured")
+    add_field(page, "", "lines", "List")
+    tid(editor_row(page, "lines/[]"), "contracts-row-type").select_option("Group")    # a plain item type: no loss preview
+    expect(editor_row(page, "lines/[]")).to_have_attribute("data-type", "Group")
+    add_field(page, "lines/[]", "product", "Text")
+    add_field(page, "lines/[]", "quantity", "Number")
+    add_field(page, "lines/[]", "status", "Choice")
+    tid(editor_row(page, "lines/[]/status"), "contracts-row-nullable").check()
+    detail = row_detail(page, "lines/[]/status")
+    change(tid(detail, "contracts-choice").first, "open")
+    expect(tid(row_detail(page, "lines/[]/status"), "contracts-choice").first).to_have_value("open")
+    detail = row_detail(page, "lines/[]/status")
+    tid(detail, "contracts-new-choice").fill("closed")
+    tid(detail, "contracts-add-choice").click()
+    expect(tid(row_detail(page, "lines/[]/status"), "contracts-choice")).to_have_count(2)
+    quantity = row_detail(page, "lines/[]/quantity")
+    change(quantity.locator('[data-test="contracts-bound"][data-keyword="minimum"]'), FINE)
+    quantity = row_detail(page, "lines/[]/quantity")
+    change(quantity.locator('[data-test="contracts-bound"][data-keyword="maximum"]'), BIG)
+    expect(row_detail(page, "lines/[]/quantity").locator('[data-test="contracts-bound"][data-keyword="maximum"]')).to_have_value(BIG)
+    has(page, "contracts-editor", "data-state", "valid")
+
+    # Advanced source is the same subset: an unsupported keyword stays in the buffer and cannot be saved.
+    tid(page, "contracts-advanced").click()
+    source = tid(page, "contracts-source").input_value()
+    assert FINE in source and BIG in source
+    tid(page, "contracts-source").fill(source.replace('"type":"number"', '"type":"number","multipleOf":2', 1))
+    tid(page, "contracts-apply-source").click()
+    has(page, "contracts-editor", "data-state", "invalid")
+    expect(tid(page, "contracts-source-error")).to_have_count(1)
+    tid(page, "contracts-save").click()
+    has(page, "contracts-status", "data-state", "error")
+    expect(tid(page, "contracts-guided-blocked")).to_have_count(1)
+    tid(page, "contracts-discard-source").click()
+    has(page, "contracts-editor", "data-state", "valid")
+    save_contract_from_page(page)
+
+    saved = jsonio.decode_exact(request(ui, "/api/contracts/order_lines")["definition_text"])
+    item = saved["schema"]["properties"]["lines"]["items"]
+    assert item["properties"]["status"] == {"type": ["string", "null"], "enum": ["open", "closed", None]}
+    assert item["properties"]["quantity"]["minimum"] == jsonio.decode_exact(FINE)
+    assert item["properties"]["quantity"]["maximum"] == int(BIG)
+    assert item["required"] == ["product", "quantity", "status"] and item["additionalProperties"] is False
     page.reload()
     page.wait_for_function("document.getElementById('version').textContent !== ''", timeout=WAIT)
-    row = page.locator('[data-test="contracts-row"][data-name="fields_v1"]')
-    expect(row).to_have_count(1)
-    row.click()
-    expect(tid(page, "contracts-name")).to_have_value("fields_v1")
-    saved = jsonio.decode_exact(tid(page, "contracts-editor").input_value())
-    wanted = jsonio.decode_exact(JSON_CONTRACT_NO_SCHEMA)
-    assert saved["checks"] == wanted["checks"]                       # 9007199254740993 and 0.10000000000000000001, exactly
-    assert saved["format"] == "json"
-    tid(page, "contracts-check-text").fill('{"id": 9007199254740993, "ratio": 1.5}')
-    tid(page, "contracts-run-check").click()
-    has(page, "contracts-check", "data-check", "fail")
-    copied = copy_of(page, "contracts-copy-check")
-    assert "Overall: fail" in copied and "$.ratio" in copied
-    tid(page, "contracts-check-text").fill('{"id": 9007199254740993, "ratio": 0.10000000000000000001}')
+    page.locator('[data-test="contracts-row"][data-name="order_lines"]').click()
+    bound = row_detail(page, "lines/[]/quantity").locator('[data-test="contracts-bound"][data-keyword="minimum"]')
+    expect(bound).to_have_value(FINE)                                                 # exact, not a JavaScript number
+    tid(page, "contracts-check-text").fill('{"lines":[{"product":"pen","quantity":' + BIG + ',"status":null}]}')
     tid(page, "contracts-run-check").click()
     has(page, "contracts-check", "data-check", "pass")
+    tid(page, "contracts-check-text").fill('{"lines":[{"product":"pen","quantity":0.1,"status":"open"}]}')
+    tid(page, "contracts-run-check").click()
+    has(page, "contracts-check", "data-check", "fail")                                 # 0.1 < 0.10000000000000000001
+    copied = copy_of(page, "contracts-copy-check")
+    assert "Overall: fail" in copied
+
+
+def test_page_saved_contract_pin_survives_appends_and_select_newer_is_explicit(ui, open_page):
+    """C27: a port selects a saved revision by exact pin; appending a revision does not move it; Select newer is an
+    unsaved block edit until the block is saved."""
+    first = save_contract(ui, "label_choice", '{"format":"json","schema":{"type":"string","enum":["a","b"]}}')
+    page = open_page(ui)
+    new_block(page, "pinned")
+    output = page.locator('[data-test="ws-port"][data-side="outputs"]')
+    tid(output, "port-mode").select_option("saved")
+    tid(output, "port-contract").select_option("label_choice")
+    has(output, "port-pin", "data-revision", "1")
+    definition = save_new_revision(page, ui, "pinned")
+    assert definition["outputs"]["out"]["contract"] == {"name": "label_choice", "revision": 1, "digest": first["digest"]}
+    second = save_contract(ui, "label_choice", '{"format":"json","schema":{"type":"string","enum":["a","b","c"]}}',
+                           token=first["file_token"])
+    tid(page, "ws-advanced-settings").click()
+    tid(page, "ws-refresh-design-fields").click()
+    has(output, "port-pin", "data-revision", "1")                                      # the pin did not move
+    expect(tid(output, "port-newer")).to_be_visible()
+    assert saved_definition(ui, "pinned")["outputs"]["out"]["contract"]["revision"] == 1
+    tid(output, "port-select-newer").click()
+    has(output, "port-pin", "data-revision", "2")
+    assert saved_definition(ui, "pinned")["outputs"]["out"]["contract"]["revision"] == 1   # not saved yet
+    definition = save_new_revision(page, ui, "pinned")
+    assert definition["outputs"]["out"]["contract"] == {"name": "label_choice", "revision": 2, "digest": second["digest"]}
+    # Used by shows the current pin; the library opens from the port.
+    tid(output, "port-open").click()
+    expect(tid(page, "panel-contracts")).to_be_visible()
+    expect(tid(page, "contracts-name")).to_have_value("label_choice")
+    row = page.locator('[data-test="contracts-used-row"][data-block="pinned"][data-current="true"]')
+    expect(row).to_have_attribute("data-revision", "2")
+
+
+def test_page_contract_stale_save_keeps_draft_restore_families_and_used_by_refusal(ui, open_page):
+    """C28: a stale save keeps the draft; family filter and grouping; historical restore appends; deletion of a used
+    contract is refused with its blockers."""
+    first = save_contract(ui, "notes", '{"format":"text","min_length":1}', family="Clinical")
+    save_contract(ui, "other", '{"format":"json"}', family="Commercial")
+    page = open_page(ui, "contracts")
+    tid(page, "contracts-family-filter").select_option("Clinical")
+    expect(tid(page, "contracts-row")).to_have_count(1)
+    tid(page, "contracts-family-filter").select_option("")
+    tid(page, "contracts-search").fill("oth")
+    expect(tid(page, "contracts-row")).to_have_count(1)
+    tid(page, "contracts-search").fill("")
+    page.locator('[data-test="contracts-row"][data-name="notes"]').click()
+    expect(tid(page, "contracts-name")).to_have_value("notes")
+    # Another tab appends revision 2 while this draft is open.
+    save_contract(ui, "notes", '{"format":"text","min_length":2}', token=first["file_token"], family="Clinical")
+    change(tid(page, "contracts-max-length"), "500")
+    has(page, "panel-contracts", "data-dirty", "true")
+    tid(page, "contracts-save").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    has(page, "contracts-status", "data-state", "stale")
+    expect(tid(page, "contracts-max-length")).to_have_value("500")                    # the draft is kept
+    assert request(ui, "/api/contracts/notes")["latest"] == 2                          # nothing was resubmitted
+    tid(page, "contracts-refresh").click()
+    expect(tid(page, "contracts-max-length")).to_have_value("500")
+    save_contract_from_page(page)
+    detail = request(ui, "/api/contracts/notes")
+    assert detail["latest"] == 3 and jsonio.decode_exact(detail["definition_text"]) == {"format": "text", "min_length": 1, "max_length": 500}
+    # Grouping is a separate save and changes no revision.
+    tid(page, "contracts-family").select_option("Commercial")
+    tid(page, "contracts-save-family").click()
+    has(page, "contracts-status", "data-state", "family_saved")
+    assert request(ui, "/api/contracts/notes")["family"] == "Commercial" and request(ui, "/api/contracts/notes")["latest"] == 3
+    # Viewing an older revision does not move latest; Restore appends a copy.
+    tid(page, "contracts-revision").select_option("2")
+    expect(tid(page, "contracts-basis-note")).not_to_be_empty()
+    tid(page, "contracts-restore").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    has(page, "contracts-status", "data-state", "restored")
+    restored = request(ui, "/api/contracts/notes")
+    assert restored["latest"] == 4 and restored["revisions"][3]["digest"] == restored["revisions"][1]["digest"]
+    # A pinned block blocks deletion; nothing cascades.
+    write_block(ui, "uses_notes", {"format_version": 3, "name": "uses_notes", "inputs": {
+        "text": {"contract": {"name": "notes", "revision": 4, "digest": restored["digest"]}}},
+        "outputs": {"out": {"contract": {"format": "text"}}},
+        "steps": [{"id": "s", "kind": "model", "role": "fast", "prompt": {"text": "{{inputs.text}}"}, "response_mode": "named_json"}]}, {})
+    tid(page, "contracts-refresh").click()
+    expect(page.locator('[data-test="contracts-used-row"][data-block="uses_notes"]')).to_have_count(1)
+    tid(page, "contracts-delete").click()
+    tid(tid(page, "ws-dialog"), "ws-delete").click()
+    has(page, "contracts-status", "data-code", "contract_in_use")
+    expect(page.locator('[data-test="contracts-blocker"][data-block="uses_notes"]')).to_have_count(1)
+    assert request(ui, "/api/contracts/notes")["latest"] == 4
+
+
+def test_page_contract_synthesis_apply_save_and_inline_attachment_are_separate(ui, server, open_page):
+    """C29: synthesis preview, Apply draft and Save are separate actions; Save inline as reusable does not change
+    the port unless chosen; dirty navigation offers Save / Discard / Stay."""
+    from test_contract_overhaul import GOOD, envelope, setup_role
+    setup_role(ui, server)
+    server.reply(envelope(GOOD))
+    page = open_page(ui, "contracts")
+    dialog = tid(page, "ws-dialog")
+    tid(page, "contracts-name").fill("triage")
+    expect(tid(page, "contracts-synth-plan")).to_be_disabled()                      # Text is authored by hand
+    tid(page, "contracts-format").select_option("any")
+    has(page, "contracts-editor", "data-format", "any")
+    expect(tid(page, "contracts-any-json")).to_have_attribute("data-state", "weak")
+    tid(page, "contracts-synth-task").fill("Classify a support message into a queue.")
+    tid(page, "contracts-synth-temperature").fill("0")
+    tid(page, "contracts-synth-reasoning").select_option("low")
+    with page.expect_request(lambda r: r.url.endswith("/api/contracts/synthesis/plan")) as sent:
+        tid(page, "contracts-synth-plan").click()
+    planned = json.loads(sent.value.post_data)
+    assert planned["settings_text"] == {"temperature": "0", "reasoning": "low"} and planned["role"] == "write_contract"
+    assert planned["definition_text"] is not None and "max_tokens" not in planned
+    has(page, "contracts-synth-status", "data-code", "task_setting")              # the stand-in is OpenAI-compatible
+    expect(dialog).to_have_count(0)                                              # refused before any review or call
+    tid(page, "contracts-synth-reasoning").select_option("")
+    with page.expect_request(lambda r: r.url.endswith("/api/contracts/synthesis/plan")) as sent:
+        tid(page, "contracts-synth-plan").click()
+    assert json.loads(sent.value.post_data)["settings_text"] == {"temperature": "0"}
+    expect(tid(dialog, "contracts-synth-review")).to_be_visible()
+    tid(dialog, "ws-confirm").click()
+    has(page, "contracts-synth-status", "data-state", "proposal")
+    expect(tid(page, "contracts-synth-notes")).to_contain_text(GOOD["notes"][0])
+    has(page, "contracts-editor", "data-format", "any")                               # nothing applied yet
+    assert not (ui.workspace.path / "contracts" / "triage.json").exists()             # nothing saved
+    tid(page, "contracts-synth-apply").click()
+    has(page, "contracts-synth-status", "data-state", "applied")
+    has(page, "contracts-editor", "data-format", "structured")
+    assert not (ui.workspace.path / "contracts" / "triage.json").exists()
+    save_contract_from_page(page)
+    saved = request(ui, "/api/contracts/triage")
+    assert saved["origin"] == "synthesized" and saved["basis"]["role"] == "write_contract"
+    assert jsonio.decode_exact(saved["definition_text"])["schema"] == GOOD["schema"]
+
+    # Dirty navigation: Stay keeps the draft, Discard leaves it.
+    save_contract(ui, "second", '{"format":"text"}')
+    tid(page, "contracts-refresh").click()
+    has(page, "contracts-status", "data-state", "idle")
+    change(tid(page, "contracts-description"), "Changed in this tab")
+    has(page, "panel-contracts", "data-dirty", "true")
+    page.locator('[data-test="contracts-row"][data-name="second"]').click()
+    tid(dialog, "ws-stay").click()
+    expect(tid(page, "contracts-name")).to_have_value("triage")
+    expect(tid(page, "contracts-description")).to_have_value("Changed in this tab")
+    page.locator('[data-test="contracts-row"][data-name="second"]').click()
+    tid(dialog, "ws-discard").click()
+    expect(tid(page, "contracts-name")).to_have_value("second")
+    assert request(ui, "/api/contracts/triage")["latest"] == 1
+
+    # Save inline as reusable: a new contract; the port changes only when chosen, and only the block save keeps it.
+    tid(page, "ws-section-blocks").click()
+    new_block(page, "attach")
+    output = page.locator('[data-test="ws-port"][data-side="outputs"]')
+    change(tid(output, "port-min-length"), "3")
+    tid(output, "port-save-reusable").click()
+    tid(dialog, "port-reusable-name").fill("reply_text")
+    tid(dialog, "ws-save-contract").click()
+    tid(dialog, "ws-keep-inline").click()
+    has(output, "port-card", "data-mode", "inline")
+    assert jsonio.decode_exact(request(ui, "/api/contracts/reply_text")["definition_text"]) == {"format": "text", "min_length": 3}
+    tid(output, "port-save-reusable").click()
+    tid(dialog, "port-reusable-name").fill("reply_text_2")
+    tid(dialog, "ws-save-contract").click()
+    tid(dialog, "ws-use-saved-revision").click()
+    has(output, "port-card", "data-mode", "saved")
+    has(output, "port-pin", "data-name", "reply_text_2")
+    assert request(ui, "/api/blocks")["total"] == 0                                    # the block is not saved yet
+    definition = save_new_revision(page, ui, "attach")
+    assert definition["outputs"]["out"]["contract"]["name"] == "reply_text_2"
 
 
 # 86 --------------------------------------------------------------------------------------------------
@@ -419,6 +670,30 @@ def test_page_checked_request_repair(ui, server, open_page):
     assert [m["role"] for m in sent] == ["system", "user", "assistant", "user"]      # the generated contract section
     assert "AgentWiz output protocol" in sent[0]["content"]
     assert server.requests[0]["body"]["messages"][0] == sent[0]                     # the repair reuses the capture
+
+
+def test_page_checked_request_dispatches_the_reviewed_numbered_revision(ui, server, open_page):
+    """Spec 13.1 / C17: Latest shows its concrete number; an explicit older revision is what is previewed and sent."""
+    first = save_contract(ui, "c", JSON_CONTRACT)
+    save_contract(ui, "c", JSON_CONTRACT_NO_SCHEMA, token=first["file_token"])            # revision 2: Any JSON
+    server.reply(json_answer('{"id": 1, "ratio": 0.5}'))
+    configure(ui, server)
+    page = open_page(ui, "checked-request")
+    tid(page, "checked-contract").select_option("c")
+    expect(tid(page, "checked-revision")).to_have_value("latest")
+    has(page, "checked-pin", "data-revision", "2")                                    # the concrete latest is shown
+    tid(page, "checked-revision").select_option("1")
+    has(page, "checked-pin", "data-revision", "1")
+    has(page, "checked-pin", "data-digest", first["digest"])
+    tid(page, "checked-contract-preview").click()
+    preview = tid(page, "checked-contract-instructions")
+    expect(preview).to_have_attribute("data-revision", "1")
+    section = preview.text_content()
+    assert "AgentWiz output protocol" in section and '"maximum":1' in section and "Any JSON" not in section
+    say(page, "checked", "give the fields")
+    has(page, "checked-status", "data-state", "done")
+    system = server.requests[-1]["body"]["messages"][0]["content"]
+    assert section.split("\n\n", 1)[1] in system                                      # exactly the previewed section
 
 
 # 87 --------------------------------------------------------------------------------------------------
@@ -500,7 +775,7 @@ def test_page_raises_no_script_errors(ui, open_page, context):
                                   p.on("console", lambda m: problems.append(m.text) if m.type == "error" else None)))
     page = open_page(ui, "chat")
     for fragment in FRAGS:
-        if fragment == "blocks":
+        if fragment in ("blocks", "contracts"):
             tid(page, "tab-workshop").click()
         elif fragment != "history":
             tid(page, "ws-workbench").click()
@@ -1035,20 +1310,20 @@ def test_workshop_variable_format_exposes_editor_and_confirms_data_loss(ui, open
     tid(dialog, 'ws-choice-start-with').select_option('write_text')
     tid(dialog, 'ws-create-draft').click()
     output = page.locator('[data-test="ws-port"][data-side="outputs"]')
-    tid(output, 'ws-choice-format').select_option('json')
-    fields = tid(output, 'ws-fields')
-    fields.locator('summary').click()
-    tid(fields, 'ws-define-object-fields').click()
-    tid(dialog, 'ws-field-property-name').fill('message')
-    tid(dialog, 'ws-apply').click()
-    expect(tid(fields, 'ws-edit-field')).to_have_count(2)
-    tid(output, 'ws-choice-format').select_option('text')
-    tid(dialog, 'ws-cancel').click()
-    expect(tid(output, 'ws-choice-format')).to_have_value('json')
+    tid(output, 'port-format').select_option('structured')               # a fresh closed Group, editable at once
+    has(output, 'port-editor', 'data-format', 'structured')
+    tid(output, 'port-new-name').fill('message')
+    tid(output, 'port-add-property').click()
+    expect(tid(output, 'port-row')).to_have_count(2)
+    tid(output, 'port-format').select_option('text')
+    tid(dialog, 'ws-cancel').click()                                     # the loss preview was declined
+    expect(tid(output, 'port-format')).to_have_value('structured')
     definition = save_new_revision(page, ui, 'variables')
     assert 'message' in definition['outputs']['out']['contract']['schema']['properties']
-    tid(output, 'ws-choice-format').select_option('text')
-    tid(dialog, 'ws-replace-contract').click()
+    tid(output, 'port-format').select_option('text')
+    expect(tid(dialog, 'port-change-before')).to_contain_text('message')
+    tid(dialog, 'ws-change-type').click()
+    has(output, 'port-editor', 'data-format', 'text')
     definition = save_new_revision(page, ui, 'variables')
     assert definition['outputs']['out']['contract'] == {'format': 'text'}
 
@@ -1269,23 +1544,25 @@ def test_workshop_design_controls_overrides_request_preview_cards_and_assistance
     tid(dialog, 'ws-close').click()
 
     card = page.locator('[data-test="ws-port"][data-side="outputs"][data-port="out"]')
-    fields = card.locator('[data-test="ws-fields"]')
-    expect(fields).to_have_count(1)                                            # the output's own card edits its fields
+    expect(tid(card, 'port-editor')).to_have_count(1)                         # the output's own card edits its fields
 
-    def add_property(which, name, kind):
-        fields.locator('summary').click()
-        getattr(tid(fields, 'ws-add-property'), which).click()
-        tid(dialog, 'ws-field-property-name').fill(name)
-        tid(dialog, 'ws-choice-value-type').select_option(kind)
-        tid(dialog, 'ws-apply').click()
+    def add_property(parent, name, kind):
+        row = card.locator(f'[data-test="port-row"][data-path="{parent}"]')
+        if card.locator(f'[data-test="port-row-detail"][data-path="{parent}"]').count() == 0:
+            tid(row, 'port-row-more').click()
+        detail = card.locator(f'[data-test="port-row-detail"][data-path="{parent}"]')
+        tid(detail, 'port-new-name').fill(name)
+        tid(detail, 'port-new-type').select_option(kind)
+        tid(detail, 'port-add-property').click()
+        expect(card.locator('[data-test="port-row"][data-path="' + '/'.join(filter(None, [parent, name])) + '"]')).to_have_count(1)
 
-    add_property('first', 'extras', 'Group')
+    add_property('', 'extras', 'Group')
     before = current_revision(ui, 'authoring')
     tid(page, 'ws-save-revision').click()
     has(page, 'ws-status', 'data-code', 'block_invalid')                      # a new group with no field is refused
     expect(dialog).to_have_count(0)                                            # no review was offered, nothing was saved
     assert current_revision(ui, 'authoring') == before
-    add_property('last', 'note', 'Text')
+    add_property('extras', 'note', 'Text')
     schema = save_new_revision(page, ui, 'authoring')['outputs']['out']['contract']['schema']
     assert list(schema['properties']['extras']['properties']) == ['note']
 

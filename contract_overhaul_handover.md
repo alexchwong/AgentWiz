@@ -6,18 +6,127 @@ Specification: `contract_overhaul_tech_specs.md`, version 1.0, November 5, 2026.
 Baseline: `ada01c82b82f1c83ca1ca702c6d15574bc5757fc`; package remains 0.2.0.
 
 This dedicated file is the cumulative progress record; it supersedes the overhaul entry formerly in
-`HANDOVER.md`, not the unrelated release/UI handover. Phase 1A was committed as `841844f`. The latest
-increment (owner request: **Phases 1B and 1C**) started from that commit with a clean tree.
-No commit, push, tag, publication, modelSpell modification or additional dependency was made in this
-checkout. (The installed-wheel smoke used a throwaway local clone, as DEVEL requires; see below.)
+`HANDOVER.md`, not the unrelated release/UI handover. Phase 1A was committed as `841844f`, Phase 1B/1C as
+`42fdb09` and the corrective pass as `58fa5ec`. The latest increment (owner request: **Phase 2**) started from
+`58fa5ec` with a clean tree. No commit, push, tag, publication, modelSpell modification or additional
+dependency was made in this checkout; changed files were delivered as an archive. (The installed-wheel smoke
+used a throwaway local clone with no remote, as DEVEL requires; see below.)
 
-**Phase 1 (1A, 1B, 1C) is implemented headlessly, and the readiness-review corrective pass (R1–R3, below)
-is implemented and verified; the Phase 1 backend is ready as the foundation for Phase 2. The overhaul is not
-complete: Phase 2 (UI) remains.**
-At the Phase 1 gate the offline suite passes except two browser journeys that drive the replaced
-Workbench Contracts editor; they are pending Phase 2, not passing and not deleted. This checkout is not
-shippable as the finished overhaul: the page's Contracts utility no longer works with the new routes.
-Do not reintroduce compatibility or automatic workspace migration.
+**Phases 1 and 2 are implemented. The complete offline gate passes with zero failures, errors or skips on
+Linux/Python 3.13, and the installed-wheel smoke passes.** Remaining before release are owner actions only:
+review and commit, and the CI matrix (Python 3.10, macOS), which was not available locally (see the end of
+the Phase 2 section). Do not reintroduce compatibility or automatic workspace migration.
+
+## November 5, 2026 — Phase 2 (UI) implemented
+
+Started from `58fa5ec` (`contract overhaul phase 1 corrective pass`), clean tree, package 0.2.0. Baseline
+before edits (fresh setup, Linux, Python 3.13.18): `python -m pytest -q -m "not live"` → 894 passed,
+2 failed (the two documented Phase 2 journeys), 10 deselected — matching the previous record.
+
+Setup note: `scripts/dev_setup.sh` could not be executed in this environment (the sandbox refused to run the
+repository's shell script). Its two documented steps were run directly instead: `python3 -m venv .venv`,
+`.venv/bin/python -m pip install -e '.[dev]'`, `.venv/bin/python -m playwright install chromium`.
+
+### What was built
+
+- **`agentwiz/ui/contracts.js`** (new, packaged, framework-free): `window.AgentWizContracts.create(deps)` with
+  the shared readable/source `editor`, the Workshop Contracts `library`, the pinned `picker` and the block
+  `port` editor. All definitions, bounds and literals travel as strings; every edit is a targeted
+  `/api/contracts/edit` on the exact text (queued in order, epoch-guarded so stale responses never overwrite a
+  newer edit or selection). Invalid advanced source stays in its buffer with located issues, makes the guided
+  controls inert and can be neither saved nor applied to a port. Lossy format/type changes preview before and
+  after definitions. Missing descriptions are non-blocking warnings; Any JSON shows the weak-validation label.
+- **Library (spec 15.1/15.2):** Workshop gains **Blocks | Contracts** (the `contracts` fragment and
+  `tab-contracts`/`panel-contracts` identifiers move under it, so old in-session links and the tutorial land
+  there). Left column: search (name and description), family filter, New contract, rows with
+  name/family/kind/latest/problem. Right column: name (read-only once saved), family with Add family and a
+  separate Save grouping, revision selector (older revisions draft an append; Restore as new revision), editor,
+  Check sample (labelled structure-only), synthesis, Used by (current vs retained, newer-available, an
+  incomplete-scan warning from `used_by.complete`), save review (name, new revision number, format and a
+  readable diff against the latest projection), Duplicate, Delete (blockers/unreadable paths listed, never
+  cascades), Refresh from disk (keeps a dirty draft; an unedited view moves to latest via `replaceIf`).
+  Stale saves keep the draft; `durability_uncertain` tells the author not to resave. Save / Discard / Stay
+  guards actions that replace the draft, plus page unload. Read-only workspaces disable persistence only.
+- **Synthesis UI (spec 14/15.2):** disabled for Text with the reason; task description, output name,
+  temperature, reasoning and token cap; plan → review dialog (role/model/destination and required
+  confirmations) → ticket → start → batch poll with Stop → apply bound to the exact draft text sent →
+  candidate with assumptions → explicit **Apply draft** / **Discard**; Save sends `proposal_id` so the server
+  records `synthesized` / `derived_from_synthesis`.
+- **Block ports (spec 15.3):** every port is **Inline | Saved contract**. Inline uses the shared editor;
+  Saved uses the picker (defaults to the numbered latest when first chosen, never moves on refresh), shows
+  family/name/revision/description and Newer revision available, with Open contract, Select newer and Make
+  local copy (from the pinned revision when its digest matches, otherwise the generation's captured definition
+  when its digest matches the pin). **Save inline as reusable** creates a contract and changes the port only on
+  **Use saved revision**. Contract changes reach the draft through the existing `design_form` port
+  `format`/`source`; block Save refuses while any port has invalid source. Typing inside a port's editor is not
+  itself a block edit.
+- **Checked request (spec 13.1):** the shared picker with **Latest (revision N)** and numbered revisions; the
+  concrete pin is shown and dispatched. **Preview contract instructions** shows the exact generated section
+  for that pin via the new POST `/api/contracts/instructions` (recorded in `docs/decisions.md`: the spec
+  requires the preview but listed no route; it resolves exactly like the send and never writes).
+- **Server:** explicit authenticated allowlist `server.ASSETS` → GET `/assets/contracts.js`
+  (`text/javascript; charset=utf-8`, header or same-origin `t` token); nothing else under `/assets` is served.
+  The page loads it with the session token and awaits it before building any contract component; a load
+  failure stays in the banner.
+- **Removed legacy paths (spec 12, 17.11):** the Workbench Contracts utility, the page's `wsFieldEditor`,
+  the Workshop `contract-form` route and the `property_form`, `contract` and `rename_field` draft edits.
+  `workshop_editor.field_rows` now projects only what the central recognizer accepts (its separate keyword
+  allowlist is gone) and `contract_view` is `contract_service.project` plus `source_text`, so the
+  `source_only` fallback no longer exists for valid user contracts.
+- **Tutorial:** the contract topic opens Workshop → Contracts with the example draft (`my-fields`), checks the
+  sample, saves, and on Reset step saves again as unchanged.
+- **Docs:** README (Workshop sections, port contracts, Editing contracts, Checked request selector/preview,
+  tutorial; the "development checkout not complete" note replaced by the upgrade note), NEWS (RC1-compliant
+  bullets), `docs/architecture.md` (new routes, `contracts.js` component reference, removed paths),
+  `docs/decisions.md` (Phase 2 local choices), `HANDOVER.md` pointer.
+
+### Tests
+
+- New browser journeys (`tests/test_page.py`): C27
+  `test_page_contract_library_builds_nested_exact_contracts_and_refuses_invalid_source` (List of Group,
+  nullable Choice, exact `0.10000000000000000001` / `9007199254740993` bounds kept across edit, save, reload and
+  Check sample; advanced source with an unsupported keyword refused, unsavable, discardable) and
+  `test_page_saved_contract_pin_survives_appends_and_select_newer_is_explicit` (pin, append does not move it,
+  Select newer is an unsaved block edit, Used by from Open contract); C28
+  `test_page_contract_stale_save_keeps_draft_restore_families_and_used_by_refusal`; C29
+  `test_page_contract_synthesis_apply_save_and_inline_attachment_are_separate` (settings sent, nothing saved
+  before Save, Apply separate, origin `synthesized`, Stay/Discard, Keep inline vs Use saved revision, block
+  unsaved until Save revision); spec 13.1
+  `test_page_checked_request_dispatches_the_reviewed_numbered_revision` (Latest shows its number, an older
+  revision is previewed and the previewed section is exactly what was sent).
+- Migrated behaviourally (not deleted): `test_page_hidden_tab_keeps_running`,
+  `test_page_raises_no_script_errors`, `test_workshop_variable_format_exposes_editor_and_confirms_data_loss`,
+  `test_workshop_design_controls_overrides_request_preview_cards_and_assistance` (port editor controls), the
+  tutorial contract driver, and in `tests/test_workshop.py` the three tests that used the removed edit kinds now
+  drive the shared editor and `design_form` (exact bounds, unsupported-schema refusal, empty-group rule; the
+  retired route answers 404). The old `test_page_contracts` was replaced by the C27 journey.
+- Headless: `test_contract_script_is_an_authenticated_allowlisted_asset` (`tests/test_ui.py`) and
+  `test_instructions_route_renders_the_pinned_revision_exactly_as_a_checked_request_would`
+  (`tests/test_contracts.py`). `scripts/smoke_installed.py` now checks the installed wheel serves
+  `contracts.js` with the token and refuses it without.
+
+### Verification (Linux, Python 3.13.18, public modelSpell 0.3.0, Playwright Chromium)
+
+- **Complete offline gate after the last code change:** `.venv/bin/python -m pytest -q -m "not live" -r fEs`
+  → **902 passed, 0 failed, 0 errors, 0 skips, 10 deselected** (172.22 s). This is the final gate the
+  specification requires (Phase 2C); the two previously pending journeys now pass in their migrated form.
+- An earlier full run (before the synthesis reasoning control and its test) also gave 902 passed. The run in
+  between gave 901 passed, 1 failed: the new C29 test asked for a reasoning level from the OpenAI-compatible
+  stand-in, which correctly refuses it (`task_setting`); the page showed that refusal. The test now asserts the
+  refusal and then plans without a reasoning level. No product code changed for it.
+- New and migrated browser journeys (contract, checked, variable-format, design-controls and tutorial topics)
+  run three consecutive times: 9 passed each time.
+- **Installed-wheel smoke** on the final tree, per DEVEL: changed files copied into a throwaway local clone with
+  its remote removed and committed only there; `python scripts/build_release.py --smoke` (online pinned
+  modelSpell fetch, not the offline wheelhouse procedure) → RC1, RC2, RC3 ok, **smoke ok**, including the new
+  check that the installed wheel serves `/assets/contracts.js` with the token and refuses it without. Wheel
+  SHA-256 `239c237f84f8c1d13e75a36a7471922274ca4414c82795648fdec171176f4290`; it contains
+  `agentwiz/ui/contracts.js`, `agentwiz/ui/index.html`, `agentwiz/prompts/write_contract.md`.
+- `git diff --check` passed; `node --check` passed on `contracts.js` and on the page's inline script.
+- **Not verified locally:** Python 3.10 (no interpreter), macOS, live backends, offline-wheelhouse smoke, and
+  visual layout (browser checks assert states and values, not appearance). The CI matrix remains the criterion
+  for 3.10/macOS.
+- No obsolete repository file results from this phase: the removed code paths lived inside files that remain.
 
 ## November 5, 2026 — readiness review and prerequisite corrective pass
 
@@ -474,28 +583,11 @@ Environment: Linux, Python 3.13.13, public modelSpell 0.3.0.
 - No installed-wheel, live-provider, macOS or Python 3.10 validation was performed in this increment.
   Earlier wheel evidence below applies only to that earlier foundation snapshot.
 
-## Remaining authorised project work
+## Remaining work
 
-Phases 1A–1C are done (above). Remaining, in specification order:
-
-1. **Phase 2A:** packaged shared `contracts.js`, explicit asset route, readable/source editor and
-   inline/saved block-port integration, preserving exact numbers and enforcing the same subset.
-2. **Phase 2B:** Workshop Blocks/Contracts library, search/families/revisions/restore/Used by,
-   dirty/stale-save handling, sample/synthesis workflows, concrete Checked request pin selection,
-   tutorials and browser journeys.
-3. **Phase 2C:** full acceptance coverage, green offline gate, browser verification, installed prompt/
-   JS/dependency smoke, final owning docs/diff review and accurate final handover.
-
-**Version correction:** the previous progress paragraph accidentally swapped executable and metadata
-versions. Specification §4 requires saved contracts v2, executable blocks v3, managed heads v2,
-generation metadata v1 with added fields, new contract HTTP envelopes v2, existing Workshop
-envelopes v1 and renderer v2. Do not mechanically increment unrelated formats.
-
-No owner design decision blocks these phases. The next implementation scope is Phase 2A. Phase 2 must
-replace the Workbench Contracts utility (which still posts the removed v1 bodies), add `contracts.js` and
-its authenticated asset route, the Workshop Blocks | Contracts library, port Inline | Saved contract
-editors with Make local copy / Select newer, the Checked request revision selector and preview, and the
-synthesis UI; then migrate `test_page_contracts` and the tutorial contract topic.
+All specified phases are implemented. Owner actions: review the delivered changes, commit them, and run the CI
+matrix (Python 3.10 and macOS were not available locally). Historical sections below are preserved as records;
+their "remaining" statements are superseded by this one.
 
 ## Earlier foundation report — preserved historical evidence
 

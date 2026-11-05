@@ -135,12 +135,13 @@
 <div id="banner" class="hidden" data-test="banner"></div>
 
 <nav id="main-nav" aria-label="Main navigation"><button id="tab-workshop" data-test="tab-workshop" aria-controls="panel-workshop">Workshop</button><button id="ws-workbench" data-test="ws-workbench">Workbench</button></nav>
+<nav id="workshop-sections" class="tabs" role="tablist" aria-label="Workshop sections" hidden><button role="tab" id="ws-section-blocks" data-test="ws-section-blocks" aria-controls="panel-workshop" aria-selected="false" tabindex="-1">Blocks</button><button role="tab" id="tab-contracts" data-test="tab-contracts" aria-controls="panel-contracts" aria-selected="false" tabindex="-1" data-state="idle" data-frag="contracts">Contracts<span class="mark" aria-hidden="true">●</span></button></nav>
 <section id="panel-workshop" data-test="panel-workshop" hidden></section>
+<section role="tabpanel" id="panel-contracts" data-test="panel-contracts" aria-labelledby="tab-contracts" hidden></section>
 <div class="tabs" role="tablist" aria-label="AgentWiz functions" id="tablist">
   <button role="tab" id="tab-chat" data-test="tab-chat" aria-controls="panel-chat" aria-selected="false" tabindex="-1" data-state="idle" data-frag="chat">Chat<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-documents" data-test="tab-documents" aria-controls="panel-documents" aria-selected="false" tabindex="-1" data-state="idle" data-frag="documents">Documents<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-mcp-tools" data-test="tab-mcp-tools" aria-controls="panel-mcp-tools" aria-selected="false" tabindex="-1" data-state="idle" data-frag="mcp-tools">MCP tools<span class="mark" aria-hidden="true">●</span></button>
-  <button role="tab" id="tab-contracts" data-test="tab-contracts" aria-controls="panel-contracts" aria-selected="false" tabindex="-1" data-state="idle" data-frag="contracts">Contracts<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-checked-request" data-test="tab-checked-request" aria-controls="panel-checked-request" aria-selected="false" tabindex="-1" data-state="idle" data-frag="checked-request">Checked request<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-history" data-test="tab-history" aria-controls="panel-history" aria-selected="false" tabindex="-1" data-state="idle" data-frag="history">History<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-blocks" data-test="tab-blocks" aria-controls="panel-blocks" aria-selected="false" tabindex="-1" data-state="idle" data-frag="blocks">Saved block runs<span class="mark" aria-hidden="true">●</span></button>
@@ -148,7 +149,6 @@
 <section role="tabpanel" id="panel-chat" data-test="panel-chat" aria-labelledby="tab-chat" hidden></section>
 <section role="tabpanel" id="panel-documents" data-test="panel-documents" aria-labelledby="tab-documents" hidden></section>
 <section role="tabpanel" id="panel-mcp-tools" data-test="panel-mcp-tools" aria-labelledby="tab-mcp-tools" hidden></section>
-<section role="tabpanel" id="panel-contracts" data-test="panel-contracts" aria-labelledby="tab-contracts" hidden></section>
 <section role="tabpanel" id="panel-checked-request" data-test="panel-checked-request" aria-labelledby="tab-checked-request" hidden></section>
 <section role="tabpanel" id="panel-history" data-test="panel-history" aria-labelledby="tab-history" hidden></section>
 <section role="tabpanel" id="panel-blocks" data-test="panel-blocks" aria-labelledby="tab-blocks" data-state="idle" hidden></section>
@@ -258,6 +258,17 @@
 
 <script>
 const TOKEN = new URLSearchParams(location.search).get("t") || "";
+// The shared contract components (overhaul spec 15.4): one packaged script behind the same session token,
+// awaited before the contract screen, port editors or the Checked request selector are built.
+const contractsScript = new Promise((resolve, reject) => {
+  const script = document.createElement("script");
+  script.src = "/assets/contracts.js?t=" + encodeURIComponent(TOKEN);
+  script.onload = () => resolve(window.AgentWizContracts);
+  script.onerror = () => reject(new Error("The contract editor script could not be loaded; reload the page."));
+  document.head.append(script);
+});
+let CW = null;                  // the contract components, once contracts.js has loaded
+const startProblems = [];       // shown in the banner on every render
 const $ = (id) => document.getElementById(id);
 const STALE_SEND = "Settings, a contract or the saving switch were changed elsewhere. The page has reloaded them; check them and send again.";
 const STALE_SAVE = "Settings were changed in another tab. The header now shows the current settings; check them and save again.";
@@ -478,16 +489,22 @@ function fragFromHash() {
   return FRAGS.includes(f) ? f : "workshop";
 }
 
+const NOT_WORKBENCH = ["workshop", "contracts", "history", "blocks"];
 function selectTab(frag, opts = {}) {
   activeFrag = frag;
-  $("tablist").hidden = ["workshop","history","blocks"].includes(frag);
-  $("ws-workbench").setAttribute("aria-pressed",String(!["workshop","history","blocks"].includes(frag)));
+  $("tablist").hidden = NOT_WORKBENCH.includes(frag);
+  $("ws-workbench").setAttribute("aria-pressed",String(!NOT_WORKBENCH.includes(frag)));
   for (const f of FRAGS) {
     const button = $("tab-" + f), selected = f === frag;
     button.setAttribute("aria-selected", selected ? "true" : "false");
     button.tabIndex = selected ? 0 : -1;
     $("panel-" + f).hidden = !selected;
   }
+  // Workshop holds Blocks | Contracts; the main Workshop tab stays selected in either section.
+  $("workshop-sections").hidden = !["workshop", "contracts"].includes(frag);
+  $("ws-section-blocks").setAttribute("aria-selected", String(frag === "workshop"));
+  $("ws-section-blocks").tabIndex = frag === "workshop" ? 0 : -1;
+  if (frag === "contracts") $("tab-workshop").setAttribute("aria-selected", "true");
   if (opts.focus) $("tab-" + frag).focus();
   if (opts.hash !== false && location.hash !== "#" + frag) {
     try { history.replaceState(null, "", "#" + frag); } catch (e) { /* keep the old fragment */ }
@@ -501,7 +518,7 @@ function setTabRunning(frag, running) {
 }
 
 $("tablist").addEventListener("keydown", (e) => {
-  const available=FRAGS.filter(f=>!["workshop","blocks","history"].includes(f));
+  const available=FRAGS.filter(f=>!NOT_WORKBENCH.includes(f));
   const i = available.indexOf(activeFrag);
   let next = -1;
   if (e.key === "ArrowRight") next = (i + 1) % available.length;
@@ -513,6 +530,13 @@ $("tablist").addEventListener("keydown", (e) => {
   selectTab(available[next], { focus: true });
 });
 for (const f of FRAGS) $("tab-" + f).addEventListener("click", () => selectTab(f));
+$("ws-section-blocks").addEventListener("click", () => selectTab("workshop"));
+$("workshop-sections").addEventListener("keydown", (e) => {
+  if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(e.key)) return;
+  e.preventDefault();
+  const next = activeFrag === "workshop" ? (e.key === "Home" ? "workshop" : "contracts") : (e.key === "End" ? "contracts" : "workshop");
+  selectTab(next); (next === "workshop" ? $("ws-section-blocks") : $("tab-contracts")).focus();
+});
 window.addEventListener("hashchange", () => {
   const f = fragFromHash();
   if(f!==activeFrag)selectTab(f,{hash:false});
@@ -570,6 +594,7 @@ function renderState() {
   if (state.legacy_server_profiles?.length) banner.append(h("p", {text: `Legacy server URLs in profiles ${state.legacy_server_profiles.join(", ")} are ignored. Transfer any needed URLs to ${state.server_config_path}.`}));
   for (const c of (state.contracts && state.contracts.items) || [])
     if (c.problem) banner.append(h("p", { text: `${c.problem.file}: ${c.problem.message}` }));
+  for (const m of startProblems) banner.append(h("p", { text: m }));
   const warning = shortCredentialWarning();
   if (warning) banner.append(h("p", { "data-test": "banner-short-credential", text: warning }));
   banner.classList.toggle("hidden", banner.childElementCount === 0);
@@ -943,7 +968,12 @@ function makeRequestTab(frag, source) {
   let active = null, shown = null, rows = [], override = null;
 
   // checked only
-  const contractSel = h("select", { id: "checked-contract", "data-test": "checked-contract" });
+  // The shared pinned selector (contracts.js) is attached once that script has loaded.
+  const contractHost = h("div", { "data-test": "checked-contract-host" });
+  let contractPicker = null, contractSignature = "";
+  const instructionsBtn = h("button", { type: "button", "data-test": "checked-contract-preview", text: "Preview contract instructions" });
+  const instructionsOut = outPanel("checked", "contract-instructions", "Generated contract section (appended to the system prompt)");
+  instructionsOut.el.classList.add("hidden");
   const sendReason = h("span", { class: "note", "data-test": "checked-send-reason" });
   const attemptsEl = h("ul", { class: "list", "data-test": "checked-attempts" });
   const repairReason = h("span", { class: "note", "data-test": "checked-repair-reason" });
@@ -957,7 +987,7 @@ function makeRequestTab(frag, source) {
     ? "Checked request: send a prompt, check the answer against a saved contract, then preview and send a repair."
     : "Chat: send a prompt to the model and watch the answer stream. Stop ends a request at any stage.";
   put(panel, h("p", { class: "panel-intro", text: intro }),
-    checked ? [h("label", { for: "checked-contract", text: "Contract" }), contractSel] : null,
+    checked ? [contractHost, h("div", { class: "row" }, instructionsBtn), instructionsOut.el] : null,
     h("label", { for: prefix + "-system", text: "System prompt (optional)" }), system,
     h("label", { for: prefix + "-prompt", text: "Input" }), prompt, task.el,
     h("div", { class: "row" }, send, stop, statusEl, attemptEl, sendReason),
@@ -969,9 +999,10 @@ function makeRequestTab(frag, source) {
   const display = (state_, text, style = "") => { statusEl.dataset.state = state_; statusEl.textContent = text; statusEl.className = "status " + style; };
   const displays = (req) => req === active || (req.attemptId !== null && req.attemptId === shown);
 
+  // The concrete pin this page shows: name, numbered revision and digest (never a literal "latest", spec 13.1).
   function selectedContract() {
-    const items = (state.contracts && state.contracts.items) || [];
-    return items.find((c) => c.name === contractSel.value && !c.problem) || null;
+    const pin = contractPicker && contractPicker.pin();
+    return pin && pin.digest ? pin : null;
   }
 
   function repairCode() {
@@ -1244,7 +1275,7 @@ function makeRequestTab(frag, source) {
       const c = selectedContract();
       if (!c) { display("idle", "Choose a usable contract first.", "error"); return; }
       // The concrete numbered revision and digest this page shows; never a literal "latest" (spec 13.1).
-      body.contract = { name: c.name, revision: c.latest, digest: c.latest_digest };
+      body.contract = { name: c.name, revision: c.revision, digest: c.digest };
     }
     const payload = JSON.stringify(body);
     if (state.limits && new TextEncoder().encode(payload).length > state.limits.request_bytes) {
@@ -1258,7 +1289,21 @@ function makeRequestTab(frag, source) {
   stop.onclick = doStop;
 
   if (checked) {
-    contractSel.onchange = refreshControls;
+    instructionsBtn.onclick = async () => {
+      const c = selectedContract();
+      if (!c) { display("idle", "Choose a usable contract first.", "error"); return; }
+      try {
+        const r = await api("/api/contracts/instructions", { format_version: 2, name: c.name, revision: c.revision, digest: c.digest });
+        const still = selectedContract();
+        if (!still || still.digest !== r.digest || still.revision !== r.revision) return;   // a newer selection wins
+        instructionsOut.pre.textContent = `Contract ${r.name} · revision ${r.revision} · ${r.digest}\n\n${r.text}`;
+        instructionsOut.pre.dataset.revision = String(r.revision); instructionsOut.pre.dataset.digest = r.digest;
+        instructionsOut.el.classList.remove("hidden");
+      } catch (e) {
+        instructionsOut.el.classList.add("hidden");
+        display("idle", CW ? CW.errorText(e) : e.message, "error");
+      }
+    };
     previewBtn.onclick = async () => {
       const last = rows[rows.length - 1];
       if (!last) return;
@@ -1287,18 +1332,23 @@ function makeRequestTab(frag, source) {
       display("idle", "", "");
       prompt.value = text; system.value = "";
       if (!preserveTask) panel.querySelector(`[data-test="${prefix}-task-reset"]`).click();
-      if (checked) contractSel.value = "fields";
       refreshControls();
+      if (checked && contractPicker) return contractPicker.select("fields").then(refreshControls);
+    },
+    attachContracts() {
+      if (!checked || !CW || contractPicker) return;
+      contractPicker = CW.picker({ test: "checked", latestOption: true, onChange: () => {
+        instructionsOut.el.classList.add("hidden"); instructionsOut.pre.textContent = ""; refreshControls();
+      } });
+      contractHost.replaceChildren(contractPicker.el);
     },
     submit,
     onState() {
       task.render();
-      if (checked) {
-        const keep = contractSel.value, items = ((state.contracts && state.contracts.items) || []).filter((c) => !c.problem);
-        contractSel.replaceChildren();
-        if (!items.length) contractSel.add(new Option("(no usable contracts)", ""));
-        for (const c of items) contractSel.add(new Option(`${c.name} r${c.latest} (${c.format})`, c.name));
-        if (items.some((c) => c.name === keep)) contractSel.value = keep;
+      if (checked && contractPicker) {
+        // Re-read the selected contract only when the library changed; "Latest" then shows the new number.
+        const signature = JSON.stringify((state.contracts && state.contracts.items) || []);
+        if (signature !== contractSignature) { contractSignature = signature; contractPicker.refresh(); }
       }
       refreshControls();
     },
@@ -1722,187 +1772,17 @@ $("save-servers").onclick = async () => {
   } catch (e) { await serversFailure(e); }
 };
 
-// --- Contracts (Section 11.2; contracts are saved in the workspace, Section 7.8) --------------------------------------
-(function contractsTab() {
-  const panel = $("panel-contracts");
-  const TEMPLATES = {
-    text: { format: "text", description: "", checks: [{ type: "contains", value: "TEXT THE ANSWER MUST CONTAIN" }] },
-    json: { format: "json", strict: false, description: "", schema: null, checks: [] },
-  };
-  let current = null;                 // {name, revision, problem} of the opened contract; null for a new one
-  let arming = false;
-  const listEl = h("ul", { class: "list", "data-test": "contracts-list" });
-  const schemaStatus = h("div", { class: "note", "data-test": "contracts-schema-status" });
-  const nameInput = h("input", { id: "contracts-name", "data-test": "contracts-name", placeholder: "contract name" });
-  const editor = h("textarea", { class: "editor", spellcheck: "false", "data-test": "contracts-editor", "data-state": "idle" });
-  const newText = h("button", { type: "button", "data-test": "contracts-new-text", text: "New text contract" });
-  const newJson = h("button", { type: "button", "data-test": "contracts-new-json", text: "New JSON contract" });
-  const saveBtn = h("button", { class: "primary", type: "button", "data-test": "contracts-save", text: "Save" });
-  const deleteBtn = h("button", { type: "button", "data-test": "contracts-delete", text: "Delete" });
-  const confirmBtn = h("button", { type: "button", class: "hidden", "data-test": "contracts-delete-confirm", text: "Confirm: delete this contract" });
-  const cancelBtn = h("button", { type: "button", class: "hidden", "data-test": "contracts-delete-cancel", text: "Cancel" });
-  const msg = h("div", { class: "note", "data-test": "contracts-msg" });
-  const errorsEl = h("ul", { class: "err-text", "data-test": "contracts-errors" });
-  const checkText_ = h("textarea", { rows: 5, "data-test": "contracts-check-text", placeholder: "Paste text to check against the contract above" });
-  const checkBtn = h("button", { type: "button", "data-test": "contracts-run-check", text: "Check" });
-  const result = checkBox("contracts");
-  panel.append(h("p", { class: "panel-intro", text: "Contracts: define, save and delete contracts, and check pasted text against one. No model is involved." }),
-    schemaStatus,
-    h("label", { text: "Saved contracts" }), listEl,
-    h("div", { class: "row" }, newText, newJson),
-    h("label", { for: "contracts-name", text: "Name" }), nameInput,
-    h("details",{},h("summary",{"data-test":"contracts-advanced",text:"Advanced contract source"}),editor),
-    h("div", { class: "row" }, saveBtn, deleteBtn, confirmBtn, cancelBtn, copyControl("contracts-copy-editor", () => editor.value, () => editor)),
-    msg, errorsEl,
-    h("label", { text: "Check text" }), checkText_,
-    h("div", { class: "row" }, checkBtn), result.el);
-
-  const human=h("div",{"data-test":"contracts-fields"});
-  editor.parentElement.before(human);
-  async function showContract(){
-    if(!editor.value)return;
-    try{
-      const view=await wsApi("contract-form",{source:editor.value});human.replaceChildren(wsShowValue({format:view.format,fields:(view.fields||[]).map(r=>({name:r.path.join(".")||"Root",type:r.type,required:r.required})),source_only:view.source_only}));
-      if(view.format==="json"&&(!view.source_only||view.blank_schema))human.append(wsFieldEditor("","contract",view.fields,async edit=>{
-        const result=await wsApi("contract-form",{source:editor.value,field_edit:edit});editor.value=result.source_text;setEditor("idle");await showContract();
-      }));
-    }catch(e){human.textContent=e.message;}
-  }
-  editor.onchange=showContract;
-  const items = () => (state.contracts && state.contracts.items) || [];
-  const readOnly = () => !!(state.contracts && state.contracts.read_only);
-  const setEditor = (s) => { editor.dataset.state = s; };
-
-  function refreshButtons() {
-    const damaged = !!(current && current.problem);
-    saveBtn.disabled = readOnly() || damaged;
-    deleteBtn.disabled = readOnly() || !current || arming;
-    deleteBtn.classList.toggle("hidden", arming);
-    confirmBtn.classList.toggle("hidden", !arming); cancelBtn.classList.toggle("hidden", !arming);
-    nameInput.readOnly = !!current;
-  }
-
-  function renderList() {
-    listEl.replaceChildren();
-    if (!items().length) listEl.append(h("li", { class: "muted", text: "No saved contracts yet." }));
-    for (const c of items()) {
-      const li = h("li", { class: "pick" + (current && current.name === c.name ? " current" : ""), "data-test": "contracts-row",
-        "data-name": c.name, "data-revision": String(c.revision) },
-        `${c.name} · ${c.format || "?"} · revision ${c.revision}${c.description ? " · " + c.description : ""}${c.problem ? " · PROBLEM: " + c.problem.message : ""}`);
-      li.onclick = () => open(c.name);
-      listEl.append(li);
-    }
-  }
-
-  function renderSchemaStatus() {
-    const c = (state.contracts && state.contracts.checks) || { available: false, detail: "unknown" };
-    schemaStatus.dataset.available = c.available ? "true" : "false";
-    schemaStatus.textContent = c.available ? `JSON Schema checks: available (${c.detail})`
-      : `JSON Schema validation unavailable (${c.detail}). Repair the AgentWiz installation and restart.`;
-  }
-
-  function showIssues(body) {
-    errorsEl.replaceChildren();
-    for (const i of body.issues || []) errorsEl.append(h("li", { text: `${i.location}: ${i.message}` }));
-    const more = (body.issue_count || 0) - (body.issues || []).length;
-    if (more > 0) errorsEl.append(h("li", { text: `… and ${more} more` }));
-  }
-
-  async function open(name) {
-    arming = false;
-    try {
-      const c = await api("/api/contracts/" + encodeURIComponent(name));
-      current = { name: c.name, revision: c.revision, problem: c.problem };
-      nameInput.value = c.name; editor.value = c.text; showContract(); setEditor("idle"); errorsEl.replaceChildren();
-      msg.textContent = c.problem ? `This contract has a problem (${c.problem.message}). It cannot be saved over; repair the file with an editor.` : "";
-    } catch (e) { msg.textContent = e.message; }
-    renderList(); refreshButtons();
-  }
-
-  function fresh(kind) {
-    arming = false; current = null;
-    nameInput.value = ""; editor.value = JSON.stringify(TEMPLATES[kind], null, 2) + "\n";
-    setEditor("idle"); showContract(); msg.textContent = ""; errorsEl.replaceChildren();
-    renderList(); refreshButtons();
-  }
-
-  newText.onclick = () => fresh("text");
-  newJson.onclick = () => fresh("json");
-  editor.addEventListener("input", () => setEditor("idle"));
-
-  saveBtn.onclick = async () => {
-    const name = nameInput.value.trim();
-    errorsEl.replaceChildren();
-    if (!NAME_RE.test(name)) {
-      setEditor("error"); msg.textContent = "A contract name is 1 to 64 letters, digits, '.', '_' or '-', starting with a letter or digit."; return;
-    }
-    setTabRunning("contracts", true);
-    try {
-      const res = await api("/api/contracts/save", { name, text: editor.value, revision: current ? current.revision : null });
-      state = res;
-      current = { name: res.contract.name, revision: res.contract.revision, problem: res.contract.problem };
-      editor.value = res.contract.text;
-      msg.textContent = "Saved." + ((res.notes || []).length ? " " + res.notes.join(" ") : "");
-      setEditor("saved"); renderState(); renderList(); refreshButtons();
-    } catch (e) {
-      setEditor("error");
-      if (e.code === "contract_error") { msg.textContent = e.message; showIssues(e.body); }
-      else if (e.code === "stale_revision") { await reloadAfterStale(); msg.textContent = "This contract changed elsewhere. Reopen it to load the current text; your edits are kept here."; }
-      else { if (e.status === 409 || e.status === 404) await reloadAfterStale(); msg.textContent = e.message; }
-    } finally { setTabRunning("contracts", false); }
-  };
-
-  deleteBtn.onclick = () => { arming = true; refreshButtons(); };
-  cancelBtn.onclick = () => { arming = false; refreshButtons(); };
-  confirmBtn.onclick = async () => {
-    if (!current) return;
-    arming = false;
-    try {
-      state = await api("/api/contracts/delete", { name: current.name, revision: current.revision });
-      current = null; nameInput.value = ""; editor.value = ""; setEditor("idle"); errorsEl.replaceChildren();
-      msg.textContent = "Deleted."; renderState();
-    } catch (e) {
-      if (e.status === 409 || e.status === 404) await reloadAfterStale();
-      msg.textContent = e.code === "stale_revision" ? "This contract changed elsewhere; reopen it before deleting." : e.message;
-    }
-    renderList(); refreshButtons();
-  };
-
-  async function runCheck() {
-    errorsEl.replaceChildren();
-    setTabRunning("contracts", true);
-    try {
-      const r = await api("/api/contracts/check", { contract_text: editor.value, text: checkText_.value });
-      result.show(r.check);
-    } catch (e) {
-      result.clear();
-      if (e.code === "contract_error") { msg.textContent = e.message; showIssues(e.body); result.note("The contract is not valid, so nothing was checked."); }
-      else msg.textContent = e.message;
-    } finally { setTabRunning("contracts", false); }
-  }
-  checkBtn.onclick = runCheck;
-
+// --- Workshop → Contracts (overhaul spec 15): the library, editor and selectors live in contracts.js -------------------
+function initContracts(components) {
+  CW = components.create({ api, h, copyControl, checkBox, dialog: wsDialog, state: () => state, changed: refreshState });
+  const library = CW.library($("panel-contracts"));
   TABS.contracts = {
-    async tutorialPrepare(text, checkText) {
-      const existing = items().find((c) => c.name === "my-fields");
-      if (existing) await open(existing.name);
-      else { fresh("json"); nameInput.value = "my-fields"; }
-      editor.value = text; checkText_.value = checkText;
-      result.clear(); setEditor("idle");
-    },
-    submit: runCheck,
-    onState() {
-      renderSchemaStatus(); renderList();
-      if (current) {                  // a file changed on disk since it was opened
-        const now = items().find((c) => c.name === current.name);
-        if (!now) msg.textContent = "This contract no longer exists. Saving creates it again only if you reopen a new one.";
-        else if (now.revision !== current.revision) msg.textContent = "This contract changed on disk. Reopen it to load the current text; saving now will be refused as stale.";
-      }
-      refreshButtons();
-    },
+    onState: library.onState, submit: library.submit, leave: library.leave, dirty: library.dirty,
+    open: library.open,
+    tutorialPrepare: (text, sample, name) => library.tutorialPrepare(text, sample, name),
   };
-  refreshButtons();
-})();
+  TABS["checked-request"].attachContracts();
+}
 
 // --- History (Section 10.5, 11.2) ---------------------------------------------------------------------------------------
 (function historyTab() {
@@ -2756,7 +2636,7 @@ const wsSearch = h("input",{placeholder:"Search blocks","aria-label":"Search blo
 const wsNav = h("div",{class:"row ws-workshop-nav","data-test":"ws-actions"});
 const wsRevisionPicker = h("div",{class:"ws-revision-picker","data-test":"ws-revision-picker"});
 const wsHeading = h("h2",{text:"Block Workshop"});
-let wsBlocks=[], wsPoll=0, wsPending=null, wsLoadGeneration=0;
+let wsBlocks=[], wsPoll=0, wsPending=null, wsLoadGeneration=0, wsPorts=[];
 function wsErrorText(e){
   const messages={invalid:"The block request is invalid. Check the key, selected starter and bindings.",stale:"Settings or source changed. Refresh and review the action again.",setup_unavailable:"The selected model role or MCP server is unavailable. Check Settings.",validation_unavailable:"Repair the AgentWiz validator installation and restart.",read_only:"The workspace is read-only. Open a writable workspace to save changes.",busy:"Workshop is busy. Wait for the current operation to finish.",unusable:"The block source could not be read. Check its files and permissions."};
   const issues=(e.body?.issues||[]).map(i=>i.location+": "+i.message).join("; ");
@@ -2777,7 +2657,7 @@ function wsChoice(parent,label,values,selected){
   parent.append(h("label",{class:"ws-field"},label,el));return el;
 }
 function wsDirty(){ws.dirty=true;wsHeading.textContent=(ws.draft?.metadata?.display_name||ws.draft?.key||"New block")+" · Unsaved";}
-window.addEventListener("beforeunload",e=>{if(ws.dirty||ws.examplesDirty){e.preventDefault();e.returnValue="";}});
+window.addEventListener("beforeunload",e=>{if(ws.dirty||ws.examplesDirty||(TABS.contracts&&TABS.contracts.dirty&&TABS.contracts.dirty())){e.preventDefault();e.returnValue="";}});
 function wsDialog(title,content,choices,beforeClose){
   return new Promise(resolve=>{
     const dialog=h("dialog",{"data-test":"ws-dialog"},h("h2",{text:title}),content);
@@ -2852,6 +2732,7 @@ async function wsSave(){
   wsBody.inert=true;wsNav.inert=true;wsRevisionPicker.inert=true;
   try{
   await wsFlush();if(!ws.draft)return false;
+  if(wsPorts.some(c=>c.invalid())){const e=new ApiError("A port's advanced contract source is invalid. Correct it and apply it, or discard the source edit, before saving.",400,"contract_invalid");throw e;}
   const bound=await wsPlan("save",{draft:ws.draft,expected_identity:ws.draft.base_digest??null});if(!bound)return false;
   const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};const saved=await wsApi("save",bound);await wsLoad({key:saved.key},false);Object.assign(ws,keep);wsRender();wsNote.dataset.state="saved";delete wsNote.dataset.code;wsNote.textContent="Revision saved";return true;
   }finally{wsBody.inert=false;wsNav.inert=false;wsRevisionPicker.inert=false;}
@@ -2981,31 +2862,26 @@ function wsDesign(){
   const revisionSave=h("div",{class:"ws-revision-save"});misc.append(revisionSave);
   const revisionName=wsField(revisionSave,"Revision name (optional)",ws.draft.metadata.revision_name||"");revisionName.maxLength=120;
   const save=wsButton("Save revision",wsSave);save.title="Saving creates a new revision; older revisions remain unchanged.";revisionSave.append(save);
-  const rows={};
+  const rows={};wsPorts=[];
   for(const side of ["inputs","outputs"]){
     const area=h("fieldset",{},h("legend",{text:side==="inputs"?"Inputs":"Outputs"}));variables.append(area);rows[side]=[];
-    const table=h("table",{class:"ws-port-table"},h("thead",{},h("tr",{},...["Field name","Format","Meaning"].map(text=>h("th",{scope:"col",text})))));area.append(table);
+    const table=h("table",{class:"ws-port-table"},h("thead",{},h("tr",{},...["Field name","Meaning"].map(text=>h("th",{scope:"col",text})))));area.append(table);
     function port(name,format,description,source){
-      const line=h("tbody",{class:"ws-port","data-test":"ws-port","data-side":side,"data-port":name}),cells=[h("td"),h("td"),h("td")];line.append(h("tr",{class:"ws-port-main"},...cells));
-      const n=wsField(cells[0],"Field name",name),desc=wsField(cells[2],"Meaning",description);
-      const f=wsChoice(cells[1],"Format",[["text","Text"],["json","Structured value"],["shared","Shared contract"]],format);
-      const detail=h("td",{colspan:"3"});line.append(h("tr",{},detail));
-      const adv=h("details",{},h("summary",{text:"Contract source"})),src=wsField(adv,"Exact contract",source||"",true);detail.append(adv);
-      const shared=wsChoice(detail,"Saved contract",[["","Choose a saved contract"],...(state.contracts?.items||[]).filter(c=>!c.problem).map(c=>[c.name,c.name])],format==="shared"?JSON.parse(source):"");
-      shared.parentElement.hidden=format!=="shared";
-      shared.onchange=()=>{src.value=JSON.stringify(shared.value);changed();};
-      const item={original:name,n,desc,f,src};rows[side].push(item);
-      const view=p.contracts?.[side]?.[name];
-      let editor=null;
-      function fields(current){if(editor)editor.remove();editor=null;if(f.value==="json"&&current&&(!current.source_only||current.blank_schema)){editor=wsFieldEditor(side,()=>item.original,current.fields);detail.append(editor);}}
-      fields(view);
-      let previous=format;
-      f.onchange=async e=>{e.stopPropagation();const next=f.value;f.value=previous;
-        let destructive=false;try{const c=JSON.parse(src.value||"{}");destructive=typeof c==="string"||Object.keys(c).some(k=>k!=="format"&&(k!=="checks"||!Array.isArray(c.checks)||c.checks.length));}catch(error){destructive=true;}
-        if(destructive&&await wsDialog("Change variable format",h("p",{text:"Changing format replaces this variable's contract, including any structured fields or checks."}),["Replace contract","Cancel"])!=="Replace contract")return;
-        f.value=next;previous=next;shared.parentElement.hidden=next!=="shared";src.value=next==="shared"?JSON.stringify(shared.value):JSON.stringify({format:next});fields({blank_schema:true,fields:[]});changed();};
-      if(format==="shared")detail.append(wsButton("Make inline copy",()=>{const c=p.contracts?.[side]?.[name];if(c){src.value=c.source_text;f.value=c.format;previous=c.format;shared.parentElement.hidden=true;fields(c);changed();}}));
-      detail.append(wsButton("Remove",()=>{rows[side]=rows[side].filter(x=>x!==item);line.remove();changed();}));table.append(line);
+      const line=h("tbody",{class:"ws-port","data-test":"ws-port","data-side":side,"data-port":name}),cells=[h("td"),h("td")];line.append(h("tr",{class:"ws-port-main"},...cells));
+      const n=wsField(cells[0],"Field name",name),desc=wsField(cells[1],"Meaning",description);
+      const detail=h("td",{colspan:"2"});line.append(h("tr",{},detail));
+      const item={original:name,n,desc,format,source};rows[side].push(item);
+      // Inline | Saved contract (overhaul spec 15.3): the shared editor and pinned selector from contracts.js.
+      // A contract change is an unsaved block edit until the block revision is saved.
+      if(CW){
+        item.contract=CW.port({side,name,format,source,captured:ws.draft.metadata?.contracts?.[side]?.[name],
+          onChange:(nextFormat,nextSource)=>{item.format=nextFormat;item.source=nextSource;changed();},
+          onOpen:async(contract,revision)=>{selectTab("contracts");await TABS.contracts.open(contract,revision);}});
+        // Typing in the contract editor is not yet a block edit; only an applied change (onChange) is.
+        for(const type of ["input","change"])item.contract.el.addEventListener(type,e=>e.stopPropagation());
+        wsPorts.push(item.contract);detail.append(item.contract.el);
+      }else detail.append(h("p",{class:"err-text",text:"The contract editor is unavailable; reload the page."}));
+      detail.append(wsButton("Remove",()=>{rows[side]=rows[side].filter(x=>x!==item);wsPorts=wsPorts.filter(x=>x!==item.contract);line.remove();changed();}));table.append(line);
     }
     for(const field of d[side]||[])port(field.name,field.format,field.description,field.source);
     area.append(wsButton("Add "+side.slice(0,-1),()=>{port("","text","","");changed();}));
@@ -3075,7 +2951,8 @@ function wsDesign(){
   if(d.kind==="tool"){const args=wsField(more,"Tool argument mapping",d.arguments||"{}",true);args.oninput=()=>{d.arguments=args.value;};}
   const advanced=wsSource("Inspect executable definition",ws.draft.definition_text);more.append(advanced);
   function changed(){wsDirty();wsPending=async()=>{
-    const ports={};for(const side of ["inputs","outputs"])ports[side]=rows[side].map(r=>({original:r.original,name:r.n.value,description:r.desc.value,format:r.f.value,source:r.src.value}));
+    await Promise.all(rows.inputs.concat(rows.outputs).map(r=>r.contract?r.contract.ready():null));   // contract edits in flight land first
+    const ports={};for(const side of ["inputs","outputs"])ports[side]=rows[side].map(r=>({original:r.original,name:r.n.value,description:r.desc.value,format:r.format,source:r.source}));
     const result=await wsApi("preview",{draft:ws.draft,edit:{kind:"design_form",name:title.value,revision_name:revisionName.value,purpose:purpose.value,ports,arguments:d.arguments,behaviour:behavior.value,binding:role.value,system:system.value,settings:settings.value,sampling:Object.fromEntries(Object.entries(sampling).map(([n,f])=>[n,settingModes[n]&&settingModes[n].value!=="custom"?"":f.value])),resets:Object.entries(settingModes).filter(([,f])=>f.value==="reset").map(([n])=>n),customs:Object.entries(settingModes).filter(([,f])=>f.value==="custom").map(([n])=>n),limits:Object.fromEntries(Object.entries(limits).map(([n,f])=>[n,f.value])),budget:budget.value,repairs:repair.value}});
     ws.projection=result;ws.draft=result.draft;
     for(const side of ["inputs","outputs"])for(const r of rows[side])r.original=r.n.value;
@@ -3207,31 +3084,6 @@ async function wsEditExample(selected){
   ws.examples=ws.examples.map(x=>x.id===e.id?ex:x);ws.examplesDirty=true;wsRender();
 }
 const wsRatings={};
-function wsFieldEditor(side,port,fields,sharedEdit=null){
-  const label=typeof port==="function"?port():port;
-  const card=h("details",{"data-test":"ws-fields","data-side":side,"data-port":label},h("summary",{text:"Structured fields · "+label}));
-  const rows=fields||[];
-  async function edit(row,addition){
-    const box=h("div"),field=wsField(box,"Property name",addition?"":row.path.at(-1)||""),
-      type=wsChoice(box,"Value type",["Text","Whole number","Number","Yes/No","Group","List","Choice"].map(t=>[t,t]),addition?"Text":row.type),
-      desc=wsField(box,"Field description",addition?"":row.description),
-      required=h("input",{type:"checkbox",checked:!addition&&row.required}),
-      nullable=h("input",{type:"checkbox",checked:!addition&&row.nullable}),choices=wsField(box,"Allowed choices (one per line)",(row.choices||[]).join("\n"),true);
-    const low=wsField(box,"Minimum value or length",row.minimum??row.min_length??row.min_items??""),high=wsField(box,"Maximum value or length",row.maximum??row.max_length??row.max_items??"");
-    box.append(h("label",{},required," Required"),h("label",{},nullable," Allow null"));
-    let additional;
-    if(row.type==="Group"&&!addition){additional=wsChoice(box,"Unknown properties",[["preserve","Keep current policy"],["allow","Allow"],["reject","Reject"]]);}
-    const choice=await wsDialog("Edit structured field",box,["Apply",...(!addition&&row.path.length&&row.path.at(-1)!=="[]"?["Remove field"]:[]),"Cancel"]);if(!["Apply","Remove field"].includes(choice))return;
-    const edit={kind:"property_form",side,port:typeof port==="function"?port():port,path:row.path,addition,remove:choice==="Remove field",...(additional&&additional.value!=="preserve"?{additional_properties:additional.value==="allow"}:{}),bounds:[low.value,high.value],name:field.value,type:type.value,description:desc.value,required:required.checked,nullable:nullable.checked,choices:choices.value.split("\n").filter(Boolean)};
-    if(sharedEdit){await sharedEdit(edit);return;}
-    await wsFlush();if(typeof port==="function")edit.port=port();   // a rename still pending in the row is applied first
-    const p=await wsApi("preview",{draft:ws.draft,edit});
-    ws.projection=p;ws.draft=p.draft;wsDirty();wsRender();
-  }
-  for(const r of rows){card.append(h("div",{},r.path.join(".")+" · "+r.type+" ",wsButton("Edit field",()=>edit(r,false))));if(r.type==="Group")card.append(wsButton("Add property",()=>edit(r,true)));}
-  if(!rows.length)card.append(wsButton("Define object fields",()=>edit({path:[],type:"Group"},true)));
-  return card;
-}
 async function wsPersistExamples(){
   await wsFlush();
   if(ws.dirty||!ws.draft.base_digest){
@@ -3241,7 +3093,7 @@ async function wsPersistExamples(){
   const result=await wsPut("blocks/"+ws.draft.key+"/examples",{expected_revision:ws.revision,examples:ws.examples});ws.revision=result.revision;ws.examples=result.examples;ws.examplesDirty=false;wsNote.textContent="Examples saved";wsRender();return true;
 }
 function wsInput(parent,name,contract,initial,remember=true){
-  if(contract?.format!=="json"||contract.source_only||!contract.fields?.length){
+  if(contract?.format!=="json"||!contract.fields?.length){
     const container=contract?.format==="json"?h("details",{open:true},h("summary",{text:name+" · advanced value"})):parent;
     if(container!==parent)parent.append(container);
     const field=wsField(container,name,initial,true);field.oninput=()=>{if(remember)ws.inputs[name]=field.value;};
@@ -3528,10 +3380,17 @@ const openWorkspaces = h("button", { type: "button", id: "open-workspaces", "dat
 $("workspace").after(openWorkspaces);
 
 // --- start -----------------------------------------------------------------------------------------------------------------
-selectTab(fragFromHash(), { hash: false });
-refreshState().then(tutorialInit).catch((e) => {
-  $("banner").replaceChildren(h("p", { text: e.message }));
+function startFailure(e) {
+  startProblems.push(e.message);
+  $("banner").append(h("p", { text: e.message }));
   $("banner").classList.remove("hidden");
+}
+contractsScript.then(initContracts).catch(startFailure).finally(() => {
+  selectTab(fragFromHash(), { hash: false });
+  refreshState().then(tutorialInit).catch((e) => {
+    $("banner").replaceChildren(h("p", { text: e.message }));
+    $("banner").classList.remove("hidden");
+  });
 });
 </script>
 </body>

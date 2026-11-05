@@ -299,7 +299,7 @@ plain JSON only (no `Decimal`; a contract travels as `{"name", "revision", "text
 
 ## Contracts and checks
 
-### Contract overhaul — Phases 1A–1C (headless; Phase 2 UI pending)
+### Contract overhaul (definitions, revisions, pins, synthesis and the shared editor)
 
 `contract_schema` is the authoritative recognizer for the user vocabulary and owns the canonical
 exact-number digest (`contract_digest`). `checks.parse_contract` and `contract_from_text` always apply user
@@ -363,10 +363,43 @@ acceptance, so an accepted proposal is always applicable and an oversized one us
 | POST `/api/contracts/project`, `/edit`, `/check` | Draft projection, targeted edit, Contract check; never write or dispatch. |
 | POST `/api/contracts/save`, `/family`, `/restore`, `/delete` | Persistence with `expected_file_token`; refused in read-only workspaces. |
 | POST `/api/contracts/synthesis/plan`, `/start`, `/apply` | Synthesis plan, ticketed start, draft-bound application (no write). |
+| POST `/api/contracts/instructions` | `{name, revision, digest}` → the exact direct-value section `output_protocol.single_value_instructions` renders for that pin, resolved like a Checked request send (404/409 on a missing revision or changed digest). Never writes. |
+| GET `/assets/contracts.js` | The packaged page component script; an explicit allowlist entry in `server.ASSETS`, session token required (header or same-origin `t` query), `text/javascript; charset=utf-8`. No other path under `/assets` is served. |
 
 Checked requests send `contract:{name,revision,digest}`; a newer appended revision does not invalidate the
-reviewed pin. The editable Contracts utility in the page, the shared `contracts.js` editor and the Workshop
-Contracts library are Phase 2 work; until then the page's contract editor still targets the replaced routes.
+reviewed pin.
+
+### The page's contract components (`agentwiz/ui/contracts.js`)
+
+One framework-free script exposing `window.AgentWizContracts.create(deps)`; `deps` passes the page's
+`api`, `h`, `copyControl`, `checkBox`, the Workshop review dialog, a `state()` getter and `changed()` (state
+refresh). The page loads it from `/assets/contracts.js?t=<token>` and awaits it before selecting the first tab;
+a load failure is shown in the banner and ports show that the editor is unavailable. Components:
+
+- `editor` — the one readable/source editor (library, inline ports). It holds the last valid exact definition
+  text and the server projection; every change is a targeted `/api/contracts/edit` (or `/project` for a fresh
+  definition chosen by Change type or applied source), queued in order. `set()` starts a new epoch and drops
+  queued edits against the replaced text; `replaceIf(expected, text)` replaces only if no edit intervened.
+  Invalid source stays in the source buffer (`data-state="invalid"`, guided controls inert) and `text()` is
+  null, so it can be neither saved nor applied to a port. Domain numbers are never parsed by the browser:
+  bounds, rules and definitions travel as strings; fresh node/definition templates contain no numbers.
+- `library` — Workshop → Contracts: listing (search, family filter), open/revision view, save review
+  (`changes()` diff against the latest projection), stale refusal keeping the draft, Refresh (`replaceIf`
+  keeps drafts), family save, restore, duplicate, delete with blockers/unreadable paths, Check sample,
+  Used by and synthesis (plan → review dialog → ticket → start → batch poll/Stop → apply bound to the
+  draft text the request used → explicit Apply draft; Save sends `proposal_id`).
+- `picker` — contract and revision selectors for a concrete `{name, revision, digest}` pin; `latestOption`
+  (Checked request) maps **Latest** to the concrete latest at the last read. Refresh never moves an explicit
+  numbered selection.
+- `port` — Inline | Saved contract for one block port. Changes reach the block draft through the existing
+  `design_form` port `source`/`format` (an inline definition, or `format:"shared"` with the pin JSON). Make
+  local copy uses the pinned revision when its digest still matches, otherwise the generation's captured
+  definition when its digest matches the pin. Save inline as reusable creates a contract and changes the port
+  only on explicit choice.
+
+`workshop_editor.field_rows` projects only schemas the central recognizer accepts (no second allowlist);
+`contract_view` is `contract_service.project` plus `source_text`. The former Workshop `contract-form` route
+and the `property_form`, `contract` and `rename_field` draft edits were removed.
 
 - **Validation copy.** `jsonschema` picks its validator class from `$schema`, in `check_schema` and
   while following `$ref`, so extending its `integer` check does not reach every path. AgentWiz
@@ -909,7 +942,8 @@ file may be undeclared: the executable's references plus selected support must
 account for the complete set. The server constructs assistant-generated filenames.
 `definition_text` remains the advanced escape hatch. Preview returns port contract
 projections, exact source, facts, descriptions, freshness, setup issues and a filled
-prompt/arguments when inputs are supplied. Unsupported schemas are source-only.
+prompt/arguments when inputs are supplied. Port contracts are projected by the shared contract service; a
+definition outside the user vocabulary is never projected.
 Preview also returns `valid` and declared `input_ports`, and projects independently usable contracts
 even when another part of the definition is invalid. Save/Start planning rejects invalid drafts with
 409 `block_invalid` and bounded `issues` (location/rule), rather than misclassifying them as file
@@ -929,7 +963,6 @@ constraints. Reference/shape-changing schemas refuse visual editing.
 | --- | --- |
 | GET `starters` | Nine starter IDs, versions and two packaged examples each. |
 | POST `render-value`, `input-value`, `answer-view` | Exact literal text to typed presentation, or typed input back to exact text; checked answers use the existing checker/parser for display. |
-| POST `contract-form` | Shared Contracts field projection/edit against the original exact contract. |
 | POST `preview` | Accept draft, starter/key/binding, or key/revision/support selection. No dispatch/publication. |
 | POST `plans` | `{action,request}` returns `expected_plan`, effective descriptor and required confirmations. |
 | POST `save` | Draft/source, `expected_identity`, expected plan and confirmations publish one revision. |

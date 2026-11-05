@@ -112,6 +112,16 @@ try:
         check(False, "page served without the token")
     except urllib.error.HTTPError as e:
         check(e.code == 403, f"tokenless GET returned {e.code}")
+    # The packaged contract editor script (overhaul spec 15.4): served from the installed wheel, token required,
+    # as JavaScript, exactly as the page loads it.
+    script = urllib.request.urlopen(root + "/assets/contracts.js?t=" + token, timeout=10)
+    check(script.status == 200 and script.headers["Content-Type"].startswith("text/javascript")
+          and b"window.AgentWizContracts" in script.read(), "contracts.js not served from the installed wheel")
+    try:
+        urllib.request.urlopen(root + "/assets/contracts.js", timeout=10)
+        check(False, "contracts.js served without the token")
+    except urllib.error.HTTPError as e:
+        check(e.code == 403, f"tokenless script GET returned {e.code}")
 
     def api(path, body=None):
         req = urllib.request.Request(root + path, method="GET" if body is None else "POST",

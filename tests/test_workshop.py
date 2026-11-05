@@ -269,19 +269,29 @@ def test_exact_editor_preservation_and_unsupported_schema_refusal(ui):
         'ratio': {'type': 'number', 'minimum': jsonio.decode_exact('0.10000000000000000001')}},
         'required': ['id'], 'additionalProperties': False}}
     draft = {'key': 'b', 'definition_text': jsonio.encode_exact(obj), 'files': MODEL_FILES, 'metadata': {}}
-    result = send(ui, 'preview', draft=draft, edit={'kind': 'contract', 'side': 'outputs', 'port': 'out', 'path': ['id'], 'set': {'description': '"Identifier"'}})
+    result = port_edit(ui, send(ui, 'preview', draft=draft), 'outputs', 'out',
+                       {'op': 'set_description', 'path': ['id'], 'description': 'Identifier'})
     edited = jsonio.decode_exact(result['draft']['definition_text'])
+    assert edited['outputs']['out']['contract']['schema']['properties']['id']['description'] == 'Identifier'
     assert edited['outputs']['out']['contract']['schema']['properties']['id']['minimum'] == 9007199254740993
     assert edited['outputs']['out']['contract']['schema']['properties']['ratio']['minimum'] == jsonio.decode_exact('0.10000000000000000001')
     assert edited['outputs']['out']['contract']['schema']['additionalProperties'] is False
     plan_save(ui, result['draft'])
-    assert send(ui, 'preview', key='b')['contracts']['outputs']['out']['projection']
-    unsupported = draft['definition_text'].replace('"minimum":0.10000000000000000001',
-                                                   '"multipleOf":0.10000000000000000001')
-    refused = failure_of(lambda: send(ui, 'preview', draft={**draft, 'definition_text': unsupported},
-        edit={'kind': 'contract', 'side': 'outputs', 'port': 'out', 'path': ['id'],
-              'set': {'description': '"Identifier"'}}))
-    assert refused.status == 400
+    projected = send(ui, 'preview', key='b')['contracts']['outputs']['out']
+    assert [row['path'] for row in projected['fields']] == [[], ['id'], ['ratio']]
+    assert projected['fields'][2]['minimum'] == '0.10000000000000000001'               # exact text, never a float
+    # The shared editor refuses an unsupported user schema; it is never projected from a partial reading.
+    unsupported = jsonio.encode_exact(edited['outputs']['out']['contract']).replace(
+        '"minimum":0.10000000000000000001', '"multipleOf":0.10000000000000000001')
+    refused = failure_of(lambda: request(ui, '/api/contracts/edit', {'format_version': 2, 'definition_text': unsupported,
+        'edit': {'op': 'set_description', 'path': ['id'], 'description': 'Identifier'}}))
+    assert refused.status == 400 and refused.body['code'] == 'unsupported_keyword'
+    carried = send(ui, 'preview', draft=draft)
+    operation = design_edit(carried)
+    operation['ports']['outputs'][0]['source'] = unsupported
+    invalid = send(ui, 'preview', draft=carried['draft'], edit=operation)
+    assert invalid['valid'] is False and invalid['issues'] and 'out' not in invalid['contracts']['outputs']
+    assert failure_of(lambda: send(ui, 'plans', action='save', request={'draft': invalid['draft'], 'expected_identity': None})).status in (400, 409)
 
 
 def test_design_binding_edits_and_located_invalid_draft_refusals(ui):
@@ -486,17 +496,21 @@ def test_visual_forms_keep_exact_values_and_remove_required_members(ui):
     value = send(ui, 'render-value', text=text)
     assert jsonio.decode_exact(send(ui, 'input-value', value=value)['text']) == jsonio.decode_exact(text)
     source = '{"format":"json","schema":{"type":"object","properties":{"n":{"type":"number","minimum":0.123456789012345678901,"maximum":0.999999999999999999999}},"required":["n"]}}'
-    result = send(ui, 'contract-form', source=source, field_edit={
-        'path':['n'], 'addition':False, 'name':'exact', 'type':'Number', 'description':'Amount',
-        'required':True, 'nullable':False, 'choices':[], 'bounds':['0.123456789012345678901','']})
-    schema = jsonio.decode_exact(result['source_text'])['schema']
-    assert schema['required'] == ['exact']
+
+    def edit(text, operation):
+        return request(ui, '/api/contracts/edit', {'format_version': 2, 'definition_text': text, 'edit': operation})['definition_text']
+    text = edit(source, {'op': 'rename_property', 'path': ['n'], 'name': 'exact'})
+    text = edit(text, {'op': 'set_description', 'path': ['exact'], 'description': 'Amount'})
+    text = edit(text, {'op': 'set_bound', 'path': ['exact'], 'keyword': 'maximum', 'value_text': None})
+    schema = jsonio.decode_exact(text)['schema']
+    assert schema['required'] == ['exact'] and 'maximum' not in schema['properties']['exact']
     assert schema['properties']['exact']['minimum'] == jsonio.decode_exact('0.123456789012345678901')
-    result = send(ui, 'contract-form', source=result['source_text'], field_edit={'path':['exact'], 'remove':True})
-    schema = jsonio.decode_exact(result['source_text'])['schema']
+    schema = jsonio.decode_exact(edit(text, {'op': 'remove_property', 'path': ['exact']}))['schema']
     assert schema['properties'] == {} and schema['required'] == []
     opaque = '{"format":"json","schema":{"type":"object","$defs":{},"properties":{}}}'
-    assert failure_of(lambda: send(ui, 'contract-form', source=opaque)).status == 400
+    assert failure_of(lambda: request(ui, '/api/contracts/project', {'format_version': 2, 'definition_text': opaque})).status == 400
+    # The retired Workshop-only contract form route is gone; the shared contract editor is the one path.
+    assert failure_of(lambda: send(ui, 'contract-form', source=source)).status == 404
 
 
 def test_display_rename_keeps_description_review_until_behaviour_changes(ui):
@@ -595,10 +609,23 @@ def schema_block(schema, name='b'):
     return model_block(name, outputs={'out': {'contract': {'format': 'json', 'schema': schema}}})
 
 
-def add_property(draft, name, kind, path=()):
-    return {'kind': 'property_form', 'side': 'outputs', 'port': 'out', 'path': list(path), 'addition': True,
-            'name': name, 'type': kind, 'description': '', 'required': True, 'nullable': False,
-            'choices': [], 'bounds': ['', '']}
+NODES = {'Group': '{"type":"object","properties":{},"required":[],"additionalProperties":false}', 'Text': '{"type":"string"}'}
+
+
+def port_edit(ui, preview, side, port, operation):
+    """Edit one port's inline definition with the shared contract editor (POST /api/contracts/edit), then carry the
+    result into the block draft as an ordinary design edit, exactly as the page does."""
+    entry = next(f for f in preview['design'][side] if f['name'] == port)
+    edited = request(ui, '/api/contracts/edit', {'format_version': 2, 'definition_text': entry['source'], 'edit': operation})
+    design = design_edit(preview)
+    for f in design['ports'][side]:
+        if f['name'] == port:
+            f.update(source=edited['definition_text'], format=edited['format'])
+    return send(ui, 'preview', draft=preview['draft'], edit=design)
+
+
+def add_property(name, kind, path=()):
+    return {'op': 'add_property', 'path': list(path), 'name': name, 'node_text': NODES[kind], 'required': True}
 
 
 def test_a_new_empty_group_may_be_edited_but_not_saved_or_started_and_a_saved_one_is_kept(ui, server):
@@ -614,7 +641,7 @@ def test_a_new_empty_group_may_be_edited_but_not_saved_or_started_and_a_saved_on
     closed = {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ['a'], 'additionalProperties': False}
     draft = {'key': 'g', 'definition_text': json.dumps(schema_block(closed, 'g')), 'files': MODEL_FILES, 'metadata': {}}
     plan_save(ui, draft)
-    edited = send(ui, 'preview', draft=draft, edit=add_property(draft, 'nested', 'Group'))       # the empty state is allowed
+    edited = port_edit(ui, send(ui, 'preview', draft=draft), 'outputs', 'out', add_property('nested', 'Group'))   # the empty state is allowed
     assert edited['issues'] == []
     refused = failure_of(lambda: send(ui, 'plans', action='save', request={'draft': edited['draft'], 'expected_identity': None}))
     assert refused.status == 409 and refused.body['code'] == 'block_invalid'
@@ -622,7 +649,7 @@ def test_a_new_empty_group_may_be_edited_but_not_saved_or_started_and_a_saved_on
     started = failure_of(lambda: send(ui, 'plans', action='test', request=body))
     assert started.status == 409 and started.body['code'] == 'block_invalid'
     assert [i['location'] for i in started.body['issues']] == ['outputs.out.nested']
-    filled = send(ui, 'preview', draft=edited['draft'], edit=add_property(edited['draft'], 'child', 'Text', ['nested']))
+    filled = port_edit(ui, edited, 'outputs', 'out', add_property('child', 'Text', ['nested']))
     assert send(ui, 'plans', action='test', request={**body, 'draft': filled['draft']})['expected_plan']
     # A group that the saved block already holds empty is not "new": it stays editable and runnable.
     legacy = json.loads(json.dumps(closed))

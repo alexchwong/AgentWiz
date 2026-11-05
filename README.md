@@ -14,7 +14,9 @@ What 0.2.0 adds:
 - **Saved revisions:** display names, duplicate, restore, explicit legacy conversion and newest-20 retention.
 - **Examples and correctness:** exact outputs, field assertions or human review, independently of contract acceptance.
 - **Five assistance actions:** create, improve, describe, suggest examples and explain a failure. Review proposals before Apply.
-- **Workbench:** Chat, Documents, MCP tools, Contracts and Checked request remain independent utilities.
+- **Contracts:** a Workshop section for reusable Text and JSON contracts with append-only revisions, a readable
+  editor (advanced source optional), sample checks, Used by and reviewable model-drafted proposals.
+- **Workbench:** Chat, Documents, MCP tools and Checked request remain independent utilities.
 - **History:** saved runs, checks, attempts and source attribution, with saving off by default.
 - **Fourteen tutorial topics** using isolated local services, with no API keys or live model required.
 
@@ -36,12 +38,9 @@ JSON Schema validation is included in the standard installation.
 
 Working from a clone? See DEVEL.md for the developer setup.
 
-**Development checkout:** the contract overhaul has completed its headless phases (new definitions,
-revisioned saved contracts, pinned references, synthesis and migrated packaged assets). The browser
-editor (Workshop → Contracts, port editors and synthesis UI) is not built yet, and the old Workbench
-Contracts editor in this checkout no longer works with the new routes. Old version 1 contract files and
-block files are refused with `migration_required`; nothing migrates a workspace automatically. See
-`contract_overhaul_handover.md` for status and validation evidence.
+**Upgrading a development workspace:** contract files and executable block files written before the
+contract overhaul (contract version 1, executable block version 1) are refused with `migration_required`;
+nothing migrates a workspace automatically. Recreate them as new contracts and blocks.
 
 Prefer to do it by hand? Download the wheel from the release page (the wheel, not the source zip),
 then run:
@@ -107,18 +106,18 @@ starting with a letter or digit.
 
 ## Navigation
 
-**Workshop** is the default. Its compact saved-block selector is above Design, Test and Compare.
-**Workbench** groups the five independent utilities below. **History**
+**Workshop** is the default, with two sections: **Blocks** (its compact saved-block selector is above
+Design, Test and Compare) and **Contracts**. **Workbench** groups the four independent utilities below. **History**
 opens saved runs. Settings in the header groups model profiles, roles, MCP servers and Save runs; the
 Workspaces control beside the workspace name opens workspace management.
 
 | Location | Address | Purpose |
 | --- | --- | --- |
-| Workshop | `#workshop/<key>/<design\|test\|compare>` | Author and evaluate one block. |
+| Workshop: Blocks | `#workshop/<key>/<design\|test\|compare>` | Author and evaluate one block. |
+| Workshop: Contracts | `#contracts` | Create, revise, check and reuse saved contracts; see which blocks use them. |
 | Workbench: Chat | `#chat` | Send a system prompt and input; see reasoning and answer stream in. |
 | Workbench: Documents | `#documents` | Preview a text document and copy it. |
 | Workbench: MCP tools | `#mcp-tools` | Discover and call tools, with labelled arguments or an explicit advanced editor. |
-| Workbench: Contracts | `#contracts` | Edit supported structured fields or exact source and check pasted text. |
 | Workbench: Checked request | `#checked-request` | Check an answer and explicitly send a repair. |
 | History | `#history` | Read saved runs and attempts, copy evidence or delete a run. |
 
@@ -178,9 +177,10 @@ A model block's Design form has three unlabelled columns on wide screens: block 
 and **User prompt** on the left; variable tables in the middle; identity, saving and settings on the right.
 The form stacks on narrow screens. Insert buttons add
 `{{inputs.name}}` and `{{output.name}}` placeholders (see [Named outputs](#named-outputs)). Each input and
-output is an editable row with field name, format dropdown and meaning. Each row retains its own expandable
-contract source, shared-contract selector or **Structured fields** editor. Choosing Structured value exposes
-its field editor without a manual refresh. Destructive format changes ask before replacing a contract.
+output is an editable row with field name and meaning, and its contract below it: **Inline** uses the same
+readable contract editor as Workshop → Contracts; **Saved contract** pins one numbered revision (see
+[Contracts](#contracts)). A type change that would drop fields, choices or bounds previews the before and
+after definitions first; contract edits are unsaved block edits until **Save revision**.
 **Request preview** shows the exact system and user messages a run would send for the current inputs,
 with the generated output section and where each setting came from, each with Copy. On the right,
 **Model role** selects a configured role without silently replacing an unavailable saved binding.
@@ -200,10 +200,14 @@ Structured fields distinguish missing, null, false, zero and empty text. Numeric
 source text. Saved examples and their expected values use the same typed forms as Test. Editing an example
 also offers inputs it lacks, and keeps expected values for outputs the block no longer declares until you
 remove them. A new group needs at least one field before **Save revision** or a run: editing may pass through
-an empty group, and a group that was already empty in the saved block is left alone. Unsupported schema structures use the labelled contract-source editor; unknown rules are
-preserved. A shared contract can be copied inline for a block-specific edit. Deliberate shared edits
-remain in Workbench Contracts and show dependent blocks. Schema-backed validation and assistance use
-the validator included in the standard installation; repair the installation if it becomes unavailable.
+an empty group, and a group that was already empty in the saved block is left alone. A definition outside
+the supported vocabulary is never projected or overwritten: it stays in the advanced source with its
+located problems, and neither the port nor the block can be saved until it is corrected or discarded.
+**Make local copy** replaces a pin with the pinned definition for a block-specific edit; **Save inline as
+reusable** creates a new saved contract and changes the port only if you choose **Use saved revision**.
+Shared edits happen in Workshop → Contracts, which shows the blocks that use each contract. Schema-backed
+validation and assistance use the validator included in the standard installation; repair the
+installation if it becomes unavailable.
 
 **Save revision**, in Design's right-hand controls, previews the effective action and its required
 acknowledgements. **Block revision** selects a retained revision into the draft, not the saved head;
@@ -542,6 +546,29 @@ proposed JSON contract with its assumptions listed separately. The proposal is a
 never saved or attached automatically, it gets one repair if its schema is outside the vocabulary, and
 saving it records only which prompt, role and model produced it.
 
+**Editing contracts (Workshop → Contracts).** The left column searches names and descriptions, filters
+by family and starts **New contract** (a blank Text draft in family General). The right column edits one
+contract: **Format** is Text, Structured JSON or Any JSON. Text has optional length limits, exact text and
+repeatable required/forbidden literals (a blank box means the rule does not run). Structured JSON is an
+indented field table — Name, Type, Description, Required, Allow null — where **More** shows a field's
+bounds, choices, unknown-property policy and Add/Remove property. New groups reject unknown properties;
+new properties are required and not nullable. Any JSON is labelled as having no field validation. Missing
+descriptions are warnings only. **Advanced source** (collapsed) accepts exact source through the same
+rules; invalid source is kept with its problems and cannot be saved. Every edit is applied by the server
+to the exact definition, so long integers and decimals keep every digit.
+**Revision** views any saved revision; editing it drafts an append, and **Restore as new revision** copies
+it as the next revision. **Save** first shows the name, the new revision number, the format and the
+changes from the latest revision; an unchanged draft writes nothing. A save based on a file changed in
+another tab is refused and the draft is kept: **Refresh from disk**, review and save again. If saving
+reports that durability could not be confirmed, do not save again; refresh to confirm. **Save grouping**
+changes only the family; **Duplicate** starts a new contract at revision 1. **Delete** lists the blocks
+that use the contract and is refused while any do, or while a block could not be inspected. **Check
+sample** checks pasted text (literal text for Text, an answer for JSON) without a model call; a pass is a
+structure pass, not a correctness check. Leaving an unsaved draft offers Save, Discard or Stay.
+**Synthesize** (Structured or Any JSON only) shows the destination of the `write_contract` role before
+sending; the proposal appears beside its assumptions, **Apply draft** only replaces the editor's draft,
+and **Save** is still a separate step. Read-only workspaces allow viewing, checking and copying only.
+
 **Results.** Each check gives `pass`, `fail` or `not_run`; overall `pass`, `fail`, `incomplete` (a check
 could not run, for example a number beyond the exact limits) or `contract_error` (the contract itself
 could not be applied — never the model's fault, and never repaired). Issues are listed by location; the
@@ -569,10 +596,12 @@ but wrong value passes its contract and only an example expectation or review re
 ## Checked requests and repair
 
 The **Checked request** tab is Chat with a contract. Choose a saved contract (only usable ones are
-listed, with their latest revision number; Send stays disabled, with the reason, until one is chosen),
-type a system prompt and an input, and press **Send**. The request carries the exact revision and digest
-shown; if that revision has since been changed or removed the request is refused before sending, while a
-newer appended revision does not affect it. When the answer completes, it is checked, and the tab shows the overall result, each
+listed; Send stays disabled, with the reason, until one is chosen) and a revision: **Latest** shows the
+concrete revision number and digest it currently means, or choose a numbered revision. **Preview contract
+instructions** shows the exact generated section that will be appended to the system prompt for that
+revision. Type a system prompt and an input, and press **Send**. The request carries the exact revision and
+digest shown; if that revision has since been changed or removed the request is refused before sending,
+while a newer appended revision does not affect it. When the answer completes, it is checked, and the tab shows the overall result, each
 check, and the first 20 issues.
 
 - **What is checked.** Only answers whose outcome is *Complete* or *Truncated answer*. Blank,
@@ -996,7 +1025,7 @@ changed what it shows):
 - **Chat** (updated in 0.1.3): send a message and reuse an answer.
 - **Use a document** (updated in 0.1.3): preview an example and copy it into a conversation.
 - **Call a tool** (updated in 0.1.3): run a prepared local tool and use its result.
-- **Define a contract** (updated in 0.2.0): save reusable structural requirements; a wrong number of the
+- **Define a contract** (updated in 0.2.0): in Workshop → Contracts, check and save reusable structural requirements; a wrong number of the
   right type still passes — exact values belong in Workshop example expectations.
 - **Repair a response** (updated in 0.2.0): an answer missing a required field fails; preview and send a
   follow-up using contract feedback.

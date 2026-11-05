@@ -92,12 +92,18 @@ def drive_tool(page):
 
 
 def drive_contract(page):
+    expect(tid(page, "panel-contracts")).to_be_visible()                 # Workshop → Contracts (overhaul 15.1)
+    has(page, "contracts-editor", "data-format", "structured")
+    tid(page, "contracts-run-check").click()
+    has(page, "contracts-check", "data-check", "pass")
     tid(page, "contracts-save").click()
-    has(page, "contracts-editor", "data-state", "saved")
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    has(page, "contracts-status", "data-state", "saved")
     tid(page, "tutorial-reset").click()
     has(page, "tutorial-status", "data-state", "ready")
     tid(page, "contracts-save").click()
-    has(page, "contracts-editor", "data-state", "saved")
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    has(page, "contracts-status", "data-state", "unchanged")             # the same definition appends nothing
 
 
 def drive_repair(page):
