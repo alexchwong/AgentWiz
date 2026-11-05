@@ -1,5 +1,7 @@
 # NEWS
 ## 0.2.0
+- Contract synthesis shows sanitized model-call errors, including missing API keys, instead of only a generic failure.
+- Roles flags default roles missing from the saved workspace and explains how to add them without replacing existing roles.
 - Contracts are Text, JSON with a small schema vocabulary, or Any JSON; literal Text rules and exact
   numbers; legacy `checks`/`strict` definitions are refused.
 - Saved contracts keep every revision in one file per name, with families, restore-as-new and

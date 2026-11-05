@@ -562,6 +562,28 @@ def test_page_contract_stale_save_keeps_draft_restore_families_and_used_by_refus
     assert request(ui, "/api/contracts/notes")["latest"] == 4
 
 
+def test_page_contract_synthesis_model_error(ui, server, open_page, monkeypatch):
+    import modelspell
+    from agentwiz import model_call
+    from test_contract_overhaul import setup_role
+    setup_role(ui, server)
+    description = 'OpenRouter API key is not set'
+
+    def missing_key(*args, **kwargs):
+        raise modelspell.AuthError(description)
+
+    monkeypatch.setattr(model_call, 'call_model', missing_key)
+    page = open_page(ui, 'contracts')
+    tid(page, 'contracts-format').select_option('any')
+    tid(page, 'contracts-synth-task').fill('Classify a support message.')
+    tid(page, 'contracts-synth-plan').click()
+    tid(page, 'ws-dialog').get_by_role('button', name='Confirm', exact=True).click()
+    has(page, 'contracts-synth-status', 'data-state', 'failed')
+    has(page, 'contracts-synth-status', 'data-code', 'AuthError')
+    expect(tid(page, 'contracts-synth-status')).to_have_text('AuthError: ' + description)
+    assert not server.requests
+
+
 def test_page_contract_synthesis_apply_save_and_inline_attachment_are_separate(ui, server, open_page):
     """C29: synthesis preview, Apply draft and Save are separate actions; Save inline as reusable does not change
     the port unless chosen; dirty navigation offers Save / Discard / Stay."""
@@ -928,6 +950,25 @@ def test_page_blocks_stale_and_problem(ui, server, open_page):
 
 
 # 111 -----------------------------------------------------------------------------------------------------
+def test_page_roles_flags_missing_defaults(ui, server, open_page):
+    from test_contract_overhaul import setup_role
+    setup_role(ui, server)  # Existing workspace defines only write_contract.
+    page = open_page(ui, 'chat')
+    if not tid(page, 'header-roles').is_visible():
+        tid(page, 'ws-settings').click()
+    tid(page, 'header-roles').click()
+    notice = tid(page, 'roles-missing-defaults')
+    expect(notice).to_be_visible()
+    expect(notice).to_have_attribute('data-missing', 'fast,assistant,reasoning')
+    tid(page, 'roles-defaults').click()
+    expect(notice).to_be_visible()  # Still absent from the saved workspace until Save.
+    tid(page, 'roles-save').click()
+    has(page, 'roles-dialog', 'data-state', 'saved')
+    expect(notice).to_be_hidden()
+    assert get_state(ui)['roles']['map'] == {'write_contract': 'p'}
+    assert set(get_state(ui)['roles']['definitions']) == {'fast', 'assistant', 'reasoning', 'write_contract'}
+
+
 def test_page_roles(ui, server, open_page):
     save_profile(ui, "p", model="m", kind="openai_compat", base_url=server.url + "/v1", provider="")
     page = open_page(ui, "chat")

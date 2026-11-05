@@ -198,6 +198,7 @@
   <h3 style="margin:4px 0">Roles</h3>
   <p class="note">Roles select saved model profiles for blocks and Workshop assistance. Local means this machine (LM Studio or a loopback OpenAI-compatible server, including llama-server). Cloud roles never use local profiles. Neither location falls back to the other.</p>
   <p class="note" id="roles-path" data-test="roles-path"></p>
+  <p class="warn-text" id="roles-missing-defaults" data-test="roles-missing-defaults" role="status" hidden></p>
   <div class="fields">
     <label for="roles-location-filter">Find by location<select id="roles-location-filter" data-test="roles-location-filter"><option value="">All locations</option><option value="local">Local</option><option value="cloud">Cloud / remote</option></select></label>
     <label for="roles-family-filter">Then family / domain<select id="roles-family-filter" data-test="roles-family-filter"></select></label>
@@ -2403,6 +2404,10 @@ function renderRoleBrowser(preferred=roleSelected){
   select.disabled=!matches.length;
   if(roleSelected)select.value=String(roleDrafts.indexOf(roleSelected));else select.add(new Option("No matching roles", ""));
   $("roles-count").textContent=`${matches.length} matching of ${roleDrafts.length} roles. Changes are retained while browsing; Save all changes persists every role.`;
+  const info=rolesInfo(),savedNames=new Set([...Object.keys(info.definitions||{}),...Object.keys(info.map||{})]);
+  const missing=Object.keys(info.defaults||{}).filter(name=>!savedNames.has(name));
+  const notice=$("roles-missing-defaults");notice.hidden=!missing.length;notice.dataset.missing=missing.join(",");
+  notice.textContent=missing.length?`Default roles missing from this workspace: ${missing.join(", ")}. Use Set up defaults, then Save all changes to add them without replacing existing roles.`:"";
   const list=$("roles-list");list.replaceChildren();
   if(roleSelected)list.append(roleRow(roleSelected));else list.append(h("p",{text:"No roles match these filters. Change the filters or add a role."}));
 }

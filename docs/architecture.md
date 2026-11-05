@@ -354,7 +354,9 @@ acceptance, so an accepted proposal is always applicable and an oversized one us
   (role `write_contract`, packaged prompt, one closed wrapper output `proposal`, one repair, 1800 s budget)
   runs through the existing plan/ticket/batch/Stop machinery. Proposals live in the bounded proposal store
   with kind `contract` and a source-draft digest; Save with `proposal_id` derives `synthesized` or
-  `derived_from_synthesis` and a minimal server-captured basis.
+  `derived_from_synthesis` and a minimal server-captured basis. A failed synthesis model attempt exposes
+  its existing sanitized error as the batch row's `model_error` (`class`, `status`, `description`, optional
+  `hint`); the Contracts pane displays that description without exposing raw backend exception text.
 
 | Contract route (version 2 envelopes) | Behavior |
 | --- | --- |

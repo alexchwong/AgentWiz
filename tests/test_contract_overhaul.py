@@ -8,7 +8,7 @@ import threading
 import pytest
 
 from agentwiz import checks, contract_examples, contract_schema, jsonio, workshop_service
-from conftest import (answer, contract_detail, contract_files, contract_item, failure_of, request, save_contract,
+from conftest import (Reply, answer, contract_detail, contract_files, contract_item, failure_of, request, save_contract,
                       save_profile, save_roles, switch_history, wait_until, write_block)
 
 GOOD = {"description": "A triage label", "schema": {"type": ["string", "null"],
@@ -79,6 +79,35 @@ def test_unsupported_nested_schema_is_repaired_once_then_refused(ui, server):
     row = batch["rows"][0]
     assert row["outcome"] != "complete" and row["repairs"] == 1 and "proposal_id" not in row
     assert len(server.requests) == 4                                               # one repair, never more
+
+
+@pytest.mark.parametrize('status', [401, 500])
+def test_synthesis_reports_sanitized_model_errors(ui, server, status):
+    setup_role(ui, server)
+    server.reply(Reply(status=status, body=b'{"error":{"message":"SECRET-reflected-key"}}',
+                       headers={'Content-Type': 'application/json'}))
+    _plan, _started, batch = synthesize(ui, synthesis_body())
+    row = batch['rows'][0]
+    assert row['outcome'] == 'failed' and row['attempts'] == 1
+    assert row['model_error']['status'] == status
+    assert row['model_error']['class'] == ('AuthError' if status == 401 else 'BackendError')
+    assert 'SECRET' not in json.dumps(batch)
+
+
+def test_synthesis_reports_missing_openrouter_key(ui, server, monkeypatch):
+    monkeypatch.delenv('OPENROUTER_API_KEY', raising=False)
+    save_profile(ui, 'p', model='m', kind='openrouter', base_url=server.url + '/v1', provider='')
+    request(ui, '/api/roles/save', {'roles': {'write_contract': 'p'},
+                                  'revision': request(ui, '/api/state')['roles']['revision'],
+                                  'definitions': {'write_contract': {'description': 'Draft contracts',
+                                                                     'location': 'cloud', 'family': 'Workshop'}}})
+    _plan, _started, batch = synthesize(ui, synthesis_body())
+    row = batch['rows'][0]
+    assert row['outcome'] == 'failed'
+    assert row['model_error']['class'] == 'AuthError'
+    assert row['model_error']['status'] is None
+    assert 'key' in row['model_error']['description'].lower()
+    assert not server.requests
 
 
 def test_synthesis_capture_records_the_server_validator_and_repairs_with_it():

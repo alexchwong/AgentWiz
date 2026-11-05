@@ -1,3 +1,17 @@
+# Synthesis error and missing-default-role UI fixes (2026-11-05)
+
+- Synthesis batch rows carry the existing sanitized model-attempt error to the Contracts pane,
+  which displays its description and error class instead of only the generic failed-proposal message.
+  Raw backend exception text and raw-output viewing are not added; Stop and non-model-error fallbacks remain.
+- Roles lists defaults absent from the saved workspace, with Set up defaults / Save guidance.
+  The notice remains while additions are unsaved; existing definitions and assignments are preserved.
+- Added missing-OpenRouter-key, sanitized HTTP 401/500, browser error-display and missing-default-role
+  regressions. Updated README, architecture and NEWS for these behaviors.
+- Validation on Linux / Python 3.13.13: focused initial checks 4 passed; actual missing-key check 1 passed;
+  Contracts/Roles/page groups 108 passed; offline gate 907 passed, 10 live checks deselected;
+  final diff inspected and `git diff --check` passed. Live providers, macOS and installed-wheel smoke not run.
+- No commits, pushes or publication; no dependencies or workspace files changed.
+
 # AgentWiz 0.2.0 — cumulative Phase 2 handover
 
 ## Contract overhaul progress

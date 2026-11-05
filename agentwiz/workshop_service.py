@@ -774,6 +774,7 @@ class Service:
                 self.truncated = 0
                 self.raw_answer = None
                 self.output_checks = {}
+                self.model_error = None
 
             def attempt_committed(self, record):
                 self.attempts += 1
@@ -783,6 +784,7 @@ class Service:
                 answer = (record.get('result') or {}).get('text')
                 self.raw_answer = answer if isinstance(answer, str) and len(answer.encode('utf-8')) <= 512 << 10 else None
                 self.output_checks = (record.get('check') or {}).get('outputs', {})
+                self.model_error = record.get('error')
 
             def started(self, event):
                 with service.lock:
@@ -842,6 +844,9 @@ class Service:
                         row['raw_answer'] = observer.raw_answer
                         batch['preview_bytes'] += len(observer.raw_answer.encode('utf-8'))
                     row['output_checks'] = observer.output_checks
+                    if batch['action'] == 'contract_synthesize' and observer.model_error:
+                        # Already sanitized by model_step; never expose a raw backend exception.
+                        row['model_error'] = observer.model_error
                 if complete:
                     batch['preview_bytes'] += len(text.encode())
                 with self.lock:

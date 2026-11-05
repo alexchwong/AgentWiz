@@ -567,7 +567,9 @@ sample** checks pasted text (literal text for Text, an answer for JSON) without 
 structure pass, not a correctness check. Leaving an unsaved draft offers Save, Discard or Stay.
 **Synthesize** (Structured or Any JSON only) shows the destination of the `write_contract` role before
 sending; the proposal appears beside its assumptions, **Apply draft** only replaces the editor's draft,
-and **Save** is still a separate step. Read-only workspaces allow viewing, checking and copying only.
+and **Save** is still a separate step. Model-call failures show the sanitized error in the synthesis pane,
+including missing credentials, authentication failures and connection errors, rather than only a failed-proposal message.
+Read-only workspaces allow viewing, checking and copying only.
 
 **Results.** Each check gives `pass`, `fail` or `not_run`; overall `pass`, `fail`, `incomplete` (a check
 could not run, for example a number beyond the exact limits) or `contract_error` (the contract itself
@@ -723,7 +725,8 @@ Edit the selected role's purpose, location, family and saved profile. Switching 
 retains unsaved edits; **Save all changes** saves every role, including roles hidden by filters.
 Profile choices show backend, endpoint and model. **Create / edit model profiles**
 opens model settings and returns without losing role edits. **Set up defaults** adds missing starter
-roles without replacing existing definitions. Save persists assignments and definitions in
+roles without replacing existing definitions. A notice lists default roles missing from the saved workspace;
+it remains until those roles are added and saved. Save persists assignments and definitions in
 `<workspace>/roles.json`. Saved role names are stable; removing a role warns about references in blocks.
 
 **Local means this machine:** LM Studio or an OpenAI-compatible server (including llama-server)

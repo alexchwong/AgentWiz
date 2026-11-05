@@ -947,8 +947,11 @@
       async function finished(b, source) {
         const row = (b.rows || [])[0] || {};
         if (!row.proposal_id) {
+          const error = row.model_error;
           setStatus(synthStatus, b.state === "stopped" || row.outcome === "stopped" ? "stopped" : "failed",
-            row.outcome === "stopped" || b.state === "stopped" ? "Stopped; no proposal." : "No usable proposal was produced (" + (row.outcome || b.state) + ").");
+            row.outcome === "stopped" || b.state === "stopped" ? "Stopped; no proposal." :
+              error && error.description ? error.description : "No usable proposal was produced (" + (row.outcome || b.state) + ").",
+            error && error.class);
           return;
         }
         let applied;
