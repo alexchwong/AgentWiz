@@ -17,6 +17,170 @@ Workbench Contracts editor; they are pending Phase 2, not passing and not delete
 shippable as the finished overhaul: the page's Contracts utility no longer works with the new routes.
 Do not reintroduce compatibility or automatic workspace migration.
 
+## November 5, 2026 — readiness review and prerequisite corrective pass
+
+### Review disposition and evidence limits
+
+Reviewed checkout: `42fdb09` (`contract overhaul phase 1 completion`), with a clean working tree.
+The implementation record below is historical; this review qualifies its Phase 1 completion claim.
+The architecture is substantially ready for Phase 2, but **Phase 1 sign-off is blocked pending the
+targeted corrective pass below**. These findings do not justify redesigning the contract system or
+adding a compatibility layer. Complete the pass before treating the backend as the accepted foundation
+for Phase 2 integration. This section records recommendations, not completed fixes or authority to
+implement additional roadmap work.
+
+Evidence: source tracing and in-memory probes using mocked reads on Linux / Python 3.13.13. Exact
+numeric projection was also checked. `git diff --check` passed and the review changed no source files.
+The review did **not** rerun pytest, installed-wheel smoke, live backends, Python 3.10 or macOS checks.
+The earlier 851-passed/2-failed result remains the implementation handover's historical result, not
+fresh validation of these findings. No end-to-end destructive deletion was performed by the probes.
+
+### R1 — high: deletion reference scanning does not consistently fail closed
+
+Relevant code: `agentwiz/workshop_assets.py`, `reference_scan` and `_declared_references`; compare
+the stricter managed-head validation in `head`. `agentwiz/contracts.py`, `ContractStore.delete`,
+trusts the scan's blockers/unreadable result.
+
+The scan accepts an empty retained list without checking that `current` is represented, does not enforce
+the ordinary managed-head invariants, and treats successfully decoded but structurally uninspectable
+definitions as containing no references. Malformed port collections are skipped. In-memory probes
+returned `([], [])` (no blockers and no unreadable paths) for each of:
+
+- A managed head with a nonempty `current` identity but `retained: []`.
+- A valid-shaped managed head whose retained generation's `block.json` is a JSON array.
+- An executable-shaped object with malformed `inputs` rather than an inspectable port object.
+
+Consequently deletion can be permitted without establishing absence of use. The Phase 2 Used by/Delete
+screen must not build a safety claim on this result. This concerns damaged/external files as well as
+normal writers; registry serialization alone cannot correct an incomplete scan.
+
+Recommended correction:
+
+1. Reconcile managed-head inspection with the existing `head` invariants: exact supported envelope,
+   nonempty bounded unique retained identities, valid identity strings, and `current == retained[0]`.
+   Reuse a narrowly shared validation helper if appropriate; do not introduce a second divergent format
+   interpretation or require live contract resolution merely to inspect declarations.
+2. Validate enough of each current/retained definition and its port/declaration structures to establish
+   that references can be enumerated. Unsupported or ambiguous structures must contribute their path
+   to `unreadable`, producing `reference_scan_incomplete`, rather than silently implying no use.
+   Distinguish a legitimately absent port collection from a malformed one according to the executable
+   format. Keep conservative detection of old string references and identifiable pins in broken blocks.
+3. Continue scanning current plus retained definitions exactly once, excluding orphan generations and
+   run snapshots. Preserve symlink refusal, stable blocker ordering, the registered writer and registry
+   reservation, and the final contract file-token check. Do not cascade deletion or rewrite broken files.
+4. Add functional regressions in the existing contracts/overhaul suites for malformed heads, omitted
+   current generations, empty/duplicate retained lists, non-object retained definitions and malformed
+   ports. Exercise the HTTP deletion path: expect 409 `reference_scan_incomplete` and unchanged contract
+   bytes/token. Retain positive deletion cases and current/retained pin blockers; check Used by reports
+   incomplete inspection instead of an apparently exhaustive empty result.
+
+### R2 — medium: synthesis acceptance omits the complete-definition size gate
+
+Relevant code: `agentwiz/checks.py`, `_synthesis_post_validator`; `agentwiz/workshop_service.py`,
+`proposal_definition`, successful synthesis proposal creation, `synthesis_apply` and `synthesis_origin`.
+
+The acceptance post-validator calls `validate_user_schema`, whereas conversion to a usable draft calls
+`validate_user_definition`, which additionally enforces the 1 MiB complete-definition limit. A supported
+schema probe produced a prospective definition of **1,201,045 bytes**: the synthesis post-validator
+returned no issues, but `proposal_definition` refused it with `too_large`. Thus acceptance can declare
+success and retain a proposal that Apply cannot use. Apply currently maps that rejection to
+`proposal_expired`, obscuring the real reason and missing the acceptance-time repair opportunity.
+
+Recommended correction:
+
+1. Make the server-owned post-validator validate the same prospective user definition that application
+   will construct, including the optional description and complete-definition byte limit. Keep wrapper
+   validation first and preserve the authoritative subset recognizer. Factor only the small pure
+   construction/validation operation needed for consistency; avoid a checks/service import cycle or
+   duplicate definition-building rules.
+2. Return located, value-redacted acceptance issues through the existing checker so a completed nonblank
+   oversized proposal uses the existing single repair allowance. Original and repaired answers must use
+   the same captured `contract_synthesis_v1` validation. Do not increase token/time/repair caps, switch
+   models, truncate the proposed schema or create another call loop.
+3. Keep defensive validation on Apply and Save/provenance derivation. Do not manufacture a usable
+   proposal from a failed/truncated run. If an invalid recovered proposal is refused, distinguish that
+   defensive refusal in the implementation evidence from genuine expiration; do not change public
+   error conventions without reconciling the specification.
+4. Add deterministic stand-in tests: supported schema over the complete-definition limit; a schema
+   whose description pushes the complete definition over the limit; invalid-first/valid-repair success;
+   and invalid-second response yielding no usable proposal. Check that rejection occurs in acceptance,
+   not only on Apply, and that an ordinary accepted proposal applies/saves unchanged. Verify no proposal
+   or transcript reaches disk with Save runs off and preserve ordinary redacted-history behaviour.
+
+### R3 — medium: snapshot restoration accepts malformed reference identities
+
+Relevant code: `agentwiz/model_step.py`, `ContractCopy.from_record`.
+
+Definition digest and policy are verified, but identity validation only checks that name/revision are
+both null or both non-null. A valid captured Text definition was restored after substituting
+`name: "../not-a-name"` and `revision: true`. Missing name/revision fields also default to an apparent
+inline identity. This is incomplete captured-metadata validation, **not evidence of path traversal or
+live-registry resolution**: restoration uses the captured definition, not that name as a file path.
+
+Recommended correction:
+
+1. Require the new snapshot identity members explicitly. Accept inline identities only with both fields
+   null; accept referenced identities only with a valid stable name and a positive integer revision,
+   excluding booleans. Preserve digest/policy/validator verification and never consult live files.
+2. Distinguish genuinely old snapshots lacking the new capture format (`migration_required`) from
+   malformed new-format captures (`snapshot_incomplete`) consistently with existing restoration rules.
+   Missing identity fields in an otherwise new-format capture must not silently convert a saved pin
+   into an inline capture. Keep historical viewing separate from executable restoration.
+3. Add focused restoration/repair regressions for invalid names, traversal-like names, zero/negative,
+   boolean/string revisions, missing identity members and mixed null identities. Check valid inline and
+   saved captures still restore after the live contract disappears. Assert refusals do not dispatch a
+   model call and do not repair/recalculate a changed snapshot digest.
+
+### Corrective-pass sequence and acceptance evidence
+
+1. Re-read the specification, DEVEL and relevant architecture contracts; inspect the current tree and
+   reconcile any later changes before editing. Fix R1 first, then R2 and R3 using the smallest justified
+   changes. Add tests for the defects under T1–T3, not document-content or source-spelling assertions.
+2. Run focused checks with the checkout's virtual environment:
+
+   ```bash
+   . .venv/bin/activate
+   python -m pytest -q tests/test_contracts.py tests/test_contract_overhaul.py
+   python -m pytest -q tests/test_checks.py tests/test_model_step.py tests/test_attempts.py tests/test_named_outputs.py tests/test_workshop_replay.py
+   python -m pytest -q tests/test_shutdown.py
+   ```
+
+   Add directly affected history/Workshop checks as indicated by the actual diff. Preserve cancellation,
+   exactly-once admission, immutable capture and registry-race coverage. Use hooks and Events/barriers,
+   not sleeps, for any new race regression.
+3. Run the complete offline gate, `python -m pytest -q -m "not live"`, without removing or weakening
+   tests. Before Phase 2, the two already documented replaced-editor browser journeys may remain
+   pending; record their actual results and require no unexplained/new failures. Phase 2C still requires
+   zero failures/errors/skips. Run `git diff --check` and inspect the final diff. Report platform coverage
+   honestly; Linux/Python 3.13 does not establish macOS/Python 3.10 compatibility.
+4. Update this handover with the corrections, their reasons, exact commands/counts, any blocked checks
+   and the resulting disposition of R1–R3. Historical results are not replacement evidence. Follow
+   DEVEL's throwaway-clone procedure if installed-wheel verification is needed; do not commit the working
+   checkout to satisfy a builder. No dependency change, publication or unrelated refactor is needed.
+
+### Phase 2 carry-forward risks (not additional demonstrated Phase 1 blockers)
+
+- **Exact browser data:** use exact source strings/projections and server-targeted edits, never rebuild
+  domain numbers through JavaScript Number. Browser coverage must preserve large integers and long
+  fractional bounds across edit/save/reload/attachment, not merely initial source display.
+- **Single shared editor:** replace legacy page request/response/status assumptions across Workshop,
+  inline ports, selectors, Checked request and tutorials. Do not leave a parallel legacy editor active.
+  The two known browser failures remain planned UI migration work, not a reason for compatibility APIs.
+- **Separate lifecycle actions:** synthesis Apply, contract Save, port attachment and block publication
+  remain distinct. A failed block save must not delete a newly saved contract; grouping is separate from
+  revision append. Preserve dirty drafts and Save / Discard / Stay on all navigation paths.
+- **Pinned selection:** refresh/latest append must not move an existing block pin. Checked request must
+  display and dispatch the concrete reviewed revision/digest and exact generated instruction preview.
+- **Async ownership:** stale projection/check/synthesis responses must not overwrite newer edits or a
+  newly selected item. Retain failed/stale drafts and reviewable assumptions; bind Apply to its source.
+- **Authenticated packaged asset:** implement the explicit `/assets/contracts.js` allowlist route,
+  existing token authorization and load ordering, then verify the installed wheel serves the script.
+  Source-tree success alone is insufficient; do not broaden filesystem serving or add a UI framework.
+- **Publication limits:** handle `durability_uncertain` using the returned real identity, without blind
+  retries. Registry reservation protects cooperating AgentWiz writers, not arbitrary external editors.
+  The current pre-replace hook follows the token recheck; tests must not imply detection of every edit
+  after that final observation. This review did not establish an additional race defect beyond R1–R3.
+
 ## Cumulative implementation
 
 ### Phase 0 / pre-existing foundation
