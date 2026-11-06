@@ -7,85 +7,58 @@ You choose a model backend (LM Studio, OpenRouter, or any OpenAI-compatible serv
 llama-server), type an optional system prompt and an input, and watch the reasoning and the answer
 stream back, followed by token usage, cost and a clear outcome.
 
-What 0.1.4 does:
+What 0.2.0 adds:
 
-- **Blocks.** A block is a saved single step, a folder in the workspace with a `block.json` and,
-  for a model step, prompt files, or for a script step, a Python file. A step is one of three kinds:
-  a **model** call, an **MCP tool** call or a **script**. The **Blocks** tab lists your blocks,
-  shows their files exactly, builds an input form, runs one, and shows a trace.
-- **Roles.** A role such as `fast` names a saved profile; a model step chooses its model by role.
-  The **Roles** dialog in the header edits the map.
-- **Contracts on both sides.** Every input and output of a block has a contract. Inputs are checked
-  before anything runs; an output is accepted only if its contract passes.
-- **Automatic repair.** A model step whose answer fails its check is asked again, with the checks'
-  findings, up to a limit you set; a cut-off answer is never accepted.
-- **Runs that outlive the page.** A block run has time and token budgets, keeps going if the page
-  closes, and can be found again and stopped from the Blocks tab.
-- **Eight tutorial topics**, each showing the version that last changed it.
+- **Workshop:** create, understand, save, test and compare one model, tool or Python block at a time.
+- **Nine starters** and blank blocks, exact structured fields, prompt preview and a standard description for each saved revision.
+- **Saved revisions:** display names, duplicate, restore, explicit import of unmanaged v3 blocks and newest-20 retention. Eligible retained
+  revisions can be selected, described, tested and compared without changing the default.
+- **Examples and correctness:** exact outputs, field assertions or human review, independently of contract acceptance.
+- **Assistance:** create, improve, suggest examples and explain a failure, reviewed before Apply; Describe drafts a saved
+  revision's standard description with its own `write_block_description` role, reviewed before Save description.
+- **Contracts:** a Workshop section for reusable Text and JSON contracts with append-only revisions, a readable
+  editor (advanced source optional), sample checks, Used by and reviewable model-drafted proposals.
+- **Workbench:** Chat, Documents, MCP tools and Checked request remain independent utilities.
+- **History:** saved runs, checks, attempts and source attribution, with saving off by default.
+- **Fourteen tutorial topics** using isolated local services, with no API keys or live model required.
 
-Carried forward from 0.1.3:
-
-- **Seven tabs, one function each.** **Chat** sends a request; **Documents** previews a text file;
-  **MCP tools** calls a tool on a local MCP server; **Contracts** saves and tests output contracts;
-  **Checked request** sends a request and checks the answer against a contract; **History** shows
-  saved runs; **Blocks** runs a saved block. Model settings, MCP servers and roles are dialogs in
-  the header, shared by every tab.
-- **Contracts and checks.** A contract says what an answer should look like: text or JSON, content
-  checks, and optionally a JSON Schema. Checks are deterministic and keep every number exact.
-- **Checked requests and repair.** A failed answer can be sent back to the model with the checks'
-  findings, as the next attempt of the same run. You see exactly what will be sent first.
-- **Stop works before the first token.** The server ends a request at any stage, within about a
-  second, and reports whether the request may have reached the backend.
-- **Run history, off by default.** When you turn **Save runs** on, each run is written to a folder in
-  the workspace, with the credentials AgentWiz has held replaced by `***`.
-- **Copy replaces Insert.** Every output has a **Copy** button. Nothing is inserted into a request for
-  you; the clipboard is the only way between tabs.
-- **Task settings belong to the request.** Reasoning level, temperature, max tokens and eight
-  advanced sampling settings are set in each request panel, and one set can be saved per workspace.
-- **Model settings can be saved as named profiles** in a workspace folder. Profiles, the saved task
-  settings, the list of MCP servers and the contracts are saved; nothing else is, unless you turn on
-  run history.
-- **Settings are shared by all tabs of one AgentWiz process.** If another browser tab changes them,
-  a page that is still showing the old settings is asked to check them before sending, so a request
-  never goes to a backend the page is not showing.
-- **API keys and MCP tokens stay in memory.** They are never shown again, never written to disk
-  (profiles and saved runs included) and are lost when AgentWiz stops.
+Model profiles, roles and MCP servers are shared settings. Credentials stay in process memory.
+Scripts run with your filesystem and network access. AgentWiz uses the pinned modelSpell 0.3.0 public API.
 
 ## Install
 
-Requires Python 3.10 or later.
+This guide covers AgentWiz 0.2.0, which requires Python 3.10 or later.
 
 ```bash
 curl -fsSL https://github.com/alexchwong/AgentWiz/releases/latest/download/install.sh | bash
 ```
 
-The script creates `.venv` in the current directory, checks the newest release wheel against the
-sha256 GitHub publishes, installs it, and prints how to launch. Pin a release with
-`… | bash -s -- --version 0.1.3`; download the script first if you want to read it before running it.
-Add `--with-checks` (`… | bash -s -- --with-checks`) to install the optional JSON Schema checks.
+The script creates `.venv` in the current directory, checks the latest published release wheel against
+the SHA-256 GitHub publishes and prints how to launch. Run `.venv/bin/agentwiz --version` to confirm
+what was installed. To pin a published release, pass `--version` followed by its version number
+(`… | bash -s -- --version 0.1.4` is an example). You can download the script first to inspect it.
+For a development checkout, follow [the developer setup](DEVEL.md#environment-and-required-commands).
 
-Working from a clone? See DEVEL.md for the developer setup.
+**Upgrading a development workspace.** Executable format-1 blocks and format-1 saved contract
+files report `migration_required`. Recreate or deliberately rewrite them as executable v3 blocks
+and current Text/JSON contracts. Reusable contract references need exact revision pins. For model
+steps, update the reply instructions to match the [named JSON envelope](#named-outputs).
 
-Prefer to do it by hand? Download the wheel from the release page (the wheel, not the source zip),
-then run:
+If you already have a locally built 0.2.0 wheel or have downloaded its published wheel, install it with:
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install ./agentwiz-0.1.3-py3-none-any.whl
+python -m pip install ./agentwiz-0.2.0-py3-none-any.whl
 ```
 
-For checksum verification, use `python -m pip install` with the wheel URL and `#sha256=…` fragment
-from the release notes instead of the local filename. Both methods also install modelSpell 0.3.0,
-pinned by URL and checksum.
+For a published wheel, you can pass the URL with the `#sha256=…` fragment from the release notes
+to pip instead of the local filename. Both methods install the URL- and checksum-pinned modelSpell 0.3.0.
 
-**JSON Schema checks are optional.** Contracts with a `schema` need the extra
-`AgentWiz[checks]` (it installs `jsonschema` 4.26 or later, below 5): add `--with-checks` to
-`install.sh`, or run `python -m pip install './agentwiz-0.1.3-py3-none-any.whl[checks]'`. Without it
-everything else works; a contract with a schema cannot be saved, and a schema in a contract file
-is reported as not run, so the answer never passes on it (see **Contracts**). The extra brings
-`rpds-py`, a compiled package; a platform without a published wheel needs a Rust toolchain to
-install it.
+**JSON Schema validation is required and installed automatically** (`jsonschema>=4.26,<5`).
+It brings `rpds-py`, a compiled package; a platform without a published wheel needs a Rust
+toolchain to install it. If validation support becomes unavailable because the installation is
+damaged or unsupported, reinstall AgentWiz before using schema-dependent actions.
 
 ## Launch
 
@@ -117,61 +90,246 @@ is created with copies of the default profiles, and its terminal line ends in `(
 not expect that, check the name you typed. Names are 1 to 64 letters, digits, `.`, `_` or `-`,
 starting with a letter or digit.
 
-- **One AgentWiz process per workspace.** A second AgentWiz on the same workspace prints which
-  process holds it and exits with status 3. To switch workspace, stop AgentWiz and start it again
-  with another `--workspace`.
+- **One AgentWiz process owns one workspace at a time.** A second AgentWiz on the same workspace
+  prints which process holds it and exits with status 3. Use **Workspaces** in the header to switch
+  to another workspace in the same `--workspaces-dir`: AgentWiz releases the current lock, opens the
+  selected workspace and reloads the page. The `--workspace` option still chooses the initial
+  workspace. To use two workspaces at once, launch a separate process for the other one.
 - The folder holds `workspace.json`, `model-profiles/profiles.json`, `task_settings.json` (once
-  saved) and `.agentwiz.lock`. If you keep workspaces inside a git repository, add `.agentwiz.lock`
-  to that repository's `.gitignore`.
+  saved), `roles.json`, `contracts/`, `blocks/`, `workshop/` (saved examples and comparisons),
+  `runs/` (when saving is on) and `.agentwiz.lock`. If you keep workspaces inside a git repository,
+  add `.agentwiz.lock` to that repository's `.gitignore`.
 - **Supported locations:** local disks on Linux and macOS, and WSL2's own filesystem. Shared,
   network and cloud-synced folders are not supported and not detected: the workspace lock may not
   be visible from another machine. Under WSL2, workspaces on `/mnt/c` (the Windows drive) have not
   been tested; prefer a folder in WSL2's own filesystem, such as `~/agentwiz`.
 
-## The workbench
+## Navigation
 
-The page is a row of tabs, one per function. Each works without visiting any other.
+**Workshop** is the default, with two sections: **Blocks** (its compact saved-block selector is above
+Design, Test and Compare) and **Contracts**. **Workbench** groups the four independent utilities below. **History**
+opens saved runs. Settings in the header groups model profiles, roles, MCP servers and Save runs; the
+Workspaces control beside the workspace name opens workspace management.
 
-| Tab | Address | What it does |
+| Location | Address | Purpose |
 | --- | --- | --- |
-| **Chat** | `#chat` | Send a system prompt and an input to the model; reasoning and answer stream in. |
-| **Documents** | `#documents` | Read a `.txt`, `.md`, `.csv` or `.json` file and preview it; copy it. |
-| **MCP tools** | `#mcp-tools` | Call a tool on a local MCP server and copy the result. |
-| **Contracts** | `#contracts` | Save text or JSON contracts; check pasted text against one, with no model. |
-| **Checked request** | `#checked-request` | Send a request, check the answer against a contract, preview and send a repair. |
-| **History** | `#history` | Open saved runs read-only; copy any part; delete them. |
-| **Blocks** | `#blocks` | List the workspace's blocks, read their files, fill the inputs, run, Stop, read the trace. |
+| Workshop: Blocks | `#workshop/<key>/<design\|test\|compare>` | Author and evaluate one block. |
+| Workshop: Contracts | `#contracts` | Create, revise, check and reuse saved contracts; see which blocks use them. |
+| Workbench: Chat | `#chat` | Send a system prompt and input; see reasoning and answer stream in. |
+| Workbench: Documents | `#documents` | Preview a text document and copy it. |
+| Workbench: MCP tools | `#mcp-tools` | Discover and call tools, with labelled arguments or an explicit advanced editor. |
+| Workbench: Checked request | `#checked-request` | Check an answer and explicitly send a repair. |
+| History | `#history` | Read saved runs and attempts, copy evidence or delete a run. |
 
-- **The address holds the tab.** Open `http://127.0.0.1:<port>/?t=<token>#contracts` and a reload
-  stays there. An unknown fragment selects Chat. The arrow keys move between tabs; Home and End go
-  to the first and last.
-- **Shared configuration lives in the header.** **Model settings** (with profiles), **MCP
-  servers** and **Roles** are dialogs; so is the **Save runs** switch. Contracts, once saved, are shared by name.
-- **One request per tab.** Chat and Checked request can each have a model request running at once,
-  MCP tools one tool call, Blocks one block run, Documents one upload. AgentWiz as a whole still runs at most 8 model
-  requests and 8 tool operations.
-- **Hidden tabs keep running.** Switching tabs hides a panel without stopping what it does; a tab
-  with work in progress shows a marker, and the result is there when you come back.
-- **Ctrl/Cmd+Enter** acts on the visible tab: Send on Chat and Checked request, Run on MCP tools and
-  Blocks, Check on Contracts.
-- **Copy.** Every output panel has a **Copy** button. For documents and tool results it copies the
-  preview exactly, provenance line included, so a pasted result still says where it came from. If
-  the browser refuses clipboard access, the text is selected and the page says to press Ctrl+C
-  (Cmd+C on a Mac).
-- **Inputs are not kept across a reload.** What you typed in a tab is lost when the page reloads.
-- **A tab that is out of date.** If settings, task settings, the MCP server list, a contract or the
-  Save runs switch were changed elsewhere, the tab that tried to use them reloads, keeps what you
-  typed, says so, and sends nothing. Send again.
+A reload preserves validated navigation identifiers. Unknown fragments open Workshop. Keyboard arrows,
+Home and End move between tabs. Ctrl/Cmd+Enter submits the active Workbench function. Output panels have
+Copy; independent Workbench utilities exchange content through the clipboard. Hidden requests keep running.
+
+Typed inputs and unsaved drafts are held in page memory. A dirty draft survives Design/Test/Compare
+switches; replacing it offers Save, Discard or Stay. Reload can lose it, with a browser unload warning
+where supported. Saved definitions and examples survive restart; session-only results do not.
+
+**Workspaces** opens the shared workspace dialog. It lists the current workspace and the other
+workspaces in the launch folder, and provides:
+
+- **Switch** — open an existing workspace and reload the page. Save or discard a dirty Workshop
+  draft first. Running requests and Workshop batches must be stopped; AgentWiz refuses to switch
+  while work is in progress.
+- **Create** — make a new workspace and switch to it. A new workspace receives copies of the shared
+  default profiles, with no active profile.
+- **Clone** — copy the selected source into a new workspace. Configuration, profiles, roles,
+  contracts, blocks and saved examples are copied. Saved runs and comparisons are excluded unless
+  **Include saved runs and comparisons** is checked. The source and clone are independent; the lock
+  file is never copied.
+- **Reset** — clear a workspace back to a fresh state, keeping its name and folder. The workspace
+  receives fresh profile copies and no saved data. This cannot be undone.
+- **Delete** — permanently remove a non-current workspace. The current workspace must be switched
+  away first. Delete and reset require typing the workspace name exactly.
+- **Launch in another process** — show a shell-quoted command for a separate AgentWiz process. Only
+  one process can own a workspace.
+
+Only names directly under the launch folder can be managed. Shared defaults and the MCP server
+library must remain outside managed workspaces; reset and delete refuse a workspace that contains
+either one. Session API keys and MCP tokens are memory-only: switching or resetting clears them, so
+re-enter them when needed. Workspace administration is disabled inside the tutorial's temporary
+workspace.
+
+## Block Workshop
+
+Choose **New block**, a starter or blank model/tool/script and a stable block key. Set its display name,
+purpose, inputs, behaviour and outputs in Design. A model role resolves to a profile; a tool binds to a
+server and discovered tool. Insert input controls use the existing `{{inputs.name}}` template syntax.
+The block key is an internal identifier, not a display title: use 1–64 ASCII letters, digits, dots,
+underscores or hyphens, starting with a letter or digit (for example, `summarise_notes`); no spaces.
+**Start with** chooses an initial template, not an output prefix. Model roles are aliases assigned to
+saved profiles in Settings → Roles, not chat-message roles. The dialog lists defined roles and marks
+unresolved assignments. Fresh workspaces define unconfigured `fast`, `assistant` and `reasoning` roles,
+plus the dedicated `write_contract` and `write_block_description` roles;
+drafts can be designed before profiles are assigned. Use **Configure roles** before running.
+Assistance separately selects an assistant role.
+Only fields relevant to the selected block type are shown. Tool blocks list configured MCP servers and
+automatically discover the selected server's advertised tool names in a dropdown. **Refresh tools**
+retries discovery after configuration or connection changes. AgentWiz does not scan for unconfigured
+servers: add their URLs in Settings → MCP servers first. Discovery lists tools without executing them.
+Creation errors keep the dialog and entered values available for correction. **Create draft** opens
+Design without calling a model; **Create with assistance** first creates the same draft, then opens the
+separate assistance request/review workflow. Neither button saves a revision automatically.
+A model block's Design form has three unlabelled columns on wide screens: block description, **System prompt**
+and **User prompt** on the left; variable tables in the middle; identity, saving and settings on the right.
+The form stacks on narrow screens. Insert buttons add
+`{{inputs.name}}` and `{{output.name}}` placeholders (see [Named outputs](#named-outputs)). Each input and
+output is an editable row with field name and **Declared meaning** (part of the executable block; an output's
+declared meaning can contribute to the model request), and its contract below it: **Inline** uses the same
+readable contract editor as Workshop → Contracts; **Saved contract** pins one numbered revision (see
+[Contracts](#contracts)). A type change that would drop fields, choices or bounds previews the before and
+after definitions first; contract edits are unsaved block edits until **Save as new revision**.
+**Request preview** shows the exact system and user messages a run would send for the current inputs,
+with the generated output section and where each setting came from, each with Copy. On the right,
+**Model role** selects a configured role without silently replacing an unavailable saved binding.
+Temperature and Reasoning level sit side by side. An empty Temperature inherits the selected role's
+default, shown in grey; zero is an explicit value. Reasoning's first option shows the role's value
+followed by **(default)** and inherits it; selecting a level explicitly overrides it. If no role default
+is declared, the backend default applies and no numeric value is guessed.
+
+**Model advanced settings** holds explicit backend-default bypasses for both settings, the output cap,
+budgets and source editors. **Additional repairs** is always visible below Outputs; zero allows no
+repair attempts after the initial response. The optional revision name sits above the revision selector and save controls;
+the **Block revision** selector sits above the save buttons in Design and above the editor in Test and Compare. **Assist** and **Revision actions** share
+the Design/Test/Compare action row in all three modes. Test's **Preview
+instructions** shows the actual filled prompt or arguments for the supplied inputs.
+
+Structured fields distinguish missing, null, false, zero and empty text. Numeric values travel as exact
+source text. Saved examples and their expected values use the same typed forms as Test. Editing an example
+also offers inputs it lacks, and keeps expected values for outputs the block no longer declares until you
+remove them. A new group needs at least one field before **Save as new revision** or a run: editing may pass through
+an empty group, and a group that was already empty in the saved block is left alone. A definition outside
+the supported vocabulary is never projected or overwritten: it stays in the advanced source with its
+located problems, and neither the port nor the block can be saved until it is corrected or discarded.
+**Make local copy** replaces a pin with the pinned definition for a block-specific edit; **Save inline as
+reusable** creates a new saved contract and changes the port only if you choose **Use saved revision**.
+Shared edits happen in Workshop → Contracts, which shows the blocks that use each contract. Schema-backed
+validation and assistance use the validator included in the standard installation; repair the
+installation if it becomes unavailable.
+
+**Save as new revision**, in Design's right-hand controls, previews the effective action and its required
+acknowledgements. A new revision becomes the default. **Block revision** opens any retained revision as a
+clean saved selection: its design, contracts and standard description are shown, Test and Compare run that
+revision, and the default (marked **(current)**) does not change. Unsaved changes offer Save, Discard or
+Stay before switching. Editing a selection makes it an unsaved draft, labelled with its base revision and
+**Unsaved**, which runs through the draft path. On a clean older selection **Save as new revision** stays disabled
+until you edit it or choose **Revision actions → Restore to draft**; saving then publishes it as the new
+default. Results and the prepared preview name the revision they ran. A retained revision runs with today's
+model roles, MCP settings and exact saved-contract pins: a missing or changed pinned contract blocks the run
+with a located error but still lets you view and describe the revision's captured interface. Older-format
+revisions are listed and show **Migration required** on selection. Revisions display per-block numbers starting at 1 and an
+optional name of up to 120 characters. Enter a name before saving; names need not be unique and do not
+rename the block. A new revision's name defaults to blank.
+
+The revision dropdown sits immediately above **Save as new revision** and **Overwrite selected revision**.
+Overwrite confirms replacement of the selected revision's contents (and clears its standard description),
+keeping its number and position rather than adding another revision. Overwriting an older revision does
+not change the current default. The replacement remains selected; existing run evidence is unchanged.
+Overwrite is unavailable until the block has a saved revision. Concurrent changes require a fresh review.
+Numbers survive restart and pruning; restoring an older version and saving creates the next number.
+Duplicates start their own sequence. Existing unnumbered histories are numbered oldest first from the
+retained history available at upgrade, not from already-pruned lifetime history. Internal IDs remain unchanged.
+The first confirmed Workshop Save of a valid unmanaged v3 block captures its original definition
+as revision 1 and the edited definition as revision 2 under a managed v2 head. Only the newest
+20 revisions are retained.
+The Save plan identifies revisions
+being pruned. Duplicate keeps the original key intact and offers explicit copying of examples. Restore to
+draft loads a retained definition into a draft; a deliberate Save creates a new revision, without rerunning it.
+Renaming the display name also requires Save; the stable key remains in Details.
+
+Python starters expose validated parameters and captured runtime identity. Actual source/support edits
+become custom Python and disable those parameter controls. Update support files retains captured copies
+or previews root replacements/additions/removals. Root files selected for replacement are rechecked at
+publication. Old revisions keep their captured helpers and data. Scripts are not sandboxed; source
+review does not establish safety, and undeclared dependencies or absolute-path assumptions cannot be inferred.
+
+Test's **Inputs** section accepts new input or a selected example. Leave **Example** at **New input**,
+enter values and choose **Run test** for a one-off run; neither a saved block nor a saved example is
+required. Run-history persistence still follows **Save runs**. Advanced JSON values start expanded.
+Definition problems appear in Design and Test with their locations; usable input fields remain
+available, but running is disabled until those problems are corrected. Input renames/removals can
+require updating prompt or tool references; output renames update the step's output binding.
+
+**Add example** captures the current input in memory. **Edit selected example** edits its expectation
+and values. **Saved examples** shows whether changes are pending; **Save example collection** persists
+them separately from blocks and run history. If the block is new or edited, saving the collection
+offers to save a block revision first, with the normal review. Cancelling or a failed save keeps
+pending examples; the selected example and entered inputs survive Design/Test navigation. Expectations
+can compare exact named outputs, assert explicit field paths or ask for human review. Verify an expectation
+before using it for automatic correctness. Editing an example invalidates prior verification. An accepted,
+well-typed result may still be incorrect. Human ratings bind the exact result and never transfer to a rerun.
+
+Compare selects a saved baseline and either a saved candidate, the selected revision or the current unsaved
+draft, using the same ordered examples. A shared example that does not fit one revision's inputs is named,
+with its missing or extra input names; run such revisions individually. Review source differences, destinations, trial/repair bounds, effects and saving before Start.
+Trials alternate arm order between examples. Results show execution, checks and correctness separately,
+with paired answers, trace, denominators, reported usage and timing coverage. Unknown usage is not zero;
+with no correct result, time per correct result is undefined. Backend internals and cold starts can vary.
+
+Save runs is off by default and is captured once at Start. Saving off retains active/latest session evidence
+until process restart. Saving on writes comparison evidence and child histories; these can be opened from
+Recent runs and comparisons and deleted independently. Stop cancels the current child and remaining trials.
+Reload reattaches to retained work by ID without dispatching it again. Real tool/script calls may change
+external state, and an unknown tool outcome is never automatically retried.
+
+Assist offers four independent draft actions. Choose the action, role, task, stage or Improve sections, then review
+the destination, settings and selected context before sending. Assist's **describe** is a shortcut to
+**Describe block** (below) and ignores the role, task and settings in this dialog. Apply changes only the matching draft or
+unsaved example suggestions. Discard sends nothing further. Generated custom Python is displayed for source
+acknowledgement. A stale or expired proposal requires a deliberate new request. Assistance never publishes
+a block or executes its proposal automatically.
+
+### Standard descriptions
+
+Each saved revision has its own standard description: six short sections (use, when not to use, effects,
+limitations, missing data, failures) and optional per-port **Documentation**. Design's **Standard
+description** panel shows it for the selected revision, with the purpose, each port's exact name and format,
+the configured role or server, declared effects and any dependency problems. A port without documentation
+shows its declared meaning. Documentation is for readers only: it never changes what the block sends or
+checks, and describing a revision never creates, changes or reruns a revision.
+
+**Describe block** asks the `write_block_description` role (unassigned by default; assign it in Settings →
+Roles) for a description of the selected saved revision. It first shows the role, backend, model and whether
+the endpoint is on this computer; a remote endpoint carries a warning that source excerpts or feedback may be
+confidential. The request contains the revision's interface and up to 4,000 characters of its active prompt,
+main script or tool binding (argument names and input paths; literal values omitted). Support files,
+examples, inputs, history and known credentials are not sent; other confidential text in the source can be.
+It never runs the block, calls a tool or saves run evidence, even with Save runs on. **Stop** cancels the call.
+Review the proposal, then **Save description**, **Refine** (one feedback note and one further model call;
+requests to change behaviour are declined) or **Discard**. **Edit description** writes it by hand without a
+model. Saving changes only that revision's description, never the executable block, the default or your
+inputs and examples. Both are disabled while the executable form has unsaved changes, and for a block that
+has not been saved yet.
+
+A new revision starts without a saved description, even when restored from an older one. Revisions saved
+before this release show their stored prose as **Existing description** until you save a new one. A
+description that changed elsewhere since you opened it is refused rather than overwritten; reload and
+review it again. An unreadable, linked or newer-format sidecar shows **Description unavailable**
+and is protected from writes. An invalid or mismatched v1 sidecar can be replaced if AgentWiz
+can read its freshness token. The sidecar is independent of execution. Pruning a revision also
+removes its description.
 
 ## Settings
 
-Open **Model settings** in the header to choose where requests go:
+Model-server connections are configured in `./config/model-servers.ini`, relative to the launch directory.
+The installer or first launch creates it from the supplied template if absent; it never replaces an existing
+file. Edit the URLs and, if needed, local-server API keys there, then restart AgentWiz. Use `--config PATH`
+to select another file. Protect this file if it contains local-server credentials. Do not put an OpenRouter
+key in it.
+
+Use the standalone **OpenRouter key** button to enter a write-only session key. It is highlighted when
+no key is available. A session key takes precedence over `OPENROUTER_API_KEY`; clearing it exposes that
+environment fallback if present. Neither is saved by AgentWiz.
+
+Open **Model settings** in the header to choose the model:
 
 | Setting | Notes |
 | --- | --- |
 | Model source | LM Studio, OpenRouter or OpenAI-compatible. |
-| Base URL | Including `/v1`. Blank uses the default (`http://localhost:1234/v1` for LM Studio, `https://openrouter.ai/api/v1` for OpenRouter). Required for OpenAI-compatible. Must not contain a user name, password, query or fragment (`@`, `?`, `#`): put credentials in the API key. |
-| API key | Write-only. Bound to the model source and base URL it was saved for, so it is never sent anywhere else. **Clear** removes it. For OpenRouter, `OPENROUTER_API_KEY` is used when no key is entered. Keys must be visible ASCII characters without spaces. |
 | Model ID | Type it, or use **Load models**. |
 | Provider | OpenRouter only. **Load providers** lists the model's providers; choosing one pins the request to it with no fallback. |
 
@@ -180,20 +338,17 @@ Reasoning and max tokens are set in each request panel (see **Task settings**).
 **Apply** uses the dialog's settings for this AgentWiz process.
 
 The header shows the workspace (hover for its folder), the active profile, the current settings and
-where the key comes from: `key: session` (entered here), `key: env OPENROUTER_API_KEY`, or
-`key: none`.
+where the key comes from: `key: session`, `key: env OPENROUTER_API_KEY`, `key: config`, or `key: none`.
 
 ### Profiles
 
-A profile stores four settings under a name: model source, base URL, model ID and provider. It never
-stores a key.
+A profile stores model source, model ID and provider under a name. It never stores a key or server URL.
+Older profile URLs are no longer used: transfer any required endpoint manually to the configuration file.
 
-- **From 0.1.2, profile files are format version 2.** Profiles saved by 0.1.1 load as they are, but
+- **Profile files are format version 3.** Older profiles load, but their server URLs are ignored and
+  removed on the next write. Earlier AgentWiz releases cannot read version 3 files. Profiles saved by 0.1.1 load as they are, but
   their reasoning and max tokens values are dropped the next time the file is written: set them in
   the request panel and press **Save task settings** instead.
-- **Once 0.1.2 has rewritten a profile file, AgentWiz 0.1.1 treats it as read-only.** In particular,
-  after an **Export as default** from 0.1.2, a 0.1.1 process sharing those defaults can no longer
-  import or export, though its own workspace profiles keep working.
 
 Shared **defaults** live in `./model_profiles/profiles.json`, relative to the launch directory.
 Use `--profiles-dir /path/to/another/project/model_profiles` to use defaults kept in another project.
@@ -219,8 +374,8 @@ initially. Existing workspaces are never automatically updated, including on res
 - **Delete** removes the active profile after asking; the settings stay as they are.
 - The header shows `profile: <name>`, with `(modified)` after you Apply settings that differ from
   the saved profile, or `no profile`.
-- The active profile is restored when AgentWiz starts. Keys are not: enter them again (each key is
-  remembered for its model source and base URL), or use `OPENROUTER_API_KEY` for OpenRouter.
+- The active profile and fixed server configuration are restored when AgentWiz starts. OpenRouter
+  session keys are not: enter one again or use `OPENROUTER_API_KEY`.
 
 ### Read-only workspaces
 
@@ -374,103 +529,129 @@ how much it returns; under WSL2, use the address where Docker publishes port 876
 
 ## Contracts
 
-A contract says what an answer should look like. Checks compare an answer with it deterministically
-and report every problem with its location, in words both you and a model can act on. They check
-format, structure and stated values; they cannot judge whether an answer is right.
+A contract describes one value: the text or JSON a port carries. Checks compare a value with it
+deterministically and report every problem with its location. They check **structure** — types,
+required fields, allowed choices, lengths and bounds — not whether a value is correct, complete or safe
+to act on. A pass is labelled as a structure pass, never as a correctness or privacy certificate.
 
-A contract is a JSON object. The **Contracts** tab edits it as JSON text and saves it as
-`<workspace>/contracts/<name>.json`. You can also edit those files with any editor: AgentWiz notices
-changes, and a file you repair is usable again without a restart. Names follow the profile-name rule.
+There are three kinds, and each can be written inline in a block or saved and reused:
 
 ```json
-{
-  "format_version": 1,
-  "format": "json",
-  "strict": false,
-  "description": "Fields pulled from a report",
-  "schema": {"type": "object", "required": ["id", "ratio"],
-             "properties": {"id": {"type": "integer"}, "ratio": {"type": "number", "maximum": 1}}},
-  "checks": [
-    {"type": "contains", "value": "\"id\""},
-    {"type": "json_equals", "value": {"id": 9007199254740993, "ratio": 0.10000000000000000001}}
-  ]
-}
+{"format": "text", "description": "A short reply", "min_length": 1, "max_length": 2000,
+ "contains": ["Acknowledged"], "not_contains": ["CONFIDENTIAL"]}
 ```
 
-| Field | Rule |
-| --- | --- |
-| `format_version` | 1. The editor may leave it out; the server writes it. A greater number means a newer file, which AgentWiz will not use or overwrite. |
-| `format` | `"text"` or `"json"`. Required. |
-| `strict` | `true` or `false` (default `false`). JSON contracts only; see below. |
-| `description` | Shown in lists; never checked. |
-| `schema` | `null`, or a JSON Schema (Draft 2020-12). JSON contracts only. |
-| `checks` | A list of checks. An unknown `type` or key is refused, because a mistyped key would otherwise do nothing. |
+```json
+{"format": "json", "description": "A classification",
+ "schema": {"type": ["string", "null"], "enum": ["routine", "urgent", null]}}
+```
 
-Unknown top-level fields are kept when AgentWiz rewrites the file, and a save names them, so a
-mistyped field is visible.
+```json
+{"format": "json", "description": "Anything"}
+```
 
-**Reading an answer.** Reasoning is never checked, only the answer text. A text contract checks the
-whole text. A JSON contract first parses the answer. If it contains exactly one fenced code block
-(three or more backticks or tildes, as in CommonMark), that block is parsed; with `strict` the whole
-answer, trimmed, is parsed and a fence is a parse failure. Two or more fenced blocks fail the parse,
-located at the second. The other checks run on the whole answer text, not on the extracted block.
+- **Text** rules (all optional, all applied together): `min_length`, `max_length` (code points),
+  `exact` (including the empty string), `contains`, `not_contains` (up to 100 distinct literals each).
+  Comparison uses the decoded text exactly: no trimming, case folding or newline/Unicode normalisation.
+  A non-string value fails `text.type`. Contradictory rules (inverted bounds, a literal both required and
+  forbidden, an `exact` value another rule rejects) are refused.
+- **JSON with a schema** uses a small JSON Schema vocabulary: every node has `type` — `string`,
+  `integer`, `number`, `boolean`, `array`, `object`, or `[T, "null"]` in that order — and may have a
+  `description`. Strings may have `enum`, `minLength`, `maxLength`; numbers `minimum`, `maximum`;
+  arrays a required `items` plus `minItems`, `maxItems`; objects a required `properties`, optional
+  `required` and a boolean `additionalProperties` (omitted means extra properties are allowed).
+  Property names are identifiers. At most 100 nodes and depth 10. Everything else (`$ref`, `pattern`,
+  `format`, `oneOf`, `const`, `default`, …) is refused at its location rather than ignored.
+- **Any JSON** (no `schema`) accepts any JSON value and is shown as **Any JSON — no field validation**.
 
-| Check | Keys | Passes when |
-| --- | --- | --- |
-| `exact` | `value` | the answer equals it, after normalising line endings and trimming both |
-| `contains` / `not_contains` | `value` (not empty) | the answer does / does not contain it, case-sensitive |
-| `regex` | `pattern` | Python's `re.search` finds it, unanchored; flags only inline, such as `(?i)` |
-| `length` | `min`, `max` | the trimmed answer has that many Unicode code points; at least one bound set |
-| `json_equals` | `value` | the parsed JSON equals it: objects ignore key order, arrays do not, `1` equals `1.0`, `true` never equals `1` (JSON contracts only) |
+Required and nullable are independent: `required` says a property must be present; `[T, "null"]` says
+it may be an explicit `null`. A nullable choice lists its strings and then one final `null`.
 
-**Numbers are exact.** Integers and decimals are kept digit for digit and compared by value; no
-number is ever converted to a float. `9007199254740993` and `9007199254740992` are different, and
-so are `0.10000000000000000001` and `0.1`. The page never parses a contract's numbers: the contract
-travels as text. The limits are integers of at most 4,300 digits and a 2,100-digit decimal
-precision. Beyond them a check reports **not run**, never an approximation.
+**Numbers are exact.** Integers and decimals are kept digit for digit; `2`, `2.0` and `2e0` are the same
+integer, `true` is not a number, and no value is converted to a float. Identifiers such as record numbers
+belong in strings.
 
-**JSON Schema** needs the `checks` extra (see **Install**). It is Draft 2020-12 only, and:
+**Reading an answer.** A JSON value is parsed from the whole answer or from its single fenced code block;
+there is no other recovery. Text is checked as written.
 
-- References (`$ref`, `$dynamicRef`) must be local, starting with `#`; nothing is ever fetched.
-- Every `$schema` in the schema must name Draft 2020-12; a subschema declaring another draft is refused.
-- `format` is an annotation and is not asserted. `pattern` uses Python's regular expressions, which
-  differ from the ECMA-262 dialect JSON Schema specifies.
-- `1` and `1.0` are treated alike (`"type": "integer"` accepts `1.0`), as JSON Schema specifies.
-- A reference to a local target that does not exist is not refused when you save; it makes the
-  result `contract_error` when an answer is checked.
-- Without the extra, a contract with a schema cannot be saved. One already in a file still loads and
-  is usable, but its schema check is **not run**, so the result is `incomplete`, or `fail` if
-  something else failed. It never passes.
+**Saved contracts.** A saved contract is `<workspace>/contracts/<name>.json`: a stable name, a family for
+grouping, and every revision oldest first. Saving an edit appends a new revision; saving an unchanged
+definition does nothing; **Restore** appends a copy of an older revision; changing the family does not
+create a revision. Revisions are never rewritten, and each has a digest of its definition that AgentWiz
+checks every time it reads the file — a file whose history was changed by hand is listed as unusable.
+Every change states the file token it was based on, so an edit from a stale tab is refused rather than
+overwriting another. A contract that blocks still use (current or retained Workshop revisions) cannot be
+deleted; the refusal lists them. Old version 1 contract files are listed as `migration_required`: recreate
+them as new contracts.
 
-**Results.** Each check gives `pass`, `fail` or `not_run`. The overall result:
+**Pinned references.** A block refers to a saved contract by `{"name", "revision", "digest"}`, never by
+name alone or "latest". Appending a newer revision does not change any block; switching a block to it is
+an explicit block edit. Runs and repairs keep their own copy of every contract they used, so a later edit
+or deletion never changes them.
 
-| Overall | Meaning |
-| --- | --- |
-| `pass` | Every check ran and passed. |
-| `fail` | At least one check failed. |
-| `incomplete` | Nothing failed, but at least one check could not run: the schema extra is missing, a number was too large to check exactly, or the answer could not be parsed. |
-| `contract_error` | The contract itself could not be applied, for example a reference that does not resolve. This is never the model's fault, and Repair is not offered. |
+**Contract synthesis** asks the role `write_contract` (unassigned by default; assign it in Roles) for a
+proposed JSON contract with its assumptions listed separately. The proposal is a draft to review: it is
+never saved or attached automatically, it gets one repair if its schema is outside the vocabulary, and
+saving it records only which prompt, role and model produced it.
 
-Issues are listed by location (`answer`, then `line 3, column 7`, then `$.items[2].name`). The first
-20 are shown with the total count; the repair message lists the same 20.
+**Editing contracts (Workshop → Contracts).** The left column searches names and descriptions, filters
+by family and starts **New contract** (a blank Text draft in family General). The right column edits one
+contract: **Format** is Text, Structured JSON or Any JSON. Text has optional length limits, exact text and
+repeatable required/forbidden literals (a blank box means the rule does not run). Structured JSON is an
+indented field table — Name, Type, Description, Required, Allow null — where **More** shows a field's
+bounds, choices, unknown-property policy and Add/Remove property. New groups reject unknown properties;
+new properties are required and not nullable. Any JSON is labelled as having no field validation. Missing
+descriptions are warnings only. **Advanced source** (collapsed) accepts exact source through the same
+rules; invalid source is kept with its problems and cannot be saved. Every edit is applied by the server
+to the exact definition, so long integers and decimals keep every digit.
+**Revision** views any saved revision; editing it drafts an append, and **Restore as new revision** copies
+it as the next revision. **Save** first shows the name, the new revision number, the format and the
+changes from the latest revision; an unchanged draft writes nothing. A save based on a file changed in
+another tab is refused and the draft is kept: **Refresh from disk**, review and save again. If saving
+reports that durability could not be confirmed, do not save again; refresh to confirm. **Save grouping**
+changes only the family; **Duplicate** starts a new contract at revision 1. **Delete** lists the blocks
+that use the contract and is refused while any do, or while a block could not be inspected. **Check
+sample** checks pasted text (literal text for Text, an answer for JSON) without a model call; a pass is a
+structure pass, not a correctness check. Leaving an unsaved draft offers Save, Discard or Stay.
+**Synthesize** (Structured or Any JSON only) shows the destination of the `write_contract` role before
+sending; the proposal appears beside its assumptions, **Apply draft** only replaces the editor's draft,
+and **Save** is still a separate step. Model-call failures show the sanitized error in the synthesis pane,
+including missing credentials, authentication failures and connection errors, rather than only a failed-proposal message.
+Read-only workspaces allow viewing, checking and copying only.
 
-**Check text.** The Contracts tab can check pasted text against the contract in its editor, saved
-or not, with no model involved. Use it to try a contract on an answer you already have. For example,
-with the contract above, `{"id": 9007199254740993, "ratio": 1.5}` fails with an issue at `$.ratio`.
+**Results.** Each check gives `pass`, `fail` or `not_run`; overall `pass`, `fail`, `incomplete` (a check
+could not run, for example a number beyond the exact limits) or `contract_error` (the contract itself
+could not be applied — never the model's fault, and never repaired). Issues are listed by location; the
+first 20 are shown with the total count, and value messages name the rule, not your data.
 
-**Damaged contracts.** A file that cannot be read, is not valid, or is from a newer AgentWiz is
-listed with its problem. You can open it, read its text and delete it, but not select it for a
-request, check against it, or save over it from the page. Repair it with an editor; AgentWiz picks
-the change up.
+### Common tasks
 
-A regular expression in a contract is yours and runs on model answers. A pathological one can take a
-long time on a long answer, holding that request.
+Five illustrative starters (`agentwiz/contract_examples.py`; synthetic data, not a regulatory or clinical
+standard) show the vocabulary: **Identifier occurrences** (a list of kind/value/source/offsets),
+**Clinical observations** (status, nullable value/unit/comparator, as reported), **Classification** (one
+choice), **Invoice** (header, lines, total) and **Action items** (task, nullable owner and due fields).
+The same building blocks cover de-identification, medications, grounded summaries, transaction matching,
+legal obligations, compliance evidence, security or safety triage, letters, translation, table
+extraction, variable key/value records (a list of `{key, value}` groups), tool-action proposals, search
+results, artifact references and suggested corrections — as task-specific groups, lists, text and
+choices.
+
+Limits to plan for: source spans need an immutable source and a separate half-open code-point offset
+check; dates are strings with no date assertion; arithmetic (totals, reconciliation) needs deterministic
+code; key/value slots need their own consistency checks; real tool arguments keep their tool's own
+schema; and an empty extraction list must not stand for an input that failed to process. Until multi-block
+workflows exist, run those checks as separate script blocks or example assertions — a structurally valid
+but wrong value passes its contract and only an example expectation or review rejects it.
 
 ## Checked requests and repair
 
-The **Checked request** tab is Chat with a contract. Choose a contract (only usable ones are listed;
-Send stays disabled, with the reason, until one is chosen), type a system prompt and an input, and
-press **Send**. When the answer completes, it is checked, and the tab shows the overall result, each
+The **Checked request** tab is Chat with a contract. Choose a saved contract (only usable ones are
+listed; Send stays disabled, with the reason, until one is chosen) and a revision: **Latest** shows the
+concrete revision number and digest it currently means, or choose a numbered revision. **Preview contract
+instructions** shows the exact generated section that will be appended to the system prompt for that
+revision. Type a system prompt and an input, and press **Send**. The request carries the exact revision and
+digest shown; if that revision has since been changed or removed the request is refused before sending,
+while a newer appended revision does not affect it. When the answer completes, it is checked, and the tab shows the overall result, each
 check, and the first 20 issues.
 
 - **What is checked.** Only answers whose outcome is *Complete* or *Truncated answer*. Blank,
@@ -490,60 +671,87 @@ check, and the first 20 issues.
   and contract copy of the attempt it repairs, not what the screen shows now. Changing the input,
   profile or contract means starting a new run with **Send**. The API key is looked up again when you
   send the repair; if you cleared it, the backend's refusal is an ordinary error.
+  If its captured endpoint differs from the configured server, repair is refused before sending;
+  start a new request instead. Historical records are not rewritten.
 - **LM Studio with reasoning off** uses LM Studio's native route, which flattens a conversation into
   one text. Repair still works, but the roles are lost.
 - A repair counts toward the limit of 8 model requests in progress.
 
 ## Blocks
 
-A block is a folder directly under `<workspace>/blocks/`; its name is the folder name and the `name` in
-its `block.json`. AgentWiz **reads** block files and **never writes them**: edit them with any editor,
-then press **Reload** in the Blocks tab (the tab also notices an edit when you open a block or run it).
+A block lives directly under `<workspace>/blocks/<key>/`. An unmanaged block has an executable
+v3 `block.json` with a matching `name`. A Workshop-managed root has a v2 `block.json` that points
+to its saved generations. Edit managed blocks through Workshop so the captured assets stay intact.
+The saved-block inspector retains Reload and the run, Stop and trace controls.
 
-```
-<workspace>/blocks/extract_fields/
-    block.json
-    prompts/system.md
-    prompts/user.md
-    scripts/clean.py        (script steps only)
-```
-
-`block.json` (format version 1). Every key not listed here is refused, with its location, so a
-mistyped key never silently does nothing.
+The table describes the executable v3 definition. Unknown keys are refused with their locations.
 
 | Key | Meaning |
 | --- | --- |
-| `format_version` | `1`. A greater number means the block was written for a newer AgentWiz. |
-| `name` | The folder name (1 to 64 letters, digits, `.`, `_`, `-`). |
+| `format_version` | `3`. Version 1 blocks are refused with `migration_required`; a greater number means a newer AgentWiz. |
+| `name` | The folder name (1 to 64 ASCII letters, digits, `.`, `_`, `-`, starting with a letter or digit). |
 | `description` | Optional text shown in the list. |
-| `inputs` | Object: input name to `{"contract": ..., "description": ...}`. The contract is an inline contract object or the name of a saved contract. Names follow `[A-Za-z_][A-Za-z0-9_]{0,63}`. May be empty. |
+| `inputs` | Object: input name to `{"contract": ..., "description": ...}`. The contract is an inline definition or an exact saved-contract pin `{"name", "revision", "digest"}`. Names follow `[A-Za-z_][A-Za-z0-9_]{0,63}`. May be empty. |
 | `outputs` | Same shape, at least one. |
 | `steps` | A list of **exactly one** step. |
 | `budget` | `{"max_seconds": 1..86400 (default 1800), "max_model_tokens": integer >= 1 or absent}`. |
 
-A model step:
+Save this complete example as `<workspace>/blocks/count_identifiers/block.json` and assign the
+`fast` role before running it:
 
 ```json
-{"id": "extract", "kind": "model", "role": "fast",
- "system": {"file": "prompts/system.md"},
- "prompt": {"file": "prompts/user.md"},
- "task": {"temperature": 0, "max_tokens": 1024},
- "output": "fields",
- "repair": {"max_repairs": 2}}
+{
+  "format_version": 3,
+  "name": "count_identifiers",
+  "description": "Count synthetic identifier mentions",
+  "inputs": {
+    "source": {"contract": {"format": "text", "min_length": 1}}
+  },
+  "outputs": {
+    "summary": {
+      "description": "Short tally",
+      "contract": {"format": "text", "min_length": 1}
+    },
+    "count": {
+      "description": "Number of identifier mentions, including repeats",
+      "contract": {"format": "json", "schema": {"type": "integer", "minimum": 0}}
+    }
+  },
+  "steps": [{
+    "id": "extract",
+    "kind": "model",
+    "role": "fast",
+    "response_mode": "named_json",
+    "prompt": {"text": "Count each mention of a token starting with ID- in the source below. Include a short tally and the total number of mentions.\n\nSource:\n{{inputs.source}}"}
+  }]
+}
 ```
 
-`system` (optional) and `prompt` are `{"file": "prompts/..."}` or `{"text": "..."}`. `task` takes the
-same settings as a request panel. `output` names the one declared output. A model or tool block
-declares exactly one output.
+Use `ID-ALPHA, ID-BETA, ID-ALPHA` as the plain-text Test input. One passing reply is
+`{"summary":"Three mentions","count":3}`. A quoted count, missing key or extra key fails. A count
+of 2 is structurally valid. An example expectation on `count` can test correctness separately.
 
-A tool step calls a tool on a server from the MCP servers dialog:
+Model steps declare one or more outputs. The optional `system` and required `prompt` each use
+`{"file":"prompts/…"}` or `{"text":"…"}`. The optional `task` uses request-panel settings.
+
+For a tool block, replace the `inputs`, `outputs` and `steps` fields with the following fields,
+and use a block name matching its folder. This example requires a configured MCP server
+named `docs` that advertises a `lookup` tool accepting `id` and `label`:
 
 ```json
-{"id": "lookup", "kind": "tool", "server": "docs", "tool": "lookup",
- "arguments": {"id": "{{inputs.id}}", "label": "n={{inputs.id}}"}, "output": "result"}
+{
+  "inputs": {"id": {"contract": {"format": "text"}}},
+  "outputs": {"result": {"contract": {"format": "json"}}},
+  "steps": [{
+    "id": "lookup", "kind": "tool", "server": "docs", "tool": "lookup",
+    "arguments": {"id": "{{inputs.id}}", "label": "n={{inputs.id}}"}, "output": "result"
+  }]
+}
 ```
 
-A script step runs a Python file (see **Script steps**):
+The tool step's `output` binds its one declared output. A script step has a different shape.
+This step fragment requires your own `scripts/clean.py` and output declarations matching its
+[standard output](#script-steps):
 
 ```json
 {"id": "clean", "kind": "script", "file": "scripts/clean.py", "timeout_s": 60}
@@ -559,8 +767,8 @@ A script step runs a Python file (see **Script steps**):
 - **The input form** comes from the input contracts: a text area for a `text` input; for a `json`
   input, a generated form when its schema is a simple object schema (numbers are kept exactly as you
   type them), otherwise a JSON editor. Values travel as text.
-- **Revisions.** Each block has a revision that changes when its files, or a saved contract it names,
-  change. The page runs a block only at the revision it showed. If the block changed since, the run is
+- **Revisions.** Each block has a revision that changes when its files change, or when a revision it
+  pins changes, disappears or becomes unusable (a newer appended revision does not count). The page runs a block only at the revision it showed. If the block changed since, the run is
   refused (`stale`), the tab reloads the block and keeps the input texts whose names still exist, and
   nothing is sent. Run again.
 - **The trace** shows the run's state and outcome, the step, each attempt with its outcome, check and
@@ -572,13 +780,46 @@ A script step runs a Python file (see **Script steps**):
 
 ## Roles
 
-`<workspace>/roles.json` maps a role name to a profile name, for example `fast` to a profile you saved
-for a small local model. A model step names a role, so the same block can run on another model by
-changing the map. Open the **Roles** dialog in the header to add, change or remove roles and Save; a
-role whose profile no longer exists, or whose profile has no model, is shown as unresolved with the
-reason, and a block that uses it is refused before any request. **Chat and Checked request keep
-using the active profile**; roles are only for blocks. A role's profile is read when the run is
-prepared, so a profile you edit takes effect on the next run.
+Roles select saved model profiles for model blocks and Workshop assistance. Fresh workspaces offer
+three unconfigured starter roles: **fast** (routine generation/extraction), **assistant** (Workshop
+assistance), and **reasoning** (more demanding tasks). These are suggestions, not model capabilities;
+several roles may share a profile. No model, paid service or credentials are selected automatically.
+
+Open **Settings → Roles** to browse by **location** (All, Local, Cloud / remote), then by
+**family / domain**, and select a role from the matching-role dropdown. Only one role editor is
+displayed at a time. Suggested families are General, Writing & communication, Coding & engineering,
+Research & analysis, Data & extraction, and Workflow assistance. Use **Add family** in the editor
+to create and assign your own family; custom families persist with their saved roles. Older roles
+without a family appear under General. Adding a role uses the active location/family filters.
+
+Edit the selected role's purpose, location, family and saved profile. Switching roles or filters
+retains unsaved edits; **Save all changes** saves every role, including roles hidden by filters.
+Profile choices show backend, endpoint and model. **Create / edit model profiles**
+opens model settings and returns without losing role edits. **Set up defaults** adds missing starter
+roles without replacing existing definitions. A notice lists default roles missing from the saved workspace;
+it remains until those roles are added and saved. Workspaces created before `write_block_description` existed
+list it there until it is added. Save persists assignments and definitions in
+`<workspace>/roles.json`. Saved role names are stable; removing a role warns about references in blocks.
+
+**Local means this machine:** LM Studio or an OpenAI-compatible server (including llama-server)
+using `localhost` or a loopback IP address. LAN servers and other remote endpoints are classified as
+Cloud / remote; OpenRouter is always Cloud. Profile choices are filtered by location, and the backend
+checks compatibility at assignment and role resolution. Neither location silently falls back to the
+other. This constrains the endpoint AgentWiz contacts, not what a server might forward elsewhere.
+
+Each role may carry a default **Temperature** and **Reasoning level**; leave either as *Backend default*
+to set none. They apply to every model block and Workshop assistance call that uses the role, unless the block
+overrides or resets that setting ([Named outputs](#named-outputs)), and never to Chat or Checked request,
+which use the active profile. Zero is a default, not an absent one. An assignment-only save keeps existing
+definitions and defaults.
+
+Unconfigured roles can be used while drafting, but cannot run. Missing profiles, blank models and
+location mismatches are shown with reasons. Existing version-1 assignments remain usable without
+automatic reassignment; saving through the editor adds explicit location definitions. Files written
+with definitions use format version 3 (versions 1 and 2 are still read) and require this version of
+AgentWiz or newer. **Chat and
+Checked request keep using the active profile**, not these roles. Role resolution uses saved profile
+settings when preparing a run; already captured Workshop trials retain their reviewed snapshots.
 
 ## Templates
 
@@ -596,15 +837,19 @@ placeholders written exactly as `{{inputs.name}}` or with a dotted path into a J
   placeholder (spaces, `{{inputs.}}`, an index) or a `{{steps...}}` placeholder is refused when the
   block is loaded.
 - The trace lists every fill with its location, placeholder, source and the SHA-256 of what was
-  inserted. There is no placeholder that renders a contract or schema.
+  inserted. In a model step's system and user prompts, `{{output.name}}` inserts that output's description,
+  format and schema (see [Named outputs](#named-outputs)); it is not a value, and script and tool
+  templates never accept it.
 
 ## Contracts in blocks
 
-- **A contract is never sent to the model.** A block's prompt must itself state the required output,
-  preferably as one short instruction and one example (for a router: say which words are allowed and
-  show one). The contract only decides whether the answer is accepted.
-- **How answers are read.** In strict mode the whole trimmed answer is parsed. Otherwise a single
-  fenced code block is used, with any prose around it ignored, or else the whole answer.
+- **Generated output instructions.** AgentWiz renders each output's name, declared meaning,
+  contract description, format, Text rules and complete JSON schema where applicable. The
+  generated section excludes saved contract identifiers and example data. The checker evaluates
+  the result against the captured contracts.
+- **How JSON answers are read.** With no fenced block, the parser reads the whole trimmed answer.
+  With exactly one, it reads that block and ignores surrounding prose. Multiple fences, duplicate
+  keys and invalid JSON are refused. The parser performs no coercion or arbitrary substring extraction.
 - **The truncation rule.** A block never accepts a cut-off answer, even one whose check passes: a
   truncated attempt is repaired (with a message saying it was cut off) or, if repair is exhausted,
   fails the step. The step result shows the truncated attempts and the cap that applied, so you can
@@ -612,6 +857,45 @@ placeholders written exactly as `{{inputs.name}}` or with a dotted path into a J
 - **Inputs have contracts too.** Each input's text is parsed and checked before the run is admitted.
   A failure rejects the run (outcome **rejected**), takes no slot, and names the input and the rule.
   A JSON input is parsed whole: a fenced block in an input field is a parse error.
+
+## Named outputs
+
+A model step has `"response_mode": "named_json"` and no `output` key. The model returns **one JSON object
+whose top-level keys are exactly the names in the block's `outputs`**, for one output or many. Each key's value
+is checked against that output's own contract, and the outputs are published together or not at all: a failed,
+truncated or stopped answer exposes no partial output. A repair asks for the whole object again.
+
+**What is sent.** AgentWiz fills your prompt templates and appends a generated section to your
+system instructions. With no authored system instructions, the section is the system message.
+**Request preview** shows both messages. The generated section asks the model to:
+
+- Return exactly one JSON object and nothing else: no words before or after it, and no Markdown fence around it.
+- Its top-level keys are exactly these output names, in any order, one value each.
+- Every key must be present. Do not add keys, rename them, or nest one output inside another, and do not split
+  one output across several keys.
+- Place each output's complete value directly under its own key. A value may be empty only where its schema
+  allows that.
+- A text output is a JSON string holding the complete text; quotes, backslashes and line breaks are escaped as
+  JSON requires, and any formatting the task asks for goes inside that string.
+- A JSON output is the value itself, placed directly under its key, not a string containing JSON.
+
+The section is generated for each request. A Text value inside the JSON envelope may contain
+Markdown. The prohibition on fences in the instructions applies to the envelope itself.
+
+**`{{output.name}}`** inserts the named output's declaration in a model prompt. The declaration
+may span multiple lines, so place the placeholder on its own line when you use it.
+`{{output.a.b}}`, `{{ output.a }}`, `{{output.}}` and undeclared names are refused. Filled text is
+never scanned again. Structured outputs require a working JSON Schema validator.
+
+**Older blocks.** Executable v1 definitions report `migration_required` before step keys are
+checked. Rewrite the definition and its contracts for v3. If a v3 model step still contains
+`output`, remove that key and use `response_mode: "named_json"`. Old saved attempts remain readable.
+
+**Sampling precedence.** Temperature and reasoning are resolved separately for each setting: a value the step
+sets wins; `task_resets` naming the setting asks for the backend's default and stops the role's default being
+inherited; otherwise the role's saved default; otherwise the backend's default. Other task settings stay as the
+step configures them. The result is resolved once when a run is prepared, so every repair of that run keeps it,
+and a started comparison keeps the settings it was reviewed with.
 
 ## Automatic repair
 
@@ -627,8 +911,8 @@ prompt evaluation.
 ## Script steps
 
 A script step runs one of your Python files under `scripts/`. The block's inputs arrive on standard
-input as one JSON object; the script prints one JSON object on standard output whose keys are the
-block's output names (every declared output must be present).
+input as one JSON object. The script prints one JSON object on standard output whose keys exactly
+match the block's declared output names.
 
 - The script runs with an allow-listed environment (`PATH`, `HOME`, `LANG`, `TMPDIR`), so it holds no
   credentials, in its own process group, with a time limit (`timeout_s`, default 60, at most 3,600).
@@ -793,20 +1077,26 @@ Click **Tutorial** in the header to open an isolated workbench with local script
 auto-filled inputs and a persistent tips box. No API keys, models or terminal setup are needed.
 The tutorial works in the installed application too.
 
-Eight short feature introductions show how to (each is annotated with the AgentWiz version that last
+Fourteen short feature introductions show how to (each is annotated with the AgentWiz version that last
 changed what it shows):
 
 - **Chat** (updated in 0.1.3): send a message and reuse an answer.
 - **Use a document** (updated in 0.1.3): preview an example and copy it into a conversation.
 - **Call a tool** (updated in 0.1.3): run a prepared local tool and use its result.
-- **Define a contract** (updated in 0.1.3): save reusable response requirements.
-- **Repair a response** (updated in 0.1.3): preview and send a follow-up using contract feedback.
-- **Run a model block** (updated in 0.1.4): see the role `fast` mapped to a profile, then run a block
+- **Define a contract** (updated in 0.2.0): in Workshop → Contracts, check and save reusable structural requirements; a wrong number of the
+  right type still passes — exact values belong in Workshop example expectations.
+- **Repair a response** (updated in 0.2.0): an answer missing a required field fails; preview and send a
+  follow-up using contract feedback.
+- **Run a model block** (updated in 0.2.0): see the role `fast` mapped to a profile, then run a block
   whose first answer fails its contract and whose repair passes.
-- **Run a tool block** (updated in 0.1.4): run a block that sends two exact numbers to a tool and
+- **Run a tool block** (updated in 0.2.0): run a block that sends two exact numbers to a tool and
   gets them back digit for digit.
-- **Run and stop a script block** (updated in 0.1.4): count words with a script, then start a script
+- **Run and stop a script block** (updated in 0.2.0): count words with a script, then start a script
   that waits and Stop it.
+
+- **Design a block** (updated in 0.2.0): save a starter, test it and compare revisions with examples.
+- **Create, improve, describe, suggest examples and explain a failure** (five topics, updated in 0.2.0):
+  prepare assistance against the isolated model, inspect a proposal and Apply or Discard it.
 
 These are learning workflows, not correctness checks or owner assignments. Move freely with
 Next, Back, Reset step or the feature selector. No acknowledgement or successful outcome is
@@ -835,16 +1125,16 @@ Stopping the original AgentWiz process also closes its tutorial.
   setting quietly ignored. On LM Studio, seed, stop sequences and the presence and frequency
   penalties are never sent; top-k, min-p and repetition penalty need reasoning off.
 - **Settings and keys.** Model settings are shared by all pages of one AgentWiz process; only
-  profiles, the saved task settings, the MCP server list, contracts, the Save runs switch and (if on)
-  saved runs survive a restart. Keys and typed MCP tokens are held in memory only and must be
+  profiles, the saved task settings, the MCP server list, contracts, saved blocks/examples, the Save runs switch
+  and (if on) saved runs/comparisons survive a restart. Keys and typed MCP tokens are held in memory only and must be
   re-entered after a restart.
 - **Inputs are not kept.** Each tab's fields are lost when the page reloads.
-- **Checks are syntactic.** They check format, structure and stated values, not whether an answer is
-  right. Regular expressions use Python's dialect, in `regex` checks and in a schema's `pattern`; a
-  pathological expression can take a long time on a long answer.
+- **Checks are syntactic.** They check structure and declared requirements. Use examples or
+  review to judge correctness. User contracts refuse unsupported schema keywords such as
+  `$ref`, `pattern`, `format` and `oneOf`. The contract's top-level `format` still selects Text or JSON.
 - **Number limits.** Exact checks stop at 4,300-digit integers and a 2,100-digit decimal precision;
   beyond them a check reports not run, never an approximation.
-- **JSON Schema** needs the `checks` extra, which brings the compiled package `rpds-py`.
+- **JSON Schema** is included in the standard installation and brings the compiled package `rpds-py`.
 - **A contract edited on disk while a request uses it** does not affect that request, which uses the
   copy taken when it was accepted. A repair uses the contract of the attempt it repairs.
 - **Memory.** At most 100 finished attempts and 256 MiB are held, plus 1,000 summaries. Older
@@ -867,9 +1157,10 @@ Stopping the original AgentWiz process also closes its tutorial.
 - **Unknown tool outcomes.** A lost connection, a server failure, a deadline or Stop after a call
   was sent leaves its outcome unknown; AgentWiz never resends it.
 - **Documents** are the four text formats, kept whole; the token count is an estimate.
-- **Workspaces.** One AgentWiz process per workspace; restart to switch. The default folders are
-  relative to where AgentWiz is launched. Shared, network and cloud-synced folders are unsupported
-  and not detected.
+- **Workspaces.** One AgentWiz process owns one workspace at a time; the Workspaces dialog can switch
+  within the launch folder. The default folders are relative to where AgentWiz is launched. Shared,
+  network and cloud-synced folders are unsupported and not detected. Clone excludes saved runs and
+  comparisons by default, reset cannot be undone, and only a non-current workspace can be deleted.
 - **Damaged or newer local files** make the workspace, its profiles or its task settings read-only
   until AgentWiz restarts. Damaged defaults disable import/export only, and a damaged MCP server list
   disables MCP; both are detected again as soon as they are repaired, as are contract files. Numbers
@@ -881,16 +1172,15 @@ Stopping the original AgentWiz process also closes its tutorial.
 - **Backends.** OpenAI-compatible servers (including llama-server) have no reasoning control from
   AgentWiz; their reasoning text is still displayed. On LM Studio's native route (reasoning "off"),
   truncation is modelSpell's estimate. Stop, contracts and repair on LM Studio and llama-server are
-  checked by the automated tests only, not against a live server, until 0.2.0.
-- **Blocks (0.1.4).** One step per block: no wiring, routing or nesting yet. Block files are read,
-  never written, by AgentWiz. Scripts are not sandboxed and need POSIX process groups; a script that
+  covered by optional live checks; results require an available configured backend.
+- **Blocks.** One step per block: no wiring, routing or nesting yet. Workshop writes managed revisions. Scripts run without a sandbox and need POSIX process groups. A script that
   starts its own session escapes group termination. The token budget is a soft, reported-usage
   allowance; time budgets are not an exact ceiling. Block runs continue after the page closes, up to
   their time budget, holding their slots; they do not survive a restart. Results are held for 100
   runs and 256 MiB; older ones are available from History only if saving was on. A stopped or
-  timed-out tool call may still have run. The parser stays strict, and the truncation rule fails
-  steps whose check passed. Graceful exit can wait for a script group that will not die; a second
-  Ctrl-C exits immediately and skips cleanup. The tutorial doubles process budgets while it is open.
+  timed-out tool call may still have run. A truncated attempt cannot publish outputs even when its
+  checks pass. Graceful exit can wait for a script group that will not die. A second Ctrl-C exits
+  immediately and skips cleanup. The tutorial doubles process budgets while it is open.
 - **The page** is checked in a headless Chromium by the developer tests; other browsers are covered
   only by the tour above.
 - **WSL2** is not checked by the automated tests.

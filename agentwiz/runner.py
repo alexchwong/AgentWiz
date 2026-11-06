@@ -15,12 +15,23 @@ from typing import Any, Mapping
 
 import modelspell
 
-from . import __version__, checks, executor, history, insertion, jsonio, model_call, model_step, runs, script_step, templates
+from . import (__version__, checks, executor, history, insertion, jsonio, model_call, model_step,
+               output_protocol, runs, script_step, templates, task_settings)
 from .errors import ShuttingDown, report_internal
 from .state import NoSuchServer, RoleUnresolved
 from .task_settings import TaskSettingError
 
 RECORD_VERSION = 1
+
+
+@dataclass
+class FrozenSource:
+    snapshot: Any
+    save_runs: bool
+    provenance: dict
+    owner: Any = None
+    capture: Any = None          # state.RoleCapture: the destination and the role's defaults, taken together
+
 
 
 # --- hooks tests replace ----------------------------------------------------------------------------------------
@@ -197,26 +208,64 @@ def _rejected(location: str, message: str) -> _Preparation:
     return _Preparation("rejected", issues=[{"location": location, "message": message}])
 
 
+@dataclass(frozen=True)
+class ModelMessages:
+    """One model block's prepared prompt: the author's system text, the generated output section, the
+    filled user prompt, the messages actually sent, and the effective settings with their sources.
+
+    Preview and dispatch both build this, so what a preview shows is what a run sends.
+    """
+
+    system_author: str
+    system_sent: str
+    generated: str
+    prompt: str
+    fills: list
+    effective: Any
+    plan: Any
+
+
+def model_messages(block: Any, values: Mapping, defaults: Mapping) -> ModelMessages:
+    """Fill a model block's prompts and resolve its settings. Raises `templates.FillError` or
+    `TaskSettingError`; the caller reports them as located issues."""
+    step = block.step
+    effective = task_settings.resolve_effective(step.task, step.task_resets, defaults)
+    plan = model_step.OutputPlan.of(block.outputs, block.contracts["outputs"])
+    descriptions = {spec.name: output_protocol.describe(spec) for spec in plan.specs()}
+    system, system_fills = templates.fill_model_text(step.system or "", "system", values, descriptions)
+    prompt, prompt_fills = templates.fill_model_text(step.prompt or "", "prompt", values, descriptions)
+    generated = output_protocol.instructions(plan.specs())
+    system_sent = f"{system}\n\n{generated}" if system else generated
+    if len(jsonio.encode({"messages": model_call.build_messages(system_sent, prompt)})) > insertion.REQUEST_LIMIT:
+        raise templates.FillError("prompt", "the prepared model request exceeds the request size limit")
+    return ModelMessages(system_author=system, generated=generated, prompt=prompt,
+                         system_sent=system_sent,
+                         fills=system_fills + prompt_fills, effective=effective, plan=plan)
+
+
 def _prepare_model(state: Any, block: Any, values: Mapping) -> _Preparation:
     step = block.step
     try:
-        snapshot = state.resolve_role(step.role)
+        capture = state.role_capture(step.role)
     except RoleUnresolved as exc:
         return _rejected("steps[0].role", str(exc))
     try:
-        system, system_fills = templates.fill_text(step.system or "", "system", values)
-        prompt, prompt_fills = templates.fill_text(step.prompt or "", "prompt", values)
+        prepared_messages = model_messages(block, values, capture.defaults)
     except templates.FillError as exc:
         return _rejected("steps[0]." + exc.location, exc.message)
-    messages = model_call.build_messages(system, prompt)
+    except TaskSettingError as exc:
+        return _rejected("steps[0].task", str(exc))
+    messages = model_call.build_messages(prepared_messages.system_sent, prepared_messages.prompt)
     if len(jsonio.encode({"messages": messages})) > insertion.REQUEST_LIMIT:
         return _rejected("steps[0].prompt", "the filled request is larger than 32 MiB")
     try:
-        arguments = model_call.task_arguments(step.task, snapshot.kind, snapshot.provider)
+        arguments = model_call.task_arguments(prepared_messages.effective.task, capture.snapshot.kind,
+                                              capture.snapshot.provider)
     except TaskSettingError as exc:
         return _rejected("steps[0].task", str(exc))
-    prepared = executor.PreparedModel(snapshot=snapshot, task=step.task, arguments=arguments, messages=messages,
-                                      fills=system_fills + prompt_fills, role=step.role)
+    prepared = executor.PreparedModel(snapshot=capture.snapshot, task=prepared_messages.effective.task,
+                                      arguments=arguments, messages=messages, fills=prepared_messages.fills,
+                                      role=step.role, settings=prepared_messages.effective.sources)
     return _Preparation("prepared", prepared)
 
 
@@ -276,6 +325,7 @@ class _Execution:
 
     def __init__(self, state: Any, loaded: Any, input_texts: Mapping[str, str], checked: InputChecks,
                  observer: _Safe, writer: Any):
+        self.frozen = None
         self.state = state
         self.loaded = loaded
         self.block = loaded.block
@@ -306,7 +356,7 @@ def _create_run(ex: _Execution, executing: bool) -> runs.Run:
         ex.slot, ex.reservation = _admit(state, block.step.kind)
     try:
         run = state.store.new_block_run(
-            save_runs=state.save_runs_now(),
+            save_runs=ex.frozen.save_runs if ex.frozen else state.save_runs_now(),
             block={"name": block.name, "revision": ex.loaded.revision, "files": dict(block.files)},
             inputs=ex.checked.views, input_texts=ex.input_texts, contracts=_contracts_view(block),
             budget=block.budget.view(), step_id=block.step.id, slot=ex.slot)
@@ -356,6 +406,7 @@ def _build_result(ex: _Execution, outcome: str, end: runs.EndPoint) -> dict:
             "input_checks": ex.checked.results, "outputs": outputs, "issues": issues,
             "steps": [ex.step] if ex.step is not None else [],
             "budget": run.budget, "usage": ex.tally.view(),
+            "workshop": ex.frozen.provenance if ex.frozen else {},
             "agentwiz_version": __version__, "modelspell_version": modelspell.__version__}
 
 
@@ -411,7 +462,35 @@ def _execute(ex: _Execution) -> None:
     state, block, run = ex.state, ex.block, ex.run
     values = ex.checked.values
     kind = block.step.kind
-    if kind == "model":
+    if ex.loaded.workshop.get('assets') and ex.frozen is None:
+        from .workshop_assets import validate_generation
+        root = ex.loaded.physical_root
+        validate_generation(root, ex.loaded.workshop)
+    if ex.loaded.workshop.get('origin') in ('llm_generated', 'derived_from_llm'):
+        from .workshop_assets import read, fingerprint
+        source = {p: read(ex.loaded.physical_root, p) for p in [block.step.script_file, *ex.loaded.workshop.get('support', [])]} if kind == 'script' else {}
+        if kind == 'script' and ex.loaded.workshop.get('source_review') != fingerprint(source):
+            ex.preparation = _rejected('source', 'generated source review is required')
+            return
+    if ex.frozen is not None and kind == 'model':
+        if ex.frozen.capture is None:
+            ex.preparation = _rejected('steps[0].role', 'the captured role defaults are missing')
+            return
+
+        class CapturedState:
+            def role_capture(self, role):
+                return ex.frozen.capture
+        ex.preparation = _prepare_model(CapturedState(), block, values)
+    elif ex.frozen is not None and kind == 'tool':
+        current = state.mcp_snapshot_for_block(block.step.server)
+        if current != ex.frozen.snapshot:
+            ex.preparation = _rejected('server', 'captured server configuration changed')
+        else:
+            class CapturedState:
+                def mcp_snapshot_for_block(self, server):
+                    return ex.frozen.snapshot
+            ex.preparation = _prepare_tool(CapturedState(), block, values, ex.reservation)
+    elif kind == "model":
         ex.preparation = _prepare_model(state, block, values)
     elif kind == "tool":
         ex.preparation = _prepare_tool(state, block, values, ex.reservation)
@@ -428,23 +507,27 @@ def _execute(ex: _Execution) -> None:
             make_timer=lambda seconds, callback: make_timer(seconds, callback),
             registry=state.cleanups, writer=ex.writer, release_slot=ex.slot.release,
             protect=lambda: state.store.protect_run(run), unprotect=lambda: state.store.unprotect_run(run),
-            on_started=lambda: ex.observer.operation_started("script"))
+            on_started=lambda: ex.observer.operation_started("script"),
+            capture_owner=ex.frozen.owner if ex.frozen else ex.loaded,
+            no_bytecode=bool(ex.frozen or ex.loaded.workshop))
     ctx = executor.StepContext(
         run=run, block=block, values=values, prepared=ex.preparation.prepared,
         contracts=block.contracts["outputs"], store=state.store, sink=sink, ops=state.mcp_ops,
-        observer=ex.observer, client=state.mcp_client, key_for=state.key_for, script_env=script_env,
+        observer=ex.observer, client=state.mcp_client, key_for=(lambda kind, url: ex.frozen.snapshot.endpoint.api_key) if ex.frozen and kind == 'model' else state.key_for, script_env=script_env,
         script_handle=ex.handle, tally=ex.tally, produced=ex.produced)
     ex.step = executor.execute_step(ctx)
 
 
-def run_block(state: Any, loaded: Any, input_texts: Mapping[str, str], observer: Observer | None = None) -> Finished:
+def run_block(state: Any, loaded: Any, input_texts: Mapping[str, str], observer: Observer | None = None, *, frozen: FrozenSource | None = None) -> Finished:
     """Run a loaded, usable block with the submitted input texts (one per declared input; the caller has checked
     the shape). Raises `Busy` or `ShuttingDown` before any run exists; otherwise returns the ended run."""
     block = loaded.block
+    checks.require_validation(copy.parsed for ports in block.contracts.values() for copy in ports.values())
     safe = _Safe(observer)
     checked = check_inputs(block, input_texts)                       # no slot, no lock (BD-03)
     writer = state.register_writer(f"block run {block.name}")        # refused once shutdown has begun
     ex = _Execution(state, loaded, input_texts, checked, safe, writer)
+    ex.frozen = frozen
     try:
         run = _create_run(ex, executing=checked.passed)
     except BaseException:

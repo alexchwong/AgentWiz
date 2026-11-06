@@ -81,18 +81,37 @@
   #tutorial-box p { margin:6px 0; }
   #tutorial-box input[type="checkbox"] { width:auto; }
   .tutorial-target { outline:3px solid var(--accent); outline-offset:3px; }
+.ws-layout input[type=checkbox],dialog input[type=checkbox]{width:auto}#main-nav .mark,.ws-layout aside .mark{display:none}#main-nav [data-state=running] .mark,.ws-layout aside [data-state=running] .mark{display:inline}.ws-facts dd{min-width:0;overflow-wrap:anywhere}
+.ws-table{overflow-x:auto}.ws-table table{border-collapse:collapse;width:100%}.ws-table th,.ws-table td{border:1px solid var(--line);padding:6px;text-align:left}
+#main-nav{display:flex;gap:.5rem;margin:1rem 0}#main-nav [aria-selected=true],#main-nav [aria-pressed=true],.ws-layout [aria-pressed=true]{font-weight:700;border-bottom:3px solid currentColor}.ws-layout{display:grid;grid-template-columns:minmax(10rem,17rem) minmax(0,1fr);gap:1.25rem}.ws-layout aside,.ws-field{display:grid;gap:.35rem;align-content:start}.ws-field{margin:.65rem 0}.ws-layout textarea,dialog textarea{width:100%;min-height:4rem}.ws-port,article{padding:.6rem;border:1px solid var(--line);margin:.5rem 0}.ws-facts{display:grid;grid-template-columns:auto 1fr;gap:.25rem .75rem}.ws-facts dd{margin:0}dialog{max-height:85vh;max-width:min(48rem,92vw);overflow:auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}#tablist[hidden]{display:none}@media(max-width:720px){.ws-layout{grid-template-columns:minmax(0,1fr)}} </style>
+<style>
+.ws-layout{grid-template-columns:minmax(0,1fr)}
+.ws-layout aside{grid-template-columns:minmax(8rem,14rem) minmax(10rem,20rem) auto minmax(10rem,20rem);align-items:start;justify-content:start}
+.ws-layout aside #tab-blocks{grid-column:1/-1}
+.ws-design-grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1.4fr) minmax(0,1fr);gap:1rem;align-items:start}
+.ws-design-grid>section,.ws-body,.ws-design-grid fieldset{min-width:0}
+.ws-instructions textarea{min-height:13rem}.ws-instructions label:first-child textarea{min-height:6rem}
+.ws-port-table{width:100%;table-layout:fixed;border-collapse:collapse}.ws-port-table th{text-align:left;font-size:12px}
+.ws-port-table td{padding:.2rem;vertical-align:top}.ws-port-table .ws-field{margin:.2rem 0}
+.ws-port-table .ws-port-main label{font-size:0}.ws-port-table td input,.ws-port-table td select{font-size:13px;padding:.4rem}
+.ws-port-table tbody{border-bottom:1px solid var(--line)}.ws-port-table details{margin:.3rem 0}
+.ws-misc{display:flex;flex-direction:column;gap:.4rem}.ws-misc>button{align-self:start}
+.ws-revision-save,.ws-model-settings{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.6rem;align-items:end}.ws-model-settings{grid-template-columns:repeat(2,minmax(0,1fr))}.ws-misc .ws-field{margin:.3rem 0}.ws-revision-save>button{margin-bottom:.3rem}.ws-model-settings input::placeholder{color:var(--muted);opacity:1}.ws-role-field{grid-template-columns:minmax(0,1fr) auto;align-items:center}.ws-role-field select{grid-column:1/-1;grid-row:2}.ws-role-config{font-size:12px;padding:0 4px;grid-column:2;grid-row:1}.ws-revision-picker{max-width:20rem}.ws-hint{color:var(--muted);font-size:13px}.ws-standard-description{border:1px solid var(--line);padding:.6rem;margin:.4rem 0}.ws-standard-description h3{margin:0 0 .3rem}.ws-revision-picker .ws-field{margin:0}.ws-workshop-nav{flex-wrap:wrap}
+@media(max-width:1100px){.ws-design-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.ws-misc{grid-column:1/-1}}
+@media(max-width:720px){.ws-design-grid{grid-template-columns:minmax(0,1fr)}.ws-layout aside{grid-template-columns:minmax(0,1fr)}.ws-revision-save,.ws-model-settings{grid-template-columns:minmax(0,1fr)}.ws-revision-save>button{justify-self:start}.ws-port-table td input,.ws-port-table td select{padding:.25rem}}
 </style>
 </head>
 <body>
 <header>
   <h1>AgentWiz <span id="version"></span></h1>
-  <span id="workspace"></span>
+  <span id="workspace" data-test="header-workspace"></span>
   <span id="summary"></span>
   <label class="switch" title="Saved as given, except that credentials AgentWiz has held, if at least 8 characters long, are replaced with ***. Shorter credentials are not replaced. Text you paste into a request, including copied documents and tool results, is saved with it.">
     <input type="checkbox" id="save-runs" data-test="header-save-runs"> Save runs</label>
   <span id="saving" class="saving hidden" data-test="header-saving">Saving runs</span>
   <span id="switch-msg" class="note err-text hidden" data-test="header-switch-msg"></span>
   <button id="open-settings" data-test="header-model-settings">Model settings</button>
+  <button id="open-openrouter-key" data-test="header-openrouter-key">OpenRouter key</button>
   <button id="open-servers" data-test="header-mcp-servers">MCP servers</button>
   <button id="open-roles" data-test="header-roles">Roles</button>
   <button id="open-tutorial" data-test="header-tutorial">Tutorial</button>
@@ -115,19 +134,21 @@
 <div id="header-note" class="note hidden" data-test="header-note"></div>
 <div id="banner" class="hidden" data-test="banner"></div>
 
+<nav id="main-nav" aria-label="Main navigation"><button id="tab-workshop" data-test="tab-workshop" aria-controls="panel-workshop">Workshop</button><button id="ws-workbench" data-test="ws-workbench">Workbench</button></nav>
+<nav id="workshop-sections" class="tabs" role="tablist" aria-label="Workshop sections" hidden><button role="tab" id="ws-section-blocks" data-test="ws-section-blocks" aria-controls="panel-workshop" aria-selected="false" tabindex="-1">Blocks</button><button role="tab" id="tab-contracts" data-test="tab-contracts" aria-controls="panel-contracts" aria-selected="false" tabindex="-1" data-state="idle" data-frag="contracts">Contracts<span class="mark" aria-hidden="true">●</span></button></nav>
+<section id="panel-workshop" data-test="panel-workshop" hidden></section>
+<section role="tabpanel" id="panel-contracts" data-test="panel-contracts" aria-labelledby="tab-contracts" hidden></section>
 <div class="tabs" role="tablist" aria-label="AgentWiz functions" id="tablist">
   <button role="tab" id="tab-chat" data-test="tab-chat" aria-controls="panel-chat" aria-selected="false" tabindex="-1" data-state="idle" data-frag="chat">Chat<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-documents" data-test="tab-documents" aria-controls="panel-documents" aria-selected="false" tabindex="-1" data-state="idle" data-frag="documents">Documents<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-mcp-tools" data-test="tab-mcp-tools" aria-controls="panel-mcp-tools" aria-selected="false" tabindex="-1" data-state="idle" data-frag="mcp-tools">MCP tools<span class="mark" aria-hidden="true">●</span></button>
-  <button role="tab" id="tab-contracts" data-test="tab-contracts" aria-controls="panel-contracts" aria-selected="false" tabindex="-1" data-state="idle" data-frag="contracts">Contracts<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-checked-request" data-test="tab-checked-request" aria-controls="panel-checked-request" aria-selected="false" tabindex="-1" data-state="idle" data-frag="checked-request">Checked request<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-history" data-test="tab-history" aria-controls="panel-history" aria-selected="false" tabindex="-1" data-state="idle" data-frag="history">History<span class="mark" aria-hidden="true">●</span></button>
-  <button role="tab" id="tab-blocks" data-test="tab-blocks" aria-controls="panel-blocks" aria-selected="false" tabindex="-1" data-state="idle" data-frag="blocks">Blocks<span class="mark" aria-hidden="true">●</span></button>
+  <button role="tab" id="tab-blocks" data-test="tab-blocks" aria-controls="panel-blocks" aria-selected="false" tabindex="-1" data-state="idle" data-frag="blocks">Saved block runs<span class="mark" aria-hidden="true">●</span></button>
 </div>
 <section role="tabpanel" id="panel-chat" data-test="panel-chat" aria-labelledby="tab-chat" hidden></section>
 <section role="tabpanel" id="panel-documents" data-test="panel-documents" aria-labelledby="tab-documents" hidden></section>
 <section role="tabpanel" id="panel-mcp-tools" data-test="panel-mcp-tools" aria-labelledby="tab-mcp-tools" hidden></section>
-<section role="tabpanel" id="panel-contracts" data-test="panel-contracts" aria-labelledby="tab-contracts" hidden></section>
 <section role="tabpanel" id="panel-checked-request" data-test="panel-checked-request" aria-labelledby="tab-checked-request" hidden></section>
 <section role="tabpanel" id="panel-history" data-test="panel-history" aria-labelledby="tab-history" hidden></section>
 <section role="tabpanel" id="panel-blocks" data-test="panel-blocks" aria-labelledby="tab-blocks" data-state="idle" hidden></section>
@@ -144,19 +165,67 @@
   </div>
 </dialog>
 
+<dialog id="workspaces-dialog" data-test="workspaces-dialog" data-state="idle">
+  <h3 style="margin:4px 0">Workspaces</h3>
+  <p class="note">A workspace holds this project's profiles, blocks, examples, roles, contracts and saved runs. Switching releases the current workspace's lock and opens another. Save or discard Workshop changes first. Session API keys and MCP tokens are memory-only and are not carried across a switch or reset.</p>
+  <p class="note" id="workspaces-root" data-test="workspaces-root"></p>
+  <p class="note" id="workspaces-current" data-test="workspaces-current"></p>
+  <div id="workspaces-list" data-test="workspaces-list"></div>
+  <label>Workspace<select id="workspaces-selection" data-test="workspaces-selection"></select></label>
+  <div class="fields">
+    <label>New or clone name<input id="workspaces-name" data-test="workspaces-name"></label>
+    <label>Clone source<select id="workspaces-source" data-test="workspaces-source"></select></label>
+  </div>
+  <label class="checkbox-label"><input type="checkbox" id="workspaces-evidence" data-test="workspaces-evidence"> Include saved runs and comparisons in a clone</label>
+  <p id="workspaces-msg" class="note" data-test="workspaces-msg" role="status"></p>
+  <div class="row" style="justify-content:flex-end">
+    <button type="button" id="workspaces-switch" data-test="workspaces-switch">Switch</button>
+    <button type="button" id="workspaces-create" data-test="workspaces-create">Create</button>
+    <button type="button" id="workspaces-clone" data-test="workspaces-clone">Clone</button>
+    <button type="button" id="workspaces-reset" data-test="workspaces-reset">Reset</button>
+    <button type="button" id="workspaces-delete" data-test="workspaces-delete">Delete</button>
+    <button type="button" id="workspaces-close" data-test="workspaces-close">Close</button>
+  </div>
+  <details>
+    <summary>Launch in another process</summary>
+    <p class="note">This starts a separate AgentWiz process. Only one process can own a workspace.</p>
+    <div class="row" id="workspaces-launch-row"><button type="button" id="workspaces-launch" data-test="workspaces-launch">Show command</button></div>
+    <pre id="workspaces-command" data-test="workspaces-command"></pre>
+  </details>
+</dialog>
+
 <dialog id="roles-dialog" data-test="roles-dialog" data-state="idle">
   <h3 style="margin:4px 0">Roles</h3>
-  <p class="note">A role names a profile. Blocks use roles, so a block can be moved between models by changing this map.</p>
+  <p class="note">Roles select saved model profiles for blocks and Workshop assistance. Local means this machine (LM Studio or a loopback OpenAI-compatible server, including llama-server). Cloud roles never use local profiles. Neither location falls back to the other.</p>
   <p class="note" id="roles-path" data-test="roles-path"></p>
+  <p class="warn-text" id="roles-missing-defaults" data-test="roles-missing-defaults" role="status" hidden></p>
+  <div class="fields">
+    <label for="roles-location-filter">Find by location<select id="roles-location-filter" data-test="roles-location-filter"><option value="">All locations</option><option value="local">Local</option><option value="cloud">Cloud / remote</option></select></label>
+    <label for="roles-family-filter">Then family / domain<select id="roles-family-filter" data-test="roles-family-filter"></select></label>
+  </div>
+  <label for="roles-selection">Role<select id="roles-selection" data-test="roles-selection"></select></label>
+  <p class="note" id="roles-count" data-test="roles-count" role="status"></p>
   <div id="roles-list"></div>
   <p id="roles-msg" class="note" data-test="roles-msg"></p>
   <div class="row" style="justify-content:flex-end">
     <button type="button" id="add-role" data-test="roles-add">Add role</button>
+    <button type="button" id="default-roles" data-test="roles-defaults">Set up defaults</button>
+    <button type="button" id="role-create-profile" data-test="roles-create-profile">Create / edit model profiles</button>
     <button type="button" id="close-roles" data-test="roles-close">Close</button>
-    <button type="button" id="save-roles" class="primary" data-test="roles-save">Save</button>
+    <button type="button" id="save-roles" class="primary" data-test="roles-save">Save all changes</button>
   </div>
 </dialog>
 
+<dialog id="openrouter-key-dialog" data-test="openrouter-key-dialog">
+  <h3>OpenRouter API key</h3>
+  <p class="note">The key is held in memory only. Clearing it falls back to OPENROUTER_API_KEY if set.</p>
+  <label for="openrouter-key-input">API key</label>
+  <input id="openrouter-key-input" data-test="openrouter-key-input" type="password" autocomplete="off">
+  <p id="openrouter-key-msg" role="status"></p>
+  <div class="row"><button type="button" id="openrouter-key-cancel" data-test="openrouter-key-cancel">Cancel</button>
+    <button type="button" id="openrouter-key-clear" data-test="openrouter-key-clear">Clear session key</button>
+    <button type="button" id="openrouter-key-save" data-test="openrouter-key-save">Set / replace</button></div>
+</dialog>
 <dialog id="settings">
   <form method="dialog" id="settings-form">
     <label for="profile">Profile</label>
@@ -169,12 +238,7 @@
       <option value="openrouter">OpenRouter</option>
       <option value="openai_compat">OpenAI-compatible</option>
     </select>
-    <label for="base_url">Base URL (including /v1; blank = default)</label>
-    <input id="base_url" placeholder="">
-    <div id="key-row">
-      <label for="api_key">API key (write-only; blank keeps the current key) <span id="key-state"></span></label>
-      <div class="inline"><input id="api_key" type="password" autocomplete="off"><button type="button" id="clear-key">Clear</button></div>
-    </div>
+    <p class="note" id="server-config-note"></p>
     <label for="model">Model ID</label>
     <div class="inline"><input id="model" list="model-list"><button type="button" id="load-models">Load models</button></div>
     <datalist id="model-list"></datalist>
@@ -195,8 +259,18 @@
 
 <script>
 const TOKEN = new URLSearchParams(location.search).get("t") || "";
+// The shared contract components (overhaul spec 15.4): one packaged script behind the same session token,
+// awaited before the contract screen, port editors or the Checked request selector are built.
+const contractsScript = new Promise((resolve, reject) => {
+  const script = document.createElement("script");
+  script.src = "/assets/contracts.js?t=" + encodeURIComponent(TOKEN);
+  script.onload = () => resolve(window.AgentWizContracts);
+  script.onerror = () => reject(new Error("The contract editor script could not be loaded; reload the page."));
+  document.head.append(script);
+});
+let CW = null;                  // the contract components, once contracts.js has loaded
+const startProblems = [];       // shown in the banner on every render
 const $ = (id) => document.getElementById(id);
-const DEFAULT_URL = { lmstudio: "http://localhost:1234/v1", openrouter: "https://openrouter.ai/api/v1", openai_compat: "required" };
 const STALE_SEND = "Settings, a contract or the saving switch were changed elsewhere. The page has reloaded them; check them and send again.";
 const STALE_SAVE = "Settings were changed in another tab. The header now shows the current settings; check them and save again.";
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -205,9 +279,9 @@ const LABELS = { complete: "Complete", empty: "Empty answer", reasoning_only: "R
                  stopped: "Stopped", error: "Error" };
 const DISCLOSURE = "Saved as given, except that credentials AgentWiz has held, if at least 8 characters long, are replaced with ***. " +
   "Shorter credentials are not replaced. Text you paste into a request, including copied documents and tool results, is saved with it.";
-const FRAGS = ["chat", "documents", "mcp-tools", "contracts", "checked-request", "history", "blocks"];
+const FRAGS = ["workshop","chat", "documents", "mcp-tools", "contracts", "checked-request", "history", "blocks"];
 const POLL_MS = 2000;
-let state = {}, clearKey = false;
+let state = {};
 const modelContexts = {};       // model id -> context length, from the dialog's last Load models
 const BASIC = ["temperature", "max_tokens"];
 const ADVANCED = ["top_p", "top_k", "min_p", "repetition_penalty", "presence_penalty", "frequency_penalty", "seed", "stop"];
@@ -413,17 +487,25 @@ let activeFrag = "chat";
 function fragFromHash() {
   let f = "";
   try { f = decodeURIComponent(location.hash.slice(1)); } catch (e) { /* unknown → Chat */ }
-  return FRAGS.includes(f) ? f : "chat";
+  return FRAGS.includes(f) ? f : "workshop";
 }
 
+const NOT_WORKBENCH = ["workshop", "contracts", "history", "blocks"];
 function selectTab(frag, opts = {}) {
   activeFrag = frag;
+  $("tablist").hidden = NOT_WORKBENCH.includes(frag);
+  $("ws-workbench").setAttribute("aria-pressed",String(!NOT_WORKBENCH.includes(frag)));
   for (const f of FRAGS) {
     const button = $("tab-" + f), selected = f === frag;
     button.setAttribute("aria-selected", selected ? "true" : "false");
     button.tabIndex = selected ? 0 : -1;
     $("panel-" + f).hidden = !selected;
   }
+  // Workshop holds Blocks | Contracts; the main Workshop tab stays selected in either section.
+  $("workshop-sections").hidden = !["workshop", "contracts"].includes(frag);
+  $("ws-section-blocks").setAttribute("aria-selected", String(frag === "workshop"));
+  $("ws-section-blocks").tabIndex = frag === "workshop" ? 0 : -1;
+  if (frag === "contracts") $("tab-workshop").setAttribute("aria-selected", "true");
   if (opts.focus) $("tab-" + frag).focus();
   if (opts.hash !== false && location.hash !== "#" + frag) {
     try { history.replaceState(null, "", "#" + frag); } catch (e) { /* keep the old fragment */ }
@@ -437,18 +519,30 @@ function setTabRunning(frag, running) {
 }
 
 $("tablist").addEventListener("keydown", (e) => {
-  const i = FRAGS.indexOf(activeFrag);
+  const available=FRAGS.filter(f=>!NOT_WORKBENCH.includes(f));
+  const i = available.indexOf(activeFrag);
   let next = -1;
-  if (e.key === "ArrowRight") next = (i + 1) % FRAGS.length;
-  else if (e.key === "ArrowLeft") next = (i + FRAGS.length - 1) % FRAGS.length;
-  else if (e.key === "Home") next = 0;
-  else if (e.key === "End") next = FRAGS.length - 1;
+  if (e.key === "ArrowRight") next = (i + 1) % available.length;
+  else if (e.key === "ArrowLeft") next = (i + available.length - 1) % available.length;
+  else if (e.key === "Home") next = available.indexOf("chat");
+  else if (e.key === "End") next = available.length - 1;
   if (next < 0) return;
   e.preventDefault();
-  selectTab(FRAGS[next], { focus: true });
+  selectTab(available[next], { focus: true });
 });
 for (const f of FRAGS) $("tab-" + f).addEventListener("click", () => selectTab(f));
-window.addEventListener("hashchange", () => { const f = fragFromHash(); if (f !== activeFrag) selectTab(f, { hash: false }); });
+$("ws-section-blocks").addEventListener("click", () => selectTab("workshop"));
+$("workshop-sections").addEventListener("keydown", (e) => {
+  if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(e.key)) return;
+  e.preventDefault();
+  const next = activeFrag === "workshop" ? (e.key === "Home" ? "workshop" : "contracts") : (e.key === "End" ? "contracts" : "workshop");
+  selectTab(next); (next === "workshop" ? $("ws-section-blocks") : $("tab-contracts")).focus();
+});
+window.addEventListener("hashchange", () => {
+  const f = fragFromHash();
+  if(f!==activeFrag)selectTab(f,{hash:false});
+  else if(f==="workshop")TABS.workshop.onShow();
+});
 
 // Ctrl/Cmd+Enter acts on the visible tab only.
 document.addEventListener("keydown", (e) => {
@@ -460,6 +554,7 @@ document.addEventListener("keydown", (e) => {
 // --- header, banner and state ------------------------------------------------------------------------------
 function keySource(s) {
   if (s.key_source === "session") return { summary: "key: session", label: "(set for this endpoint)" };
+  if (s.key_source === "config") return { summary: "key: config", label: "(from server config)" };
   if (typeof s.key_source === "string" && s.key_source.startsWith("env:")) {
     const name = s.key_source.slice(4);
     return { summary: "key: env " + name, label: `(from ${name})` };
@@ -485,6 +580,9 @@ function renderState() {
   const ws = state.workspace || {};
   $("workspace").textContent = ws.name ? `workspace: ${ws.name}${ws.read_only ? " (read-only)" : ""}` : "";
   $("workspace").title = ws.path || "";
+  $("workspace").dataset.workspace = ws.name || "";
+  const workspaceButton = $("open-workspaces");
+  if (workspaceButton) workspaceButton.hidden = ws.admin === false;
   const banner = $("banner");
   banner.replaceChildren();
   const problems = Array.isArray(ws.problems) ? ws.problems : [];
@@ -494,8 +592,10 @@ function renderState() {
   const pr = profilesInfo();
   $("summary").title = `${pr.path || ""}\nDefaults: ${pr.defaults_path || ""}`;
   if (pr.unresolved_active) banner.append(h("p", { text: `Profile ${pr.unresolved_active} is missing; default settings are in use.` }));
+  if (state.legacy_server_profiles?.length) banner.append(h("p", {text: `Legacy server URLs in profiles ${state.legacy_server_profiles.join(", ")} are ignored. Transfer any needed URLs to ${state.server_config_path}.`}));
   for (const c of (state.contracts && state.contracts.items) || [])
     if (c.problem) banner.append(h("p", { text: `${c.problem.file}: ${c.problem.message}` }));
+  for (const m of startProblems) banner.append(h("p", { text: m }));
   const warning = shortCredentialWarning();
   if (warning) banner.append(h("p", { "data-test": "banner-short-credential", text: warning }));
   banner.classList.toggle("hidden", banner.childElementCount === 0);
@@ -505,6 +605,10 @@ function renderState() {
   if (state.kind === "openrouter") parts.push("provider=" + (state.provider || "any"));
   parts.push(keySource(state).summary);
   $("summary").textContent = parts.join(" · ");
+  const keyMissing = state.openrouter_key_source === "none";
+  $("open-openrouter-key").textContent = keyMissing ? "OpenRouter key not set" : "OpenRouter key set";
+  $("open-openrouter-key").classList.toggle("primary", keyMissing);
+  $("open-openrouter-key").dataset.state = keyMissing ? "missing" : "present";
   const hi = historyInfo();
   $("save-runs").checked = !!hi.save_runs;
   $("save-runs").disabled = !!hi.read_only;
@@ -664,15 +768,13 @@ function makeTaskPanel(prefix) {
 // --- the Model settings dialog (unchanged from 0.1.2) ----------------------------------------------------
 function syncDialogVisibility() {
   const kind = $("kind").value;
-  $("base_url").placeholder = DEFAULT_URL[kind];
   $("provider-row").classList.toggle("hidden", kind !== "openrouter");
 }
 
 function dialogConfig() {
   const kind = $("kind").value;
-  const cfg = { kind, base_url: $("base_url").value.trim(), model: $("model").value.trim(),
+  const cfg = { kind, model: $("model").value.trim(),
     provider: kind === "openrouter" ? $("provider").value : "" };
-  if ($("api_key").value) cfg.api_key = $("api_key").value; else if (clearKey) cfg.api_key = "";
   return cfg;
 }
 
@@ -696,8 +798,8 @@ function renderProfileControls() {
 
 function fillDialog() {
   $("export-default").checked = false;
-  $("kind").value = state.kind; $("base_url").value = state.base_url || ""; $("model").value = state.model || "";
-  $("api_key").value = ""; clearKey = false; $("key-state").textContent = keySource(state).label;
+  $("kind").value = state.kind; $("model").value = state.model || "";
+  $("server-config-note").textContent = `Server connections are configured in ${state.server_config_path || "the model server configuration file"}; restart after editing.`;
   const p = $("provider"); p.length = 1;
   if (state.provider) p.add(new Option(state.provider, state.provider, true, true));
   renderProfileControls(); syncDialogVisibility();
@@ -705,12 +807,26 @@ function fillDialog() {
 
 $("open-settings").onclick = () => { fillDialog(); settingsMsg(""); $("settings").showModal(); };
 $("kind").onchange = syncDialogVisibility;
-$("clear-key").onclick = () => { clearKey = true; $("api_key").value = ""; $("key-state").textContent = "(will be cleared)"; };
+$("open-openrouter-key").onclick = () => { $("openrouter-key-input").value = ""; $("openrouter-key-msg").textContent = ""; $("openrouter-key-dialog").showModal(); };
+$("openrouter-key-cancel").onclick = () => $("openrouter-key-dialog").close();
+$("openrouter-key-dialog").addEventListener("close", () => { $("openrouter-key-input").value = ""; });
+async function updateOpenRouterKey(value, clear = false) {
+  if (!clear && !value.trim()) { $("openrouter-key-msg").textContent = "Enter a key, or use Clear session key."; return; }
+  try {
+    state = await api("/api/openrouter-key", {api_key: value, revision: state.revision});
+    $("openrouter-key-input").value = ""; renderState(); $("openrouter-key-dialog").close();
+  } catch (e) {
+    if (e.code === "stale_revision") await refreshState();
+    $("openrouter-key-msg").textContent = e.message;
+  }
+}
+$("openrouter-key-save").onclick = () => updateOpenRouterKey($("openrouter-key-input").value);
+$("openrouter-key-clear").onclick = () => updateOpenRouterKey("", true);
 
 $("load-models").onclick = async () => {
   const cfg = dialogConfig(); settingsMsg("Loading models…");
   try {
-    const { models } = await api("/api/models", { kind: cfg.kind, base_url: cfg.base_url, api_key: cfg.api_key || null });
+    const { models } = await api("/api/models", { kind: cfg.kind });
     const list = $("model-list"); list.replaceChildren();
     for (const key of Object.keys(modelContexts)) delete modelContexts[key];
     for (const m of models) {
@@ -726,7 +842,7 @@ $("load-models").onclick = async () => {
 $("load-providers").onclick = async () => {
   const cfg = dialogConfig(); settingsMsg("Loading providers…");
   try {
-    const { providers } = await api("/api/providers", { kind: cfg.kind, base_url: cfg.base_url, api_key: cfg.api_key || null, model: cfg.model });
+    const { providers } = await api("/api/providers", { kind: cfg.kind, model: cfg.model });
     const p = $("provider"); p.length = 1;
     for (const x of providers) {
       const label = `${x.name} — ${x.slug ?? "no tag"}${x.quantization ? " · " + x.quantization : ""}${x.context_length ? " · " + x.context_length + " ctx" : ""}`;
@@ -849,10 +965,16 @@ function makeRequestTab(frag, source) {
   const output = outPanel(prefix, "output", "Output");
   const final = outPanel(prefix, "final", "Final event (exact JSON as received)", "exact");
   const checkResult = checkBox(prefix);
+  const structured=h("div",{"data-test":prefix+"-structured-preview"});
   let active = null, shown = null, rows = [], override = null;
 
   // checked only
-  const contractSel = h("select", { id: "checked-contract", "data-test": "checked-contract" });
+  // The shared pinned selector (contracts.js) is attached once that script has loaded.
+  const contractHost = h("div", { "data-test": "checked-contract-host" });
+  let contractPicker = null, contractSignature = "";
+  const instructionsBtn = h("button", { type: "button", "data-test": "checked-contract-preview", text: "Preview contract instructions" });
+  const instructionsOut = outPanel("checked", "contract-instructions", "Generated contract section (appended to the system prompt)");
+  instructionsOut.el.classList.add("hidden");
   const sendReason = h("span", { class: "note", "data-test": "checked-send-reason" });
   const attemptsEl = h("ul", { class: "list", "data-test": "checked-attempts" });
   const repairReason = h("span", { class: "note", "data-test": "checked-repair-reason" });
@@ -866,21 +988,22 @@ function makeRequestTab(frag, source) {
     ? "Checked request: send a prompt, check the answer against a saved contract, then preview and send a repair."
     : "Chat: send a prompt to the model and watch the answer stream. Stop ends a request at any stage.";
   put(panel, h("p", { class: "panel-intro", text: intro }),
-    checked ? [h("label", { for: "checked-contract", text: "Contract" }), contractSel] : null,
+    checked ? [contractHost, h("div", { class: "row" }, instructionsBtn), instructionsOut.el] : null,
     h("label", { for: prefix + "-system", text: "System prompt (optional)" }), system,
     h("label", { for: prefix + "-prompt", text: "Input" }), prompt, task.el,
     h("div", { class: "row" }, send, stop, statusEl, attemptEl, sendReason),
     h("div", { class: "grid" }, reasoning.el, output.el),
-    checked ? [checkResult.el, h("label", { text: "Attempts of this run" }), attemptsEl, repairBox, previewOut.el] : null,
+    checked ? [structured,checkResult.el, h("label", { text: "Attempts of this run" }), attemptsEl, repairBox, previewOut.el] : null,
     final.el);
 
   const mark = (name, value) => { if (value === null || value === undefined) delete statusEl.dataset[name]; else statusEl.dataset[name] = value; };
   const display = (state_, text, style = "") => { statusEl.dataset.state = state_; statusEl.textContent = text; statusEl.className = "status " + style; };
   const displays = (req) => req === active || (req.attemptId !== null && req.attemptId === shown);
 
+  // The concrete pin this page shows: name, numbered revision and digest (never a literal "latest", spec 13.1).
   function selectedContract() {
-    const items = (state.contracts && state.contracts.items) || [];
-    return items.find((c) => c.name === contractSel.value && !c.problem) || null;
+    const pin = contractPicker && contractPicker.pin();
+    return pin && pin.digest ? pin : null;
   }
 
   function repairCode() {
@@ -932,7 +1055,7 @@ function makeRequestTab(frag, source) {
 
   function clearDisplay() {
     reasoning.pre.textContent = ""; output.pre.textContent = ""; final.pre.textContent = "";
-    checkResult.clear();
+    checkResult.clear();structured.replaceChildren();
     for (const name of ["outcome", "attemptId", "save", "error"]) delete statusEl.dataset[name];
     attemptEl.textContent = "";
     if (checked) { previewOut.el.classList.add("hidden"); previewOut.pre.textContent = ""; }
@@ -960,6 +1083,7 @@ function makeRequestTab(frag, source) {
     if (output.pre.textContent === "") output.pre.textContent = (record.result && record.result.text) || (record.partial && record.partial.text) || "";
     if (reasoning.pre.textContent === "") reasoning.pre.textContent = (record.result && record.result.reasoning) || (record.partial && record.partial.reasoning) || "";
     if (checked) {
+      if (record.contract?.text&&record.result?.text)structured.replaceChildren(h("h4",{text:"Structured answer preview"}),wsStructured(record.result.text,record.contract.text));
       if (record.check) checkResult.show(record.check);
       else checkResult.note(SKIPPED[record.check_skipped] || "Not checked.");
     }
@@ -1151,7 +1275,8 @@ function makeRequestTab(frag, source) {
     if (checked) {
       const c = selectedContract();
       if (!c) { display("idle", "Choose a usable contract first.", "error"); return; }
-      body.contract = { name: c.name, revision: c.revision };
+      // The concrete numbered revision and digest this page shows; never a literal "latest" (spec 13.1).
+      body.contract = { name: c.name, revision: c.revision, digest: c.digest };
     }
     const payload = JSON.stringify(body);
     if (state.limits && new TextEncoder().encode(payload).length > state.limits.request_bytes) {
@@ -1165,7 +1290,21 @@ function makeRequestTab(frag, source) {
   stop.onclick = doStop;
 
   if (checked) {
-    contractSel.onchange = refreshControls;
+    instructionsBtn.onclick = async () => {
+      const c = selectedContract();
+      if (!c) { display("idle", "Choose a usable contract first.", "error"); return; }
+      try {
+        const r = await api("/api/contracts/instructions", { format_version: 2, name: c.name, revision: c.revision, digest: c.digest });
+        const still = selectedContract();
+        if (!still || still.digest !== r.digest || still.revision !== r.revision) return;   // a newer selection wins
+        instructionsOut.pre.textContent = `Contract ${r.name} · revision ${r.revision} · ${r.digest}\n\n${r.text}`;
+        instructionsOut.pre.dataset.revision = String(r.revision); instructionsOut.pre.dataset.digest = r.digest;
+        instructionsOut.el.classList.remove("hidden");
+      } catch (e) {
+        instructionsOut.el.classList.add("hidden");
+        display("idle", CW ? CW.errorText(e) : e.message, "error");
+      }
+    };
     previewBtn.onclick = async () => {
       const last = rows[rows.length - 1];
       if (!last) return;
@@ -1194,18 +1333,23 @@ function makeRequestTab(frag, source) {
       display("idle", "", "");
       prompt.value = text; system.value = "";
       if (!preserveTask) panel.querySelector(`[data-test="${prefix}-task-reset"]`).click();
-      if (checked) contractSel.value = "fields";
       refreshControls();
+      if (checked && contractPicker) return contractPicker.select("fields").then(refreshControls);
+    },
+    attachContracts() {
+      if (!checked || !CW || contractPicker) return;
+      contractPicker = CW.picker({ test: "checked", latestOption: true, onChange: () => {
+        instructionsOut.el.classList.add("hidden"); instructionsOut.pre.textContent = ""; refreshControls();
+      } });
+      contractHost.replaceChildren(contractPicker.el);
     },
     submit,
     onState() {
       task.render();
-      if (checked) {
-        const keep = contractSel.value, items = ((state.contracts && state.contracts.items) || []).filter((c) => !c.problem);
-        contractSel.replaceChildren();
-        if (!items.length) contractSel.add(new Option("(no usable contracts)", ""));
-        for (const c of items) contractSel.add(new Option(`${c.name} (${c.format})`, c.name));
-        if (items.some((c) => c.name === keep)) contractSel.value = keep;
+      if (checked && contractPicker) {
+        // Re-read the selected contract only when the library changed; "Latest" then shows the new number.
+        const signature = JSON.stringify((state.contracts && state.contracts.items) || []);
+        if (signature !== contractSignature) { contractSignature = signature; contractPicker.refresh(); }
       }
       refreshControls();
     },
@@ -1467,7 +1611,7 @@ function mcpInfo() { return state.mcp || { servers: {}, read_only: true, revisio
       }
       if (ev.result.structured_text !== null) {
         const p = outPanel("mcp", "result-structured", "Structured content (as sent)");
-        p.pre.textContent = ev.result.structured_text; resultBox.append(p.el);
+        p.pre.textContent = ev.result.structured_text; resultBox.append(wsStructured(ev.result.structured_text),h("details",{},h("summary",{text:"Exact structured source"}),p.el));
       }
       if (ev.result.other_items.length)
         resultBox.append(h("div", { class: "note", text: "Other items: " + ev.result.other_items.map((i) => i.type).join(", ") }));
@@ -1629,175 +1773,17 @@ $("save-servers").onclick = async () => {
   } catch (e) { await serversFailure(e); }
 };
 
-// --- Contracts (Section 11.2; contracts are saved in the workspace, Section 7.8) --------------------------------------
-(function contractsTab() {
-  const panel = $("panel-contracts");
-  const TEMPLATES = {
-    text: { format: "text", description: "", checks: [{ type: "contains", value: "TEXT THE ANSWER MUST CONTAIN" }] },
-    json: { format: "json", strict: false, description: "", schema: null, checks: [] },
-  };
-  let current = null;                 // {name, revision, problem} of the opened contract; null for a new one
-  let arming = false;
-  const listEl = h("ul", { class: "list", "data-test": "contracts-list" });
-  const schemaStatus = h("div", { class: "note", "data-test": "contracts-schema-status" });
-  const nameInput = h("input", { id: "contracts-name", "data-test": "contracts-name", placeholder: "contract name" });
-  const editor = h("textarea", { class: "editor", spellcheck: "false", "data-test": "contracts-editor", "data-state": "idle" });
-  const newText = h("button", { type: "button", "data-test": "contracts-new-text", text: "New text contract" });
-  const newJson = h("button", { type: "button", "data-test": "contracts-new-json", text: "New JSON contract" });
-  const saveBtn = h("button", { class: "primary", type: "button", "data-test": "contracts-save", text: "Save" });
-  const deleteBtn = h("button", { type: "button", "data-test": "contracts-delete", text: "Delete" });
-  const confirmBtn = h("button", { type: "button", class: "hidden", "data-test": "contracts-delete-confirm", text: "Confirm: delete this contract" });
-  const cancelBtn = h("button", { type: "button", class: "hidden", "data-test": "contracts-delete-cancel", text: "Cancel" });
-  const msg = h("div", { class: "note", "data-test": "contracts-msg" });
-  const errorsEl = h("ul", { class: "err-text", "data-test": "contracts-errors" });
-  const checkText_ = h("textarea", { rows: 5, "data-test": "contracts-check-text", placeholder: "Paste text to check against the contract above" });
-  const checkBtn = h("button", { type: "button", "data-test": "contracts-run-check", text: "Check" });
-  const result = checkBox("contracts");
-  panel.append(h("p", { class: "panel-intro", text: "Contracts: define, save and delete contracts, and check pasted text against one. No model is involved." }),
-    schemaStatus,
-    h("label", { text: "Saved contracts" }), listEl,
-    h("div", { class: "row" }, newText, newJson),
-    h("label", { for: "contracts-name", text: "Name" }), nameInput,
-    h("label", { text: "Contract (JSON text)" }), editor,
-    h("div", { class: "row" }, saveBtn, deleteBtn, confirmBtn, cancelBtn, copyControl("contracts-copy-editor", () => editor.value, () => editor)),
-    msg, errorsEl,
-    h("label", { text: "Check text" }), checkText_,
-    h("div", { class: "row" }, checkBtn), result.el);
-
-  const items = () => (state.contracts && state.contracts.items) || [];
-  const readOnly = () => !!(state.contracts && state.contracts.read_only);
-  const setEditor = (s) => { editor.dataset.state = s; };
-
-  function refreshButtons() {
-    const damaged = !!(current && current.problem);
-    saveBtn.disabled = readOnly() || damaged;
-    deleteBtn.disabled = readOnly() || !current || arming;
-    deleteBtn.classList.toggle("hidden", arming);
-    confirmBtn.classList.toggle("hidden", !arming); cancelBtn.classList.toggle("hidden", !arming);
-    nameInput.readOnly = !!current;
-  }
-
-  function renderList() {
-    listEl.replaceChildren();
-    if (!items().length) listEl.append(h("li", { class: "muted", text: "No saved contracts yet." }));
-    for (const c of items()) {
-      const li = h("li", { class: "pick" + (current && current.name === c.name ? " current" : ""), "data-test": "contracts-row",
-        "data-name": c.name, "data-revision": String(c.revision) },
-        `${c.name} · ${c.format || "?"} · revision ${c.revision}${c.description ? " · " + c.description : ""}${c.problem ? " · PROBLEM: " + c.problem.message : ""}`);
-      li.onclick = () => open(c.name);
-      listEl.append(li);
-    }
-  }
-
-  function renderSchemaStatus() {
-    const c = (state.contracts && state.contracts.checks) || { available: false, detail: "unknown" };
-    schemaStatus.dataset.available = c.available ? "true" : "false";
-    schemaStatus.textContent = c.available ? `JSON Schema checks: available (${c.detail})`
-      : `JSON Schema checks: not available (${c.detail}). Install them with: pip install 'AgentWiz[checks]'`;
-  }
-
-  function showIssues(body) {
-    errorsEl.replaceChildren();
-    for (const i of body.issues || []) errorsEl.append(h("li", { text: `${i.location}: ${i.message}` }));
-    const more = (body.issue_count || 0) - (body.issues || []).length;
-    if (more > 0) errorsEl.append(h("li", { text: `… and ${more} more` }));
-  }
-
-  async function open(name) {
-    arming = false;
-    try {
-      const c = await api("/api/contracts/" + encodeURIComponent(name));
-      current = { name: c.name, revision: c.revision, problem: c.problem };
-      nameInput.value = c.name; editor.value = c.text; setEditor("idle"); errorsEl.replaceChildren();
-      msg.textContent = c.problem ? `This contract has a problem (${c.problem.message}). It cannot be saved over; repair the file with an editor.` : "";
-    } catch (e) { msg.textContent = e.message; }
-    renderList(); refreshButtons();
-  }
-
-  function fresh(kind) {
-    arming = false; current = null;
-    nameInput.value = ""; editor.value = JSON.stringify(TEMPLATES[kind], null, 2) + "\n";
-    setEditor("idle"); msg.textContent = ""; errorsEl.replaceChildren();
-    renderList(); refreshButtons();
-  }
-
-  newText.onclick = () => fresh("text");
-  newJson.onclick = () => fresh("json");
-  editor.addEventListener("input", () => setEditor("idle"));
-
-  saveBtn.onclick = async () => {
-    const name = nameInput.value.trim();
-    errorsEl.replaceChildren();
-    if (!NAME_RE.test(name)) {
-      setEditor("error"); msg.textContent = "A contract name is 1 to 64 letters, digits, '.', '_' or '-', starting with a letter or digit."; return;
-    }
-    setTabRunning("contracts", true);
-    try {
-      const res = await api("/api/contracts/save", { name, text: editor.value, revision: current ? current.revision : null });
-      state = res;
-      current = { name: res.contract.name, revision: res.contract.revision, problem: res.contract.problem };
-      editor.value = res.contract.text;
-      msg.textContent = "Saved." + ((res.notes || []).length ? " " + res.notes.join(" ") : "");
-      setEditor("saved"); renderState(); renderList(); refreshButtons();
-    } catch (e) {
-      setEditor("error");
-      if (e.code === "contract_error") { msg.textContent = e.message; showIssues(e.body); }
-      else if (e.code === "stale_revision") { await reloadAfterStale(); msg.textContent = "This contract changed elsewhere. Reopen it to load the current text; your edits are kept here."; }
-      else { if (e.status === 409 || e.status === 404) await reloadAfterStale(); msg.textContent = e.message; }
-    } finally { setTabRunning("contracts", false); }
-  };
-
-  deleteBtn.onclick = () => { arming = true; refreshButtons(); };
-  cancelBtn.onclick = () => { arming = false; refreshButtons(); };
-  confirmBtn.onclick = async () => {
-    if (!current) return;
-    arming = false;
-    try {
-      state = await api("/api/contracts/delete", { name: current.name, revision: current.revision });
-      current = null; nameInput.value = ""; editor.value = ""; setEditor("idle"); errorsEl.replaceChildren();
-      msg.textContent = "Deleted."; renderState();
-    } catch (e) {
-      if (e.status === 409 || e.status === 404) await reloadAfterStale();
-      msg.textContent = e.code === "stale_revision" ? "This contract changed elsewhere; reopen it before deleting." : e.message;
-    }
-    renderList(); refreshButtons();
-  };
-
-  async function runCheck() {
-    errorsEl.replaceChildren();
-    setTabRunning("contracts", true);
-    try {
-      const r = await api("/api/contracts/check", { contract_text: editor.value, text: checkText_.value });
-      result.show(r.check);
-    } catch (e) {
-      result.clear();
-      if (e.code === "contract_error") { msg.textContent = e.message; showIssues(e.body); result.note("The contract is not valid, so nothing was checked."); }
-      else msg.textContent = e.message;
-    } finally { setTabRunning("contracts", false); }
-  }
-  checkBtn.onclick = runCheck;
-
+// --- Workshop → Contracts (overhaul spec 15): the library, editor and selectors live in contracts.js -------------------
+function initContracts(components) {
+  CW = components.create({ api, h, copyControl, checkBox, dialog: wsDialog, state: () => state, changed: refreshState });
+  const library = CW.library($("panel-contracts"));
   TABS.contracts = {
-    async tutorialPrepare(text, checkText) {
-      const existing = items().find((c) => c.name === "my-fields");
-      if (existing) await open(existing.name);
-      else { fresh("json"); nameInput.value = "my-fields"; }
-      editor.value = text; checkText_.value = checkText;
-      result.clear(); setEditor("idle");
-    },
-    submit: runCheck,
-    onState() {
-      renderSchemaStatus(); renderList();
-      if (current) {                  // a file changed on disk since it was opened
-        const now = items().find((c) => c.name === current.name);
-        if (!now) msg.textContent = "This contract no longer exists. Saving creates it again only if you reopen a new one.";
-        else if (now.revision !== current.revision) msg.textContent = "This contract changed on disk. Reopen it to load the current text; saving now will be refused as stale.";
-      }
-      refreshButtons();
-    },
+    onState: library.onState, submit: library.submit, leave: library.leave, dirty: library.dirty,
+    open: library.open,
+    tutorialPrepare: (text, sample, name) => library.tutorialPrepare(text, sample, name),
   };
-  refreshButtons();
-})();
+  TABS["checked-request"].attachContracts();
+}
 
 // --- History (Section 10.5, 11.2) ---------------------------------------------------------------------------------------
 (function historyTab() {
@@ -1844,9 +1830,9 @@ $("save-servers").onclick = async () => {
     };
     detail.append(h("div", { class: "row" }, h("strong", { text: `Run ${openId}` }), del, confirm_, cancel_, close));
     detail.dataset.runId = openId;
-    if (run) detail.append(section("history", "run", "run.json", JSON.stringify(run, null, 2), "exact"));
+    if (run) detail.append(wsShowValue(run.inputs||{}),h("details",{},h("summary",{text:"Run record"}),section("history","run","run.json",JSON.stringify(run,null,2),"exact")));
     for (const p of r.problems || []) detail.append(h("div", { class: "warn-text", text: `${p.file}: ${p.message}` }));
-    if (r.result) detail.append(section("history", "result", "result.json", JSON.stringify(r.result, null, 2), "exact"));
+    if(r.result)detail.append(wsShowValue({outcome:r.result.outcome,outputs:r.result.outputs}),h("details",{},h("summary",{text:"Result record"}),section("history","result","result.json",JSON.stringify(r.result,null,2),"exact")));
     for (const a of r.attempts || []) {
       const res = a.result || a.partial || {};
       detail.append(h("fieldset", { "data-test": "history-attempt", "data-attempt-id": a.id },
@@ -1855,7 +1841,7 @@ $("save-servers").onclick = async () => {
         section("history", "answer", "Answer", res.text || ""),
         section("history", "reasoning", "Reasoning", res.reasoning || "", "reasoning"),
         section("history", "check", "Check result", a.check ? checkText(a.check) : (a.check_skipped ? (SKIPPED[a.check_skipped] || "Not checked.") : "No contract.")),
-        section("history", "record", "Full record", JSON.stringify(a, null, 2), "exact")));
+        h("details",{},h("summary",{text:"Troubleshooting"}),section("history", "record", "Full record", JSON.stringify(a, null, 2), "exact"))));
     }
   }
 
@@ -1892,6 +1878,7 @@ $("save-servers").onclick = async () => {
   refresh.onclick = load;
   TABS.history = {
     onShow() { msg.textContent = ""; load(); },
+    openRun,
     onState() {
       const hi = historyInfo();
       savingNote.textContent = (hi.save_runs ? "Saving runs is on. " : "Saving runs is off; turn it on in the header. ") + DISCLOSURE;
@@ -2277,28 +2264,44 @@ const BLOCK_OUTCOMES = { complete: "Complete", rejected: "Rejected before any wo
     controls();
     let outcomeSeen = false;
     try {
-      const r = await fetch("/api/blocks/run", { method: "POST", signal: runCtl.signal,
-        headers: { "X-Session-Token": TOKEN, "Content-Type": "application/json" }, body: payload });
-      if (!r.ok) {
-        let j = {}; try { j = await r.json(); } catch (e) { /* keep the status */ }
-        outcomeSeen = true;
-        if (r.status === 409 && j.code === "stale_revision") {
-          const keep = currentTexts();
-          await select(detail.name, keep);
-          await loadListing(false);
-          say("stale", BLOCK_STALE);
-        } else {
-          say("idle", j.error || `${r.status} ${r.statusText}`);
-          if (r.status === 409) { await loadListing(true); if (selected) await select(selected, currentTexts()); }
-        }
-        return;
+      const fresh=await api("/api/blocks/"+encodeURIComponent(detail.name));
+      if(fresh.revision!==detail.revision){
+        const keep=currentTexts();await select(detail.name,keep);await loadListing(false);say("stale",BLOCK_STALE);outcomeSeen=true;return;
       }
-      const how = await readLines(r, (ev) => { onEvent(ev); });
-      outcomeSeen = finalSeen;
-      if (!finalSeen && how !== "stopped") startPolling();
-      else if (finalSeen && status.dataset.save === "pending") startPolling();
+      const body={key:detail.name,inputs:texts};
+      let plan;
+      try{plan=await wsApi("plans",{action:"test",request:body});}
+      catch(e){
+        if(e.code!=="support_required")throw e;
+        const info=await wsApi("blocks/"+encodeURIComponent(detail.name)+"/support"),box=h("div"),files=[];
+        for(const p of info.candidates){const c=h("input",{type:"checkbox"});files.push([p.path,c]);box.append(h("label",{},c,p.path));}
+        if(await wsDialog("Confirm script support files",box,["Use selection","Cancel"])!=="Use selection"){say("idle","Cancelled.");outcomeSeen=true;return;}
+        body.support=files.filter(([,c])=>c.checked).map(([p])=>p);
+        plan=await wsApi("plans",{action:"test",request:body});
+      }
+      if(plan.required_confirmations.length&&await wsDialog("Review run",wsShowValue(plan.required_confirmations),["Confirm","Cancel"])!=="Confirm"){say("idle","Cancelled.");outcomeSeen=true;return;}
+      const ticket=(await wsApi("tickets",{})).ticket;
+      let accepted;try{accepted=await wsApi("test",{...body,ticket,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations.map(({kind,digest})=>({kind,digest}))});}
+      catch(e){accepted=await wsApi("tickets/"+ticket);if(!accepted.operation_id)throw e;}
+      for(;;){
+        const batch=await wsApi("batches/"+accepted.operation_id);
+        const child=batch.active_run||batch.rows[0]?.run_id;
+        if(child&&!runId){onEvent({type:"started",run_id:child,block:detail.name,step_id:detail.step.id,kind:detail.step.kind});if(detail.step.kind!=="model")showOperation(detail.step.kind,null,true);}
+        if(batch.state!=="running"){
+          if(child){
+            const env=await api("/api/block_runs/"+child);
+            for(const step of env.result.steps||[])for(const id of step.attempts||[]){
+              const held=await api("/api/attempts/"+id);const a=held.record||held.summary;
+              if(a)upsert(attemptNumber(id),{id,outcome:a.outcome,check:a.check?.overall||a.check,repair_reason:a.repair_reason});
+            }
+            renderFinal(env.result,env.save_status);
+          }else say("done",batch.reason||batch.state,batch.state);
+          outcomeSeen=true;break;
+        }
+        await new Promise(resolve=>setTimeout(resolve,100));
+      }
     } catch (e) {
-      if (!finalSeen && runId) startPolling();
+      if(runId&&!finalSeen)startPolling();else{say("idle",e.message);outcomeSeen=true;}
     } finally {
       runCtl = null;
       if (!finalSeen && !polling && !outcomeSeen && status.dataset.state !== "idle" && status.dataset.state !== "stale")
@@ -2375,50 +2378,126 @@ const BLOCK_OUTCOMES = { complete: "Complete", rejected: "Rejected before any wo
 // --- the Roles dialog (techspec 0.1.4, Section 13.2) -------------------------------------------------------------
 const ROLES_STALE = "The roles were saved elsewhere. The dialog now shows the saved roles; check them and save again.";
 function rolesInfo() { return state.roles || { map: {}, revision: 0, read_only: true, path: "", problem: null, unresolved: [] }; }
+const ROLE_FAMILIES = ["General", "Writing & communication", "Coding & engineering", "Research & analysis", "Data & extraction", "Workflow assistance"];
+let roleDrafts=[], roleSelected=null, roleFamilies=new Set(ROLE_FAMILIES);
+function roleDraft(name,profile,definition){
+  return {name:name||"",profile:profile||"",saved:!!name,definition:{description:"",location:profilesInfo().details?.[profile]?.location||"local",family:"General",...definition}};
+}
+function rememberRole(){
+  const row=$("roles-list").querySelector('[data-test="roles-row"]');
+  if(!row||!roleSelected)return;
+  roleSelected.name=row.querySelector('[data-key="role"]').value;
+  roleSelected.profile=row.querySelector('[data-key="profile"]').value;
+  for(const key of ["description","location","family"])roleSelected.definition[key]=row.querySelector(`[data-key="${key}"]`).value;
+  roleSelected.definition.task_defaults={};
+  for(const key of ["temperature","reasoning"]){const value=row.querySelector(`[data-key="default-${key}"]`).value;if(value!=="")roleSelected.definition.task_defaults[key]=value;}
+}
+function renderRoleBrowser(preferred=roleSelected){
+  const location=$("roles-location-filter").value,family=$("roles-family-filter").value;
+  for(const draft of roleDrafts)roleFamilies.add(draft.definition.family);
+  const families=$("roles-family-filter");families.replaceChildren(new Option("All families", ""));
+  for(const name of [...roleFamilies].sort())families.add(new Option(name,name));families.value=family;
+  const matches=roleDrafts.filter(d=>(!location||d.definition.location===location)&&(!family||d.definition.family===family));
+  roleSelected=matches.includes(preferred)?preferred:matches[0]||null;
+  const select=$("roles-selection");select.replaceChildren();
+  for(const draft of matches)select.add(new Option(draft.name||"New role (enter a name)",String(roleDrafts.indexOf(draft))));
+  select.disabled=!matches.length;
+  if(roleSelected)select.value=String(roleDrafts.indexOf(roleSelected));else select.add(new Option("No matching roles", ""));
+  $("roles-count").textContent=`${matches.length} matching of ${roleDrafts.length} roles. Changes are retained while browsing; Save all changes persists every role.`;
+  const info=rolesInfo(),savedNames=new Set([...Object.keys(info.definitions||{}),...Object.keys(info.map||{})]);
+  const missing=Object.keys(info.defaults||{}).filter(name=>!savedNames.has(name));
+  const notice=$("roles-missing-defaults");notice.hidden=!missing.length;notice.dataset.missing=missing.join(",");
+  notice.textContent=missing.length?`Default roles missing from this workspace: ${missing.join(", ")}. Use Set up defaults, then Save all changes to add them without replacing existing roles.`:"";
+  const list=$("roles-list");list.replaceChildren();
+  if(roleSelected)list.append(roleRow(roleSelected));else list.append(h("p",{text:"No roles match these filters. Change the filters or add a role."}));
+}
 
-function roleRow(name, profile) {
+function roleRow(draft) {
+  const {name,profile,definition}=draft;
   const info = rolesInfo(), ro = info.read_only;
   const unresolved = (info.unresolved || []).find((u) => u.role === name);
   const row = h("fieldset", { class: "server-row", "data-test": "roles-row", "data-role": name, "data-unresolved": unresolved ? "true" : "" });
-  const nameInput = h("input", { "data-key": "role", placeholder: "role name", value: name, disabled: ro });
+  const nameInput = h("input", { "data-key": "role", placeholder: "role name", value: name, disabled: ro, readOnly: draft.saved });
+  const details = profilesInfo().details || {};
+  const family=h("select",{"data-key":"family","data-test":"roles-family",disabled:ro});
+  for(const name of [...roleFamilies].sort())family.add(new Option(name,name));family.value=definition.family;
+  const familyName=h("input",{"data-test":"roles-new-family",placeholder:"New family / domain",maxLength:64,disabled:ro,"aria-label":"New family / domain"});
+  const addFamily=h("button",{type:"button","data-test":"roles-add-family",text:"Add family",disabled:ro});
+  addFamily.onclick=()=>{
+    const name=familyName.value.trim();if(!name){$("roles-msg").textContent="Enter a family name (1–64 characters).";familyName.focus();return;}
+    rememberRole();roleFamilies.add(name);draft.definition.family=name;
+    if($("roles-family-filter").value)$("roles-family-filter").value="";
+    renderRoleBrowser(draft);
+  };
+  const description = h("input", {"data-key":"description", value:definition.description, maxLength:500, disabled:ro});
+  const defaultTemperature=h("input",{"data-key":"default-temperature","data-test":"roles-default-temperature",value:definition.task_defaults?.temperature==null?"":String(definition.task_defaults.temperature),placeholder:"Backend default",disabled:ro});
+  const defaultReasoning=h("select",{"data-key":"default-reasoning","data-test":"roles-default-reasoning",disabled:ro});
+  for(const level of ["","off","low","medium","high"])defaultReasoning.add(new Option(level||"Backend default",level));defaultReasoning.value=definition.task_defaults?.reasoning||"";
+  const location = h("select", {"data-key":"location", disabled:ro});
+  location.add(new Option("Local — this machine", "local"));location.add(new Option("Cloud / remote", "cloud"));location.value=definition.location;
   const select = h("select", { "data-key": "profile", disabled: ro });
   const names = profilesInfo().names || [];
-  if (profile && !names.includes(profile)) select.add(new Option(`${profile} (missing)`, profile));
-  for (const n of names) select.add(new Option(n, n));
-  select.value = profile || (names[0] || "");
+  const status=h("p", {"data-test":"roles-status", role:"status"});
+  function update(selected){
+    select.replaceChildren(new Option("Not configured — choose a profile", ""));
+    for(const n of names){const p=details[n];if(p?.location===location.value)select.add(new Option(`${n} · ${p.kind} · ${p.base_url||"default endpoint"} · ${p.model||"no model"}`,n));}
+    if(selected&&!Array.from(select.options).some(o=>o.value===selected))select.add(new Option(`${selected} (${details[selected]?"incompatible location":"missing"})`,selected));
+    select.value=selected||"";showStatus();
+  }
+  function showStatus(){const p=details[select.value];const code=!select.value?"unconfigured":!p?"missing":p.location!==location.value?"incompatible":!p.model.trim()?"no-model":"ready";row.dataset.status=code;status.textContent={unconfigured:"Not configured. Drafting is allowed; running requires a profile.",missing:"Missing profile. Choose a replacement.",incompatible:"Profile location does not match this role.","no-model":"Choose a model in this profile.",ready:"Ready"}[code];}
+  location.onchange=()=>update("");select.onchange=showStatus;update(profile);
   const remove = h("button", { type: "button", "data-test": "roles-remove", text: "Remove", disabled: ro });
-  remove.onclick = () => row.remove();
+  remove.onclick = () => {if(!draft.saved||confirm(`Remove role ${name}? Existing blocks may still reference it and will need a replacement.`)){roleDrafts=roleDrafts.filter(d=>d!==draft);renderRoleBrowser(null);}};
   row.append(h("div", { class: "fields" }, h("div", {}, h("label", { text: "Role" }), nameInput), h("div", {}, h("label", { text: "Profile" }), select)),
+    h("div", { class: "fields" }, h("label", {}, "Purpose", description), h("label", {}, "Execution location", location)), status,
+    h("label",{},"Family / domain",family),h("div",{class:"row"},familyName,addFamily),
+    h("label",{},"Default temperature",defaultTemperature),h("label",{},"Default reasoning",defaultReasoning),
     h("div", { class: "row" }, remove));
   if (unresolved) row.append(h("div", { class: "warn-text", "data-test": "roles-reason", text: unresolved.reason }));
   return row;
 }
 
 function fillRoles(message) {
-  const info = rolesInfo(), list = $("roles-list");
-  list.replaceChildren();
-  for (const [role, profile] of Object.entries(info.map || {})) list.append(roleRow(role, profile));
+  const info = rolesInfo();
+  roleDrafts=[...new Set([...Object.keys(info.definitions||{}),...Object.keys(info.map||{})])].map(n=>roleDraft(n,info.map[n],info.definitions?.[n]));
+  roleFamilies=new Set(ROLE_FAMILIES);$("roles-location-filter").value="";$("roles-family-filter").replaceChildren(new Option("All families",""));
+  renderRoleBrowser(roleDrafts.find(d=>d.name===roleSelected?.name)||roleDrafts.find(d=>d.name==="fast"));
   $("roles-path").textContent = `File: ${info.path || ""} · revision ${info.revision}`;
   $("add-role").disabled = info.read_only; $("save-roles").disabled = info.read_only;
+  $("default-roles").disabled=info.read_only;
   const reason = info.read_only ? "Roles are read-only: " + (info.problem ? `${info.problem.file}: ${info.problem.message}` : "the workspace is read-only") : "";
   $("roles-msg").textContent = message || reason;
 }
 
 $("open-roles").onclick = () => { $("roles-dialog").dataset.state = "idle"; fillRoles(); $("roles-dialog").showModal(); };
 $("close-roles").onclick = () => $("roles-dialog").close();
-$("add-role").onclick = () => $("roles-list").append(roleRow("", ""));
+for(const id of ["roles-location-filter","roles-family-filter"])$(id).onchange=()=>{rememberRole();renderRoleBrowser();};
+$("roles-selection").onchange=()=>{rememberRole();renderRoleBrowser(roleDrafts[Number($("roles-selection").value)]);};
+$("add-role").onclick = () => {rememberRole();const draft=roleDraft("","",{location:$("roles-location-filter").value||"local",family:$("roles-family-filter").value||"General"});roleDrafts.push(draft);renderRoleBrowser(draft);};
+$("default-roles").onclick=()=>{rememberRole();const names=new Set(roleDrafts.map(d=>d.name));for(const [n,d] of Object.entries(rolesInfo().defaults||{}))if(!names.has(n))roleDrafts.push(roleDraft(n,"",d));renderRoleBrowser();};
+$("role-create-profile").onclick=()=>{
+  rememberRole();const dlg=$("roles-dialog");
+  dlg.close();$("open-settings").click();
+  $("settings").addEventListener("close",()=>{renderRoleBrowser();dlg.showModal();},{once:true});
+};
 $("save-roles").onclick = async () => {
-  const map = {}, dlg = $("roles-dialog");
-  for (const row of $("roles-list").querySelectorAll('[data-test="roles-row"]')) {
-    const role = row.querySelector('[data-key="role"]').value.trim();
-    const profile = row.querySelector('[data-key="profile"]').value;
+  rememberRole();
+  const map = Object.create(null), definitions=Object.create(null), dlg = $("roles-dialog");
+  for (const draft of roleDrafts) {
+    const role = draft.name.trim(),profile=draft.profile;
     if (!NAME_RE.test(role)) { dlg.dataset.state = "error"; $("roles-msg").textContent = "Each role needs a name: 1 to 64 letters, digits, '.', '_' or '-'."; return; }
-    if (Object.prototype.hasOwnProperty.call(map, role)) { dlg.dataset.state = "error"; $("roles-msg").textContent = `The role ${role} appears twice.`; return; }
-    if (!profile) { dlg.dataset.state = "error"; $("roles-msg").textContent = `Choose a profile for ${role}.`; return; }
-    map[role] = profile;
+    if (Object.prototype.hasOwnProperty.call(definitions, role)) { dlg.dataset.state = "error"; $("roles-msg").textContent = `The role ${role} appears twice.`; return; }
+    definitions[role]={...draft.definition};
+    definitions[role].task_defaults={...draft.definition.task_defaults};
+    if(Object.hasOwn(definitions[role].task_defaults,"temperature")){
+      const text=String(definitions[role].task_defaults.temperature);
+      if(!text.trim()||!Number.isFinite(Number(text))){dlg.dataset.state="error";$("roles-msg").textContent="Enter a numeric default temperature or leave it blank.";return;}
+      definitions[role].task_defaults.temperature=Number(text);
+    }
+    if(profile)map[role] = profile;
   }
   try {
-    state = await api("/api/roles/save", { roles: map, revision: rolesInfo().revision });
+    state = await api("/api/roles/save", { roles: map, definitions, revision: rolesInfo().revision });
     renderState(); fillRoles("Saved."); dlg.dataset.state = "saved";
   } catch (e) {
     try { await refreshState(); } catch (e2) { /* keep */ }
@@ -2447,7 +2526,7 @@ const TUTORIAL_ACTIONS = {
     $("open-roles").click();
     await new Promise((resolve) => { const d = $("roles-dialog"); const done = () => { d.removeEventListener("close", done); resolve(); }; d.addEventListener("close", done); });
   },
-  "wait-script": async (topic) => { await TABS.blocks.tutorialPrepare("wait_for_stop", {}); tutorialTarget("blocks-run"); },
+  "wait-script": async (topic) => { await TABS.workshop.tutorialPrepare("wait_for_stop", {}); tutorialTarget("ws-run-test"); },
 };
 function tutorialTarget(name) {
   for (const el of document.querySelectorAll(".tutorial-target")) el.classList.remove("tutorial-target");
@@ -2545,11 +2624,945 @@ async function tutorialInit() {
   setInterval(() => api("/api/tutorial").catch(() => tutorialStatus("Tutorial disconnected. Return to the original AgentWiz page to start again.", "error")), 60000);
 }
 
+// Block Workshop. Drafts and typed inputs stay in page memory. All execution and plans are server-owned.
+const wsPanel = $("panel-workshop");
+const ws = {draft:null, projection:null, dirty:false, view:"design", inputs:{}, examples:[], revision:null, examplesDirty:false, selectedExample:"", batch:null, proposal:null, selectedRevision:null, revisionRows:[], currentRevision:null, saved:null, describe:null};
+const wsApi = (path, body) => api("/api/workshop/" + path, body === undefined ? undefined : {format_version:1,...body});
+async function wsPut(path, body) {
+  const response = await fetch("/api/workshop/"+path,{method:"PUT",headers:{"Content-Type":"application/json","X-Session-Token":TOKEN},body:JSON.stringify({format_version:1,...body})});
+  const value = await response.json();
+  if (!response.ok) throw new ApiError(value.error, response.status, value.code, value);
+  return value;
+}
+const wsNote = h("p",{role:"status","data-test":"ws-status"});
+const wsBody = h("div",{class:"ws-body"});
+const wsList = h("select",{"aria-label":"Saved block","data-test":"ws-list"});
+const wsSearch = h("input",{placeholder:"Search blocks","aria-label":"Search blocks"});
+const wsNav = h("div",{class:"row ws-workshop-nav","data-test":"ws-actions"});
+const wsRevisionPicker = h("div",{class:"ws-revision-picker","data-test":"ws-revision-picker"});
+const wsHeading = h("h2",{text:"Block Workshop"});
+let wsBlocks=[], wsPoll=0, wsPending=null, wsLoadGeneration=0, wsPorts=[];
+function wsErrorText(e){
+  const messages={invalid:"The block request is invalid. Check the key, selected starter and bindings.",stale:"Settings or source changed. Refresh and review the action again.",setup_unavailable:"The selected model role or MCP server is unavailable. Check Settings.",validation_unavailable:"Repair the AgentWiz validator installation and restart.",read_only:"The workspace is read-only. Open a writable workspace to save changes.",busy:"Workshop is busy. Wait for the current operation to finish.",unusable:"The block source could not be read. Check its files and permissions."};
+  const issues=(e.body?.issues||[]).map(i=>i.location+": "+i.message).join("; ");
+  return (e.code==="block_invalid"?"The block definition needs correction.":messages[e.code]||e.message||String(e))+(issues?" "+issues:"")+(e.code?" ["+e.code+"]":"");
+}
+function wsError(e){wsNote.dataset.state="error";wsNote.dataset.code=e.code||"error";wsNote.textContent=wsErrorText(e);if(["stale","proposal_expired"].includes(e.code))wsNote.append(". Your draft is kept. Reload or request assistance again when ready.");}
+function wsButton(label,fn,id){
+  return h("button",{type:"button","data-test":id || "ws-"+label.toLowerCase().replace(/[^a-z0-9]+/g,"-"),text:label,
+    onclick:async e=>{const button=e.currentTarget;button.disabled=true;try{await fn();}catch(error){wsError(error);}finally{button.disabled=false;}}});
+}
+function wsField(parent,label,value="",multi=false){
+  const el=h(multi?"textarea":"input",{"aria-label":label,"data-test":"ws-field-"+label.toLowerCase().replace(/[^a-z0-9]+/g,"-"),value:value??""});
+  parent.append(h("label",{class:"ws-field"},label,el)); return el;
+}
+function wsChoice(parent,label,values,selected){
+  const el=h("select",{"aria-label":label,"data-test":"ws-choice-"+label.toLowerCase().replace(/[^a-z0-9]+/g,"-" )},...values.map(([id,name])=>h("option",{value:id,text:name})));
+  if(selected!=null)el.value=selected;
+  parent.append(h("label",{class:"ws-field"},label,el));return el;
+}
+function wsDirty(){ws.dirty=true;wsHeading.textContent=(ws.draft?.metadata?.display_name||ws.draft?.key||"New block")+" · Unsaved";
+  const picker=wsRevisionPicker.querySelector("select");
+  if(picker){picker.dataset.dirty="true";const option=[...picker.options].find(o=>o.value===ws.selectedRevision);if(option&&!option.text.endsWith(" · Unsaved"))option.text+=" · Unsaved";}
+  const save=wsBody.querySelector('[data-test="ws-save-revision"]');if(save&&save.disabled&&save.dataset.historical){save.disabled=false;delete save.dataset.historical;save.title="Saving creates a new revision; older revisions remain unchanged.";}
+  for(const b of wsBody.querySelectorAll('[data-test="ws-describe-block"], [data-test="ws-edit-description"]')){b.disabled=true;b.title="Save or discard the executable changes before describing this revision.";}}
+window.addEventListener("beforeunload",e=>{if(ws.dirty||ws.examplesDirty||(TABS.contracts&&TABS.contracts.dirty&&TABS.contracts.dirty())){e.preventDefault();e.returnValue="";}});
+function wsDialog(title,content,choices,beforeClose){
+  return new Promise(resolve=>{
+    const dialog=h("dialog",{"data-test":"ws-dialog"},h("h2",{text:title}),content);
+    const close=v=>{dialog.close();dialog.remove();resolve(v);};
+    let submitting=false;
+    dialog.append(h("div",{class:"row"},...choices.map(c=>wsButton(c,async()=>{
+      if(submitting)return;
+      submitting=true;
+      try{if(!beforeClose||await beforeClose(c))close(c);}finally{submitting=false;}
+    }))));
+    dialog.addEventListener("cancel",e=>{e.preventDefault();if(!submitting)close(null);});
+    document.body.append(dialog);dialog.showModal();
+  });
+}
+function wsShowValue(value){
+  if(value===null||typeof value!=="object")return h("span",{text:String(value??"Unknown")});
+  if(Array.isArray(value))return h("ol",{},...value.map(v=>h("li",{},wsShowValue(v))));
+  return h("dl",{class:"ws-facts"},...Object.entries(value).flatMap(([k,v])=>[h("dt",{text:k.replaceAll("_"," ")}),h("dd",{},wsShowValue(v))]));
+}
+function wsTyped(node){
+  if(node.type==="object")return h("dl",{class:"ws-facts"},...node.fields.flatMap(f=>[h("dt",{text:f.name}),h("dd",{},wsTyped(f.value))]));
+  if(node.type==="array"){
+    const names=node.items[0]?.type==="object"?node.items[0].fields.map(f=>f.name):[];
+    if(names.length&&node.items.every(item=>item.type==="object"&&item.fields.length===names.length&&item.fields.every((f,i)=>f.name===names[i])))
+      return h("div",{class:"ws-table"},h("table",{},h("thead",{},h("tr",{},...names.map(text=>h("th",{text})))),h("tbody",{},...node.items.map(item=>h("tr",{},...item.fields.map(f=>h("td",{},wsTyped(f.value))))))));
+    return h("ol",{},...node.items.map(item=>h("li",{},wsTyped(item))));
+  }
+  return h("span",{text:node.text});
+}
+function wsStructured(text,contract_text){
+  const box=h("div",{class:"ws-value"});
+  wsApi(contract_text?"answer-view":"render-value",{text,...(contract_text?{contract_text}:{})}).then(v=>box.replaceChildren(wsTyped(contract_text?v.value:v))).catch(()=>box.replaceChildren(h("pre",{text})));
+  return box;
+}
+function wsSource(label,text){return h("details",{},h("summary",{text:label}),h("pre",{text}),copyControl("ws-copy-source",()=>text,null));}
+async function wsFlush(){if(wsPending){const save=wsPending;await save();wsPending=null;}}
+async function wsLeave(){if(!ws.dirty&&!ws.examplesDirty)return true;const choice=await wsDialog("Unsaved changes",h("p",{text:"Save this draft and its pending example changes before opening another block?"}),["Save","Discard","Stay"]);if(choice==="Save"){if(ws.dirty&&!await wsSave())return false;return !ws.examplesDirty||await wsPersistExamples();}return choice==="Discard";}
+async function wsPlan(action,request){
+  const plan=await wsApi("plans",{action,request});
+  const d=plan.descriptor, disclosure=h("div");
+  for(const c of d.candidates||[]){
+    const dest=c.destination||{},url=dest.base_url||dest.url;let locality=c.kind==="script"?"Local script":"Remote or unknown";
+    if(url){try{locality=["localhost","127.0.0.1","[::1]"].includes(new URL(url).hostname)?"Local endpoint":"Remote endpoint";}catch(e){}}
+    disclosure.append(wsShowValue({source:c.block_revision_number?"Saved revision "+c.block_revision_number:"Unsaved draft",destination:c.destination||c.kind,location:locality,effects:c.effects}));if(c.settings)disclosure.append(wsTyped(c.settings));
+  }
+  if(d.candidates?.length===2){const [a,b]=d.candidates;disclosure.append(wsShowValue({definition_changed:a.source_digest!==b.source_digest,baseline:a.source_digest,candidate:b.source_digest}));
+    disclosure.append(wsSource("Compare exact definitions",a.draft.definition_text+"\n\nCandidate\n"+b.draft.definition_text));}
+  disclosure.append(wsShowValue({saving:d.saving,persistence:d.saving?"Saved evidence":"Session only; restart loses results",trials:d.trial_count??1,repairs:d.repair_bounds||[],pruned:(d.pruned||[]).map(id=>{const r=ws.revisionRows.find(r=>r.id===id);return r?wsRevisionLabel(r):id;})}));
+  if(d.overwrite)disclosure.append(h("p",{text:"Overwrite selected revision "+wsRevisionLabel(d.overwrite)+"? Its previous contents and standard description will be replaced. Other revisions and existing run evidence are unchanged."}));
+  disclosure.append(h("p",{text:"Start makes real model, tool or script calls. Comparison order alternates by example; backend internals and cold starts may differ."}));
+  if(d.assistance)disclosure.append(wsShowValue({action:d.assistance.action,task:d.assistance.task,stage:d.assistance.stage,sections:d.assistance.sections,evidence:d.assistance.evidence}));
+  const reviewed=plan.required_confirmations.some(c=>c.kind==="generated_source"||c.kind==="support_set");
+  for(const draft of [d.draft,...(d.candidates||[]).map(c=>c.draft)].filter(Boolean)){
+    const source=h("details",{open:reviewed},h("summary",{text:"Complete selected source · "+draft.key}));
+    source.append(wsSource("Executable definition",draft.definition_text));
+    for(const [path,encoded] of Object.entries(draft.files||{})){
+      let text=encoded;
+      if(typeof encoded!=="string"){
+        try{text=new TextDecoder("utf-8",{fatal:true}).decode(Uint8Array.from(atob(encoded.text),c=>c.charCodeAt(0)));}
+        catch(e){text="Binary support file · encoded bytes: "+encoded.text;}
+      }
+      source.append(h("h4",{text:path}),h("pre",{text}),copyControl("ws-copy-review-source",()=>text,null));
+    }
+    disclosure.append(source);
+  }
+  if(d.runtime_updated)disclosure.append(h("p",{text:"This edit updates the captured script runtime."}));
+  for(const c of plan.required_confirmations)disclosure.append(h("p",{text:c.detail}));
+  disclosure.append(wsSource("Inspect complete plan",JSON.stringify(d,null,2)));
+  const go=await wsDialog("Review "+action,disclosure,["Confirm","Cancel"]);if(go!=="Confirm")return null;
+  return {...request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations.map(({kind,digest})=>({kind,digest}))};
+}
+async function wsSave(overwrite=false){
+  wsBody.inert=true;wsNav.inert=true;wsRevisionPicker.inert=true;
+  try{
+  await wsFlush();if(!ws.draft)return false;
+  if(wsPorts.some(c=>c.invalid())){const e=new ApiError("A port's advanced contract source is invalid. Correct it and apply it, or discard the source edit, before saving.",400,"contract_invalid");throw e;}
+  const bound=await wsPlan("save",{draft:ws.draft,expected_identity:ws.draft.base_digest??null,...(overwrite?{overwrite_revision:ws.selectedRevision}:{})});if(!bound)return false;
+  const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};const saved=await wsApi("save",bound);await wsLoad({key:saved.key,...(overwrite?{revision:saved.durable_id}:{})},false);Object.assign(ws,keep);wsRender();wsNote.dataset.state="saved";delete wsNote.dataset.code;wsNote.textContent=overwrite?"Selected revision overwritten":"New revision saved";return true;
+  }finally{wsBody.inert=false;wsNav.inert=false;wsRevisionPicker.inert=false;}
+}
+async function wsRefresh(){
+  wsBlocks=(await api("/api/blocks")).blocks;wsFilter();
+}
+function wsFilter(){wsList.replaceChildren(new Option("Choose a saved block",""),...wsBlocks.filter(b=>(b.name+" "+b.display_name).toLowerCase().includes(wsSearch.value.toLowerCase())).map(b=>new Option((b.display_name||b.name)+" · "+(b.kind||"unavailable"),b.name)));if(ws.draft&&!wsBlocks.some(b=>b.name===ws.draft.key))wsList.add(new Option((ws.draft.metadata.display_name||ws.draft.key)+" · Unsaved draft",ws.draft.key));wsList.value=ws.draft?.key||"";}
+async function wsLoad(source,dirty){
+  const generation=++wsLoadGeneration;
+  const keep=source.draft&&source.draft.key===ws.draft?.key?{examples:ws.examples,revision:ws.revision,inputs:ws.inputs,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample}:null;
+  let preview;
+  try{preview=await wsApi("preview",source);}catch(e){
+    if(e.code!=="support_required")throw e;
+    const support=await wsApi("blocks/"+encodeURIComponent(source.key)+"/support"),box=h("div"),checks=[];
+    for(const p of support.candidates){const c=h("input",{type:"checkbox"});checks.push([p.path,c]);box.append(h("label",{},c,p.path));}
+    if(await wsDialog("Select script support files",box,["Use selection","Cancel"])!=="Use selection")return;
+    preview=await wsApi("preview",{...source,support:checks.filter(([,c])=>c.checked).map(([p])=>p)});
+  }
+  if(generation!==wsLoadGeneration)return;
+  const sameBlock=ws.draft?.key===preview.draft.key;
+  ws.draft=preview.draft;ws.projection=preview;ws.dirty=dirty;wsPending=null;
+  const versions=ws.draft.base_digest?await wsApi("blocks/"+encodeURIComponent(ws.draft.key)+"/revisions"):{current:null,revisions:[]};
+  if(generation!==wsLoadGeneration)return;
+  ws.revisionRows=versions.revisions;ws.currentRevision=versions.current;
+  const keepSaved=source.draft&&sameBlock&&!source.duplicate_key;
+  // A saved preview resolves its selection once; take the ID from the response, not the revision list.
+  ws.selectedRevision=preview.selector?.revision||(keepSaved?ws.selectedRevision:versions.current);
+  if(preview.selector)ws.saved={selector:preview.selector,number:preview.revision_number,name:preview.revision_name||"",description:preview.standard_description,runIssues:preview.run_issues||[]};
+  else if(!keepSaved)ws.saved=null;
+  ws.draft.metadata.revision_name=source.draft?(ws.draft.metadata.revision_name||""):"";
+  await wsRefresh();
+  const collection=await wsApi("blocks/"+encodeURIComponent(ws.draft.key)+"/examples");
+  if(generation!==wsLoadGeneration)return;
+  ws.examples=collection.examples;ws.revision=collection.revision;
+  ws.examplesDirty=false;ws.selectedExample="";ws.inputs={};if(keep)Object.assign(ws,keep);if(ws.batch?.plan?.candidates?.[0]?.draft?.key!==ws.draft.key)ws.batch=null;wsRender();
+}
+async function wsSupport(){
+  await wsFlush();const key=ws.draft.key,info=await wsApi("blocks/"+key+"/support"),box=h("div"),replacements=[],removals=[];
+  for(const x of info.candidates){const c=h("input",{type:"checkbox"});replacements.push([x.path,c]);box.append(h("label",{},c," Use root copy · "+x.path));}
+  for(const x of info.captured_details){const c=h("input",{type:"checkbox"});removals.push([x.path,c]);box.append(h("label",{},c," Remove captured "+x.path+" · root "+x.root_copy));}
+  if(await wsDialog("Update support files",box,["Preview","Cancel"])!=="Preview")return;
+  const selection=await wsApi("blocks/"+key+"/support/preview",{draft:ws.draft,replace:replacements.filter(x=>x[1].checked).map(x=>x[0]),remove:removals.filter(x=>x[1].checked).map(x=>x[0])});
+  if(await wsDialog("Review selected support",wsShowValue({files:selection.support,digest:selection.source_digest}),["Apply","Cancel"])==="Apply"){
+    await wsLoad({draft:selection.draft},true);
+  }
+}
+async function wsNew(){
+  if(!await wsLeave())return;
+  state=await api("/api/state");
+  const box=h("div"),name=wsField(box,"Block key"),starters=(await wsApi("starters")).starters;
+  box.append(h("p",{text:"A stable identifier, not a display title: 1–64 letters, digits, dots, underscores or hyphens; start with a letter or digit. Example: summarise_notes. No spaces."}));
+  const kind=wsChoice(box,"Start with",[...starters.map(s=>[s.id,s.id.replaceAll("_"," ")]),...["model","tool","script"].map(k=>["blank_"+k,"Blank "+k])]);
+  box.append(h("p",{text:"Start with chooses a prepared template or a blank model, tool or Python script block."}));
+  const modelBox=h("div"),toolBox=h("div");box.append(modelBox,toolBox);
+  const role=wsRoleChoice(modelBox,"Model role","fast");
+  modelBox.append(h("p",{text:"A role is an alias for a saved model profile, not a chat-message role. Configure assignments in Settings → Roles. Unresolved roles can be drafted but must be configured before running."}));
+  const server=wsChoice(toolBox,"MCP server",[["","Choose a configured server"],...Object.keys(mcpInfo().servers).map(n=>[n,n])]);
+  const tool=wsChoice(toolBox,"Tool name",[]),discovery=h("p",{role:"status","data-test":"ws-tool-discovery"});
+  toolBox.append(h("p",{text:"Servers come from Settings → MCP servers; unconfigured servers cannot be auto-detected. Tools are discovered from the selected server without calling them."}),discovery);
+  let generation=0;
+  async function discover(){
+    const current=++generation,selected=server.value;
+    tool.replaceChildren();tool.disabled=true;
+    discovery.dataset.state=selected?"loading":"empty";discovery.textContent=selected?"Discovering tools…":"Choose a server, or add one in Settings → MCP servers.";
+    if(!selected)return;
+    try{
+      const found=await api("/api/mcp/tools",{server:selected,revision:mcpInfo().revision});
+      if(current!==generation)return;
+      tool.replaceChildren(...found.tools.map(t=>new Option(t.title?t.title+" · "+t.name:t.name,t.name)));
+      tool.disabled=!found.tools.length;discovery.dataset.state=found.tools.length?"ready":"empty";
+      discovery.textContent=found.tools.length?"Choose an advertised tool. Review its arguments in Design.":"This server advertises no tools.";
+    }catch(e){if(current===generation){discovery.dataset.state="error";discovery.textContent=wsErrorText(e);}}
+  }
+  server.onchange=discover;toolBox.append(wsButton("Refresh tools",async()=>{state=await api("/api/state");await discover();}));
+  function updateKind(){const k=kind.value;modelBox.hidden=!["blank_model","write_text","summarise","extract_fields","choose_label","check_source"].includes(k);toolBox.hidden=!["call_tool","blank_tool"].includes(k);if(!toolBox.hidden)discover();else ++generation;}
+  kind.onchange=updateKind;updateKind();
+  const error=h("p",{role:"alert","data-test":"ws-create-error"});box.append(error);
+  const choice=await wsDialog("Create a block",box,["Create draft","Create with assistance","Cancel"],async action=>{
+    if(action==="Cancel")return true;
+    error.textContent="";delete error.dataset.code;name.removeAttribute("aria-invalid");
+    if(!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name.value)){
+      error.dataset.code="invalid_key";error.textContent="Enter a block key using 1–64 letters, digits, dots, underscores or hyphens, starting with a letter or digit. Spaces are not allowed.";name.setAttribute("aria-invalid","true");name.focus();return false;
+    }
+    if(!toolBox.hidden&&(!server.value||tool.disabled||!tool.value)){
+      error.dataset.code="tool_required";error.textContent="Select a configured server and wait for discovery, then choose an available tool.";return false;
+    }
+    try{await wsLoad({key:name.value,starter:kind.value,role:modelBox.hidden?null:role.value,server:toolBox.hidden?null:server.value,tool:toolBox.hidden?null:tool.value},true);return true;}
+    catch(e){error.dataset.code=e.code||"error";error.textContent=wsErrorText(e);return false;}
+  });if(!["Create draft","Create with assistance"].includes(choice))return;
+  ws.examples=structuredClone(starters.find(s=>s.id===kind.value)?.examples||[]);ws.examplesDirty=ws.examples.length>0;ws.view="design";wsRender();if(choice==="Create with assistance")await wsAssist("create");
+}
+function wsRoleChoice(parent,label,preferred){
+  const roles=state.roles?.map||{},unresolved=new Set((state.roles?.unresolved||[]).map(r=>r.role)),names=[...new Set([...Object.keys(state.roles?.definitions||{}),...Object.keys(roles)])];
+  const selected=names.includes(preferred)&&roles[preferred]?preferred:names.find(n=>roles[n]&&!unresolved.has(n))||names.find(n=>n===preferred)||names[0];
+  const choice=wsChoice(parent,label,names.length?names.map(n=>[n,n+" → "+(roles[n]||"not assigned")+(unresolved.has(n)?" (unresolved)":"")]):[["","No roles defined — configure roles"]],selected||"");
+  parent.append(wsButton("Configure roles",()=>{
+    $("open-roles").click();
+    $("roles-dialog").addEventListener("close",()=>{
+      const names=[...new Set([...Object.keys(state.roles?.definitions||{}),...Object.keys(state.roles?.map||{})])],previous=choice.value;
+      choice.replaceChildren();for(const n of names)choice.add(new Option(n+" → "+(state.roles?.map?.[n]||"not assigned"),n));
+      choice.value=names.includes(previous)?previous:names.includes(preferred)?preferred:names[0]||"";
+    },{once:true});
+  }));return choice;
+}
+async function wsView(view){await wsFlush();ws.view=view;wsRender();}
+function wsRender(){
+  wsBody.replaceChildren();wsNav.replaceChildren();wsRevisionPicker.replaceChildren();wsPending=null;
+  wsNav.after(wsNote);
+  wsHeading.textContent=(ws.draft?.metadata?.display_name||ws.draft?.key||"Block Workshop")+(ws.dirty?" · Unsaved":"");
+  if(!ws.draft){wsBody.append(h("p",{text:"Choose a saved block or create one to design and test it."}));return;}
+  if(activeFrag==="workshop")history.replaceState(null,"","#workshop/"+encodeURIComponent(ws.draft.key)+"/"+ws.view);
+  for(const view of ["design","test","compare"]){const b=wsButton(view[0].toUpperCase()+view.slice(1),()=>wsView(view));b.setAttribute("aria-pressed",String(ws.view===view));wsNav.append(b);}
+  wsNav.append(wsButton("Assist",wsAssist),wsButton("Revision actions",wsRevisions));
+  wsPicker();
+  wsNav.after(wsRevisionPicker);
+  if(ws.view==="design")wsDesign();else wsTrials(ws.view==="compare");
+}
+// The revision selector, common to Design, Test and Compare. Selecting a retained revision opens a clean saved
+// selection (the default pointer stays where it is); Revision actions → Restore to draft enters draft mode.
+function wsPicker(){
+  const rows=ws.revisionRows;
+  const label=r=>wsRevisionLabel(r)+(r.id===ws.currentRevision?" (current)":"")+(ws.dirty&&r.id===ws.selectedRevision?" · Unsaved":"");
+  const revision=wsChoice(wsRevisionPicker,"Block revision",rows.length?rows.map(r=>[r.id,label(r)]):[["","Unsaved draft"]],ws.selectedRevision);
+  revision.dataset.current=ws.currentRevision||"";revision.dataset.selected=ws.selectedRevision||"";revision.dataset.dirty=String(!!ws.dirty);
+  revision.disabled=!rows.length;
+  revision.oninput=e=>e.stopPropagation();
+  revision.onchange=async e=>{e.stopPropagation();const selected=revision.value;revision.disabled=true;try{
+    if(await wsLeave()){const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};await wsLoad({key:ws.draft.key,revision:selected},false);Object.assign(ws,keep);wsRender();}
+  }catch(error){if(error.status===404){wsNote.dataset.state="error";wsNote.dataset.code="missing";wsNote.textContent="That revision is no longer retained. Choose another revision.";const versions=await wsApi("blocks/"+encodeURIComponent(ws.draft.key)+"/revisions").catch(()=>null);if(versions){ws.revisionRows=versions.revisions;ws.currentRevision=versions.current;}wsRender();}else wsError(error);}finally{if(revision.isConnected){revision.value=ws.selectedRevision||"";revision.disabled=!ws.revisionRows.length;}}};
+}
+// A clean managed selection runs through its explicit saved selector; edits use the existing draft path.
+function wsClean(){return !ws.dirty&&!!ws.saved&&ws.saved.selector.key===ws.draft?.key&&ws.saved.selector.revision===ws.selectedRevision;}
+function wsSourceOf(extra){return wsClean()?{key:ws.draft.key,revision:ws.selectedRevision,...extra}:{draft:ws.draft,...extra};}
+function wsSelectionLabel(){return ws.saved?("Revision "+ws.saved.number+(ws.saved.name?" — "+ws.saved.name:"")+(ws.dirty?" · Unsaved edits":"")):"Unsaved draft";}
+function wsDesign(){
+  const p=ws.projection,form=h("div",{class:"ws-design-grid"}),d=p.design||{};
+  wsBody.append(form);
+  const instructions=h("section",{class:"ws-instructions"}),variables=h("section",{class:"ws-variables"}),misc=h("section",{class:"ws-misc"});
+  form.append(instructions,variables,misc);
+  const title=wsField(misc,"Display name",ws.draft.metadata.display_name||ws.draft.key),purpose=wsField(instructions,"Purpose",d.purpose,true);
+  purpose.parentElement.firstChild.textContent="Block description";purpose.setAttribute("aria-label","Block description");instructions.append(purpose.parentElement);
+  const revisionSave=h("div",{class:"ws-revision-save"});misc.append(revisionSave);
+  const revisionName=wsField(revisionSave,"Revision name (optional)",ws.draft.metadata.revision_name||"");revisionName.maxLength=120;
+  misc.append(wsRevisionPicker);
+  const saveActions=h("div",{class:"row"});misc.append(saveActions);
+  const save=wsButton("Save as new revision",()=>wsSave(),"ws-save-revision");save.title="Saving creates a new revision; older revisions remain unchanged.";
+  const overwrite=wsButton("Overwrite selected revision",()=>wsSave(true),"ws-overwrite-revision");overwrite.disabled=!ws.selectedRevision;saveActions.append(save,overwrite);
+  const historical=()=>wsClean()&&ws.selectedRevision!==ws.currentRevision;
+  if(historical()){save.disabled=true;save.dataset.historical="true";save.title="Edit this revision or use Revision actions → Restore to draft before saving it as a new revision.";}
+  const rows={};wsPorts=[];
+  for(const side of ["inputs","outputs"]){
+    const area=h("fieldset",{},h("legend",{text:side==="inputs"?"Inputs":"Outputs"}));variables.append(area);rows[side]=[];
+    const table=h("table",{class:"ws-port-table"},h("thead",{},h("tr",{},...["Field name","Declared meaning"].map(text=>h("th",{scope:"col",text})))));area.append(table);
+    if(side==="outputs"&&d.kind==="model")area.append(h("p",{class:"ws-hint","data-test":"ws-declared-meaning-note",text:"A declared output meaning is part of the executable block and can contribute to the model request. Standard description documentation does not."}));
+    function port(name,format,description,source){
+      const line=h("tbody",{class:"ws-port","data-test":"ws-port","data-side":side,"data-port":name}),cells=[h("td"),h("td")];line.append(h("tr",{class:"ws-port-main"},...cells));
+      const n=wsField(cells[0],"Field name",name),desc=wsField(cells[1],"Declared meaning",description);
+      const detail=h("td",{colspan:"2"});line.append(h("tr",{},detail));
+      const item={original:name,n,desc,format,source};rows[side].push(item);
+      // Inline | Saved contract (overhaul spec 15.3): the shared editor and pinned selector from contracts.js.
+      // A contract change is an unsaved block edit until the block revision is saved.
+      if(CW){
+        item.contract=CW.port({side,name,format,source,captured:ws.draft.metadata?.contracts?.[side]?.[name],
+          onChange:(nextFormat,nextSource)=>{item.format=nextFormat;item.source=nextSource;changed();},
+          onOpen:async(contract,revision)=>{selectTab("contracts");await TABS.contracts.open(contract,revision);}});
+        // Typing in the contract editor is not yet a block edit; only an applied change (onChange) is.
+        for(const type of ["input","change"])item.contract.el.addEventListener(type,e=>e.stopPropagation());
+        wsPorts.push(item.contract);detail.append(item.contract.el);
+      }else detail.append(h("p",{class:"err-text",text:"The contract editor is unavailable; reload the page."}));
+      detail.append(wsButton("Remove",()=>{rows[side]=rows[side].filter(x=>x!==item);wsPorts=wsPorts.filter(x=>x!==item.contract);line.remove();changed();}));table.append(line);
+    }
+    for(const field of d[side]||[])port(field.name,field.format,field.description,field.source);
+    area.append(wsButton("Add "+side.slice(0,-1),()=>{port("","text","","");changed();}));
+  }
+  const behavior=wsField(instructions,d.kind==="script"?"Python source":d.kind==="tool"?"Tool name":"Instructions",d.behaviour,true);
+  if(d.kind==="model"){behavior.parentElement.firstChild.textContent="User prompt";behavior.setAttribute("aria-label","User prompt");instructions.append(behavior.parentElement);}
+  if(d.kind==="model")for(const input of d.inputs||[])instructions.append(wsButton("Insert "+input.name,()=>{behavior.setRangeText("{{inputs."+input.name+"}}",behavior.selectionStart,behavior.selectionEnd,"end");changed();}));
+  if(d.kind==="script"){const details=h("details",{},h("summary",{text:"Inspect or edit Python source"}));instructions.append(details);details.append(behavior.parentElement);instructions.append(h("p",{text:p.script_warning}));}
+  if(d.kind==="tool")instructions.append(behavior.parentElement);
+  const role=d.kind==="model"?wsChoice(misc,"Model role",[],d.binding):wsField(misc,d.kind==="tool"?"Server":"Role",d.binding);role.parentElement.hidden=d.kind==="script";
+  let refreshModelDefaults=()=>{};
+  if(d.kind==="model"){
+    function refreshRoles(){
+      const selected=role.options.length?role.value:d.binding||"",map=state.roles?.map||{},unresolved=new Set((state.roles?.unresolved||[]).map(r=>r.role));
+      const names=[...new Set([selected,...Object.keys(state.roles?.definitions||{}),...Object.keys(map)])];
+      role.replaceChildren(...names.map(n=>new Option(n?n+" → "+(map[n]||"not assigned")+(unresolved.has(n)||!map[n]?" (unresolved)":""):"No role selected",n)));role.value=selected;
+      refreshModelDefaults();
+    }
+    refreshRoles();role.onchange=()=>refreshModelDefaults();
+    const configure=wsButton("Configure roles",()=>{$("open-roles").click();$("roles-dialog").addEventListener("close",()=>{if(role.isConnected)refreshRoles();},{once:true});});configure.className="ws-role-config";role.parentElement.classList.add("ws-role-field");role.parentElement.append(configure);
+  }
+  if(d.kind==="tool"){
+    misc.append(wsButton("Discover tools",async()=>{
+      const discovered=await api("/api/mcp/tools",{server:role.value,revision:mcpInfo().revision}),box=h("div");
+      const tool=wsChoice(box,"Discovered tool",discovered.tools.map(t=>[t.name,t.title||t.name]),behavior.value);
+      if(await wsDialog("Choose a tool",box,["Use tool","Cancel"])==="Use tool"){behavior.value=tool.value;changed();}
+    }));
+  }
+  const more=h("details",{},h("summary",{"data-test":"ws-advanced-settings",text:d.kind==="model"?"Model advanced settings":"More settings"}));misc.append(more);
+  const system=wsField(d.kind==="model"?instructions:more,"System instructions",d.system,true), sampling={},limits={},settingModes={};
+  if(d.kind==="model"){
+    system.parentElement.dataset.test="ws-system";system.parentElement.firstChild.textContent="System prompt";system.setAttribute("aria-label","System prompt");behavior.parentElement.before(system.parentElement);
+    const model=h("div",{class:"ws-model-settings"});more.before(model);
+    for(const [key,label] of [["temperature","Temperature"],["reasoning","Reasoning level"]]){
+      const reset=h("input",{type:"checkbox",checked:d.resets?.includes(key),"data-test":"ws-reset-"+key});more.append(h("label",{class:"ws-field"},h("span",{},reset," Use backend default for "+label.toLowerCase()+" (bypass role)")));
+      const mode={value:reset.checked?"reset":d.sampling[key]!=null?"custom":"inherit"};settingModes[key]=mode;
+      sampling[key]=key==="reasoning"?wsChoice(model,label,[["","Backend default (default)"],...["off","low","medium","high"].map(x=>[x,x])],d.sampling[key]||""):wsField(model,label,d.sampling[key]??"");
+      if(key==="temperature")sampling[key].inputMode="decimal";
+      sampling[key].oninput=()=>{reset.checked=false;mode.value=sampling[key].value.trim()?"custom":"inherit";refreshModelDefaults();};
+      reset.onchange=()=>{if(reset.checked)sampling[key].value="";mode.value=reset.checked?"reset":sampling[key].value.trim()?"custom":"inherit";refreshModelDefaults();};
+    }
+    refreshModelDefaults=()=>{
+      const defaults=state.roles?.definitions?.[role.value]?.task_defaults||{};
+      sampling.temperature.placeholder=settingModes.temperature.value==="reset"?"Backend default":String(defaults.temperature??"Backend default");
+      sampling.reasoning.options[0].text=settingModes.reasoning.value==="reset"?"Backend default (role bypassed)":(defaults.reasoning||"Backend default")+" (default)";
+      for(const key of ["temperature","reasoning"])sampling[key].dataset.source=settingModes[key].value;
+    };refreshModelDefaults();
+    sampling.max_tokens=wsField(more,"Output token cap",d.sampling.max_tokens??"");
+    for(const output of d.outputs||[])instructions.append(wsButton("Insert output "+output.name,()=>{behavior.setRangeText("{{output."+output.name+"}}",behavior.selectionStart,behavior.selectionEnd,"end");changed();}));
+    variables.append(h("p",{text:"Response: named JSON envelope — one top-level key per output."}));
+    instructions.append(wsButton("Request preview",async()=>{
+      await wsFlush();const p=await wsApi("preview",wsSourceOf({inputs:ws.inputs})),box=h("div",{"data-test":"ws-request-messages"},h("p",{"data-test":"ws-request-source",text:wsSelectionLabel()}));
+      if(p.prepared){
+        for(const [name,label,text] of [["system","System message sent",p.prepared.system_sent],["prompt","User message sent",p.prepared.prompt]]){
+          const pre=h("pre",{"data-test":"ws-request-"+name,text});box.append(h("h3",{text:label}),h("div",{class:"panelhead"},copyControl("ws-request-copy-"+name,()=>text,()=>pre)),pre);
+        }
+        box.append(wsShowValue({response_mode:p.prepared.response_mode,task:p.prepared.task,sources:p.prepared.sources}));
+      }else box.append(wsShowValue(p.prepared_issues||p.input_checks||p.issues));
+      await wsDialog("Request preview",box,["Close"]);
+    }));
+  }
+  for(const [key,label] of [["max_seconds","Time budget (seconds)"],["max_model_tokens","Model token budget"]])limits[key]=wsField(more,label,d.limits[key]||"");
+  const sourceSettings=h("details",{},h("summary",{text:"Advanced settings source"}));more.append(sourceSettings);
+  const settings=wsField(sourceSettings,"Task settings source",d.settings,true),budget=wsField(sourceSettings,"Budget source",d.budget,true),repair=wsField(variables,"Additional repairs",d.repairs);
+  repair.title="Additional attempts after the initial response fails output validation.";
+  if(d.kind!=="model"){system.parentElement.hidden=true;repair.parentElement.hidden=true;}
+  if(d.kind==="tool"){const args=wsField(more,"Tool argument mapping",d.arguments||"{}",true);args.oninput=()=>{d.arguments=args.value;};}
+  const advanced=wsSource("Inspect executable definition",ws.draft.definition_text);more.append(advanced);
+  function changed(){wsDirty();wsPending=async()=>{
+    await Promise.all(rows.inputs.concat(rows.outputs).map(r=>r.contract?r.contract.ready():null));   // contract edits in flight land first
+    const ports={};for(const side of ["inputs","outputs"])ports[side]=rows[side].map(r=>({original:r.original,name:r.n.value,description:r.desc.value,format:r.format,source:r.source}));
+    const result=await wsApi("preview",{draft:ws.draft,edit:{kind:"design_form",name:title.value,revision_name:revisionName.value,purpose:purpose.value,ports,arguments:d.arguments,behaviour:behavior.value,binding:role.value,system:system.value,settings:settings.value,sampling:Object.fromEntries(Object.entries(sampling).map(([n,f])=>[n,settingModes[n]&&settingModes[n].value!=="custom"?"":f.value])),resets:Object.entries(settingModes).filter(([,f])=>f.value==="reset").map(([n])=>n),customs:Object.entries(settingModes).filter(([,f])=>f.value==="custom").map(([n])=>n),limits:Object.fromEntries(Object.entries(limits).map(([n,f])=>[n,f.value])),budget:budget.value,repairs:repair.value}});
+    ws.projection=result;ws.draft=result.draft;
+    for(const side of ["inputs","outputs"])for(const r of rows[side])r.original=r.n.value;
+  };}
+  form.oninput=changed;form.onchange=changed;
+  if(p.destination)more.append(wsShowValue(p.destination));if(p.setup_issues?.length)misc.append(wsShowValue(p.setup_issues));
+  if(p.issues?.length)misc.append(h("div",{"data-test":"ws-validation","data-state":"invalid"},wsShowValue(p.issues)));
+  more.append(wsButton("Refresh design fields",async()=>{await wsFlush();wsRender();}));
+  if(d.kind==="script"&&ws.draft.base_digest)more.append(wsButton("Update support files",wsSupport));
+  if(p.classification==="starter"){
+    const area=h("fieldset",{},h("legend",{text:"Starter parameters"}));behavior.closest("details").before(area);
+    const m=ws.draft.metadata,params=m.parameters;let read;
+    if(m.starter==="count_text"){
+      const unit=wsChoice(area,"Count unit",[["whitespace_words","Whitespace separated words"],["characters","Characters"]],params.unit);read=()=>({unit:unit.value});
+    }else if(m.starter==="format_report"){
+      const template=wsField(area,"Report template",params.template,true);
+      for(const n of p.facts.inputs)area.append(wsButton("Insert report "+n,()=>template.setRangeText("{{inputs."+n+"}}",template.selectionStart,template.selectionEnd,"end")));
+      read=()=>({template:template.value});
+    }else{
+      const mappings=[];
+      function mapping(m={source_path:[],destination:"",required:true}){
+        const line=h("div"),path=wsField(line,"Source path",m.source_path.join(".")),destination=wsField(line,"Destination field",m.destination),required=h("input",{type:"checkbox",checked:m.required});
+        line.append(h("label",{},required," Required source field"));area.append(line);mappings.push(()=>({source_path:path.value.split("."),destination:destination.value,required:required.checked}));
+      }
+      params.mappings.forEach(mapping);area.append(wsButton("Add mapping",()=>mapping()));read=()=>({mappings:mappings.map(fn=>fn())});
+    }
+    area.append(wsButton("Apply parameters",async()=>{await wsFlush();await wsLoad({draft:ws.draft,edit:{kind:"starter_parameters",parameters:read()}},true);}));
+  }else if(d.kind==="script")instructions.append(h("p",{text:p.classification==="unsupported_starter_version"?"This starter version is unavailable. Captured source is preserved; parameter editing is disabled.":"Custom Python source; parameter controls are disabled."}));
+  misc.append(wsDescriptionPanel());more.append(wsSource("Details · stable key",ws.draft.key));
+}
+
+// --- Standard description of the selected saved revision (block_metadata_refactor spec v2, section 5) ---------
+const WS_SECTIONS=[["use","Use"],["exclusions","Do not use for"],["effects","Effects"],["limitations","Limitations"],["missing_data","Missing data"],["failures","Failures"]];
+let wsDescribeGeneration=0;
+function wsSameSelection(saved){return !!ws.saved&&ws.saved.selector.key===saved.selector.key&&ws.saved.selector.revision===saved.selector.revision;}
+function wsDescriptionPanel(){
+  const saved=ws.saved,sd=saved?.description;
+  const box=h("section",{class:"ws-standard-description","data-test":"ws-standard-description","data-status":sd?.status||"none"},h("h3",{text:"Standard description"}));
+  if(!saved||!sd||saved.selector.key!==ws.draft.key){box.append(h("p",{"data-test":"ws-description-label",text:"Save this block first. A standard description belongs to one saved revision."}));return box;}
+  const status={saved:"Saved description",legacy:"Existing description",missing:"No saved description; showing executable text",unavailable:"Description unavailable"}[sd.status]||sd.status;
+  box.append(h("p",{"data-test":"ws-description-label",text:"Description of revision "+saved.number+(saved.name?" — "+saved.name:"")+" · "+status+(ws.dirty?" · executable changes are unsaved and not described":"")}));
+  for(const issue of sd.issues||[])box.append(h("p",{class:"ws-hint","data-test":"ws-description-issue","data-code":issue.code,text:issue.message}));
+  const facts=h("dl",{class:"ws-facts","data-test":"ws-description-readout"});box.append(facts);
+  const row=(label,text,hint,test)=>facts.append(h("dt",{text:label}),h("dd",{...(test?{"data-test":test}:{})},h("span",{text}),...(hint?[h("span",{class:"ws-hint",text:" · "+hint})]:[])));
+  row("Purpose",sd.fallback.purpose||"Not stated","block description");
+  if(sd.sections)for(const [key,label] of WS_SECTIONS)if(sd.sections[key])row(label,sd.sections[key],"",""+"ws-description-"+key);
+  const contracts=ws.projection?.contracts||{};
+  for(const side of ["inputs","outputs"])for(const [name,meaning] of Object.entries(sd.fallback.ports[side]||{})){
+    const c=contracts[side]?.[name],root=c?.fields?.find(f=>!f.path.length),type=c?c.format+(root?" · "+root.type:""):"";
+    const doc=sd.port_summaries?.[side]?.[name];
+    row((side==="inputs"?"Input ":"Output ")+name+(type?" ("+type+")":""),doc||meaning||"No meaning declared",doc?"documentation":"declared meaning");
+  }
+  const binding=ws.projection?.design?.binding;
+  row("Configured requirement",binding?(ws.projection.design.kind==="tool"?"MCP server "+binding:"Model role "+binding):ws.projection?.design?.kind==="script"?"Python on this computer":"None recorded","current configuration");
+  row("Declared effects",ws.draft.metadata?.effects||"unknown","executable metadata");
+  if(saved.runIssues?.length)box.append(h("div",{"data-test":"ws-run-issues"},h("p",{text:"This revision cannot run until these dependencies are repaired. Its description is unaffected."}),wsShowValue(saved.runIssues)));
+  const blocked=ws.dirty?"Save or discard the executable changes before describing this revision.":!sd.basis?"This revision has no usable description basis.":!sd.writable?"This description record cannot be replaced safely here.":"";
+  const describe=wsButton("Describe block",()=>wsDescribe(),"ws-describe-block"),edit=wsButton("Edit description",()=>wsEditDescription(),"ws-edit-description");
+  for(const b of [describe,edit]){b.disabled=!!blocked;if(blocked)b.title=blocked;}
+  box.append(h("div",{class:"row"},describe,edit));
+  return box;
+}
+function wsRenderDescription(){const panel=wsBody.querySelector('[data-test="ws-standard-description"]');if(panel)panel.replaceWith(wsDescriptionPanel());}
+async function wsReloadDescription(saved){
+  const preview=await wsApi("blocks/"+encodeURIComponent(saved.selector.key)+"/revisions/"+encodeURIComponent(saved.selector.revision));
+  if(wsSameSelection(saved)){ws.saved.description=preview.standard_description;wsRenderDescription();}
+}
+async function wsSaveDescription(saved,body){
+  const target=saved.selector;
+  const projection=await wsPut("blocks/"+encodeURIComponent(target.key)+"/revisions/"+encodeURIComponent(target.revision)+"/description",body);
+  // A description write updates only the readout: no executable dirty flag, inputs, examples or picker change.
+  if(wsSameSelection(saved)){ws.saved.description=projection;wsRenderDescription();}
+  wsNote.dataset.state="description_saved";delete wsNote.dataset.code;wsNote.textContent="Description saved for revision "+saved.number;
+}
+async function wsEditDescription(){
+  await wsFlush();
+  if(!wsClean())throw new ApiError("Save or discard the executable changes before describing this revision.",409,"describe_unsaved");
+  const saved=ws.saved,sd=saved.description,start=sd.sections||{},fields={},ports={inputs:{},outputs:{}};
+  const box=h("div",{"data-test":"ws-description-editor"},h("p",{text:"Description of revision "+saved.number+". Saving changes only this description, never the executable block."}));
+  for(const [key,label] of WS_SECTIONS){fields[key]=wsField(box,label,start[key]||"",true);fields[key].dataset.test="ws-description-field-"+key;}
+  box.append(h("p",{class:"ws-hint",text:"Documentation is for readers only and does not change what the block sends or checks. Leave a field blank to show the port's declared meaning."}));
+  for(const side of ["inputs","outputs"])for(const [name,meaning] of Object.entries(sd.fallback.ports[side]||{})){
+    const field=wsField(box,"Documentation · "+(side==="inputs"?"input ":"output ")+name,sd.port_summaries?.[side]?.[name]||"");
+    field.placeholder=meaning||"";field.dataset.test="ws-description-port";field.dataset.side=side;field.dataset.port=name;ports[side][name]=field;
+  }
+  const error=h("p",{role:"alert","data-test":"ws-description-error"});box.append(error);
+  await wsDialog("Edit description",box,["Save description","Cancel"],async action=>{
+    if(action!=="Save description")return true;
+    error.textContent="";
+    const body={expected_token:sd.token,basis:sd.basis,sections:Object.fromEntries(Object.entries(fields).map(([k,f])=>[k,f.value])),port_summaries:{inputs:{},outputs:{}}};
+    for(const side of ["inputs","outputs"])for(const [name,f] of Object.entries(ports[side]))if(f.value.trim())body.port_summaries[side][name]=f.value;
+    try{await wsSaveDescription(saved,body);return true;}
+    catch(e){error.dataset.code=e.code||"error";error.textContent=wsErrorText(e);if(e.code==="stale"){await wsReloadDescription(saved).catch(()=>{});error.append(" The saved description changed; it has been reloaded. Review it and try again.");}return false;}
+  });
+}
+async function wsRolesNeeded(){
+  wsNote.dataset.state="error";wsNote.dataset.code="role_unresolved";
+  wsNote.textContent="Describe needs the write_block_description model role. Assign it in Roles, or use Edit description to write it yourself. ";
+  wsNote.append(wsButton("Open Roles",()=>$("open-roles").click(),"ws-open-roles"));
+}
+// One user-requested model call: plan with destination disclosure, confirm, start, follow with Stop.
+async function wsDescribeCall(saved,request){
+  let plan;
+  try{plan=await wsApi("plans",{action:"assist",request});}
+  catch(e){if(e.code==="role_unresolved"){await wsRolesNeeded();return null;}throw e;}
+  const d=plan.descriptor,dest=d.destination||{},box=h("div",{"data-test":"ws-describe-plan","data-locality":dest.locality||"unknown"});
+  box.append(wsShowValue({revision:"Revision "+d.describe.revision_number,request:d.describe.mode==="refine"?"Refine the pending proposal":"Describe this revision",role:dest.role,backend:dest.kind||"unknown",model:dest.model||"unknown",...(dest.provider?{provider:dest.provider}:{}),endpoint:dest.locality==="local"?"Local endpoint":"Remote or unknown endpoint",persistence:d.persistence}));
+  if(dest.locality!=="local")box.append(h("p",{"data-test":"ws-describe-remote",class:"err-text",text:"This endpoint is not on this computer. Source excerpts or feedback may contain confidential data and will be sent to it."}));
+  box.append(h("p",{text:"Describe sends this revision's interface and an excerpt of its active prompt, script or tool binding. It never runs the block or calls a tool. Known credentials are removed; other confidential text in the source can still be sent."}));
+  if(await wsDialog("Review describe request",box,["Confirm","Cancel"])!=="Confirm")return null;
+  const bound={...request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations.map(({kind,digest})=>({kind,digest}))};
+  const ticket=(await wsApi("tickets",{})).ticket;let op;
+  try{op=await wsApi("assist",{...bound,ticket});}catch(e){op=await wsApi("tickets/"+ticket).catch(()=>({}));if(!op.operation_id)throw e;}
+  const generation=++wsDescribeGeneration,id=op.operation_id;
+  const stop=wsButton("Stop",async()=>{await wsApi("batches/"+id+"/stop",{});},"ws-describe-stop");
+  wsNote.dataset.state="describing";delete wsNote.dataset.code;wsNote.replaceChildren(h("span",{text:"Describing revision "+saved.number+"… "}),stop);
+  let batch;
+  for(;;){batch=await wsApi("batches/"+id);if(batch.state!=="running")break;await new Promise(r=>setTimeout(r,250));}
+  stop.remove();
+  if(generation!==wsDescribeGeneration||!wsSameSelection(saved)){wsNote.dataset.state="describe_ignored";wsNote.textContent="A description request finished for a revision that is no longer selected. Nothing was saved.";return null;}
+  return batch;
+}
+function wsDescribeOutcome(batch){
+  if(batch.outcome==="description_invalid"){
+    wsNote.dataset.state="error";wsNote.dataset.code="description_invalid";
+    wsNote.textContent="The model's description could not be used: "+(batch.rows[0]?.description_issues||[]).map(i=>i.location+": "+i.message).join("; ")+". The saved description is unchanged.";return false;}
+  if(!batch.proposal){wsNote.dataset.state="describe_stopped";delete wsNote.dataset.code;wsNote.textContent=(batch.outcome==="stopped"?"Describe stopped.":"Describe finished without a proposal.")+" The saved description is unchanged.";return false;}
+  return true;
+}
+async function wsDescribe(){
+  await wsFlush();
+  if(!wsClean())throw new ApiError("Save or discard the executable changes before describing this revision.",409,"describe_unsaved");
+  const saved=ws.saved,target={key:saved.selector.key,revision:saved.selector.revision};
+  const first=await wsDescribeCall(saved,{action:"describe",mode:"generate",...target});
+  if(!first||!wsDescribeOutcome(first))return;
+  let proposal=first.proposal,problem="";
+  for(;;){
+    const box=h("div",{"data-test":"ws-description-proposal","data-proposal":proposal.proposal_id},h("p",{text:"Proposed description for revision "+saved.number+". Check its meaning before saving; nothing is saved until you choose Save description."}));
+    if(problem)box.append(h("p",{role:"alert","data-test":"ws-describe-problem",text:problem}));
+    if(proposal.note)box.append(h("p",{class:"ws-hint","data-test":"ws-description-note",text:"Model note: "+proposal.note}));
+    if(proposal.changed?.length)box.append(h("p",{"data-test":"ws-description-changed",text:"Changed: "+proposal.changed.map(l=>(WS_SECTIONS.find(([k])=>k===l)?.[1])||l.replace(".", " ")).join(", ")}));
+    const dl=h("dl",{class:"ws-facts"});box.append(dl);
+    for(const [key,label] of WS_SECTIONS)dl.append(h("dt",{text:label}),h("dd",{"data-test":"ws-proposed-"+key,text:proposal.sections[key]||"—"}));
+    const contracts=ws.projection?.contracts||{};
+    for(const side of ["inputs","outputs"])for(const [name,meaning] of Object.entries(saved.description.fallback.ports[side]||{})){
+      const c=contracts[side]?.[name],doc=proposal.port_summaries[side]?.[name];
+      dl.append(h("dt",{text:(side==="inputs"?"Input ":"Output ")+name+(c?" ("+c.format+")":"")}),h("dd",{},h("span",{text:doc||meaning||"No meaning declared"}),h("span",{class:"ws-hint",text:doc?" · documentation":" · declared meaning"})));
+    }
+    const choice=await wsDialog("Review description",box,["Save description","Refine","Discard"]);
+    if(choice==="Save description"){
+      try{await wsSaveDescription(saved,{proposal_id:proposal.proposal_id,expected_token:proposal.base_token});}
+      catch(e){wsError(e);if(e.code==="stale")await wsReloadDescription(saved).catch(()=>{});}
+      return;
+    }
+    if(choice!=="Refine"){wsNote.dataset.state="proposal_discarded";delete wsNote.dataset.code;wsNote.textContent="Proposal discarded. The saved description is unchanged.";return;}
+    const form=h("div"),feedback=wsField(form,"Feedback","",true);feedback.dataset.test="ws-describe-feedback";feedback.maxLength=2000;
+    form.append(h("p",{class:"ws-hint",text:"Describe what to change in the prose. Requests to change the block's behaviour are outside this action."}));
+    if(await wsDialog("Refine description",form,["Send feedback","Cancel"])!=="Send feedback"){problem="";continue;}
+    let next=null;
+    try{next=await wsDescribeCall(saved,{action:"describe",mode:"refine",...target,proposal_id:proposal.proposal_id,feedback:feedback.value});}
+    catch(e){problem=wsErrorText(e)+". The previous proposal is kept.";continue;}
+    if(!next){if(!wsSameSelection(saved))return;problem="";continue;}
+    if(next.proposal){proposal=next.proposal;problem=next.outcome==="unchanged"?"The feedback did not change the proposal.":"";}
+    else problem=(next.outcome==="description_invalid"?"The refined description could not be used: "+(next.rows[0]?.description_issues||[]).map(i=>i.location+": "+i.message).join("; "):"Refine stopped.")+" The previous proposal is kept.";
+    wsNote.dataset.state="proposal_review";delete wsNote.dataset.code;wsNote.textContent="Reviewing a proposed description";
+  }
+}
+function wsRevisionLabel(r){return String(r.revision_number)+(r.revision_name?" — "+r.revision_name:"");}
+async function wsRevisions(){
+  await wsFlush();const box=h("div"),historyRows=ws.draft.base_digest?(await wsApi("blocks/"+ws.draft.key+"/revisions")).revisions:[];
+  const rev=wsChoice(box,"Revision",historyRows.map(r=>[r.id,wsRevisionLabel(r)])),name=wsField(box,"New key for duplicate");
+  const examples=h("input",{type:"checkbox"});box.append(h("label",{},examples," Copy examples to the duplicate"));
+  const choice=await wsDialog("Revision actions",box,["Restore to draft","Duplicate","Cancel"]);
+  if(choice==="Restore to draft"&&await wsLeave())await wsLoad({key:ws.draft.key,revision:rev.value},true);
+  if(choice==="Duplicate"){
+    const copied=examples.checked?structuredClone(ws.examples):[];
+    await wsLoad({draft:ws.draft,duplicate_key:name.value},true);ws.examples=copied;ws.revision=null;ws.examplesDirty=copied.length>0;
+    wsNote.textContent=examples.checked?"Duplicate draft. Save the block, then explicitly save its copied example collection.":"Duplicate draft";
+  }
+}
+async function wsAssist(initialAction){
+  await wsFlush();const box=h("div"),action=wsChoice(box,"Action",["create","improve","describe","suggest_examples","explain_failure"].map(x=>[x,x.replaceAll("_"," ")]),initialAction||ws.tutorialAction||"improve"),role=wsRoleChoice(box,"Assistant role","assistant"),task=wsField(box,"Task","",true);
+  const stage=wsChoice(box,"Create stage",[["","Complete block"],["fields","Fields only"],["behaviour","Behaviour only"]]);
+  const assistantSettings={},assistantModes={};
+  for(const key of ["temperature","reasoning"]){assistantModes[key]=wsChoice(box,"Assistant "+key+" source",[["inherit","Inherit role default"],["custom","Custom"],["reset","Backend default"]]);assistantSettings[key]=key==="reasoning"?wsChoice(box,"Assistant reasoning",["off","low","medium","high"].map(x=>[x,x])):wsField(box,"Assistant temperature","");assistantSettings[key].parentElement.hidden=true;assistantModes[key].onchange=()=>assistantSettings[key].parentElement.hidden=assistantModes[key].value!=="custom";}
+  const sections=[];for(const name of ["purpose","inputs","outputs","behaviour"]){const check=h("input",{type:"checkbox",checked:true});sections.push([name,check]);box.append(h("label",{},check," Improve "+name.replaceAll("_"," ")));}
+  const describeNote=h("p",{class:"ws-hint","data-test":"ws-assist-describe-note",text:"Describe writes the standard description of the selected saved revision with the write_block_description role. The role, task and settings above are not used."});box.append(describeNote);
+  const showDescribe=()=>{describeNote.hidden=action.value!=="describe";};action.addEventListener("change",showDescribe);showDescribe();
+  if(await wsDialog("Block assistance",box,["Prepare request","Cancel"])!=="Prepare request")return;
+  if(action.value==="describe")return wsDescribe();     // the same server-owned action as Standard description
+  const snap=ws.draft,body={action:action.value,role:role.value,task:task.value,draft:snap};
+  body.settings_text=Object.fromEntries(Object.entries(assistantModes).filter(([,m])=>m.value==="custom").map(([key])=>[key,assistantSettings[key].value]));
+  body.task_resets=Object.entries(assistantModes).filter(([,m])=>m.value==="reset").map(([key])=>key);
+  if(action.value==="create"&&stage.value)body.stage=stage.value;
+  if(action.value==="improve")body.sections=sections.filter(([,c])=>c.checked).map(([name])=>name);
+  if(["improve","explain_failure"].includes(action.value)&&ws.batch)body.evidence={trial:ws.batch.rows};
+  await wsStart("assist",body,async batch=>{
+    const id=batch.rows[0]?.proposal_id;if(!id)return;
+    const request={proposal_id:id,draft:ws.draft},plan=await wsApi("plans",{action:"proposals/apply",request});
+    const review=h("div",{},wsShowValue(plan.descriptor.proposal.response));for(const change of plan.descriptor.changes||[])review.append(h("details",{open:change.name==="Python source"},h("summary",{text:change.name}),h("h4",{text:"Before"}),h("pre",{text:change.before}),h("h4",{text:"After"}),h("pre",{text:change.after})));
+    for(const c of plan.required_confirmations)review.append(h("p",{text:c.detail}));
+    if(await wsDialog("Review proposal",review,["Apply","Discard"])!=="Apply"){wsNote.dataset.state="proposal_discarded";delete wsNote.dataset.code;wsNote.textContent="Proposal discarded";return;}
+    const bound={...request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations.map(({kind,digest})=>({kind,digest}))};
+    const applied=await wsApi("proposals/apply",bound);
+    if(applied.draft)await wsLoad({draft:applied.draft},true);
+    if(applied.examples){ws.examples.push(...applied.examples);ws.examplesDirty=true;await wsView("test");}
+    wsNote.dataset.state="proposal_applied";delete wsNote.dataset.code;wsNote.textContent="Proposal applied to draft";if(applied.explanation)await wsDialog("Failure explanation",wsShowValue(applied.explanation),["Close"]);
+  });
+}
+async function wsStart(action,request,done){
+  const bound=await wsPlan(action,request);if(!bound)return;
+  const ticket=(await wsApi("tickets",{})).ticket;
+  let op;
+  try{op=await wsApi(action,{...bound,ticket});}catch(e){op=await wsApi("tickets/"+ticket);if(!op.operation_id)throw e;}
+  await wsFollow(op.operation_id,done);
+}
+async function wsFollow(id,done){
+  const generation=++wsPoll;
+  while(generation===wsPoll){
+    ws.batch=await wsApi("batches/"+id);if(ws.batch.active_run){try{ws.batch.live=await api("/api/block_runs/"+ws.batch.active_run);}catch(e){/* child may already have ended */}}wsNote.dataset.state=ws.batch.state;delete wsNote.dataset.code;wsNote.textContent=ws.batch.state+" · "+ws.batch.rows.filter(r=>r.state==="terminal").length+" / "+ws.batch.rows.length;
+    wsResults();if(ws.batch.state!=="running"){if(done)await done(ws.batch);return;}
+    await new Promise(resolve=>setTimeout(resolve,250));
+  }
+}
+function wsResults(){
+  const panel=$("ws-results");if(!panel||!ws.batch)return;panel.replaceChildren();
+  if(ws.batch.live)panel.append(wsShowValue({child:ws.batch.active_run,progress:ws.batch.live.state,attempts:ws.batch.live.attempts||[]}));
+  for(const row of ws.batch.rows){
+    const result=h("article",{"data-test":"ws-trial","data-outcome":row.outcome||row.state,"data-attempts":row.attempts??0,"data-correctness":row.correctness||"unreviewed","data-arm":row.arm},h("strong",{text:(row.arm===0?"Baseline":"Candidate")+(row.block_revision_number?" · revision "+row.block_revision_number:" · draft")+" · "+(row.example.label||row.example.id)+" · "+(row.outcome||row.state)}));
+    for(const [name,v] of Object.entries(row.outputs||{}))result.append(h("h4",{text:name}),v.format==="json"?h("div",{},wsStructured(v.text),h("details",{},h("summary",{text:"Exact answer"}),h("pre",{"data-test":"ws-output","data-output":name,text:v.text}))):h("pre",{"data-test":"ws-output","data-output":name,text:v.text}),copyControl("ws-copy-output",()=>v.text,null));
+    if(row.output_checks)result.append(wsShowValue(row.output_checks));
+    if(typeof row.raw_answer==="string")result.append(h("details",{},h("summary",{text:"Raw model answer (not accepted output)"}),h("pre",{"data-test":"ws-raw-answer",text:row.raw_answer}),copyControl("ws-copy-raw-answer",()=>row.raw_answer,null)));
+    result.append(wsShowValue({execution:row.outcome||row.state,checks:row.final_check||row.check||row.steps?.map(s=>s.check)||"Unknown",correctness:row.correctness||"unreviewed",machine_judgement:row.machine_judgement,human_rating:row.human_rating,evidence:row.evidence_available===false?"Unavailable":row.preview_incomplete?"Partial":"Available",saving:ws.batch.saving?"Saved":"Session only"}),h("p",{text:"Correctness · "+(row.correctness||"unreviewed")}),wsSource("Checks and trace",JSON.stringify(row.steps||[],null,2)));
+    if(row.outcome==="complete"&&!row.preview_incomplete)for(const rating of ["correct","incorrect"])result.append(wsButton("Mark "+rating,async()=>{
+      const history=ws.batch.saving?await api("/api/runs/"+row.run_id):null;
+      const review=await wsPut("reviews/"+row.run_id,{context:{snapshot_id:row.snapshot_id,example_id:row.example.id,example_version:row.example.version,result_digest:row.result_digest},judgement:rating,expected_revision:history?.current_review?.revision||wsRatings[row.run_id]||0,persist:ws.batch.saving});
+      wsRatings[row.run_id]=review.revision;ws.batch=await wsApi("batches/"+ws.batch.id);wsResults();
+    }));
+    panel.append(result);
+  }
+  panel.prepend(wsShowValue({persistence:ws.batch.saving?"Saved":"Session only",state:ws.batch.state,save_error:ws.batch.save_error,trial_order:ws.batch.rows.map(r=>({example:r.example.id,arm:r.arm,state:r.state}))}));
+  if(ws.batch.metrics)panel.append(h("details",{},h("summary",{text:"Comparison totals"}),wsShowValue(ws.batch.metrics)));
+}
+async function wsEditExample(selected){
+  const e=ws.examples.find(x=>x.id===selected);if(!e)throw new Error("Select a saved example.");
+  const box=h("div"),label=wsField(box,"Label",e.label),fields={};
+  const ports=ws.projection.input_ports||ws.projection.facts?.inputs||[];
+  for(const n of [...Object.keys(e.inputs),...ports.filter(n=>!(n in e.inputs))])fields[n]=wsInput(box,n,ws.projection.contracts?.inputs?.[n],e.inputs[n]||"",false);
+  const kind=wsChoice(box,"Expectation",[["review","Human review"],["whole_output","Exact output"],["fields","Field assertions"]],e.expectation.kind);
+  const criterion=wsField(box,"Review criterion",e.expectation.criterion||"");const values={};
+  for(const n of ws.projection.facts.outputs)values[n]=wsInput(box,"Expected "+n,ws.projection.contracts?.outputs?.[n],e.expectation.values?.[n]||"",false);
+  const stale=Object.fromEntries(Object.entries(e.expectation.values||{}).filter(([n])=>!ws.projection.facts.outputs.includes(n)));
+  if(Object.keys(stale).length){
+    const warning=h("div",{"data-test":"ws-unmapped-expected"},h("p",{text:"These expected values belong to outputs the block no longer declares. They are kept until you remove them."}),wsShowValue(stale));
+    warning.append(wsButton("Remove stale expected values",()=>{for(const n of Object.keys(stale))delete stale[n];warning.remove();},"ws-remove-stale-expected"));box.append(warning);
+  }
+  const assertions=h("div"),edits=[];box.append(assertions);
+  function assertion(row={}){const line=h("div");assertions.append(line);const output=wsChoice(line,"Output",ws.projection.facts.outputs.map(n=>[n,n]),row.output),path=wsField(line,"Field path",(row.path||[]).join(".")),op=wsChoice(line,"Condition",["equals","absent","present","null"].map(x=>[x,x]),row.operation),v=wsField(line,"Exact value",row.value_text||"");edits.push(()=>({output:output.value,path:path.value.split(".").filter(Boolean),operation:op.value,...(op.value==="equals"?{value_text:v.value}:{})}));}
+  (e.expectation.assertions||[]).forEach(assertion);box.append(wsButton("Add assertion",()=>assertion()));
+  const verified=h("input",{type:"checkbox",checked:e.verified});box.append(h("label",{},verified," I verified this expectation"));
+  let ex;const error=h("p",{role:"alert"});box.append(error);
+  if(await wsDialog("Edit example",box,["Save","Cancel"],async action=>{
+    if(action==="Cancel")return true;
+    try{ex={...e,label:label.value,version:e.version+1,inputs:Object.fromEntries(await Promise.all(Object.entries(fields).map(async([n,f])=>[n,await f.read()]))),verified:verified.checked,expectation:kind.value==="review"?{kind:"review",criterion:criterion.value}:kind.value==="fields"?{kind:"fields",assertions:edits.map(fn=>fn())}:{kind:"whole_output",values:{...Object.fromEntries(await Promise.all(Object.entries(values).map(async([n,f])=>[n,await f.read()]))),...stale}} };return true;}
+    catch(e){error.textContent=wsErrorText(e);return false;}
+  })!=="Save")return;
+  ws.examples=ws.examples.map(x=>x.id===e.id?ex:x);ws.examplesDirty=true;wsRender();
+}
+const wsRatings={};
+async function wsPersistExamples(){
+  await wsFlush();
+  if(ws.dirty||!ws.draft.base_digest){
+    if(await wsDialog("Save block revision first",h("p",{text:"Examples are validated against the saved block. Save the current block revision first? Pending examples will be kept if you cancel."}),["Save revision first","Cancel"])!=="Save revision first")return false;
+    if(!await wsSave())return false;
+  }
+  const result=await wsPut("blocks/"+ws.draft.key+"/examples",{expected_revision:ws.revision,examples:ws.examples});ws.revision=result.revision;ws.examples=result.examples;ws.examplesDirty=false;wsNote.textContent="Examples saved";wsRender();return true;
+}
+function wsInput(parent,name,contract,initial,remember=true){
+  if(contract?.format!=="json"||!contract.fields?.length){
+    const container=contract?.format==="json"?h("details",{open:true},h("summary",{text:name+" · advanced value"})):parent;
+    if(container!==parent)parent.append(container);
+    const field=wsField(container,name,initial,true);field.oninput=()=>{if(remember)ws.inputs[name]=field.value;};
+    return {read:()=>field.value,set:value=>{field.value=value;}};
+  }
+  const area=h("fieldset",{},h("legend",{text:name}));parent.append(area);
+  const rows=contract.fields;
+  let read,current=Promise.resolve();
+  function draw(value){
+    area.replaceChildren(h("legend",{text:name}));
+    function node(host,row,data){
+      const box=h("div",{class:"ws-port","data-test":"ws-input-node","data-port":name,"data-path":row.path.join("/")});host.append(box);
+      const options=[["value","Provide value"]];if(!row.required)options.push(["omit","Omit"]);if(row.nullable)options.push(["null","Null"]);
+      const mode=wsChoice(box,row.path.at(-1)||name,options,data?.type==="null"?"null":!data&&!row.required?"omit":"value");
+      const holder=h("div");box.append(holder);mode.onchange=()=>holder.hidden=mode.value!=="value";mode.onchange();
+      let get;
+      if(row.type==="Group"){
+        const children=rows.filter(r=>r.path.length===row.path.length+1&&row.path.every((p,i)=>r.path[i]===p)).map(r=>[r.path.at(-1),node(holder,r,data?.fields?.find(f=>f.name===r.path.at(-1))?.value)]);
+        const extra=(data?.fields||[]).filter(f=>!children.some(([name])=>name===f.name));
+        if(extra.length){
+          const warning=h("div",{"data-test":"ws-unmapped-fields"},h("p",{text:"These input fields are outside the current form. They are retained until you explicitly remove them."}),wsTyped({type:"object",fields:extra}));
+          warning.append(wsButton("Remove unmapped fields",()=>{extra.splice(0);warning.remove();}));holder.append(warning);
+        }
+        get=()=>({type:"object",fields:[...children.map(([name,fn])=>({name,value:fn()})).filter(f=>f.value!==undefined),...extra]});
+      }else if(row.type==="List"){
+        const item=rows.find(r=>r.path.length===row.path.length+1&&r.path.at(-1)==="[]"&&row.path.every((p,i)=>r.path[i]===p)),items=[];
+        function add(d){const line=h("div");holder.append(line);const fn=node(line,item,d);items.push(fn);line.append(wsButton("Remove item",()=>{items.splice(items.indexOf(fn),1);line.remove();}));}
+        for(const d of data?.items||[])add(d);holder.append(wsButton("Add item",()=>add()));get=()=>({type:"array",items:items.map(fn=>fn())});
+      }else{
+        const type=row.type==="Yes/No"?"boolean":["Whole number","Number"].includes(row.type)?"number":"text";
+        const field=type==="boolean"?wsChoice(holder,"Value",[["false","No"],["true","Yes"]],data?.text||"false"):row.type==="Choice"?wsChoice(holder,"Value",row.choices.map(v=>[v,v]),data?.text):wsField(holder,"Value",data?.text||"");
+        get=()=>({type,text:field.value});
+      }
+      return ()=>mode.value==="omit"?undefined:mode.value==="null"?{type:"null",text:"null"}:get();
+    }
+    read=node(area,rows[0],value);
+  }
+  function set(text){current=text?wsApi("render-value",{text}).then(draw):Promise.resolve(draw());return current;}
+  set(initial).catch(wsError);
+  return {set,read:async()=>{await current;const result=await wsApi("input-value",{value:read()});if(remember)ws.inputs[name]=result.text;return result.text;}};
+}
+
+function wsTrials(compare){
+  const form=h("div"),results=h("div",{id:"ws-results","aria-live":"polite"});wsBody.append(form,results);
+  const valid=ws.projection.valid!==false;
+  if(!valid)form.append(h("div",{"data-test":"ws-validation","data-state":"invalid"},h("p",{text:"Correct these definition issues in Design before saving or running. Your inputs are kept."}),wsShowValue(ws.projection.issues)));
+  form.append(h("p",{"data-test":"ws-run-source","data-clean":String(wsClean()),text:"Runs use: "+wsSelectionLabel()}));
+  if(wsClean()&&ws.saved.runIssues?.length)form.append(h("div",{"data-test":"ws-run-issues"},h("p",{text:"This revision's saved dependencies need repair before it can run."}),wsShowValue(ws.saved.runIssues)));
+  const inputArea=h("fieldset",{"data-test":"ws-inputs"},h("legend",{text:"Inputs — one-off test or selected example"}));form.append(inputArea);
+  const select=wsChoice(inputArea,"Example",[["","New input — run once without saving an example"],...ws.examples.map(e=>[e.id,e.label])],ws.selectedExample);
+  const selectedInfo=h("div");form.append(selectedInfo);
+  const names=ws.projection.input_ports||ws.projection.facts?.inputs||[],inputs={};
+  for(const n of names){const contract=ws.projection.contracts?.inputs?.[n];if(contract)inputs[n]=wsInput(inputArea,n,contract,ws.inputs[n]||"");else inputArea.append(h("p",{"data-test":"ws-input-unavailable","data-port":n,text:n+": correct its contract in Design to enable this input."}));}
+  if(!names.length)inputArea.append(h("p",{"data-test":"ws-no-inputs",text:"This block requires no inputs."}));
+  inputArea.append(h("p",{text:"New input runs without a saved example. Run-history saving follows the Save runs setting."}));
+  const values=async()=>Object.fromEntries(await Promise.all(Object.entries(inputs).map(async([n,e])=>[n,await e.read()])));
+  const showSelected=()=>{const ex=ws.examples.find(e=>e.id===select.value);selectedInfo.replaceChildren();if(ex){const unmatched=Object.keys(ex.inputs).filter(n=>!inputs[n]);if(unmatched.length)selectedInfo.append(h("p",{text:"Example inputs outside this block: "+unmatched.join(", ")}),wsShowValue(ex.inputs));}};
+  select.onchange=async()=>{ws.selectedExample=select.value;const ex=ws.examples.find(e=>e.id===select.value);showSelected();for(const [n,e] of Object.entries(inputs))await e.set(ws.inputs[n]=ex?.inputs[n]||"");};showSelected();
+  const examplesArea=h("fieldset",{},h("legend",{text:"Saved examples"}),h("p",{"data-test":"ws-examples-state","data-state":ws.examplesDirty?"unsaved":"saved",text:ws.examplesDirty?"Example changes are in memory. Save example collection to keep them.":"Examples are saved separately from block revisions and run history."}));form.append(examplesArea);
+  const selection=h("fieldset",{},h("legend",{text:"Examples to run"})),selected=[];
+  for(const ex of ws.examples){const check=h("input",{type:"checkbox",checked:true,"data-test":"ws-example-choice","data-example":ex.id});selected.push([ex,check]);selection.append(h("label",{},check," "+ex.label+" "));}
+  examplesArea.append(selection);
+  const chosen=()=>selected.filter(([,check])=>check.checked).map(([ex])=>ex);
+  wsPending=async()=>{await values();};
+  if(compare){const baseline=wsChoice(form,"Baseline revision",[]),candidate=wsChoice(form,"Candidate",[["",wsClean()?"Selected revision "+ws.saved.number:"Current draft"]]);
+    wsApi("blocks/"+ws.draft.key+"/revisions").then(x=>{if(!baseline.isConnected)return;baseline.replaceChildren(...x.revisions.map(r=>new Option(wsRevisionLabel(r),r.id)));for(const r of x.revisions)candidate.add(new Option(wsRevisionLabel(r),r.id));}).catch(wsError);
+    form.append(wsButton("Compare versions",()=>wsStart("batches",{candidates:[{key:ws.draft.key,revision:baseline.value},candidate.value?{key:ws.draft.key,revision:candidate.value}:wsSourceOf()],examples:chosen()})));
+  }else{
+    inputArea.append(wsButton("Preview instructions",async()=>{const p=await wsApi("preview",wsSourceOf({inputs:await values()}));await wsDialog("Prepared behaviour · "+wsSelectionLabel(),wsShowValue(p.prepared||p.input_checks||p.issues),["Close"]);}),
+      wsButton("Run test",async()=>{
+        const input=await values(),ex=ws.examples.find(e=>e.id===select.value);
+        if(ex&&(Object.keys(ex.inputs).some(n=>!inputs[n])||Object.keys(ex.inputs).every(n=>ex.inputs[n]===input[n])))return wsStart("batches",{candidates:[wsSourceOf()],examples:[ex]});
+        return wsStart("test",wsSourceOf({inputs:input}));
+      }),
+      wsButton("Add example",async()=>{const input=await values(),box=h("div"),label=wsField(box,"Example label"),criterion=wsField(box,"Review criterion","Review against the source");if(await wsDialog("Add example",box,["Save","Cancel"])!=="Save")return;
+        const id=crypto.randomUUID();ws.examples.push({id,version:1,label:label.value||"Example",inputs:input,expectation:{kind:"review",criterion:criterion.value},origin:"manual",verified:false});ws.selectedExample=id;ws.examplesDirty=true;wsRender();},"ws-save-as-example"));
+    examplesArea.append(wsButton("Edit selected example",()=>wsEditExample(select.value)),wsButton("Save example collection",wsPersistExamples),wsButton("Run saved examples",()=>wsStart("batches",{candidates:[wsSourceOf()],examples:chosen()})));
+  }
+  for(const button of form.querySelectorAll('[data-test="ws-run-test"], [data-test="ws-run-saved-examples"], [data-test="ws-compare-versions"], [data-test="ws-save-as-example"], [data-test="ws-edit-selected-example"]'))if(!valid)button.disabled=true;
+  form.append(wsButton("Recent runs and comparisons",wsRecords));
+  form.append(wsButton("Stop",async()=>{if(ws.batch?.state==="running")await wsApi("batches/"+ws.batch.id+"/stop",{});}));wsResults();
+}
+async function wsRecords(){
+  const box=h("div"),key=ws.draft.key;
+  const runs=await api("/api/runs"),saved=await wsApi("comparisons");
+  box.append(h("h3",{text:"Saved runs for this block"}));
+  for(const row of runs.runs.filter(r=>r.block===key))box.append(wsButton((row.created_at||row.run_id)+" · "+row.outcome,async()=>{selectTab("history");await TABS.history.openRun(row.run_id);box.closest("dialog").querySelector('[data-test="ws-close"]').click();}));
+  box.append(h("h3",{text:"Saved comparison records"}));
+  for(const id of saved.comparisons){
+    const batch=await wsApi("comparisons/"+id);if(!(batch.plan?.candidates||[]).some(c=>c.draft?.key===key))continue;
+    const line=h("div",{"data-test":"ws-comparison-record","data-comparison":id,"data-arms":batch.plan.candidates.length});box.append(line);line.append(wsButton(id.slice(0,8)+" · "+batch.state,async()=>{ws.batch=batch;wsResults();box.closest("dialog").querySelector('[data-test="ws-close"]').click();},"ws-open-comparison"),wsButton("Delete comparison",async()=>{
+      const response=await fetch("/api/workshop/comparisons/"+id,{method:"DELETE",headers:{"X-Session-Token":TOKEN}});if(!response.ok)throw new Error((await response.json()).code);line.remove();
+    },"ws-delete-comparison"));
+  }
+  box.append(h("p",{text:"Saving off retains only the active and latest session batch. Saved child runs and comparison records are deleted independently."}));
+  await wsDialog("Recent evidence",box,["Close"]);
+}
+wsSearch.oninput=wsFilter;wsList.onchange=async()=>{const key=wsList.value;try{if(key&&await wsLeave())await wsLoad({key},false);else wsFilter();}catch(e){wsError(e);}};
+wsPanel.append(wsHeading,h("div",{class:"ws-layout"},h("aside",{},wsSearch,wsList,wsButton("New block",wsNew),wsRevisionPicker),h("div",{},wsNav,wsNote,wsBody)));
+TABS.workshop={async tutorialAssist(action){ws.view="design";ws.tutorialAction=action;if(action==="describe"){await wsLoad({key:"tutorial_described"},false);return;}await wsLoad({key:"tutorial_extractor",starter:"extract_fields",role:"fast"},true);}, async tutorialPrepare(key,inputs){ws.view="test";await wsLoad({key,support:[]},false);ws.inputs=inputs;ws.batch=null;wsRender();},async tutorialCreate(){ws.view="design";await wsLoad({starter:"count_text",key:"tutorial_counter"},true);ws.examples=(await wsApi("starters")).starters.find(s=>s.id==="count_text").examples;wsRender();},async onShow(){try{await wsFlush();await wsRefresh();const parts=location.hash.slice(1).split("/");
+  if(parts[1]&&wsBlocks.some(b=>b.name===parts[1])){
+    if(!ws.draft||ws.draft.key!==parts[1]){if(!await wsLeave()){wsRender();return;}ws.view=["design","test","compare"].includes(parts[2])?parts[2]:"design";await wsLoad({key:parts[1]},false);}
+    else {ws.view=["design","test","compare"].includes(parts[2])?parts[2]:"design";wsRender();}
+  }else wsRender();
+  const active=await wsApi("batches"),id=active.active||active.latest;if(id){const batch=await wsApi("batches/"+id);const source=batch.plan?.describe?null:batch.plan?.assistance?.draft||batch.plan?.candidates?.[0]?.draft;
+    if(!ws.draft&&source?.key===parts[1]){ws.view="test";await wsLoad({draft:source},true);}
+    if(source?.key===ws.draft?.key)wsFollow(id).catch(wsError);
+  }
+}catch(e){wsError(e);}}};
+
+$("main-nav").append($("tab-history"));
+$("ws-workbench").onclick=()=>selectTab("chat");
+wsPanel.querySelector("aside").append($("tab-blocks"));
+$("main-nav").setAttribute("role","tablist");
+$("main-nav").addEventListener("keydown",e=>{
+  const buttons=[...$("main-nav").querySelectorAll("button")],i=buttons.indexOf(document.activeElement);
+  const n=e.key==="ArrowRight"?(i+1)%3:e.key==="ArrowLeft"?(i+2)%3:e.key==="Home"?0:e.key==="End"?2:-1;
+  if(n>=0){e.preventDefault();buttons[n].click();buttons[n].focus();}
+});
+const settingsGroup=h("details",{id:"ws-settings"},h("summary",{"data-test":"ws-settings",text:"Settings"}));
+$("open-settings").before(settingsGroup);settingsGroup.append($("open-settings"),$("open-roles"),$("open-servers"),$("save-runs").parentElement);
+// Workspace administration controls are initialized just below, before the start section.
+const workspacesDialog = $("workspaces-dialog"), workspacesMsg = $("workspaces-msg");
+let workspacesInfo = null, workspacesSelected = "";
+function workspacesSetMsg(text, code) {
+  workspacesMsg.textContent = text || "";
+  workspacesMsg.dataset.code = code || "";
+  workspacesMsg.classList.toggle("err-text", !!code);
+}
+function workspacesError(e) {
+  let text = e?.message || String(e);
+  const holder = e?.body?.holder;
+  if (holder && typeof holder === "object" && Object.keys(holder).length) {
+    text += " (" + Object.entries(holder).map(([key, value]) => key + " " + value).join(", ") + ")";
+  }
+  workspacesSetMsg(text, e?.code || "error");
+}
+function workspacesCurrent() {
+  return (workspacesInfo?.workspaces || []).find(row => row.current) || null;
+}
+function workspacesSelectedRow() {
+  return (workspacesInfo?.workspaces || []).find(row => row.name === workspacesSelected) || workspacesCurrent();
+}
+function workspacesRender() {
+  if (!workspacesInfo) return;
+  const info = workspacesInfo, current = workspacesCurrent(), selected = workspacesSelectedRow();
+  $("workspaces-root").textContent = "Folder: " + info.root;
+  $("workspaces-current").textContent = current ? "Current: " + current.name + " · " + current.path : "";
+  const list = $("workspaces-list");
+  list.replaceChildren(...info.workspaces.map(row => {
+    const radio = h("input", { type: "radio", name: "workspaces-choice", value: row.name,
+      checked: row.name === workspacesSelected });
+    radio.onchange = () => { workspacesSelected = row.name; $("workspaces-selection").value = row.name; workspacesRender(); };
+    return h("label", { class: "pick", "data-test": "workspaces-row", "data-workspace": row.name,
+      "data-current": String(!!row.current) }, radio, " " + row.name + (row.current ? " (current)" : ""));
+  }));
+  const selection = $("workspaces-selection");
+  selection.replaceChildren(...info.workspaces.map(row => new Option(row.name + (row.current ? " (current)" : ""), row.name)));
+  selection.value = selected?.name || current?.name || "";
+  const source = $("workspaces-source"), priorSource = source.value;
+  source.replaceChildren(...info.workspaces.map(row => new Option(row.name + (row.current ? " (current)" : ""), row.name)));
+  source.value = info.workspaces.some(row => row.name === priorSource) ? priorSource : (current?.name || "");
+  const enabled = !!info.admin && !info.tutorial_active, target = $("workspaces-name").value.trim();
+  $("workspaces-switch").disabled = !enabled || !selected || !!selected.current;
+  $("workspaces-create").disabled = !enabled || !target;
+  $("workspaces-clone").disabled = !enabled || !target || !source.value || target === source.value;
+  $("workspaces-reset").disabled = !enabled || !selected;
+  $("workspaces-delete").disabled = !enabled || !selected || !!selected.current;
+  workspacesDialog.dataset.state = !enabled ? "disabled" : "idle";
+  if (info.tutorial_active) workspacesSetMsg("Exit the tutorial before changing workspaces.");
+  else if (info.admin === false) workspacesSetMsg("Workspace administration is unavailable in the tutorial.");
+}
+
+
+async function workspacesLoad() {
+  workspacesDialog.dataset.state = "loading";
+  try {
+    workspacesInfo = await api("/api/workspaces");
+    if (!workspacesSelected || !workspacesInfo.workspaces.some(row => row.name === workspacesSelected)) {
+      workspacesSelected = workspacesInfo.current;
+    }
+    workspacesSetMsg("");
+    workspacesRender();
+  } catch (e) {
+    workspacesDialog.dataset.state = "error";
+    workspacesError(e);
+  }
+}
+function workspacesReload() {
+  ws.dirty = false;
+  ws.examplesDirty = false;
+  location.reload();
+}
+async function workspacesConfirm(action, name) {
+  const box = h("div"), field = h("input", { "data-test": "workspaces-confirm-name" }),
+    note = h("p", { class: "note err-text", "data-test": "workspaces-confirm-error" });
+  box.append(h("p", { text: `Type the workspace name to ${action}. This cannot be undone.` }), field, note);
+  const choice = await wsDialog("Confirm " + action, box, ["Confirm", "Cancel"], async answer => {
+    if (answer !== "Confirm") return true;
+    if (field.value !== name) { note.textContent = "The typed name does not match."; return false; }
+    return true;
+  });
+  return choice === "Confirm";
+}
+async function workspacesFinishSwitch(target) {
+  const current = await api("/api/workspaces").catch(() => null);
+  if (current?.current === target) return workspacesReload();
+  if (current) { workspacesInfo = current; workspacesRender(); }
+}
+async function workspacesSwitch(create) {
+  const target = create ? $("workspaces-name").value.trim() : $("workspaces-selection").value;
+  if (!target || !await wsLeave()) return;
+  try {
+    await api("/api/workspaces/" + (create ? "create" : "switch"), { format_version: 1, name: target });
+    workspacesReload();
+  } catch (e) {
+    workspacesError(e);
+    await workspacesFinishSwitch(target);
+  }
+}
+
+async function workspacesClone() {
+  const source = $("workspaces-source").value, target = $("workspaces-name").value.trim();
+  if (!source || !target || target === source) return;
+  if (source === workspacesCurrent()?.name && !await wsLeave()) return;
+  try {
+    await api("/api/workspaces/clone", { format_version: 1, source, target,
+      include_evidence: $("workspaces-evidence").checked });
+    workspacesSelected = target;
+    await workspacesLoad();
+    workspacesSetMsg("Clone created. Switch to it when ready.");
+  } catch (e) {
+    workspacesError(e);
+  }
+}
+async function workspacesResetWorkspace() {
+  const selected = workspacesSelectedRow();
+  if (!selected) return;
+  if (selected.current && !await wsLeave()) return;
+  if (!await workspacesConfirm("reset", selected.name)) return;
+  try {
+    await api("/api/workspaces/reset", { format_version: 1, name: selected.name, confirm: selected.name });
+    if (selected.current) return workspacesReload();
+    await workspacesLoad();
+    workspacesSetMsg("Workspace reset.");
+  } catch (e) {
+    workspacesError(e);
+  }
+}
+async function workspacesDeleteWorkspace() {
+  const selected = workspacesSelectedRow();
+  if (!selected || selected.current) return;
+  if (!await workspacesConfirm("delete", selected.name)) return;
+  try {
+    await api("/api/workspaces/delete", { format_version: 1, name: selected.name, confirm: selected.name });
+    workspacesSelected = workspacesCurrent()?.name || "";
+    await workspacesLoad();
+    workspacesSetMsg("Workspace deleted.");
+  } catch (e) {
+    workspacesError(e);
+  }
+}
+async function workspacesLaunch() {
+  const name = workspacesSelectedRow()?.name || workspacesInfo?.current || "";
+  try {
+    const result = await api("/api/workspaces/launch?name=" + encodeURIComponent(name));
+    $("workspaces-command").textContent = result.command;
+  } catch (e) {
+    workspacesError(e);
+  }
+}
+$("workspaces-selection").addEventListener("change", () => { workspacesSelected = $("workspaces-selection").value; workspacesRender(); });
+$("workspaces-name").addEventListener("input", workspacesRender);
+$("workspaces-source").addEventListener("change", workspacesRender);
+$("workspaces-evidence").addEventListener("change", workspacesRender);
+$("workspaces-switch").onclick = () => workspacesSwitch(false).catch(e => workspacesError(e));
+$("workspaces-create").onclick = () => workspacesSwitch(true).catch(e => workspacesError(e));
+$("workspaces-clone").onclick = () => workspacesClone().catch(e => workspacesError(e));
+$("workspaces-reset").onclick = () => workspacesResetWorkspace().catch(e => workspacesError(e));
+$("workspaces-delete").onclick = () => workspacesDeleteWorkspace().catch(e => workspacesError(e));
+$("workspaces-launch").onclick = () => workspacesLaunch().catch(e => workspacesError(e));
+$("workspaces-close").onclick = () => workspacesDialog.close();
+$("workspaces-launch-row").append(copyControl("workspaces-copy-command", () => $("workspaces-command").textContent, null));
+const openWorkspaces = h("button", { type: "button", id: "open-workspaces", "data-test": "header-workspaces",
+  text: "Workspaces", onclick: async () => { workspacesDialog.showModal(); await workspacesLoad(); } });
+$("workspace").after(openWorkspaces);
+
 // --- start -----------------------------------------------------------------------------------------------------------------
-selectTab(fragFromHash(), { hash: false });
-refreshState().then(tutorialInit).catch((e) => {
-  $("banner").replaceChildren(h("p", { text: e.message }));
+function startFailure(e) {
+  startProblems.push(e.message);
+  $("banner").append(h("p", { text: e.message }));
   $("banner").classList.remove("hidden");
+}
+contractsScript.then(initContracts).catch(startFailure).finally(() => {
+  selectTab(fragFromHash(), { hash: false });
+  refreshState().then(tutorialInit).catch((e) => {
+    $("banner").replaceChildren(h("p", { text: e.message }));
+    $("banner").classList.remove("hidden");
+  });
 });
 </script>
 </body>

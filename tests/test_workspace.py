@@ -85,6 +85,13 @@ class Launch:
         req = urllib.request.Request(root + "/api/state", headers={"X-Session-Token": token})
         return json.loads(urllib.request.build_opener().open(req, timeout=10).read())
 
+    def post(self, address, path, body):
+        root, token = address.split("/?t=", 1)
+        req = urllib.request.Request(root + path, data=json.dumps(body).encode(),
+                                     headers={"X-Session-Token": token, "Content-Type": "application/json"},
+                                     method="POST")
+        return json.loads(urllib.request.build_opener().open(req, timeout=10).read())
+
     def exit_status(self, timeout=15):
         return self.proc.wait(timeout)
 
@@ -97,6 +104,31 @@ class Launch:
             assert not self.reader.is_alive(), "stdout reader did not stop after child termination"
         for stream in (self.proc.stdout, self.proc.stderr):
             stream.close()
+
+
+def test_cli_server_configuration(tmp_path):
+    config = tmp_path / "machine" / "servers.ini"
+    first = Launch(tmp_path, "--config", str(config))
+    try:
+        address = first.address()
+        assert first.state(address)["server_config_path"] == str(config)
+        assert config.is_file()
+    finally:
+        first.stop()
+    edited = config.read_text().replace("http://localhost:1234/v1", "http://127.0.0.1:9876/v1")
+    config.write_text(edited)
+    second = Launch(tmp_path, "--config", str(config))
+    try:
+        assert second.state(second.address())["base_url"] == "http://127.0.0.1:9876/v1"
+        assert config.read_text() == edited
+    finally:
+        second.stop()
+    config.write_text("[openrouter]\napi_key = sk-private-sentinel\n")
+    run = subprocess.run([sys.executable, "-m", "agentwiz", "--no-browser", "--config", str(config)],
+                         cwd=tmp_path, capture_output=True, text=True, timeout=15)
+    assert run.returncode == 1
+    assert "sk-private-sentinel" not in run.stdout + run.stderr
+    assert config.read_text() == "[openrouter]\napi_key = sk-private-sentinel\n"
 
 
 def test_cli_workspace(tmp_path):
@@ -136,3 +168,20 @@ def test_cli_workspace(tmp_path):
             item.stop()
     # Nothing else was created beside the two workspaces.
     assert sorted(p.name for p in (tmp_path / "workspaces").iterdir()) == ["default", "demo"]
+
+
+def test_cli_releases_the_current_workspace_after_a_switch(tmp_path):
+    wsdir = tmp_path / "workspaces"
+    launch = Launch(tmp_path, "--workspaces-dir", str(wsdir))
+    try:
+        address = launch.address()
+        result = launch.post(address, "/api/workspaces/create", {"format_version": 1, "name": "switched"})
+        assert result["workspace"]["name"] == "switched"
+        assert launch.state(address)["workspace"]["name"] == "switched"
+    finally:
+        launch.stop()
+    # Both the initial workspace and the switched workspace are released for another process.
+    first = open_workspace(wsdir, "default")
+    second = open_workspace(wsdir, "switched")
+    first.close()
+    second.close()

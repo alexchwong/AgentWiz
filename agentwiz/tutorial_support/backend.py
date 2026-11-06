@@ -33,7 +33,9 @@ MODELS = {
     "nonfinite": "Completes with usage containing NaN and 1e400.",
     "bigint": "Completes with usage.prompt_tokens = 9007199254740993.",
     "json-pass": "Answers a JSON object in a fenced code block (the README's contract passes).",
-    "json-repair": "Answers a JSON object that fails the README's contract; a repair (a request with an assistant message) gets json-pass's answer.",
+    "json-repair": "Answers a JSON object missing a required field of the README's contract; a repair (a request with an assistant message) gets json-pass's answer.",
+    "block-fields": "Answers the named envelope for the example model block: {\"fields\": …, \"note\": …}.",
+    "block-fields-repair": "Answers an envelope whose id is a string, not an integer; a repair gets block-fields' answer.",
     "slow-headers": "Waits 20 s before sending anything, not even the status line; logs the client's disconnect.",
 }
 USAGE = '{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}'
@@ -67,11 +69,15 @@ def words(text: str) -> list[bytes]:
 
 
 PASS_TEXT = '```json\n{"id": 9007199254740993, "ratio": 0.10000000000000000001}\n```'
-FAIL_TEXT = '```json\n{"id": 9007199254740993, "ratio": 1.5}\n```'
+FAIL_TEXT = '```json\n{"id": 9007199254740993}\n```'      # misses the required ratio: a structural failure
+ENVELOPE_PASS = '{"fields": {"id": 9007199254740993, "ratio": 0.10000000000000000001}, "note": "The report mentions id 9007199254740993."}'
+ENVELOPE_FAIL = '{"fields": {"id": "9007199254740993", "ratio": 0.10000000000000000001}, "note": "The report mentions id 9007199254740993."}'
 
 SCRIPTS = {
     "json-pass": lambda: words(PASS_TEXT) + [chunk(finish="stop", usage_json=USAGE), DONE],
     "json-repair": lambda: words(FAIL_TEXT) + [chunk(finish="stop", usage_json=USAGE), DONE],
+    "block-fields": lambda: words(ENVELOPE_PASS) + [chunk(finish="stop", usage_json=USAGE), DONE],
+    "block-fields-repair": lambda: words(ENVELOPE_FAIL) + [chunk(finish="stop", usage_json=USAGE), DONE],
     "complete": lambda: words("The stub backend says hello.") + [chunk(finish="stop", usage_json=USAGE), DONE],
     "complete-reasoning": lambda: [chunk(reasoning=w) for w in ["Thinking ", "about ", "it…"]]
     + words("Here is the answer.") + [chunk(finish="stop", usage_json=USAGE), DONE],
@@ -85,6 +91,15 @@ SCRIPTS = {
     "bigint": lambda: words("Big integer usage follows.") + [chunk(finish="stop"), chunk(
         usage_json='{"prompt_tokens":9007199254740993,"completion_tokens":3}'), DONE],
 }
+
+
+from .workshop import proposal as workshop_proposal
+for action in ('create', 'improve', 'describe', 'suggest_examples', 'explain_failure'):
+    name = 'workshop-' + action
+    MODELS[name] = 'Deterministic Workshop ' + action + ' proposal.'
+    # The proposal is the value of the assistance block's one declared output, so it travels in the
+    # named envelope like every other model answer.
+    SCRIPTS[name] = lambda action=action: words('{"proposal":' + workshop_proposal(action) + '}') + [chunk(finish='stop', usage_json=USAGE), DONE]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -123,8 +138,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(404, {"error": {"message": f"unknown stub model {model!r}"}})
         if model == "slow-headers":
             return self._slow_headers()
-        if model == "json-repair" and "assistant" in roles:       # a repair: answer as json-pass would
-            model = "json-pass"
+        if "assistant" in roles:            # a repair: answer as the passing stand-in would
+            model = {"json-repair": "json-pass", "block-fields-repair": "block-fields"}.get(model, model)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()

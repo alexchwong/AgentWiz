@@ -38,7 +38,7 @@ class SettingsError(ValueError):
 @dataclass(frozen=True)
 class ModelSettings:
     kind: str = "lmstudio"
-    base_url: str = ""          # "" means the kind's default URL
+    base_url: str = dataclasses.field(default="", compare=False)  # legacy migration information only
     model: str = ""
     provider: str = ""          # OpenRouter provider slug; "" means any
 
@@ -71,7 +71,8 @@ def settings_from_body(current: ModelSettings, body: Mapping) -> ModelSettings:
     if any(c in values["base_url"] for c in "@?#"):
         # R1-7: credentials belong in the key field, never in a URL that may be saved or shown.
         raise SettingsError("base_url must not contain a user name, password, query or fragment")
-    Endpoint(values["kind"], values["base_url"] or None)  # validates scheme and openai_compat URL
+    if values["base_url"]:
+        Endpoint(values["kind"], values["base_url"])
     if values["kind"] != "openrouter":
         values["provider"] = ""
     return ModelSettings(**values)

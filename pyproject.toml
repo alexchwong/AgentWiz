@@ -11,11 +11,11 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
+  "jsonschema>=4.26,<5",
   "modelSpell @ https://github.com/alexchwong/modelSpell/releases/download/v0.3.0/modelspell-0.3.0-py3-none-any.whl#sha256=0dddccebec3e062871f9ee6c45461415ad18c468a3f43b0bafa1803abfe27b27",
 ]
 
 [project.optional-dependencies]
-checks = ["jsonschema>=4.26,<5"]
 dev = ["pytest", "playwright==1.63.0"]
 
 [project.scripts]
@@ -33,13 +33,15 @@ path = "agentwiz/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["agentwiz"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"config/model-servers.ini.template" = "agentwiz/model-servers.ini.template"
+
 [tool.hatch.build.targets.sdist]
-only-include = ["agentwiz", "pyproject.toml", "README.md", "LICENSE"]
+only-include = ["agentwiz", "config/model-servers.ini.template", "pyproject.toml", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-rs"
 markers = [
   "live: opt-in tests against real backends (see tests/test_live.py)",
-  "needs_checks: needs the optional extra AgentWiz[checks]; skipped, with a reason, only where it is absent",
 ]

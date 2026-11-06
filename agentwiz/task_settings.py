@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import copy
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -25,6 +25,8 @@ from .workspace import InvalidDocument, Problem, check_format_version, read_docu
 REASONING_LEVELS = ("", "off", "low", "medium", "high")      # "" means the backend's default
 ADVANCED = ("top_p", "top_k", "min_p", "repetition_penalty",
             "presence_penalty", "frequency_penalty", "seed", "stop")
+# The settings a role may default and a block may override or reset (0.2.0).
+OVERRIDABLE = ("temperature", "reasoning")
 SAFE_INTEGER = 2**53 - 1
 FORMAT_VERSION = 1
 FILE = "task_settings.json"
@@ -173,6 +175,73 @@ def parse_task(value: object) -> TaskSettings:
     """Task settings from a request body; raises TaskSettingError. `None` means nothing set."""
     return _parse(value, unknown_advanced="refuse")[0]
 
+
+def parse_defaults(value: object, where: str = "task_defaults") -> dict:
+    """A role's saved defaults: only `OVERRIDABLE` keys, validated by the same rules as task settings.
+
+    Returns the set values in canonical order. A blank reasoning level or a `None` temperature is not
+    stored: absence means the backend default. Temperature zero is kept.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise TaskSettingError(f"{where} must be an object")
+    unknown = [key for key in value if key not in OVERRIDABLE]
+    if unknown:
+        raise TaskSettingError(f"{where} may hold only temperature and reasoning")
+    out: dict[str, Any] = {}
+    for name in OVERRIDABLE:
+        if name not in value:
+            continue
+        kept = _check_value(name, value[name], f"{where}.")
+        if kept is not None:
+            out[name] = kept
+    return out
+
+
+@dataclass(frozen=True)
+class Effective:
+    """The settings one model call sends, and where each overridable field came from.
+
+    `sources` holds one entry per `OVERRIDABLE` field: `block_override`, `block_reset`,
+    `role_default` or `backend_default`. Fieldwise, the order is: an explicit block setting wins, then
+    an explicit block reset, then the role's default, then the backend's own default.
+    """
+
+    task: TaskSettings
+    sources: Mapping[str, str]
+
+
+def resolve_effective(task: TaskSettings | None, resets: Iterable[str], role_defaults: Mapping[str, Any]) -> Effective:
+    """Resolve one call's effective settings without mutating `task` or the role's defaults.
+
+    A field is resolved independently. `temperature` explicitly set to a number, and a non-blank
+    `reasoning`, are block overrides; temperature zero is an override. A field named in `resets` asks
+    for the backend default and never inherits. Everything else falls back to the role's default and
+    then to the backend's.
+    """
+    task = task if task is not None else TaskSettings()
+    reset_names = set(resets)
+    resolved: dict[str, Any] = {}
+    sources: dict[str, str] = {}
+    for name in OVERRIDABLE:
+        explicit = task.temperature if name == "temperature" else task.reasoning
+        set_by_block = explicit is not None and explicit != ""
+        if name in reset_names:
+            sources[name] = "block_reset"
+            resolved[name] = None
+        elif set_by_block:
+            sources[name] = "block_override"
+            resolved[name] = explicit
+        elif name in role_defaults and role_defaults[name] is not None:
+            sources[name] = "role_default"
+            resolved[name] = _check_value(name, role_defaults[name], "role default ")
+        else:
+            sources[name] = "backend_default"
+            resolved[name] = None
+    effective = TaskSettings(reasoning=resolved["reasoning"] or "", temperature=resolved["temperature"],
+                             max_tokens=task.max_tokens, advanced=task.advanced)
+    return Effective(effective, sources)
 
 # --- the file --------------------------------------------------------------------------------------
 @dataclass(frozen=True)

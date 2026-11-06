@@ -232,6 +232,7 @@ class AttemptStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._runs: dict[str, Run] = {}
+        self._history_reservations = {}
         self._attempts: dict[str, _Attempt] = {}
         self._records: OrderedDict[str, int] = OrderedDict()   # committed, held records -> encoded size
         self._record_bytes = 0
@@ -466,6 +467,26 @@ class AttemptStore:
             run.result_save_status, run.result_save_detail = status, dict(detail)
             self._prune_run_locked(run)
 
+    def reserve_review(self, run_id: str):
+        """Reserve a result review against deletion, including after process restart."""
+        with self._lock:
+            if run_id in self._history_reservations:
+                raise RunActive()
+            run = self._runs.get(run_id)
+            if run is not None:
+                if not run.committed or run.history_state != HISTORY_INTACT:
+                    raise NotHeld()
+                run.protections += 1
+            self._history_reservations[run_id] = 'review'
+            return run
+
+    def release_review(self, run_id: str, run):
+        with self._lock:
+            self._history_reservations.pop(run_id, None)
+            if run is not None:
+                run.protections = max(0, run.protections - 1)
+                self._prune_run_locked(run)
+
     def protect_run(self, run: Run) -> None:
         """A script cleanup owner protects the run's folder from deletion (11.4)."""
         with self._lock:
@@ -609,13 +630,17 @@ class AttemptStore:
         with self._lock:
             return run.history_state
 
-    def reserve_delete(self, run_id: str) -> Run | None:
+    def reserve_delete(self, run_id: str, *, protect_absent: bool = False) -> Run | None:
         """Reserve the deletion of a run's history. Returns the in-memory Run (now 'deleting'), or None when
         the run is not in memory. Raises RunActive when an attempt is running, a save is pending or a deletion
         is already reserved."""
         with self._lock:
+            if run_id in self._history_reservations:
+                raise RunActive()
             run = self._runs.get(run_id)
             if run is None:
+                if protect_absent:
+                    self._history_reservations[run_id] = 'delete'
                 return None
             if (run.running is not None or run.pending or run.history_state == HISTORY_DELETING
                     or (run.kind == "block" and (not run.committed or run.result_save_status == "pending"))
@@ -625,10 +650,13 @@ class AttemptStore:
             run.history_state = HISTORY_DELETING
             return run
 
-    def settle_delete(self, run: Run | None, *, ok: bool, changed: bool) -> None:
+    def settle_delete(self, run: Run | None, *, ok: bool, changed: bool, run_id: str | None = None) -> None:
         """Clear 'deleting' on every path (R5-10): success -> deleted; failure -> the state captured at the
         reservation unless the tree changed, in which case history_incomplete."""
         if run is None:
+            if run_id is not None:
+                with self._lock:
+                    self._history_reservations.pop(run_id, None)
             return
         with self._lock:
             prior = run.prior_history_state or HISTORY_INTACT

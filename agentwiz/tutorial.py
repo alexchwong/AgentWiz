@@ -15,10 +15,28 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from . import tutorial_topics
-from .tutorial_topics import CONTRACT, ROLE, ROLE_MODEL, ROLE_PROFILE, TOPICS
+from .tutorial_topics import (CONTRACT, CONTRACT_FAMILY, CONTRACT_LABEL, CONTRACT_NAME, ROLE, ROLE_MODEL,
+                              ROLE_PROFILE, TOPICS)
 from .workspace import open_workspace
 
 BLOCKS_SOURCE = Path(__file__).with_name("tutorial_support") / "blocks"
+
+
+def ensure_contract(state) -> None:
+    """Idempotent: reuse `fields` when its revision 1 is the packaged definition; create it when missing. Runs only
+    against the tutorial's own temporary workspace; an existing different file is left for the learner to see."""
+    from .contract_schema import contract_digest
+    from .contracts import StoreError
+    from .jsonio import decode_exact
+    try:
+        detail = state.contract_detail(CONTRACT_NAME, 1)
+    except StoreError as exc:
+        if exc.code != "no_such_contract":
+            return
+        state.save_contract(CONTRACT_NAME, CONTRACT_FAMILY, None, CONTRACT, CONTRACT_LABEL)
+        return
+    if detail.get("digest") != contract_digest(decode_exact(CONTRACT)):
+        return
 
 
 class TutorialBusy(Exception):
@@ -82,11 +100,13 @@ class Tutorial:
     def _seed(self, state, workspace) -> None:
         """The profile, the role map and the example blocks (14.4). Nothing is written outside the session's
         temporary folder."""
-        base = {"kind": "openai_compat", "base_url": self.backend_url}
+        base = {"kind": "openai_compat"}
         state.save_profile({"name": ROLE_PROFILE, **base, "model": ROLE_MODEL}, state.view()["revision"])
         state.select_profile(None, state.view()["revision"])          # detach: the active settings stay the stand-in's
         state.apply_config({**base, "model": "complete"}, state.view()["revision"])
-        state.save_roles({ROLE: ROLE_PROFILE}, state.view()["roles"]["revision"])
+        state.save_roles({ROLE: ROLE_PROFILE}, state.view()["roles"]["revision"],
+                         {ROLE: {"description": "Routine extraction", "location": "local",
+                                 "task_defaults": {"temperature": 0}}})
         shutil.copytree(BLOCKS_SOURCE, workspace.path / "blocks", copy_function=shutil.copyfile)
 
     def start(self):
@@ -111,13 +131,16 @@ class Tutorial:
                 stub = self._serve(StubServer(("127.0.0.1", 0), handler))
                 servers = {"tutorial": {"url": f"http://127.0.0.1:{stub.server_port}/mcp"}}
                 self.workspace = open_workspace(root / "workspaces", "tutorial")
+                from .server_config import ServerSettings
+                model_servers = {kind: ServerSettings(self.backend_url) for kind in
+                                 ("lmstudio", "openrouter", "openai_compat")}
                 self.child = UIServer(workspace=self.workspace, profiles_dir=root / "profiles",
-                                      mcp_servers_dir=root / "mcp")
+                                      mcp_servers_dir=root / "mcp", servers=model_servers)
                 self._serve(self.child)
                 self.child.tutorial_session = self
                 state = self.child.state
                 state.save_mcp_servers(servers, state.view()["mcp"]["revision"])
-                state.save_contract("fields", CONTRACT, None)
+                ensure_contract(state)
                 self._seed(state, self.workspace)
                 self.topic = TOPICS[0].id
                 self.closed.clear()
@@ -143,6 +166,11 @@ class Tutorial:
             return {"active": True, "return_url": self.parent.url, "topic": self.topic,
                     "topics": [tutorial_topics.public(t) for t in TOPICS], "contract": CONTRACT}
 
+    def active(self) -> bool:
+        """True while a child session or its cleanup still exists. Used before changing workspaces."""
+        with self.lock:
+            return self.closing or self.child is not None or bool(self.resources) or self.pending is not None
+
     def prepare(self, body):
         """Prepare a topic by ID. Raises KeyError for an unknown ID (the route answers 400)."""
         with self.lock:
@@ -150,12 +178,31 @@ class Tutorial:
             state = self.child.state
             if state.store.running_count() or state.store.active_block_runs() or state.mcp_ops.active_count():
                 return {"busy": True}
+            if topic.id.startswith("assist-"):
+                action = topic.id[len("assist-"):]
+                state.save_profile({"name":"tutorial-assistant","kind":"openai_compat",
+                                    "model":"workshop-" + action}, state.view()["revision"])
+                state.select_profile(None, state.view()["revision"])
+                assignments = {ROLE: ROLE_PROFILE, "assistant": "tutorial-assistant"}
+                if action == "describe":
+                    # Describe uses its own dedicated role, bound to the same local stand-in, and a saved
+                    # managed fixture: a description belongs to a saved revision.
+                    from .roles import DEFAULTS
+                    from .tutorial_support.workshop import ensure_describe_fixture
+                    assignments["write_block_description"] = "tutorial-assistant"
+                    current = state.view()["roles"]
+                    definitions = {**current.get("definitions", {}),
+                                   "write_block_description": dict(DEFAULTS["write_block_description"])}
+                    state.save_roles(assignments, current["revision"], definitions)
+                    ensure_describe_fixture(state.workshop)
+                else:
+                    state.save_roles(assignments, state.view()["roles"]["revision"])
             self.topic = topic.id
             self.last_seen = time.monotonic()
-            state.apply_config({"kind": "openai_compat", "base_url": self.backend_url,
+            state.apply_config({"kind": "openai_compat",
                                 "model": topic.model}, state.view()["revision"])
-            if topic.seed_contract and not any(c["name"] == "fields" for c in state.view()["contracts"]["items"]):
-                state.save_contract("fields", CONTRACT, None)
+            if topic.seed_contract:
+                ensure_contract(state)
             return self.info()
 
     # --- ending ------------------------------------------------------------------------------------------

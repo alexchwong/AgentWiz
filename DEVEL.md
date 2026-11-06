@@ -35,10 +35,9 @@ Do not add repository-document-content tests to enforce this organization (T2).
 
 For work in an area, read the relevant sections of [the architecture reference](docs/architecture.md) and preserve their
 behavior contracts, including field/protocol/format and lifecycle details. Relocation is not
-permission to weaken a requirement. Follow the agreed specification; the 0.1.4 build reference
-is *AgentWiz 0.1.4 — Technical Specification*, version 5, ahead of release plan version 13.
-Consult [the decision history](docs/decisions.md) for inherited specification precedence and superseded directions,
-and `HANDOVER.md` for build departures. Raise conflicts rather than silently choosing a departure.
+permission to weaken a requirement. Use current source and tests with the architecture reference.
+Consult [the decision history](docs/decisions.md) for accepted departures and historical design
+references, and `HANDOVER.md` for current verification. Raise conflicts explicitly.
 
 ## Workflow and scope
 
@@ -69,7 +68,7 @@ python -m pytest tests/test_page.py # focused page checks when relevant
 python scripts/build_release.py --smoke # installed-wheel validation when required
 ```
 
-Setup installs `.[dev,checks]` and the matching Playwright Chromium. Missing Chromium blocks page
+Setup installs `.[dev]` (including required JSON Schema validation) and the matching Playwright Chromium. Missing Chromium blocks page
 checks; do not skip them. Setup/service details and local modelSpell checkout instructions are
 in `docs/architecture.md`. Never commit a local dependency override; releases use the pinned wheel.
 
@@ -161,11 +160,11 @@ hints; do not use 3.11-only modules/APIs (`tomllib`, `datetime.UTC`, exception g
 ## UI and tutorial rules
 
 1. Each tab demonstrates one function from start to finish and works without visiting any other tab.
-2. A release's new function gets a new tab. Changes to an existing tab only extend that tab's own function.
-3. Tabs never pass data to each other in 0.1.x. The clipboard is the only bridge.
+2. Workshop authoring actions belong inside Design, Test and Compare. Group independent utilities in Workbench.
+3. Explicitly selected Workshop drafts, examples and results may move within Workshop. Independent Workbench utilities use the clipboard.
 4. Configuration is not a function. Model profiles, MCP servers and roles are header dialogs shared by every tab. Saved definitions (contracts, blocks) are shared the same way.
 5. At most seven top-level tabs. The eighth means grouping into nested tabs, at most two levels deep.
-6. Integration in 0.2.x arrives as new tabs; existing tabs stay as a workbench.
+6. Use Workshop, Workbench and History with at most two navigation levels.
 7. Every output panel has a Copy button.
 8. Page checks find elements by `data-test` attributes and assert values and states, never wording or layout.
 
@@ -223,13 +222,17 @@ anything unverified. Required release tooling checks and smoke remain separate f
 
 ## Documentation and release preparation
 
-Follow the placement table above; update owning documents, not an omnibus guide. Any change to
-`agentwiz/**`, `pyproject.toml`, `README.md` or `LICENSE` requires a version bump and NEWS entry
-before merge into `main`. Non-shipped tests, scripts, workflows and maintenance docs do not by
-themselves require a release. Follow [release operations](docs/releases.md) for release mechanics when authorized.
+Follow the placement table above and update owning documents. Before merging shipped changes
+to `main`, use a version newer than the published version they change and a corresponding
+NEWS section. Keep using that version and section for further edits while it remains unreleased.
+Shipped inputs are `agentwiz/**`, `pyproject.toml`, `README.md`, `LICENSE` and
+`config/model-servers.ini.template`. The template ships under `agentwiz/` in the wheel.
+The current automated guard omits the template source, so apply the rule to template-only
+changes during review. Non-shipped tests, scripts, workflows and maintenance docs do not
+by themselves require a release. Follow [release operations](docs/releases.md) when authorized.
 
 NEWS contains user-visible changes only, newest release first, one change per bullet and at most
-20 words per bullet. Never edit released sections. Keep internal maintenance changes out of NEWS.
+20 words per whole bullet, including continuation lines. Never edit released sections. Keep internal maintenance changes out of NEWS.
 Keep handover check results factual and task-specific; do not copy historical passes into current
 validation claims. Nothing in this guide, `docs/`, `.clinerules`, `tests/`, `scripts/` or `.github/`
 ships in the release wheel.

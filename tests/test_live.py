@@ -25,7 +25,7 @@ import pytest
 
 import agentwiz
 from agentwiz.model_call import OUTCOMES
-from conftest import events, final_of, get_state, request, save_contract, strict_loads
+from conftest import events, final_of, get_state, request, save_contract, strict_loads, configure_server
 from live_stop import judge_stop
 
 CLASSIFIED = set(OUTCOMES) - {"error", "stopped"}
@@ -46,6 +46,7 @@ def _call(ui, path, body=None, **kw):
 
 
 def _configure(ui, **fields):
+    configure_server(ui, fields)
     return _call(ui, "/api/config", {"revision": get_state(ui)["revision"], **fields})
 
 
@@ -76,7 +77,7 @@ def test_live_lmstudio(ui):
     key = os.environ.get("AGENTWIZ_LIVE_LMSTUDIO_KEY", "").strip()
     auth = {"api_key": key} if key else {}
     _configure(ui, kind="lmstudio", base_url=url, model=model, **auth)
-    ids = [m["id"] for m in _call(ui, "/api/models", {"kind": "lmstudio", "base_url": url, **auth})["models"]]
+    ids = [m["id"] for m in _call(ui, "/api/models", {"kind": "lmstudio"})["models"]]
     assert model in ids, f"{model} is not among LM Studio's models: {ids}"
     evs, end = _stream(ui)
     _report("LM Studio", model, end)
@@ -86,9 +87,9 @@ def test_live_openrouter(ui):
     _key, model = _env("OPENROUTER_API_KEY", "AGENTWIZ_LIVE_OPENROUTER_MODEL",
                        optional=("AGENTWIZ_LIVE_OPENROUTER_PROVIDER", "AGENTWIZ_LIVE_TIMEOUT"))
     _configure(ui, kind="openrouter", base_url="", model=model)
-    ids = [m["id"] for m in _call(ui, "/api/models", {"kind": "openrouter", "base_url": ""})["models"]]
+    ids = [m["id"] for m in _call(ui, "/api/models", {"kind": "openrouter"})["models"]]
     assert model in ids, f"{model} is not in OpenRouter's model list (expected the form author/slug)"
-    providers = _call(ui, "/api/providers", {"kind": "openrouter", "base_url": "", "model": model})["providers"]
+    providers = _call(ui, "/api/providers", {"kind": "openrouter", "model": model})["providers"]
     tagged = [p for p in providers if p["slug"]]
     assert tagged, "no provider with a slug for this model"
     print("\nproviders (slug, name): " + ", ".join(f"{p['slug']} ({p['name']})" for p in tagged))
@@ -110,7 +111,7 @@ def test_live_llamaserver(ui):
     url, model = _env("AGENTWIZ_LIVE_LLAMASERVER_URL", "AGENTWIZ_LIVE_LLAMASERVER_MODEL",
                       optional=("AGENTWIZ_LIVE_TIMEOUT",))
     _configure(ui, kind="openai_compat", base_url=url, model=model)
-    assert _call(ui, "/api/models", {"kind": "openai_compat", "base_url": url})["models"]
+    assert _call(ui, "/api/models", {"kind": "openai_compat"})["models"]
     evs, end = _stream(ui)
     reasoning = "".join(e["text"] for e in evs if e["type"] == "reasoning")
     assert reasoning == (end["result"]["reasoning"] or "")
@@ -151,15 +152,38 @@ def _openrouter(ui, extra=()):
     return model
 
 
-@pytest.mark.parametrize("backend", ["lmstudio", "llamaserver"])
-def test_live_blocked_backends(backend):
-    pytest.skip("blocked until AgentWiz 0.2.0 (D72): Stop and contracts are live-checked on OpenRouter only")
+def _additional_backend(ui, backend):
+    if backend == 'openrouter':
+        return _openrouter(ui)
+    prefix = 'AGENTWIZ_LIVE_' + backend.upper()
+    url, model = _env(prefix + '_URL', prefix + '_MODEL')
+    key = os.environ.get(prefix + '_KEY', '').strip()
+    config = {'kind': 'lmstudio' if backend == 'lmstudio' else 'openai_compat',
+              'base_url': url, 'model': model, 'provider': ''}
+    if key:
+        config['api_key'] = key
+    _configure(ui, **config)
+    return model
+
+
+@pytest.mark.parametrize('backend', ['lmstudio', 'llamaserver'])
+def test_live_stop_local(ui, backend):
+    _checked_stop(ui, backend)
+
+
+@pytest.mark.parametrize('backend', ['lmstudio', 'llamaserver'])
+def test_live_checked_request_local(ui, backend):
+    _checked_contract(ui, backend)
 
 
 def test_live_stop_openrouter(ui):
     """Stop, with no deliberate delay, after `started`, on a long prompt. Either `sent` value passes and is
     reported; a normal result first, `already_finished` and a rule-3 record are inconclusive (D51)."""
-    model = _openrouter(ui)
+    _checked_stop(ui, "openrouter")
+
+
+def _checked_stop(ui, backend):
+    model = _additional_backend(ui, backend)
     prompt = ("Summarise the following text in one sentence.\n" + "The quick brown fox jumps over the lazy dog. " * 1800)
     body = {"source": "chat", "prompt": prompt, "system": "", "revision": get_state(ui)["revision"],
             "task": {"max_tokens": 512}}
@@ -175,7 +199,7 @@ def test_live_stop_openrouter(ui):
             record, seconds = event["record"], time.monotonic() - asked
             break
     verdict, report = judge_stop(answer, record, seconds)
-    print(f"\nAgentWiz {agentwiz.__version__} | modelSpell {modelspell.__version__} | backend OpenRouter | "
+    print(f"\nAgentWiz {agentwiz.__version__} | modelSpell {modelspell.__version__} | backend {backend} | "
           f"model {model} | Stop {verdict}: {report}")
     if verdict == "inconclusive":
         pytest.skip(f"inconclusive: {report}")
@@ -183,20 +207,23 @@ def test_live_stop_openrouter(ui):
 
 
 CONTRACT = json.dumps({"format": "json", "schema": {"type": "object", "required": ["answer"],
-                                                      "properties": {"answer": {"type": "string"}}},
-                       "checks": []})
+                                                      "properties": {"answer": {"type": "string"}}}})
 
 
 def test_live_checked_request_openrouter(ui):
     """A JSON contract requiring an object with an `answer` string; send, then up to two repairs while it
     fails. Fails only on a protocol problem; a model that never passes is reported, not failed."""
-    model = _openrouter(ui)
-    saved = save_contract(ui, "live_answer", CONTRACT)["contract"]
+    _checked_contract(ui, "openrouter")
+
+
+def _checked_contract(ui, backend):
+    model = _additional_backend(ui, backend)
+    saved = save_contract(ui, "live_answer", CONTRACT)
     prompt = 'Reply with a JSON object with one key, "answer", whose value is the word pong. Nothing else.'
     evs = events(_call(ui, "/api/complete", {
         "source": "checked_request", "prompt": prompt, "system": "", "revision": get_state(ui)["revision"],
         "task": {"temperature": 0.2, "max_tokens": 512},
-        "contract": {"name": saved["name"], "revision": saved["revision"]}}, raw=True))
+        "contract": {"name": saved["name"], "revision": saved["revision"], "digest": saved["digest"]}}, raw=True))
     record, lines = final_of(evs)["record"], []
     for _ in range(3):
         check = record["check"]
@@ -206,5 +233,5 @@ def test_live_checked_request_openrouter(ui):
         if not check or check["overall"] != "fail" or record["attempt"] == 3:
             break
         record = final_of(events(_call(ui, "/api/repair", {"attempt_id": record["id"]}, raw=True)))["record"]
-    print(f"\nAgentWiz {agentwiz.__version__} | modelSpell {modelspell.__version__} | backend OpenRouter | "
+    print(f"\nAgentWiz {agentwiz.__version__} | modelSpell {modelspell.__version__} | backend {backend} | "
           f"model {model}\n  " + "\n  ".join(lines))

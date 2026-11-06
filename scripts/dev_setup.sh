@@ -5,7 +5,7 @@
 #   scripts/dev_setup.sh [--python PATH]
 #
 # Run from the checkout root. Creates ./.venv if it does not exist, then runs
-# `python -m pip install -e '.[dev,checks]'` and `python -m playwright install chromium`. Also converts a .venv made by install.sh (wheel only, no
+# `python -m pip install -e '.[dev]'` and `python -m playwright install chromium`. Also converts a .venv made by install.sh (wheel only, no
 # pytest) into the developer setup. This file is not shipped in the wheel.
 set -euo pipefail
 
@@ -51,7 +51,7 @@ if [ ! -x ./.venv/bin/python ]; then
 fi
 
 printf 'Installing AgentWiz (editable) and the test dependencies into ./.venv\n'
-./.venv/bin/python -m pip install -e '.[dev,checks]' || die "pip install -e '.[dev,checks]' failed (see pip's output above)"
+./.venv/bin/python -m pip install -e '.[dev]' || die "pip install -e '.[dev]' failed (see pip's output above)"
 
 # The page checks drive headless Chromium. Where PLAYWRIGHT_BROWSERS_PATH already holds the build that
 # Playwright expects, nothing is downloaded.

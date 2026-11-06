@@ -9,18 +9,29 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
-# The example contract every topic that needs "fields" uses (saved into the tutorial's temporary workspace).
+# The example contract every topic that needs "fields" uses, saved into the tutorial's temporary workspace as
+# revision 1 of the version 2 container `fields` in family Tutorial. It checks structure only: a wrong number of
+# the right type passes it, and only an exact Workshop example expectation can reject it.
 CONTRACT = '''{
-  "format_version": 1, "format": "json", "strict": false,
-  "description": "Tutorial exact-number fields", "schema": null,
-  "checks": [{"type": "json_equals", "value": {
-    "id": 9007199254740993, "ratio": 0.10000000000000000001
-  }}]
+  "format": "json",
+  "description": "Tutorial exact-number fields",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "id": {"type": "integer", "description": "The record id, copied exactly"},
+      "ratio": {"type": "number", "description": "The ratio, copied exactly"}
+    },
+    "required": ["id", "ratio"],
+    "additionalProperties": false
+  }
 }'''
+CONTRACT_NAME = "fields"
+CONTRACT_FAMILY = "Tutorial"
+CONTRACT_LABEL = "Tutorial example"
 
 ROLE = "fast"                 # the role the example model block uses
 ROLE_PROFILE = "tutorial-json"  # the seeded profile it is mapped to
-ROLE_MODEL = "json-repair"    # that profile's stand-in model
+ROLE_MODEL = "block-fields-repair"    # that profile's stand-in model
 BLOCKS = ("extract_fields", "echo_numbers", "word_count", "wait_for_stop")
 
 
@@ -51,31 +62,46 @@ TOPICS: tuple[Topic, ...] = (
     Topic("tool", "Call a tool", "A local echo tool and its arguments are ready. Run calls it; Copy lets you use its "
           "result in a conversation.", "mcp-tools", "0.1.3", "complete", False,
           _page("mcp-tools.tutorialPrepare", ["tutorial", "echo"]), "mcp-run"),
-    Topic("contract", "Define a contract", "A contract describes the response you want. Save the filled example to "
-          "learn where reusable requirements live; Check can apply it to text.", "contracts", "0.1.3", "complete",
-          False, _page("contracts.tutorialPrepare", [CONTRACT, '{"id":1,"ratio":0.5}']), "contracts-save"),
+    Topic("contract", "Define a contract", "A contract describes the structure of the value you want. Save the filled "
+          "example to learn where reusable requirements live; Check can apply it to text. A wrong number of the right "
+          "type still passes: exact values belong in Workshop example expectations.", "contracts", "0.2.0", "complete",
+          False, _page("contracts.tutorialPrepare", [CONTRACT, '{"id":1,"ratio":0.5}', "my-fields"]), "contracts-save"),
     Topic("repair", "Repair a response", "Send asks for structured data using the selected contract. Preview repair "
           "shows a follow-up request; Send repair continues the same run with feedback.", "checked-request",
-          "0.1.3", "json-repair", True,
+          "0.2.0", "json-repair", True,
           _page("checked-request.tutorialPrepare", ["Extract the id and ratio as JSON."]), "checked-send"),
     Topic("model-block", "Run a model block",
           "A block is a saved step. This one asks a model (through the role fast) for the id and ratio in a report, "
-          "checks the answer against the fields contract and repairs it once. Show the role opens the mapping the "
-          "block uses; then Run, and compare the two attempts in the trace.", "blocks", "0.1.4", "complete", True,
-          _page("blocks.tutorialPrepare",
+          "plus a one-sentence note: two named outputs returned in one JSON object, each checked on its own, "
+          "with a repair if either fails. Its system instructions are in Design, Request preview shows the exact "
+          "messages including the generated output section, and its temperature is inherited from the role's "
+          "default. Show the role opens the editor: "
+          "filter by location and family, select one role, then review its purpose and assigned model profile. "
+          "Add family offers your own domains; Save all changes retains every role. Local uses a server on this machine; "
+          "unconfigured roles cannot run. Then Run, and compare the two attempts in the trace.", "workshop", "0.2.0", "complete", True,
+          _page("workshop.tutorialPrepare",
                 ["extract_fields", {"report": "Record 9007199254740993 has a ratio of 0.10000000000000000001."}],
-                [{"id": "show-role", "label": "Show the role"}]), "blocks-run"),
+                [{"id": "show-role", "label": "Show the role"}]), "ws-run-test"),
     Topic("tool-block", "Run a tool block",
           "This block calls the tutorial server's numbers tool with two exact numbers typed into the arguments. Run "
           "it: the output equals the inputs exactly, and the trace shows both fills as typed, with their "
-          "provenance.", "blocks", "0.1.4", "complete", True,
-          _page("blocks.tutorialPrepare",
-                ["echo_numbers", {"id": "9007199254740993", "ratio": "0.10000000000000000001"}]), "blocks-run"),
+          "provenance.", "workshop", "0.2.0", "complete", True,
+          _page("workshop.tutorialPrepare",
+                ["echo_numbers", {"id": "9007199254740993", "ratio": "0.10000000000000000001"}]), "ws-run-test"),
     Topic("script-block", "Run and stop a script block",
           "This block runs a small script that counts words. Run it for the count; then Try a script that waits, "
-          "Run it and press Stop to see a script and its process group ended.", "blocks", "0.1.4", "complete", True,
-          _page("blocks.tutorialPrepare", ["word_count", {"text": "The quick brown fox jumps over the lazy dog"}],
-                [{"id": "wait-script", "label": "Try a script that waits"}]), "blocks-run"),
+          "Run it and press Stop to see a script and its process group ended.", "workshop", "0.2.0", "complete", True,
+          _page("workshop.tutorialPrepare", ["word_count", {"text": "The quick brown fox jumps over the lazy dog"}],
+                [{"id": "wait-script", "label": "Try a script that waits"}]), "ws-run-test"),
+    Topic("workshop-design", "Create a Workshop block", "Save the word counter and confirm its captured runtime. In Test, use New input and Run test for a one-off run, or select a prepared example. Add example keeps the current inputs in memory; Save example collection persists pending examples separately. Review correctness. Return to Design, change Count unit to Characters, Apply parameters and Save as new revision. The revision dropdown above the save buttons also lets you choose a revision and Overwrite selected revision after reviewing its replacement; this keeps its number instead of adding one. In Compare, choose the earlier baseline and compare the same examples; inspect both answers and totals.", "workshop", "0.2.0", "complete", False, _page("workshop.tutorialCreate"), "ws-save-revision"),
+    *(Topic("assist-" + action, "Assist · " + action.replace("_", " "),
+            "Open Assist, choose describe and confirm the destination. Save, refine or discard the proposed "
+            "description of this saved revision; the executable block does not change."
+            if action == "describe" else
+            "Open Assist, prepare the request and inspect its destination. Apply or discard the returned proposal.",
+            "workshop", "0.2.0", "complete", False,
+            _page("workshop.tutorialAssist", [action]), "ws-assist")
+      for action in ("create", "improve", "describe", "suggest_examples", "explain_failure")),
 )
 
 _BY_ID = {t.id: t for t in TOPICS}

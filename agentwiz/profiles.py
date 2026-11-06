@@ -3,9 +3,8 @@
 Call mutations from state.py under its lock. Shared defaults additionally use the
 permanent .profiles.lock, held only across a read/change/replace operation.
 
-Profile files are format version 2 from AgentWiz 0.1.2 (techspec 0.1.2, Section 7.6): a profile holds
-kind, base_url, model and provider. Version 1 files are read; their retired `reasoning` and
-`max_tokens` are ignored, not validated, and dropped by every write, which always writes version 2.
+Profile files are format version 3: a profile holds kind, model and provider. Older files are read;
+their server URL and retired task settings are dropped on write.
 """
 from __future__ import annotations
 
@@ -18,13 +17,13 @@ from pathlib import Path
 from typing import Any
 
 from modelspell import ModelSpellError
-from .model_call import _FIELDS, KINDS, RETIRED, ModelSettings, SettingsError, settings_from_body
+from .model_call import KINDS, RETIRED, ModelSettings, SettingsError, settings_from_body
 from .workspace import (NAME_RULE, Problem, InvalidDocument as _Invalid,
                         check_format_version as _format_version, read_document, valid_name, write_atomic)
 
 PROFILES_FILE = "profiles.json"
-PROFILES_FORMAT_VERSION = 2
-PROFILE_FIELDS = _FIELDS
+PROFILES_FORMAT_VERSION = 3
+PROFILE_FIELDS = ("kind", "model", "provider")
 _NEWER = f"written by a newer AgentWiz (format_version greater than {PROFILES_FORMAT_VERSION})"
 
 def _check_profile(name: str, obj: Any) -> ModelSettings:
@@ -37,10 +36,10 @@ def _check_profile(name: str, obj: Any) -> ModelSettings:
     if obj["kind"] not in KINDS:
         raise _Invalid(f"{where}.kind must be one of {', '.join(KINDS)}")
     for f in ("base_url", "model", "provider"):
-        if not isinstance(obj[f], str):
+        if f in obj and not isinstance(obj[f], str):
             raise _Invalid(f"{where}.{f} must be a string")
     try:
-        return settings_from_body(ModelSettings(), {f: obj[f] for f in PROFILE_FIELDS})
+        return settings_from_body(ModelSettings(), {f: obj[f] for f in (*PROFILE_FIELDS, "base_url") if f in obj})
     except SettingsError as exc:  # AgentWiz's own messages; they name fields, never values
         raise _Invalid(f"{where}: {exc}") from None
     except ModelSpellError:
@@ -84,29 +83,43 @@ def read_profiles(folder: Path) -> ProfilesFile:
 
 
 def profile_object(settings: ModelSettings, previous: Mapping | None = None) -> dict:
-    """A profile's object: the previous object's unknown fields kept, the four fields replaced, the
+    """A profile's object: the previous object's unknown fields kept, the model fields replaced, the
     retired fields dropped. ModelSettings holds no key (P6).
     """
-    out = {k: v for k, v in previous.items() if k not in RETIRED} if isinstance(previous, Mapping) else {}
+    out = {k: v for k, v in previous.items() if k not in (*RETIRED, "base_url")} if isinstance(previous, Mapping) else {}
     for f in PROFILE_FIELDS:
         out[f] = getattr(settings, f)
     return out
 
 
-def version2(raw: Mapping[str, Any]) -> dict:
-    """The whole file as version 2: every profile object without the retired fields, unknown fields kept."""
+def version3(raw: Mapping[str, Any]) -> dict:
+    """Remove retired fields from every profile while retaining unknown metadata."""
     out = dict(raw)
     out["format_version"] = PROFILES_FORMAT_VERSION
     profiles = raw.get("profiles")
     if isinstance(profiles, Mapping):
-        out["profiles"] = {name: ({k: v for k, v in obj.items() if k not in RETIRED} if isinstance(obj, Mapping)
+        out["profiles"] = {name: ({k: v for k, v in obj.items() if k not in (*RETIRED, "base_url")} if isinstance(obj, Mapping)
                                   else obj) for name, obj in profiles.items()}
     return out
 
 
 def write_profiles(folder: Path, raw: Mapping[str, Any]) -> None:
-    """Every write of a profile file writes version 2 without the retired fields (Section 7.6)."""
-    write_atomic(folder, PROFILES_FILE, version2(raw))
+    """Write profile format 3 without server or retired task settings."""
+    write_atomic(folder, PROFILES_FILE, version3(raw))
+
+
+def seed_workspace(folder: Path, library: "Library") -> None:
+    """Create a workspace's model-profiles copy from the shared defaults, under the defaults lock.
+
+    A damaged or missing defaults file seeds an empty local library; the defaults problem itself is
+    reported when the workspace is opened. Existing local files are replaced by this call.
+    """
+    with library.locked():
+        loaded = read_profiles(library.path)
+        raw = loaded.raw if loaded.problem is None else empty_profiles_raw()
+        folder = Path(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        write_profiles(folder, raw or empty_profiles_raw())
 
 
 def fingerprint(folder: Path) -> tuple | None:

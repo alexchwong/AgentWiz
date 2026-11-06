@@ -1,9 +1,10 @@
 {
-  "format_version": 1,
+  "format_version": 3,
   "name": "echo_numbers",
   "description": "Send two exact numbers to a tool and check what comes back.",
   "inputs": {"id": {"contract": {"format": "json"}}, "ratio": {"contract": {"format": "json"}}},
-  "outputs": {"fields": {"contract": "fields"}},
+  "outputs": {"fields": {"contract": {"name": "fields", "revision": 1,
+                                      "digest": "sha256:8afc6fa232e7013ac1d62c4d094b6abd11365183c0b4a94d4686a6bf0e267568"}}},
   "steps": [
     {"id": "echo", "kind": "tool", "server": "tutorial", "tool": "numbers",
      "arguments": {"id": "{{inputs.id}}", "ratio": "{{inputs.ratio}}"},

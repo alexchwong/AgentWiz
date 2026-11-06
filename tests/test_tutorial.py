@@ -92,12 +92,18 @@ def drive_tool(page):
 
 
 def drive_contract(page):
+    expect(tid(page, "panel-contracts")).to_be_visible()                 # Workshop → Contracts (overhaul 15.1)
+    has(page, "contracts-editor", "data-format", "structured")
+    tid(page, "contracts-run-check").click()
+    has(page, "contracts-check", "data-check", "pass")
     tid(page, "contracts-save").click()
-    has(page, "contracts-editor", "data-state", "saved")
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    has(page, "contracts-status", "data-state", "saved")
     tid(page, "tutorial-reset").click()
     has(page, "tutorial-status", "data-state", "ready")
     tid(page, "contracts-save").click()
-    has(page, "contracts-editor", "data-state", "saved")
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    has(page, "contracts-status", "data-state", "unchanged")             # the same definition appends nothing
 
 
 def drive_repair(page):
@@ -116,33 +122,87 @@ def drive_model_block(page):
     expect(row.locator('[data-key="profile"]')).to_have_value(tutorial_topics.ROLE_PROFILE)
     tid(page, "roles-close").click()
     expect(tid(page, "roles-dialog")).to_be_hidden()
-    run_and_wait(page)
-    attempts = page.locator('[data-test="blocks-attempt"]')
-    expect(attempts).to_have_count(2)
-    assert [a.get_attribute("data-check") for a in attempts.all()] == ["fail", "pass"]
+    workshop_run(page)
+    expect(tid(page, "ws-trial")).to_have_attribute("data-attempts", "2")
+    expect(tid(page, "ws-output")).to_have_count(2)      # both named outputs come from the one accepted answer
+
+
+def workshop_run(page):
+    tid(page, "ws-run-test").click()
+    tid(tid(page,"ws-dialog"),"ws-confirm").click()
+    expect(tid(page, "ws-trial")).to_have_attribute("data-outcome", "complete")
 
 
 def drive_tool_block(page):
-    run_and_wait(page)
-    output = page.locator('[data-test="blocks-output"][data-output="fields"]')
-    assert jsonio.decode_exact(output.text_content()) == jsonio.decode_exact(EXACT)
+    workshop_run(page)
+    assert jsonio.decode_exact(tid(page, "ws-output").text_content()) == jsonio.decode_exact(EXACT)
 
 
 def drive_script_block(page):
-    run_and_wait(page)
-    assert page.locator('[data-test="blocks-output"][data-output="words"]').text_content() == "9"                  # the script printed {"words": 9}
-    page.locator('[data-test="tutorial-action"][data-action="wait-script"]').click()
-    expect(page.locator('[data-test="blocks-file"][data-path="scripts/wait.py"]')).to_have_count(1)
-    tid(page, "blocks-run").click()
-    has(page, "blocks-status", "data-state", "running")
-    expect(page.locator('[data-test="blocks-operation"]')).to_have_count(1)
-    tid(page, "blocks-stop").click()
-    has(page, "blocks-status", "data-outcome", "stopped")
+    workshop_run(page)
+    assert tid(page, "ws-output").text_content() == "9"
+    page.locator('[data-action="wait-script"]').click()
+    expect(tid(page, "ws-list")).to_have_value("wait_for_stop")
+    expect(tid(page, "ws-no-inputs")).to_be_visible()
+    tid(page, "ws-run-test").click()
+    tid(tid(page,"ws-dialog"),"ws-confirm").click()
+    has(page, "ws-status", "data-state", "running")
+    tid(page, "ws-stop").click()
+    expect(tid(page, "ws-trial")).to_have_attribute("data-outcome", "stopped")
+
+
+def drive_design(page):
+    tid(page, "ws-save-revision").click()
+    tid(tid(page,"ws-dialog"),"ws-confirm").click()
+    has(page,"ws-status","data-state","saved")
+    tid(page,"ws-test").click()
+    tid(page,"ws-run-saved-examples").click()
+    tid(tid(page,"ws-dialog"),"ws-confirm").click()
+    expect(tid(page,"ws-trial")).to_have_count(2)
+    expect(tid(page,"ws-trial").first).to_have_attribute("data-outcome","complete")
+    tid(page,"ws-design").click()
+    tid(page,"ws-choice-count-unit").select_option("characters")
+    tid(page,"ws-apply-parameters").click()
+    tid(page,"ws-save-revision").click()
+    tid(tid(page,"ws-dialog"),"ws-confirm").click()
+    has(page,"ws-status","data-state","saved")
+    tid(page,"ws-compare").click()
+    tid(page,"ws-choice-baseline-revision").select_option(index=1)
+    tid(page,"ws-compare-versions").click()
+    tid(tid(page,"ws-dialog"),"ws-confirm").click()
+    expect(tid(page,"ws-trial")).to_have_count(4)
+    expect(tid(page,"ws-trial").last).to_have_attribute("data-outcome","complete")
 
 
 DRIVERS = {"chat": drive_chat, "document": drive_document, "tool": drive_tool, "contract": drive_contract,
            "repair": drive_repair, "model-block": drive_model_block, "tool-block": drive_tool_block,
-           "script-block": drive_script_block}
+           "script-block": drive_script_block, "workshop-design": drive_design}
+
+
+def drive_assist(page):
+    tid(page,"ws-assist").click()
+    dialog=tid(page,"ws-dialog")
+    tid(dialog,"ws-prepare-request").click()
+    tid(dialog,"ws-confirm").click()
+    if tid(page,"tutorial-box").get_attribute("data-topic") == "assist-describe":
+        # Describe reviews a description of the saved managed fixture and saves only that description.
+        expect(tid(dialog,"ws-description-proposal")).to_be_visible()
+        tid(dialog,"ws-save-description").click()
+        has(page,"ws-status","data-state","description_saved")
+        has(page,"ws-standard-description","data-status","saved")
+        return
+    if tid(page,"tutorial-box").get_attribute("data-topic") == "assist-improve":
+        tid(dialog,"ws-discard").click()
+        has(page,"ws-status","data-state","proposal_discarded")
+    else:
+        tid(dialog,"ws-apply").click()
+        has(page,"ws-status","data-state","proposal_applied")
+        if tid(page,"tutorial-box").get_attribute("data-topic") == "assist-explain_failure":
+            tid(dialog,"ws-close").click()
+
+
+ASSIST_IDS = ["assist-"+a for a in ("create","improve","describe","suggest_examples","explain_failure")]
+DRIVERS.update({i:drive_assist for i in ASSIST_IDS})
 
 
 def test_tutorial_topics(ui, open_page):
@@ -170,8 +230,8 @@ def test_tutorial_topics(ui, open_page):
 def test_tutorial_topic_registry():
     topics = tutorial_topics.TOPICS
     assert [t.id for t in topics] == ["chat", "document", "tool", "contract", "repair", "model-block", "tool-block",
-                                       "script-block"]
-    assert [t.updated_in for t in topics] == ["0.1.3"] * 5 + ["0.1.4"] * 3
+                                       "script-block", "workshop-design"] + ASSIST_IDS
+    assert [t.updated_in for t in topics] == ["0.1.3"] * 3 + ["0.2.0"] * 11
     assert all(tutorial_topics.by_id(t.id) is t for t in topics)
     for bad in ("nope", None, 3, ["chat"]):
         with pytest.raises(KeyError):
@@ -183,6 +243,22 @@ def test_tutorial_topic_registry():
 def started(ui):
     request(ui, "/api/tutorial/start", {})
     return ui.tutorial.child
+
+
+def test_tutorial_workspace_administration_is_isolated(ui):
+    child = started(ui)
+    info = request(ui, "/api/workspaces")
+    assert info["tutorial_active"] is True
+    fail = failure_of(lambda: request(ui, "/api/workspaces/switch",
+                                      {"format_version": 1, "name": ui.workspace.name}))
+    assert fail.status == 409 and fail.body["code"] == "tutorial_active"
+    assert get_state(child)["workspace"]["admin"] is False
+    fail = failure_of(lambda: request(child, "/api/workspaces/delete",
+                                      {"format_version": 1, "name": child.workspace.name,
+                                       "confirm": child.workspace.name}))
+    assert fail.status == 409 and fail.body["code"] == "workspace_admin_disabled"
+    ui.tutorial.close()
+    assert request(ui, "/api/workspaces")["tutorial_active"] is False
 
 
 def test_tutorial_sandbox(ui, spawned, tmp_path):
@@ -289,3 +365,16 @@ def test_a_start_after_the_managers_closing_is_refused(ui):
     ui.tutorial.begin_shutdown()
     fail = failure_of(lambda: request(ui, "/api/tutorial/start", {}))
     assert fail.status == 503 and fail.body["code"] == "busy" and ui.tutorial.child is None
+
+
+def test_tutorial_model_block_inherits_its_role_default_and_declares_two_outputs(ui):
+    """The model-block topic demonstrates role defaults and named outputs, so the tutorial workspace must really
+    carry both: the block sets no temperature of its own and the role's default reaches the prepared request."""
+    request(ui, "/api/tutorial/start", {})
+    child = ui.tutorial.child
+    assert get_state(child)["roles"]["definitions"]["fast"]["task_defaults"] == {"temperature": 0}
+    preview = request(child, "/api/workshop/preview", {"format_version": 1, "key": "extract_fields",
+                                                       "inputs": {"report": "Record 1 has a ratio of 0.5."}})
+    prepared = preview["prepared"]
+    assert prepared["sources"]["temperature"] == "role_default"
+    assert [o["name"] for o in prepared["outputs"]] == ["fields", "note"]

@@ -1,8 +1,5 @@
-"""Contracts and checks without HTTP: techspec 0.1.3 tests #60-#63 (Part A, Section 7).
-
-Contract texts are literal text, so exact numbers reach the reader digit for digit; a Python float in a
-test would already have lost them."""
-import importlib.util
+"""User value validation, fixed answer parsing and server-only rich-schema checks."""
+import importlib
 import json
 import socket
 from decimal import Decimal
@@ -11,12 +8,9 @@ import pytest
 
 from agentwiz import checks, jsonio
 
-needs_checks = pytest.mark.needs_checks
-
 
 def contract(spec):
-    """A Contract from literal JSON text, or from a dict of values that carry no exact numbers."""
-    return checks.contract_from_text(spec if isinstance(spec, str) else json.dumps(spec))
+    return checks.contract_from_text(spec if isinstance(spec, str) else jsonio.encode_exact(spec))
 
 
 def run(spec, answer):
@@ -24,467 +18,252 @@ def run(spec, answer):
 
 
 def entry(result, name):
-    return next(e for e in result["checks"] if e["check"] == name)
+    return next(e for e in result['checks'] if e['check'] == name)
 
 
-def refusal(spec):
-    with pytest.raises(checks.ContractError) as refused:
+@pytest.mark.parametrize('rules,text,passes', [
+    ({'exact': 'Hello\nworld'}, 'Hello\nworld', True),
+    ({'exact': 'Hello\nworld'}, ' Hello\r\nworld\n', False),
+    ({'exact': ''}, '', True), ({'exact': ''}, ' ', False),
+    ({'contains': ['wor']}, 'Hello world', True),
+    ({'contains': ['WOR']}, 'Hello world', False),
+    ({'not_contains': ['world']}, 'Hello world', False),
+    ({'not_contains': ['xyz']}, 'Hello world', True),
+    ({'min_length': 2, 'max_length': 2}, 'é😀', True),
+    ({'min_length': 2, 'max_length': 2}, 'é', True),
+    ({'max_length': 2}, ' é ', False),
+    ({'min_length': 2}, 'a', False),
+    ({'exact': 'A\r\n', 'contains': ['A'], 'not_contains': ['a'],
+      'min_length': 3, 'max_length': 3}, 'A\r\n', True),
+])
+def test_text_rules_are_literal_and_value_redacted(rules, text, passes):
+    result = run({'format': 'text', **rules}, text)
+    assert result['overall'] == ('pass' if passes else 'fail')
+    assert all(e['check'].startswith('text.') for e in result['checks'])
+    assert all(i['location'] == 'answer' and i['check'].startswith('text.') for i in result['issues'])
+    assert 'Hello' not in json.dumps(result['issues'])
+
+
+def test_text_rules_all_run_with_bounded_diagnostics():
+    result = run({'format': 'text', 'contains': [f'literal{i}' for i in range(25)]}, '')
+    assert result['issue_count'] == 25 and len(result['issues']) == 20
+    assert [e['check'] for e in result['checks']] == [f'text.contains[{i}]' for i in range(25)]
+    for value in (None, 1, True, [], {}):
+        failed = checks.check_value(contract({'format': 'text'}), value)
+        assert failed['overall'] == 'fail' and failed['issues'][0]['check'] == 'text.type'
+
+
+@pytest.mark.parametrize('spec,location', [
+    ({'format': 'text', 'checks': []}, 'checks'),
+    ({'format': 'json', 'checks': [{'type': 'json_equals', 'value': 1}]}, 'checks'),
+    ({'format': 'text', 'strict': False}, 'strict'),
+    ({'format': 'json', 'strict': True}, 'strict'),
+    ({'format': 'json', 'format_version': 1}, 'format_version'),
+    ({'format': 'text', 'pattern': 'x'}, 'pattern'),
+    ({'format': 'text', 'policy': 'internal'}, 'policy'),
+    ({'format': 'text', 'future': 1}, 'future'),
+    ({'format': 'json', 'schema': None}, 'schema'),
+    ({'format': 'json', 'schema': {}}, 'schema.type'),
+    ({'format': 'json', 'schema': False}, 'schema'),
+    ({'format': 'json', 'schema': {'type': 'string', 'pattern': 'x'}}, 'schema.pattern'),
+    ({'format': 'text', 'exact': 'SECRET', 'not_contains': ['SECRET']}, 'exact'),
+    ({'format': 'text', 'min_length': True}, 'min_length'),
+    ({'format': 'yaml'}, 'format'), ({}, 'format'),
+])
+def test_user_definition_refusals_are_located(spec, location):
+    with pytest.raises(checks.ContractError) as exc:
         contract(spec)
-    return refused.value
+    assert location in [i['location'] for i in exc.value.issues]
+    assert 'SECRET' not in str(exc.value) + json.dumps(exc.value.issues)
 
 
-# 60 ---------------------------------------------------------------------------------------------
-@pytest.mark.parametrize("check, text, passes", [
-    ({"type": "exact", "value": "Hello\nworld"}, "  Hello\r\nworld \n", True),
-    ({"type": "exact", "value": "Hello\nworld"}, "hello\nworld", False),
-    ({"type": "exact", "value": ""}, " \n ", True),
-    ({"type": "contains", "value": "wor"}, "Hello world", True),
-    ({"type": "contains", "value": "WOR"}, "Hello world", False),
-    ({"type": "not_contains", "value": "xyz"}, "Hello world", True),
-    ({"type": "not_contains", "value": "world"}, "Hello world", False),
-    ({"type": "regex", "pattern": "^H.*d$"}, "Hello world", True),
-    ({"type": "regex", "pattern": "(?i)HELLO"}, "say hello", True),
-    ({"type": "regex", "pattern": "HELLO"}, "say hello", False),
-    ({"type": "regex", "pattern": "^world"}, "Hello world", False),       # search, unanchored: ^ is the start
-    ({"type": "length", "min": 2, "max": 2}, "  é\U0001f600  ", True),  # two code points, trimmed
-    ({"type": "length", "min": 2, "max": 2}, "é", True),              # a combining mark counts
-    ({"type": "length", "max": 3}, "abcd", False),
-    ({"type": "length", "min": 5}, "abcd", False),
-    ({"type": "length", "min": 4, "max": None}, "abcd", True),
+@pytest.mark.parametrize('source', [
+    '```json\n{"format":"text"}\n```', '{"format":"text","format":"json"}',
+    '{"format":"json","schema":NaN}', '{', '[1]',
+    '{"format":"text","description":"\\ud800"}',
 ])
-def test_check_definitions(check, text, passes):
-    result = run({"format": "text", "checks": [check]}, text)
-    assert result["overall"] == ("pass" if passes else "fail")
-    assert entry(result, "checks[0]")["result"] == ("pass" if passes else "fail")
-    assert len(result["issues"]) == (0 if passes else 1)
-    if not passes:
-        assert result["issues"][0]["location"] == "answer" and result["issues"][0]["check"] == "checks[0]"
+def test_contract_source_is_one_exact_json_definition(source):
+    with pytest.raises(checks.ContractError):
+        checks.contract_from_text(source)
 
 
-def test_fenced_blocks_and_strict():
-    json_contract = {"format": "json"}
-    single = run(json_contract, 'Here you go:\n```json\n{"a": 1}\n```\nDone.')
-    assert single["overall"] == "pass" and single["notes"] == ["parsed the single fenced code block"]
-    assert entry(single, "parse")["result"] == "pass"
-    bare = run(json_contract, ' \n {"a": 1} \n')
-    assert bare["overall"] == "pass" and bare["notes"] == []
-
-    two = run(json_contract, 'x\n```\n{"a":1}\n```\ny\n~~~\n{"a":2}\n~~~')
-    assert two["overall"] == "fail" and entry(two, "parse")["result"] == "fail"
-    assert two["issues"][0]["location"] == "line 6, column 1"
-    assert two["issues"][0]["message"] == "multiple code blocks"
-
-    strict = run({"format": "json", "strict": True}, '```json\n{"a":1}\n```')
-    assert strict["overall"] == "fail" and strict["issues"][0]["location"] == "line 1, column 1"
-    assert run({"format": "json", "strict": True}, ' {"a":1}\n')["overall"] == "pass"
-
-    # CommonMark's rules: an unclosed block runs to the end; a longer fence is not closed by a shorter
-    # one; four spaces of indentation make no fence; a backtick fence's info string has no backtick.
-    assert [b["open_line"] for b in checks.fenced_blocks('```json\n{"a": 1}')] == [1]
-    assert run(json_contract, '```json\n{"a": 1}')["overall"] == "pass"
-    nested = checks.fenced_blocks("````\n```\n{}\n```\n````")
-    assert len(nested) == 1 and nested[0]["content"] == "```\n{}\n```"
-    assert checks.fenced_blocks('    ```\n{"a": 1}\n    ```') == []
-    assert checks.fenced_blocks("```a`b\n{}") == []
-    assert [b["open_line"] for b in checks.fenced_blocks("```a`b\n{}\n```")] == [3]    # the last line opens one
-    assert len(checks.fenced_blocks("~~~ a`b\n{}\n~~~")) == 1
-    assert checks.fenced_blocks("   ```\n   {}\n   ```")[0]["content"] == "{}"          # indentation removed
-    assert run(json_contract, "```\r\n{\"a\": 1}\r\n```")["overall"] == "pass"           # CRLF lines
-
-    # Text checks on a JSON contract run on the whole answer, not on the extracted block.
-    whole = run({"format": "json", "checks": [{"type": "contains", "value": "Here you go"}]},
-                'Here you go:\n```json\n{"a": 1}\n```')
-    assert whole["overall"] == "pass"
-    # Parse errors are located in the answer's own lines, also inside a block.
-    bad = run(json_contract, 'intro\n```json\n{"a": 1,\n"b": }\n```')
-    assert bad["issues"][0]["location"] == "line 4, column 6"
+def test_source_size_is_checked_before_decoding(monkeypatch):
+    def no_decode(*args):
+        pytest.fail('decoded oversized source')
+    monkeypatch.setattr(jsonio, 'decode_exact', no_decode)
+    with pytest.raises(checks.ContractError) as exc:
+        checks.contract_from_text(' ' * 1048577)
+    assert exc.value.issues[0]['code'] == 'too_large'
 
 
-def test_issues_are_sorted_and_counted():
-    expected = "[" + ",".join(["0"] * 25) + "]"
-    spec = '{"format": "json", "checks": [{"type": "json_equals", "value": %s}]}' % expected
-    result = run(spec, "[" + ",".join(["1"] * 25) + "]")
-    assert result["issue_count"] == 25 and len(result["issues"]) == checks.ISSUES_SHOWN == 20
-    assert [i["location"] for i in result["issues"]] == [f"$[{n}]" for n in range(20)]   # numeric order
+def test_fixed_answer_parser_and_locations():
+    spec = {'format': 'json'}
+    fenced = run(spec, 'Here you go:\n```json\n{"a":1}\n```\nDone.')
+    assert fenced['overall'] == 'pass' and fenced['notes'] == ['parsed the single fenced code block']
+    assert run(spec, ' \n {"a":1} \n')['notes'] == []
+    two = run(spec, '```\n{}\n```\n~~~\n{}\n~~~')
+    assert two['overall'] == 'fail' and two['issues'][0]['location'] == 'line 4, column 1'
+    assert run(spec, 'intro\n```json\n{"a":1,\n"b":}\n```')['issues'][0]['location'] == 'line 4, column 5'
+    assert run(spec, '```json\n{"a":1}')['overall'] == 'pass'
+    assert run(spec, '```json\n{"format":"text"}\n```')['overall'] == 'pass'
+    for answer in ('prefix {"a":1}', '{} {}', '{"a":1,"a":2}', 'NaN'):
+        assert run(spec, answer)['overall'] != 'pass'
+    assert checks.fenced_blocks('    ```json\n{}\n    ```') == []
+    assert checks.fenced_blocks('```info`invalid\n{}') == []
+    whole = run(spec, '"```json\\n{}\\n```"')
+    assert whole['overall'] == 'pass'
 
-    spec = ('{"format": "json", "checks": [{"type": "contains", "value": "zzz"},'
-            ' {"type": "json_equals", "value": {"b": 1, "a": [%s], "c": {"x": 1}}}]}' % ",".join(["0"] * 12))
-    found = '{"a": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0], "c": {"x": 1, "y": 2}}'
-    locations = [i["location"] for i in run(spec, found)["issues"]]
-    assert locations == ["answer", "$.a[2]", "$.a[10]", "$.b", "$.c.y"]
 
-    # `answer` sorts before a located parse error.
-    mixed = run('{"format": "json", "checks": [{"type": "contains", "value": "zzz"}]}', "not json")
-    assert [i["location"] for i in mixed["issues"]] == ["answer", "line 1, column 1"]
-
-
-@pytest.mark.parametrize("spec, location", [
-    ({"format": "text", "checks": [{"type": "nope", "value": "x"}]}, "checks[0].type"),
-    ({"format": "text", "checks": [{"type": "contains", "value": "x", "extra": 1}]}, "checks[0].extra"),
-    ({"format": "text", "checks": [{"type": "contains", "value": ""}]}, "checks[0].value"),
-    ({"format": "text", "checks": [{"type": "regex", "pattern": "("}]}, "checks[0].pattern"),
-    ({"format": "text", "checks": [{"type": "length"}]}, "checks[0]"),
-    ({"format": "text", "checks": [{"type": "length", "min": 5, "max": 2}]}, "checks[0]"),
-    ({"format": "text", "checks": [{"type": "length", "min": -1}]}, "checks[0].min"),
-    ({"format": "text", "checks": [{"type": "length", "max": True}]}, "checks[0].max"),
-    ({"format": "text", "strict": False}, "strict"),
-    ({"format": "text", "schema": None}, "schema"),
-    ({"format": "text", "checks": [{"type": "json_equals", "value": 1}]}, "checks[0]"),
-    ({"format": "yaml"}, "format"),
-    ({}, "format"),
-    ({"format": "json", "strict": "yes"}, "strict"),
-    ({"format": "json", "checks": {}}, "checks"),
-    ({"format": "json", "checks": [{"type": "json_equals"}]}, "checks[0].value"),
-    ({"format": "json", "checks": ["x"]}, "checks[0]"),
-    ({"format": "json", "checks": [{"type": ["x"]}]}, "checks[0].type"),
-    ({"format": "json", "format_version": 2}, "format_version"),
-    ({"format": "json", "format_version": True}, "format_version"),
-    ({"format": "json", "description": 5}, "description"),
+@pytest.mark.parametrize('schema,answer,overall', [
+    ({'type': 'integer'}, '2.0', 'pass'), ({'type': 'integer'}, '2e0', 'pass'),
+    ({'type': 'integer'}, 'true', 'fail'), ({'type': 'integer'}, '2.5', 'fail'),
+    ({'type': 'number', 'minimum': Decimal('0.10000000000000000001')}, '0.1', 'fail'),
+    ({'type': 'number', 'maximum': 9007199254740993}, '9007199254740993', 'pass'),
+    ({'type': 'number', 'maximum': 9007199254740993}, '9007199254740994', 'fail'),
+    ({'type': 'string'}, '"' + '7' * 5000 + '"', 'pass'),
+    ({'type': 'array', 'items': {'type': 'string'}}, '[]', 'pass'),
+    ({'type': 'object', 'properties': {}}, '{}', 'pass'),
+    ({'type': 'object', 'properties': {}}, '{"extra":1}', 'pass'),
+    ({'type': 'object', 'properties': {}, 'additionalProperties': True}, '{"extra":1}', 'pass'),
+    ({'type': 'object', 'properties': {}, 'additionalProperties': False}, '{"extra":1}', 'fail'),
+    ({'type': ['string', 'null'], 'enum': ['yes', None]}, 'null', 'pass'),
+    ({'type': ['string', 'null'], 'enum': ['yes', None]}, '""', 'fail'),
 ])
-def test_contract_refusals_are_located(spec, location):
-    error = refusal(spec)
-    assert location in [issue["location"] for issue in error.issues]
-    assert all(isinstance(issue["message"], str) and issue["message"] for issue in error.issues)
+def test_user_schema_exact_values(schema, answer, overall):
+    assert run({'format': 'json', 'schema': schema}, answer)['overall'] == overall
 
 
-def test_contract_refusal_lists_every_issue_without_values():
-    error = refusal({"format": "text", "strict": True,
-                     "checks": [{"type": "contains", "value": "SECRET-VALUE", "bogus": "SECRET-VALUE"},
-                                {"type": "regex", "pattern": "SECRET-(("}]})
-    assert {i["location"] for i in error.issues} == {"strict", "checks[0].bogus", "checks[1].pattern"}
-    assert "SECRET" not in json.dumps(error.issues) and "SECRET" not in str(error)
-    assert refusal("not json").issues[0]["message"] == "the contract is not valid JSON"
-    assert refusal("[1]").issues[0]["location"] == "contract"
-    assert refusal('{"format": "text", "format": "json"}').issues[0]["location"] == "contract"
-    assert refusal('{"format": "json",\n "checks": NaN}').issues[0]["location"] == "contract"
-    assert refusal('{"format": "json",\n "checks": ').issues[0]["location"].startswith("line 2")
+def test_required_absent_null_empty_and_sorted_schema_issues():
+    spec = {'format': 'json', 'schema': {'type': 'object', 'properties': {
+        'value': {'type': ['string', 'null'], 'minLength': 1}}, 'required': ['value']}}
+    assert run(spec, '{}')['overall'] == 'fail'
+    assert run(spec, '{"value":null}')['overall'] == 'pass'
+    assert run(spec, '{"value":""}')['overall'] == 'fail'
+    result = run({'format': 'json', 'schema': {'type': 'array', 'items': {'type': 'integer'}}},
+                 json.dumps(['x'] * 25))
+    assert result['issue_count'] == 25 and len(result['issues']) == 20
+    assert [i['location'] for i in result['issues']] == [f'$[{i}]' for i in range(20)]
 
 
-def test_contract_defaults_and_unknown_fields_are_kept():
-    c = contract('{"format": "json", "future": [1.50], "checks": []}')
-    assert (c.strict, c.description, c.schema, c.checks) == (False, "", None, ())
-    assert c.raw["future"] == [Decimal("1.50")] and list(c.raw) == ["format", "future", "checks"]
+def test_user_schema_diagnostics_do_not_repeat_sensitive_values_or_choices():
+    result = run({'format': 'json', 'schema': {'type': 'string', 'enum': ['SECRET-CHOICE']}},
+                 '"SECRET-ANSWER"')
+    assert result['overall'] == 'fail'
+    assert result['issues'][0]['message'] == 'value violates schema.enum'
+    assert 'SECRET' not in json.dumps(result)
 
 
-def test_repair_message_template():
-    c = contract({"format": "json", "checks": [{"type": "contains", "value": "zzz"}]})
-    result = checks.check_answer(c, "nope")
-    text = checks.repair_message(c, result)
-    assert text.splitlines()[0] == "The previous answer did not satisfy the required output contract."
-    assert "Problems found (2 in total):" in text
-    assert "- answer: contains: the answer does not contain \"zzz\"" in text
-    assert text.endswith("Reply again with the complete corrected output, "
-                         "as JSON, either alone or in a single fenced code block.")
-    strict = contract({"format": "json", "strict": True, "checks": [{"type": "contains", "value": "zzz"}]})
-    assert checks.repair_message(strict, checks.check_answer(strict, "{}")).endswith(
-        "as JSON only, with no other text.")
-    plain = contract({"format": "text", "checks": [{"type": "contains", "value": "zzz"}]})
-    assert checks.repair_message(plain, checks.check_answer(plain, "x")).endswith("as plain text.")
-    many = contract('{"format": "json", "checks": [{"type": "json_equals", "value": [%s]}]}' % ",".join(["0"] * 25))
-    text = checks.repair_message(many, checks.check_answer(many, "[" + ",".join(["1"] * 25) + "]"))
-    assert "Problems found (25 in total; the first 20 are listed):" in text
-    assert text.count("\n- ") + text.startswith("- ") == 20
+@pytest.mark.parametrize('expected,found,equal', [
+    ({'a': 1, 'b': [None, Decimal('0.1')]}, {'b': [None, Decimal('0.10')], 'a': Decimal('1.0')}, True),
+    (True, 1, False), (False, Decimal('0'), False), (None, '', False),
+    ([1, 2], [2, 1], False), ({'a': 1}, {'a': 1, 'b': 2}, False),
+    (9007199254740993, 9007199254740992, False),
+])
+def test_direct_exact_expectations(expected, found, equal):
+    assert checks.exact_equal(expected, found) is equal
 
 
-def test_check_value_accepts_parsed_values():
-    c = contract('{"format": "json", "checks": [{"type": "contains", "value": "9007199254740993"},'
-                 ' {"type": "json_equals", "value": {"n": 9007199254740993}}]}')
-    value = jsonio.decode_exact('{"n": 9007199254740993}')
-    result = checks.check_value(c, value)
-    assert result["overall"] == "pass" and result["notes"] == ["value given already parsed"]
-    assert checks.check_value(c, {"n": 9007199254740992})["overall"] == "fail"
-    with pytest.raises(TypeError):
-        checks.check_value(contract({"format": "text"}), {"n": 1})
+def internal(schema):
+    return checks.parse_internal_contract({'format': 'json', 'schema': jsonio.decode_exact(schema)})
 
 
-# 61 ---------------------------------------------------------------------------------------------
-def equals(expected_text, answer_text):
-    spec = '{"format": "json", "checks": [{"type": "json_equals", "value": %s}]}' % expected_text
-    return run(spec, answer_text)["overall"]
+def test_internal_rich_schemas_preserve_exact_validation_and_local_references():
+    recursive = internal('{"$defs":{"node":{"type":"object","properties":{'
+                         '"v":{"type":"integer"},"next":{"$ref":"#/$defs/node"}}}},'
+                         '"$ref":"#/$defs/node"}')
+    assert checks.check_answer(recursive, '{"v":1,"next":{"v":2.0}}')['overall'] == 'pass'
+    bad = checks.check_answer(recursive, '{"next":{"v":1.5}}')
+    assert bad['overall'] == 'fail' and bad['issues'][0]['location'] == '$.next.v'
+    assert checks.check_answer(internal('{"const":1}'), 'true')['overall'] == 'fail'
+    assert checks.check_answer(internal('{"const":1}'), '1.0')['overall'] == 'pass'
+    assert checks.check_answer(internal('{"uniqueItems":true}'), '[1,1.0]')['overall'] == 'fail'
+    assert checks.check_answer(internal('{"multipleOf":0.1}'), '0.3')['overall'] == 'pass'
+    assert checks.check_answer(internal('{"multipleOf":0.1}'), '0.31')['overall'] == 'fail'
+    wide = checks.check_answer(internal('{"multipleOf":0.2}'), '0.' + '1' * 2101)
+    assert wide['overall'] == 'incomplete' and entry(wide, 'schema')['result'] == 'not_run'
+    unresolved = checks.check_answer(internal('{"$ref":"#/$defs/missing"}'), '1')
+    assert unresolved['overall'] == 'contract_error'
 
 
-def test_check_numbers():
-    assert equals("1000000000000000128", "1.0000000000000001e18") == "fail"
-    assert equals("1000000000000000100", "1.0000000000000001e18") == "pass"
-    assert equals("100", "1e2") == "pass"
-    assert equals("1", "1.0") == "pass"
-    assert equals("9007199254740992.0", "9007199254740993.0") == "fail"
-    assert equals("9007199254740993", "9007199254740992") == "fail"
-    assert equals("0.10000000000000000001", "0.1") == "fail"
-    assert equals("true", "1") == "fail" and equals("1", "true") == "fail"
-    assert equals("0", "false") == "fail" and equals("null", "0") == "fail" and equals("null", "null") == "pass"
-    assert equals('{"a": 1, "b": [1.0, 2]}', '{"b": [1, 2.00], "a": 1.0}') == "pass"      # key order is free
-    assert equals("[1, 2]", "[2, 1]") == "fail"                                          # array order is not
-    assert equals('{"a": 1}', '{"a": 1, "b": 2}') == "fail"
-    assert equals('"x"', '"x "') == "fail"
+def test_internal_anchors_and_literal_schema_keywords_are_not_user_policy():
+    c = internal('{"$defs":{"n":{"$anchor":"number","type":"integer"}},'
+                 '"properties":{"n":{"$ref":"#number"}}}')
+    assert checks.check_answer(c, '{"n":2.0}')['overall'] == 'pass'
+    assert checks.check_answer(c, '{"n":2.5}')['overall'] == 'fail'
+    literal = internal('{"const":{"$schema":"untrusted-data","$ref":"not-a-reference"}}')
+    assert checks.check_answer(literal, '{"$schema":"untrusted-data","$ref":"not-a-reference"}')['overall'] == 'pass'
 
-    # Too many digits: the answer cannot be checked exactly, which is not a failure and not a pass.
-    huge = run('{"format": "json", "checks": [{"type": "contains", "value": "1"}]}', "1" * 5000)
-    assert entry(huge, "parse")["result"] == "not_run" and huge["overall"] == "incomplete"
-    assert entry(huge, "checks[0]")["result"] == "pass"                                  # text checks still run
-    assert huge["issues"][0]["location"] == "line 1, column 1"
-    prefix = '{"format": "json", "checks": [{"type": "json_equals", "value": '
-    with pytest.raises(checks.ContractError) as refused:
-        contract(prefix + "1" * 5000 + "}]}")
-    assert refused.value.issues[0]["location"] == f"line 1, column {len(prefix) + 1}"
 
-    # A number Decimal cannot construct is the same limit, never an internal error or the contract's fault.
-    for text in ("1e9223372036854775808", '{"x": [1e9223372036854775808]}'):
-        result = run('{"format": "json", "checks": [{"type": "contains", "value": "e"}]}', text)
-        assert entry(result, "parse")["result"] == "not_run" and result["overall"] == "incomplete"
-        assert "contract_error" != result["overall"]
-    with pytest.raises(checks.ContractError) as refused:
-        contract('{"format": "json", "checks": [{"type": "json_equals", "value": 1e9223372036854775808}]}')
-    assert refused.value.issues[0]["location"].startswith("line 1, column ")
+@pytest.mark.parametrize('schema', [
+    '{"$ref":"https://example.invalid/schema"}', '{"$dynamicRef":"other.json#x"}',
+    '{"$schema":"https://json-schema.org/draft-07/schema"}', '{"type":"wrong"}',
+    '{"minimum":1e5000}',
+])
+def test_internal_schema_refusals_never_fetch(monkeypatch, schema):
+    def no_network(*args, **kwargs):
+        pytest.fail('schema validation attempted network access')
+    monkeypatch.setattr(socket, 'create_connection', no_network)
+    with pytest.raises(checks.ContractError):
+        internal(schema)
 
-    # NaN fails parse; malformed JSON fails parse at the position the reader reports.
-    nan = run({"format": "json"}, '{"a": NaN}')
-    assert entry(nan, "parse")["result"] == "fail" and nan["overall"] == "fail"
-    for bad in ('{"a": }', '[1,\n 2,, 3]', '{"a" 1}'):
-        with pytest.raises(json.JSONDecodeError) as syntax:
-            json.loads(bad)
-        located = run({"format": "json"}, bad)
-        assert entry(located, "parse")["result"] == "fail"
-        assert located["issues"][0]["location"] == f"line {syntax.value.lineno}, column {syntax.value.colno}"
 
-    # Results are plain, strict JSON: no NaN, no Infinity, no Decimal.
-    for result in (nan, huge, run({"format": "json"}, '{"a": 1.50}')):
-        json.loads(jsonio.encode({"check": result}), parse_constant=lambda name: pytest.fail(name))
+def test_validator_unavailability_and_unexpected_failure_never_pass(monkeypatch):
+    c = contract({'format': 'json', 'schema': {'type': 'integer'}})
+    monkeypatch.setattr(checks, 'schema_support', lambda: (False, 'damaged'))
+    result = checks.check_answer(c, '1')
+    assert result['overall'] == 'incomplete'
+    assert 'validation_unavailable' in result['issues'][0]['message']
+    assert 'repair the AgentWiz installation' in result['issues'][0]['message']
+    with pytest.raises(checks.ValidationUnavailable):
+        checks.require_validation([c])
+    checks.require_validation([contract({'format': 'text'}), contract({'format': 'json'})])
+    # Recognition never broadens when the installation is broken.
+    with pytest.raises(checks.ContractError):
+        contract({'format': 'json', 'schema': {'oneOf': []}})
+    monkeypatch.setattr(checks, 'schema_support', lambda: (True, 'ok'))
+    def broken():
+        raise RuntimeError('SECRET')
+    monkeypatch.setattr(checks, '_libs', broken)
+    failed = checks.check_answer(c, '1')
+    assert failed['overall'] == 'contract_error' and 'SECRET' not in json.dumps(failed)
+
+
+def test_validator_supported_versions_and_corrupt_import(monkeypatch):
+    for version, expected in [('4.26.0', True), ('4.99.1', True), ('4.25.9', False),
+                              ('5.0.0', False), ('not-a-version', False), (None, False)]:
+        monkeypatch.setattr(checks, '_jsonschema_version', lambda: version)
+        assert checks.schema_support()[0] is expected
+    monkeypatch.setattr(checks, '_jsonschema_version', lambda: '4.26.0')
+    def broken(name):
+        raise RuntimeError('SECRET')
+    monkeypatch.setattr(importlib, 'import_module', broken)
+    assert checks.schema_support() == (False, 'jsonschema cannot be imported')
+
+
+def test_answer_values_and_repair_use_captured_rules():
+    c = contract({'format': 'text', 'exact': 'pong'})
+    result, value = checks.check_answer_value(c, ' pong ')
+    assert value == ' pong ' and result['overall'] == 'fail'
+    message = checks.repair_message(c, result)
+    assert 'text.exact' in message and 'pong' not in message
+    cut = checks.repair_message(c, result, truncated=True)
+    assert cut.startswith('The previous answer was cut off at the output length limit')
+    assert cut.endswith('It must fit within the same length limit.')
+    c = contract({'format': 'json'})
+    result, value = checks.check_answer_value(c, '```json\n{"n":9007199254740993,"f":0.10000000000000000001}\n```')
+    assert result['overall'] == 'pass'
+    assert value == {'n': 9007199254740993, 'f': Decimal('0.10000000000000000001')}
+    assert checks.check_answer_value(c, 'null')[1] is None
+    assert checks.check_answer_value(c, 'not json')[1] is checks.NO_VALUE
 
 
 def test_decode_exact_error_contract():
-    for text, kind in [("{", jsonio.JSONSyntax), ("1e9223372036854775808", jsonio.ExactLimit),
-                       ("1" * 4301, jsonio.ExactLimit), ("NaN", ValueError), ('{"a":1,"a":2}', ValueError),
-                       ("[" * 100000 + "1", ValueError)]:
-        with pytest.raises(kind) as caught:
+    for text, kind in [('{', jsonio.JSONSyntax), ('1e9223372036854775808', jsonio.ExactLimit),
+                       ('1' * 4301, jsonio.ExactLimit), ('NaN', ValueError),
+                       ('{"a":1,"a":2}', ValueError), ('[' * 100000 + '1', ValueError)]:
+        with pytest.raises(kind):
             jsonio.decode_exact(text)
-        assert type(caught.value) is not Exception and isinstance(caught.value, ValueError)
-        assert not isinstance(caught.value, ArithmeticError) and "999" not in str(caught.value)
-    with pytest.raises(jsonio.JSONSyntax) as caught:
+    with pytest.raises(jsonio.JSONSyntax) as exc:
         jsonio.decode_exact('{\n  "a": ,}')
-    assert (caught.value.line, caught.value.column) == (2, 8)
-    with pytest.raises(jsonio.ExactLimit) as caught:
-        jsonio.decode_exact('{"s": "' + "7" * 5000 + '",\n  "n": ' + "7" * 4301 + "}")      # digits in a string are fine
-    assert (caught.value.line, caught.value.column) == (2, 8)
-    assert jsonio.decode_exact("1" * 4300) == int("1" * 4300)                              # the limit is exclusive
-
-
-# 62 ---------------------------------------------------------------------------------------------
-def schema_contract(schema_text, extra_checks="[]"):
-    return '{"format": "json", "schema": %s, "checks": %s}' % (schema_text, extra_checks)
-
-
-RECURSIVE = ('{"$defs": {"node": {"type": "object", "properties": {"v": {"type": "integer"},'
-             ' "next": {"$ref": "#/$defs/node"}}}}, "$ref": "#/$defs/node"}')
-
-
-@needs_checks
-def test_schema():
-    # Through the validation copy, 1 and 1.0 are alike everywhere, including check_schema and $ref.
-    assert contract(schema_contract('{"type": "array", "minItems": 1.0}')).schema["minItems"] == 1
-    c = contract(schema_contract(RECURSIVE))
-    assert checks.check_answer(c, '{"v": 1, "next": {"v": 1.0}}')["overall"] == "pass"
-    nested = checks.check_answer(c, '{"v": 1, "next": {"v": 1.5}}')
-    assert nested["overall"] == "fail" and nested["issues"][0]["location"] == "$.next.v"
-    assert "type: the value must be of type integer; it is 1.5" == nested["issues"][0]["message"]
-    defs = contract(schema_contract('{"$defs": {"n": {"type": "integer"}}, "properties": {"a": {"$ref": "#/$defs/n"}}}'))
-    assert checks.check_answer(defs, '{"a": 2.0}')["overall"] == "pass"
-    assert checks.check_answer(defs, '{"a": 2.5}')["issues"][0]["location"] == "$.a"
-    anchor = contract(schema_contract('{"$defs": {"n": {"$anchor": "num", "type": "integer"}},'
-                                      ' "properties": {"a": {"$ref": "#num"}}}'))
-    assert checks.check_answer(anchor, '{"a": 3.0}')["overall"] == "pass"
-    assert checks.check_answer(anchor, '{"a": 3.5}')["overall"] == "fail"
-
-    assert checks.check_answer(contract(schema_contract('{"multipleOf": 0.1}')), "0.3")["overall"] == "pass"
-    assert checks.check_answer(contract(schema_contract('{"uniqueItems": true}')), "[1, 1.0]")["overall"] == "fail"
-    assert checks.check_answer(contract(schema_contract('{"type": "integer"}')), "1.0")["overall"] == "pass"
-    assert checks.check_answer(contract(schema_contract('{"const": 1}')), "true")["overall"] == "fail"
-    assert checks.check_answer(contract(schema_contract('{"const": 1}')), "1.0")["overall"] == "pass"
-
-    # Numbers the exact context cannot handle make `schema` not_run, never a pass and never the
-    # contract's fault; an integral 1e5000 in a schema is a contract error.
-    huge = checks.check_answer(contract(schema_contract('{"multipleOf": 7}', '[{"type": "contains", "value": "e"}]')), "1e5000")
-    assert entry(huge, "schema")["result"] == "not_run" and entry(huge, "checks[0]")["result"] == "pass"
-    assert huge["overall"] == "incomplete"
-    with pytest.raises(checks.ContractError) as refused:
-        contract(schema_contract('{"minimum": 1e5000}'))
-    assert refused.value.issues[0]["location"] == "schema.minimum"
-
-    # After validation the saved contract still reads 1.0.
-    kept = contract(schema_contract('{"minItems": 1.0}'))
-    checks.check_answer(kept, "[1.0]")
-    assert str(kept.schema["minItems"]) == "1.0" and isinstance(kept.schema["minItems"], Decimal)
-
-
-@needs_checks
-def test_schema_numeric_controls():
-    """Fractional values, so the validation copy leaves them alone (review v2 R1)."""
-    multiple = contract(schema_contract('{"multipleOf": 0.1}', '[{"type": "contains", "value": "0.1"}]'))
-    assert checks.check_answer(multiple, "0.3")["overall"] == "fail"       # no "0.1" in the text: the contains fails
-    assert entry(checks.check_answer(multiple, "0.3"), "schema")["result"] == "pass"
-    tiny = checks.check_answer(multiple, "1e-1005000")
-    assert entry(tiny, "schema")["result"] == "fail"                         # a nonzero remainder, never a pass
-    schema_issue = next(i for i in tiny["issues"] if i["check"] == "schema")
-    assert schema_issue["location"] == "$" and schema_issue["message"].startswith("multipleOf:")
-    wide = checks.check_answer(contract(schema_contract('{"multipleOf": 0.2}', '[{"type": "contains", "value": "0.11"}]')),
-                               "0." + "1" * 2101)
-    assert entry(wide, "schema")["result"] == "not_run"                      # Inexact: the quotient needs > 2,100 digits
-    assert entry(wide, "checks[0]")["result"] == "pass"                      # an independent check still runs
-    assert wide["overall"] == "incomplete"
-
-
-@needs_checks
-def test_schema_rules_at_save():
-    refused_schemas = {
-        "another draft at the root": '{"$schema": "http://json-schema.org/draft-07/schema#", "type": "integer"}',
-        "a remote reference": '{"$ref": "http://example.com/schema.json"}',
-        "a relative reference": '{"properties": {"a": {"$ref": "other.json"}}}',
-        "a dynamic reference": '{"$dynamicRef": "https://example.com/x#node"}',
-        "a reference that is not a string": '{"$ref": 5}',
-        "a Draft 7 resource in $defs": '{"$ref": "#/$defs/x", "$defs": {"x": {"$schema": '
-                                       '"http://json-schema.org/draft-07/schema#", "dependencies": {"a": ["b"]}}}}',
-        "a Draft 7 resource nested in a keyword": '{"properties": {"a": {"allOf": [{"$schema": '
-                                                  '"http://json-schema.org/draft-04/schema#"}]}}}',
-        "an object under const that a $ref targets": '{"const": {"$schema": "http://json-schema.org/draft-07/schema#"},'
-                                                      ' "$ref": "#/const"}',
-        "an anchored target in another draft": '{"$ref": "#lib", "$defs": {"x": {"$anchor": "lib", "$schema": '
-                                                '"http://json-schema.org/draft-07/schema#"}}}',
-        "an invalid schema": '{"type": "nonsense"}',
-        "an invalid keyword value": '{"minItems": "many"}',
-        "a pattern that is not a regular expression": '{"pattern": "(("}',
-    }
-    for why, schema in refused_schemas.items():
-        with pytest.raises(checks.ContractError, match="schema"):
-            contract(schema_contract(schema))
-        assert why
-
-    accepted = {
-        "2020-12 at the root": '{"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "integer"}',
-        "2020-12 with a trailing #": '{"$schema": "https://json-schema.org/draft/2020-12/schema#", "type": "integer"}',
-        "a 2020-12 resource in $defs": '{"$ref": "#/$defs/x", "$defs": {"x": {"$schema": '
-                                       '"https://json-schema.org/draft/2020-12/schema", "type": "integer"}}}',
-        "a $schema key inside const": '{"const": {"$schema": "http://json-schema.org/draft-07/schema#"}}',
-        "a $schema key inside enum, default and examples":
-            '{"enum": [{"$schema": "x"}], "default": {"$schema": "x"}, "examples": [{"$schema": "x"}]}',
-        "a self reference": '{"$ref": "#"}',
-        "a reference cycle": '{"$defs": {"a": {"$ref": "#/$defs/b"}, "b": {"$ref": "#/$defs/a"}}, "$ref": "#/$defs/a"}',
-        "a local pointer with escapes": '{"$defs": {"a/b": {"type": "integer"}}, "$ref": "#/$defs/a~1b"}',
-        "a boolean schema": "true",
-        "an embedded resource": '{"$defs": {"x": {"$id": "https://example.com/x", "$defs": {"y": {"type": "integer"}},'
-                                ' "properties": {"a": {"$ref": "#/$defs/y"}}}}}',
-        "a reference nowhere": '{"$ref": "#/$defs/missing"}',
-        "an anchor nowhere": '{"$ref": "#nowhere"}',
-    }
-    for why, schema in accepted.items():
-        assert contract(schema_contract(schema)).schema is not None, why
-
-
-@needs_checks
-def test_unresolved_local_reference_is_the_contracts_error(monkeypatch):
-    attempts = []
-    monkeypatch.setattr(socket.socket, "connect", lambda self, address: attempts.append(address) or (_ for _ in ()).throw(OSError("blocked")))
-    monkeypatch.setattr(socket, "create_connection", lambda *a, **k: attempts.append(a) or (_ for _ in ()).throw(OSError("blocked")))
-    c = contract(schema_contract('{"$ref": "#/$defs/missing"}', '[{"type": "contains", "value": "1"}]'))   # it saves...
-    result = checks.check_answer(c, "1")
-    assert result["overall"] == "contract_error"                                        # ...and fails when applied
-    assert entry(result, "schema")["result"] == "not_run" and entry(result, "checks[0]")["result"] == "pass"
-    assert result["issues"][0]["check"] == "schema" and "could not be applied" in result["issues"][0]["message"]
-    remote = checks.check_answer(contract(schema_contract('{"properties": {"a": {"$ref": "#nowhere"}}}')), '{"a": 1}')
-    assert remote["overall"] == "contract_error"
-    assert attempts == []                                                               # nothing was fetched
-
-
-@needs_checks
-def test_schema_messages():
-    c = contract(schema_contract(
-        '{"type": "object", "required": ["a", "b"], "additionalProperties": false,'
-        ' "properties": {"a": {"type": "string", "maxLength": 2}, "n": {"minimum": 1.0}, "e": {"enum": ["x", "y"]}}}'))
-    result = checks.check_answer(c, '{"a": "toolong", "n": 0.5, "e": "z", "extra": 1}')
-    messages = {i["location"]: i["message"] for i in result["issues"]}
-    assert messages["$.a"] == 'maxLength: the value must be at most 2 characters long; it is "toolong"'
-    assert messages["$.n"] == "minimum: the value must be at least 1.0; it is 0.5"          # original form: 1.0
-    assert messages["$.e"] == 'enum: the value must be one of ["x","y"]; it is "z"'
-    assert messages["$.extra"] == "additionalProperties: this property is not allowed"
-    missing = checks.check_answer(c, "{}")
-    assert [i["message"] for i in missing["issues"]] == ['required: the property "a" is missing',
-                                                         'required: the property "b" is missing']
-    shown = checks.check_answer(contract(schema_contract('{"const": 1.0}')), "2.50")["issues"][0]["message"]
-    assert shown == "const: the value must be equal to 1.0; it is 2.50"                      # exact text, as written
-    long = checks.check_answer(contract(schema_contract('{"const": "a"}')), json.dumps("x" * 500))["issues"][0]["message"]
-    assert len(long) < 300 and "cut at 200 characters" in long
-    false = checks.check_answer(contract(schema_contract("false")), "1")
-    assert false["overall"] == "fail" and "the schema is false" in false["issues"][0]["message"]
-    deep = checks.check_answer(contract(schema_contract('{"properties": {"a": {"items": {"type": "integer"}}}}')),
-                               '{"a": [1, 2, "x"]}')
-    assert deep["issues"][0]["location"] == "$.a[2]"
-
-
-# 63 ---------------------------------------------------------------------------------------------
-def test_schema_without_extra(monkeypatch):
-    monkeypatch.setattr(checks, "schema_support", lambda: (False, "jsonschema is not installed"))
-    c = contract(schema_contract('{"type": "object", "required": ["x"]}', '[{"type": "contains", "value": "ok"}]'))
-    assert c.schema == {"type": "object", "required": ["x"]}                       # a schema contract still loads
-    result = checks.check_answer(c, '{"ok": 1}')
-    assert entry(result, "schema")["result"] == "not_run" and entry(result, "parse")["result"] == "pass"
-    assert result["overall"] == "incomplete"                                         # never pass
-    assert "pip install 'AgentWiz[checks]'" in result["issues"][0]["message"]
-    other = checks.check_answer(c, '{"nope": 1}')                                    # another check fails: fail
-    assert other["overall"] == "fail" and entry(other, "schema")["result"] == "not_run"
-    assert checks.check_answer(c, "not json")["overall"] == "fail"
-    # No schema rule runs at load: even a schema that would be refused loads without the extra.
-    assert contract(schema_contract('{"$ref": "http://example.com/x"}')).schema is not None
-    assert checks.schema_support() == (False, "jsonschema is not installed")
-
-
-def test_unsupported_version_counts_as_missing(monkeypatch):
-    for version, usable in [("4.26.0", True), ("4.99.1", True), ("4.25.9", False), ("5.0.0", False),
-                            ("3.2.0", False), ("not-a-version", False)]:
-        monkeypatch.setattr(checks, "_jsonschema_version", lambda version=version: version)
-        available, detail = checks.schema_support()
-        assert available is (usable and importlib.util.find_spec("jsonschema") is not None), version
-        if not usable:
-            assert version in detail and ("outside the supported range" in detail), detail
-    monkeypatch.setattr(checks, "_jsonschema_version", lambda: None)
-    assert checks.schema_support() == (False, "jsonschema is not installed")
-    result = checks.check_answer(contract(schema_contract('{"type": "object"}')), "{}")
-    assert entry(result, "schema")["result"] == "not_run" and result["overall"] == "incomplete"
-
-
-# 93 (0.1.4) -------------------------------------------------------------------------------------
-def test_answer_value_and_truncation_message():
-    text_contract = contract({"format": "text"})
-    result, value = checks.check_answer_value(text_contract, "hello")
-    assert value == "hello" and result == checks.check_answer(text_contract, "hello")
-
-    json_contract = contract('{"format": "json"}')
-    fenced = 'Here you go:\n```json\n{"n": 9007199254740993, "x": 0.10000000000000000001}\n```\n'
-    result, value = checks.check_answer_value(json_contract, fenced)
-    assert value == {"n": 9007199254740993, "x": Decimal("0.10000000000000000001")}
-    assert type(value["n"]) is int and result == checks.check_answer(json_contract, fenced)
-    whole = ' {"a": [1, 2]} \n'
-    result, value = checks.check_answer_value(json_contract, whole)
-    assert value == {"a": [1, 2]} and result == checks.check_answer(json_contract, whole)
-    result, value = checks.check_answer_value(json_contract, "null")
-    assert value is None and value is not checks.NO_VALUE                 # a parsed null is a value
-
-    for bad in ("not json", '{"a": ', "```json\n{}\n```\n```json\n{}\n```"):
-        result, value = checks.check_answer_value(json_contract, bad)
-        assert value is checks.NO_VALUE and result["overall"] != "pass"
-        assert result == checks.check_answer(json_contract, bad)
-
-    failing = contract({"format": "json", "checks": [{"type": "contains", "value": "zzz"}]})
-    result = checks.check_answer(failing, '{"a": 1}')
-    plain = checks.repair_message(failing, result)
-    cut = checks.repair_message(failing, result, truncated=True)
-    assert plain != cut
-    assert cut.startswith("The previous answer was cut off at the output length limit")
-    for issue in result["issues"]:
-        assert f"- {issue['location']}: {issue['message']}" in cut
-    assert cut.endswith("It must fit within the same length limit.")
-
-    passing = contract({"format": "json"})
-    ok = checks.check_answer(passing, '{"a": 1}')
-    assert ok["issue_count"] == 0
-    cut_ok = checks.repair_message(passing, ok, truncated=True)
-    assert "Problems found" not in cut_ok and "\n- " not in cut_ok
-    assert cut_ok != checks.repair_message(passing, ok)
+    assert (exc.value.line, exc.value.column) == (2, 8)
+    assert jsonio.decode_exact('1' * 4300) == int('1' * 4300)

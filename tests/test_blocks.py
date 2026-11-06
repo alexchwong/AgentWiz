@@ -10,18 +10,27 @@ from decimal import Decimal
 
 import pytest
 
-from agentwiz import blocks, contracts
+from agentwiz import blocks, checks, contracts, runner
 from conftest import write_block
 
 SENTINEL = "SENTINEL-VALUE-7731"
+PIN_ABSENT = {"name": "no_such_contract", "revision": 1, "digest": "sha256:" + "0" * 64}
+
+
+def pin_of(store_or_contracts, name, revision=None):
+    contract_store = getattr(store_or_contracts, "_contracts", store_or_contracts)
+    contract_store.rescan()
+    entry = contract_store.get(name)
+    found = entry.revisions[-1] if revision is None else entry.revision(revision)
+    return {"name": name, "revision": found.revision, "digest": found.digest}
 
 
 def model_block(name="b", **over):
-    block = {"format_version": 1, "name": name, "description": "d",
+    block = {"format_version": 3, "name": name, "description": "d",
              "inputs": {"text": {"contract": {"format": "text"}}},
              "outputs": {"out": {"contract": {"format": "text"}}},
              "steps": [{"id": "s", "kind": "model", "role": "fast", "system": {"file": "prompts/system.md"},
-                        "prompt": {"file": "prompts/user.md"}, "output": "out"}]}
+                        "prompt": {"file": "prompts/user.md"}, "response_mode": "named_json"}]}
     block.update(over)
     return block
 
@@ -30,14 +39,14 @@ MODEL_FILES = {"prompts/system.md": "You are terse.", "prompts/user.md": "Say {{
 
 
 def tool_block(name="t"):
-    return {"format_version": 1, "name": name, "inputs": {"n": {"contract": {"format": "text"}}},
+    return {"format_version": 3, "name": name, "inputs": {"n": {"contract": {"format": "text"}}},
             "outputs": {"out": {"contract": {"format": "json"}}},
             "steps": [{"id": "call", "kind": "tool", "server": "docs", "tool": "lookup",
                        "arguments": {"id": "{{inputs.n}}", "extra": ["a", "{{inputs.n}}"]}, "output": "out"}]}
 
 
 def script_block(name="sc"):
-    return {"format_version": 1, "name": name, "inputs": {"a": {"contract": {"format": "text"}}},
+    return {"format_version": 3, "name": name, "inputs": {"a": {"contract": {"format": "text"}}},
             "outputs": {"x": {"contract": {"format": "text"}}, "y": {"contract": {"format": "json"}}},
             "steps": [{"id": "run", "kind": "script", "file": "scripts/go.py", "timeout_s": 5}]}
 
@@ -71,6 +80,38 @@ def issues_of(problem):
 
 
 # --- #90 -----------------------------------------------------------------------------------------------
+@pytest.mark.parametrize('definition', [
+    {'format': 'json', 'schema': {'type': 'string', 'pattern': 'x'}},
+    {'format': 'json', 'schema': {'oneOf': [{'type': 'string'}]}},
+    {'format': 'text', 'checks': []},
+    {'format': 'json', 'strict': False},
+    {'format': 'json', 'policy': 'internal'},
+])
+def test_public_inline_contracts_cannot_select_rich_or_legacy_policy(ws, store, definition):
+    obj = model_block()
+    obj['outputs']['out']['contract'] = definition
+    write_block(ws, 'b', obj, MODEL_FILES)
+    problem = problem_of(store)
+    assert any(i['location'].startswith('outputs.out.contract') for i in problem.issues)
+
+
+@pytest.mark.parametrize('kind', ['model', 'tool', 'script'])
+def test_schema_output_requires_validator_before_any_block_dispatch(ws, store, monkeypatch, kind):
+    from types import SimpleNamespace
+    obj = model_block() if kind == 'model' else tool_block('b') if kind == 'tool' else script_block('b')
+    output = next(iter(obj['outputs']))
+    obj['outputs'][output]['contract'] = {'format': 'json', 'schema': {'type': 'integer'}}
+    files = MODEL_FILES if kind == 'model' else {'scripts/go.py': "print('hi')\n"} if kind == 'script' else {}
+    write_block(ws, 'b', obj, files)
+    loaded = store.get('b')
+    assert loaded.problem is None
+    monkeypatch.setattr(checks, 'schema_support', lambda: (False, 'damaged'))
+    def no_admission(*args):
+        pytest.fail('admitted work without validator')
+    with pytest.raises(checks.ValidationUnavailable):
+        runner.run_block(SimpleNamespace(register_writer=no_admission), loaded, {})
+
+
 def test_valid_model_tool_and_script_blocks_load_with_exact_hashes(ws, store):
     write_block(ws, "b", model_block(), MODEL_FILES)
     write_block(ws, "t", tool_block())
@@ -135,11 +176,22 @@ CASES = {
     "reference outside prompts": (lambda b: STEP(b).update(prompt={"file": "scripts/user.md"}), "invalid",
                                   "steps[0].prompt.file"),
     "name differs from the folder": (lambda b: b.update(name="other"), "invalid", "name"),
-    "two outputs on a model block": (lambda b: b["outputs"].update(o2={"contract": {"format": "text"}}), "invalid",
-                                     "outputs"),
-    "undeclared step output": (lambda b: STEP(b).update(output="nope"), "invalid", "steps[0].output"),
-    "input name not an identifier": (lambda b: b["inputs"].update({"1x": {"contract": {"format": "text"}}}),
-                                     "invalid", "inputs"),
+    "a mode other than named_json": (lambda b: STEP(b).update(response_mode="raw"), "invalid",
+                                     "steps[0].response_mode"),
+    "a legacy step output": (lambda b: STEP(b).update(output="out"), "invalid", "steps[0].output"),
+    "no task_resets list": (lambda b: STEP(b).update(task_resets="temperature"), "invalid",
+                            "steps[0].task_resets"),
+    "a task_reset that is not a setting": (lambda b: STEP(b).update(task_resets=["max_tokens"]), "invalid",
+                                           "steps[0].task_resets"),
+    "a setting both set and reset": (lambda b: STEP(b).update(task={"temperature": 0.5},
+                                                              task_resets=["temperature"]), "invalid",
+                                     "steps[0].task_resets"),
+    "an undeclared output token": (lambda b: STEP(b).update(prompt={"text": "{{output.nope}}"}), "invalid",
+                                   "steps[0].prompt"),
+    "an output token below the output": (lambda b: STEP(b).update(prompt={"text": "{{output.out.x}}"}), "invalid",
+                                         "steps[0].prompt"),
+    "an input name not an identifier": (lambda b: b["inputs"].update({"1x": {"contract": {"format": "text"}}}),
+                                        "invalid", "inputs"),
     "task decimal not exactly a float": (lambda b: STEP(b).update(task={"temperature": Decimal("0.1000000000000000055511151231257827")}),
                                          "invalid", "steps[0].task.temperature"),
     "task key not a task setting": (lambda b: STEP(b).update(task={"colour": 1}), "invalid", "steps[0].task.colour"),
@@ -150,10 +202,22 @@ CASES = {
     "steps placeholder": (lambda b: STEP(b).update(prompt={"text": "{{steps.a.b}}"}), "invalid", "steps[0].prompt"),
     "malformed placeholder": (lambda b: STEP(b).update(prompt={"text": "{{ inputs.text }}"}), "invalid",
                               "steps[0].prompt"),
-    "format_version 2": (lambda b: b.update(format_version=2), "newer_format", "format_version"),
+    "format_version 1": (lambda b: b.update(format_version=1), "migration_required", "format_version"),
+    "format_version 2": (lambda b: b.update(format_version=2), "invalid", "format_version"),
+    "format_version 4": (lambda b: b.update(format_version=4), "newer_format", "format_version"),
     "format_version true": (lambda b: b.update(format_version=True), "invalid", "format_version"),
-    "a missing saved contract": (lambda b: b["outputs"]["out"].update(contract="no_such_contract"), "unusable",
+    "a missing saved contract": (lambda b: b["outputs"]["out"].update(contract=PIN_ABSENT), "unusable",
                                  "outputs.out.contract"),
+    "a string reference": (lambda b: b["outputs"]["out"].update(contract="no_such_contract"), "invalid",
+                           "outputs.out.contract"),
+    "a reference without digest": (lambda b: b["outputs"]["out"].update(contract={"name": "c", "revision": 1}),
+                                   "invalid", "outputs.out.contract.digest"),
+    "a latest reference": (lambda b: b["outputs"]["out"].update(contract={**PIN_ABSENT, "revision": "latest"}),
+                           "invalid", "outputs.out.contract.revision"),
+    "a reference with a family": (lambda b: b["outputs"]["out"].update(contract={**PIN_ABSENT, "family": "x"}),
+                                  "invalid", "outputs.out.contract.family"),
+    "a reference with a format": (lambda b: b["outputs"]["out"].update(contract={**PIN_ABSENT, "format": "text"}),
+                                  "invalid", "outputs.out.contract.name"),
 }
 
 
@@ -168,6 +232,28 @@ def test_each_rule_is_a_located_problem_with_no_value_in_the_message(ws, store, 
     assert location in issues_of(problem), issues_of(problem)
     assert SENTINEL not in json.dumps(problem.view())
     assert problem.file.endswith(os.path.join("blocks", "b", "block.json"))
+
+
+def test_a_model_block_declares_several_outputs_and_they_all_load(ws, store):
+    """0.2.0: a model step returns one named envelope, so each declared output is checked on its own."""
+    block = model_block()
+    block["outputs"]["table"] = {"description": "rows", "contract": {"format": "json"}}
+    write_block(ws, "b", block, MODEL_FILES)
+    loaded = store.get("b")
+    assert loaded is not None and loaded.problem is None
+    assert [d.name for d in loaded.block.outputs] == ["out", "table"]
+    assert loaded.block.step.response_mode == "named_json" and loaded.block.step.output is None
+
+
+def test_an_explicit_null_temperature_is_a_reset_not_a_value(ws, store):
+    """A null temperature has always meant the backend's default; beside a role's defaults that is a reset."""
+    block = model_block()
+    STEP(block).update(task={"temperature": None, "max_tokens": 64})
+    write_block(ws, "b", block, MODEL_FILES)
+    loaded = store.get("b")
+    assert loaded.problem is None
+    assert loaded.block.step.task_resets == ("temperature",)
+    assert loaded.block.step.task.temperature is None and loaded.block.step.task.max_tokens == 64
 
 
 def test_a_script_not_ending_in_py_and_a_missing_prompt(ws, store):
@@ -241,29 +327,33 @@ def test_every_issue_is_listed_up_to_the_cap_with_the_total(ws, store, monkeypat
     assert len(capped.issues) == 3 and capped.total == 8
 
 
-def test_an_exact_number_in_an_inline_contract_survives_and_unknown_fields_are_notes(ws, store):
+def test_exact_numbers_in_inline_contract_survive_and_unknown_fields_are_rejected(ws, store):
     block = model_block()
-    block["outputs"]["out"]["contract"] = json.loads('{"format": "json", "future": 1}')
-    text = json.dumps(block).replace('"future": 1', '"future": 9007199254740993, "checks": [{"type": "json_equals", "value": 0.10000000000000000001}]')
+    block['outputs']['out']['contract'] = {'format': 'json', 'schema': {'type': 'number',
+        'maximum': 9007199254740993, 'minimum': 0}}
+    text = json.dumps(block).replace('"minimum": 0', '"minimum": 0.10000000000000000001')
     write_block(ws, "b", text, MODEL_FILES)
     loaded = store.get("b")
     assert loaded.problem is None
     copy_ = loaded.block.contracts["outputs"]["out"]
     assert copy_.name is None and "9007199254740993" in copy_.text and "0.10000000000000000001" in copy_.text
-    assert any("future" in note for note in loaded.notes)
+    write_block(ws, 'b', text.replace('"format": "json"', '"format": "json", "future": 1'), MODEL_FILES)
+    assert 'outputs.out.contract.future' in issues_of(problem_of(store))
 
 
-def test_a_saved_contract_named_before_it_exists_becomes_usable_when_saved(ws, store):
+def test_a_saved_contract_pinned_before_it_exists_becomes_usable_when_saved(ws, store):
+    from agentwiz.contract_schema import contract_digest
+    pin = {"name": "later", "revision": 1, "digest": contract_digest({"format": "text"})}
     block = model_block()
-    block["outputs"]["out"]["contract"] = "later"
+    block["outputs"]["out"]["contract"] = pin
     write_block(ws, "b", block, MODEL_FILES)
     first = store.get("b")
     assert first.problem.code == "unusable"
-    store._contracts.save("later", '{"format": "text"}', None, False)
+    store._contracts.save("later", "General", None, '{"format": "text"}', "")
     second = store.get("b")                                               # no restart
     assert second.problem is None and second.revision != first.revision
     copy_ = second.block.contracts["outputs"]["out"]
-    assert copy_.name == "later" and copy_.revision == store._contracts.get("later").revision
+    assert (copy_.name, copy_.revision, copy_.digest) == ("later", 1, pin["digest"])
 
 
 # --- #91 -----------------------------------------------------------------------------------------------
@@ -295,24 +385,41 @@ def test_a_revision_is_never_repeated_after_delete_and_recreate(ws, store):
     assert len(set(seen)) == len(seen)
 
 
-def test_saved_contract_changes_give_the_block_a_new_effective_revision(ws, store):
+def test_pins_survive_appends_and_detect_changed_history(ws, store):
+    """C14: a pin is unaffected by a later append or family change; a hand edit of the pinned revision with a
+    recomputed local digest still disagrees with the block's independent pin; damage makes it unusable."""
+    from agentwiz.contract_schema import contract_digest
+    from agentwiz import jsonio
+    contract_store = store._contracts
+    saved = contract_store.save("c1", "General", None, '{"format": "text", "min_length": 1}', "first")
     block = model_block()
-    block["outputs"]["out"]["contract"] = "c1"
-    store._contracts.save("c1", '{"format": "text"}', None, False)
+    block["outputs"]["out"]["contract"] = pin_of(contract_store, "c1")
     write_block(ws, "b", block, MODEL_FILES)
-    seen = [store.get("b").revision]
-    entry = store._contracts.get("c1")
-    store._contracts.save("c1", '{"format": "json"}', entry.revision, False)           # edited
-    seen.append(store.get("b").revision)
-    (ws / "contracts" / ("c1" + contracts.SUFFIX)).write_text("{damaged")             # damaged
+    first = store.get("b")
+    assert first.problem is None
+    appended = contract_store.save("c1", "General", saved["file_token"], '{"format": "json"}', "second")
+    moved = contract_store.set_family("c1", appended["file_token"], "Other")
+    after = store.get("b")
+    assert after.revision == first.revision and after.block.contracts["outputs"]["out"].revision == 1
+    path = ws / "contracts" / ("c1" + contracts.SUFFIX)
+    good = path.read_bytes()
+    container = jsonio.decode_file_exact(good)
+    container["revisions"][0]["contract"] = {"format": "text", "min_length": 2}
+    container["revisions"][0]["digest"] = contract_digest(container["revisions"][0]["contract"])
+    path.write_bytes(jsonio.encode_file_exact(container))
+    os.utime(path, ns=(os.stat(path).st_mtime_ns + 5_000_000_000,) * 2)
+    changed = store.get("b")
+    assert changed.problem is not None and changed.problem.code == "unusable"
+    assert "digest_mismatch" in json.dumps(changed.problem.view())
+    path.write_bytes(b"{damaged")
+    os.utime(path, ns=(os.stat(path).st_mtime_ns + 10_000_000_000,) * 2)
     damaged = store.get("b")
-    seen.append(damaged.revision)
-    assert damaged.problem is not None and damaged.problem.code == "unusable"
-    (ws / "contracts" / ("c1" + contracts.SUFFIX)).write_text('{"format_version": 1, "format": "text"}')   # repaired
-    repaired = store.get("b")
-    seen.append(repaired.revision)
-    assert repaired.problem is None
-    assert len(set(seen)) == len(seen), seen
+    assert damaged.problem.code == "unusable" and damaged.revision != changed.revision
+    path.write_bytes(good)
+    os.utime(path, ns=(os.stat(path).st_mtime_ns + 15_000_000_000,) * 2)
+    restored = store.get("b")
+    assert restored.problem is None and moved["family"] == "Other"
+    assert len({first.revision, changed.revision, damaged.revision, restored.revision}) == 4
 
 
 def test_reload_notices_an_edit_that_kept_size_and_mtime(ws, store):

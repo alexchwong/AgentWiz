@@ -23,6 +23,8 @@ from __future__ import annotations
 import base64
 import http.client
 import itertools
+import hashlib
+from collections import OrderedDict
 import socket
 import ssl
 import threading
@@ -402,6 +404,7 @@ class MCPClient:
         self._lock = threading.Lock()                 # era cache and discovery entries
         self._eras: dict[str, tuple[str, str]] = {}  # url -> (era, version)
         self._entries: dict[tuple, Entry] = {}
+        self._observations = OrderedDict()
         self.session_lock = threading.Lock()          # Section 9.2's session lock
         self._sessions: dict[tuple, Session] = {}     # identity -> its open session
         self._all_sessions: list[Session] = []
@@ -411,6 +414,24 @@ class MCPClient:
         self._generation = itertools.count(1)
         # Called with a Session that is due its DELETE; mcp_ops replaces it with maintenance work.
         self.schedule_delete: Callable[[Session], None] = lambda s: None
+
+    def observe(self, identity, tools, era, version):
+        values = {tool['name']: {'digest': hashlib.sha256(encode_exact(tool.get('inputSchema')).encode()).hexdigest(),
+                                'era': era, 'version': version} for tool in tools[:TOOL_LIMIT]}
+        with self._lock:
+            self._observations[identity] = values
+            self._observations.move_to_end(identity)
+            while len(self._observations) > 128:
+                self._observations.popitem(last=False)
+
+    def observed_tools(self, identity):
+        with self._lock:
+            return list(self._observations.get(identity, {}))
+
+    def observation(self, identity, tool):
+        with self._lock:
+            value = self._observations.get(identity, {}).get(tool)
+            return dict(value) if value else None
 
     # --- views ------------------------------------------------------------------------------------
     def era_of(self, url: str) -> tuple[str, str] | None:
@@ -440,6 +461,7 @@ class MCPClient:
     def _drop_entry(self, identity: tuple) -> None:
         with self._lock:
             self._entries.pop(identity, None)
+            self._observations.pop(identity, None)
 
     def _drop_obsolete_entries(self) -> None:
         with self.session_lock:
@@ -447,6 +469,8 @@ class MCPClient:
         if current is None:
             return
         with self._lock:
+            for identity in [i for i in self._observations if i not in current]:
+                del self._observations[identity]
             for identity in [i for i in self._entries if i not in current]:
                 del self._entries[identity]
 
@@ -886,9 +910,12 @@ class MCPClient:
 
     def discover(self, ctx: OpContext, snap: Snapshot) -> DiscoveryResult:
         """Load tools: probe (always), then initialize if legacy, then every tools/list page."""
+        with self._lock:
+            self._observations.pop(snap.identity, None)
         era, version, info = self.probe(ctx, snap)
         if era == "modern":
             tools = self._list_pages(ctx, snap, "modern", None, "discovery")
+            self.observe(snap.identity, tools, "modern", MODERN)
             entry = self._entry_from(tools, MODERN)
             self._store_entry(snap.identity, entry)
             offered = [t for t in tools if t["name"] in entry.offered]
@@ -897,6 +924,7 @@ class MCPClient:
                                    {n: [".".join(p) for p, _, _ in paths] for n, paths in entry.offered.items()})
         session = self._session(ctx, snap, "discovery")
         tools = self._list_pages(ctx, snap, "legacy", session, "discovery")
+        self.observe(snap.identity, tools, "legacy", session.version)
         return DiscoveryResult("legacy", session.version, info, tools)
 
     # --- legacy sessions --------------------------------------------------------------------------

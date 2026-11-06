@@ -124,6 +124,8 @@ class Env:
     protect: Callable[[], None]                # protects the run's folder from deletion
     unprotect: Callable[[], None]
     on_started: Callable[[], None] | None = None   # told once the process exists (the observer's `operation` event)
+    capture_owner: Any = None
+    no_bytecode: bool = False
 
 
 class Handle:
@@ -370,7 +372,7 @@ class _Step:
                     self._remove_temp_scratch()
                     return self._finish(None, never=True)
                 try:
-                    self.proc = spawn([sys.executable, str(self.path)], stdin=subprocess.PIPE,
+                    self.proc = spawn([sys.executable, *(["-B"] if self.env.no_bytecode else []), str(self.path)], stdin=subprocess.PIPE,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
                                       cwd=str(self.scratch), env=_environment(self.run_id, self.block_name),
                                       start_new_session=True)

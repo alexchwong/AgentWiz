@@ -93,6 +93,7 @@ def main(argv: list[str] | None = None) -> None:
     import modelspell
 
     from . import __version__
+    from . import server_config
     from .ui.server import UIServer
     from .workspace import WorkspaceError, WorkspaceInUse, open_workspace
 
@@ -110,9 +111,19 @@ def main(argv: list[str] | None = None) -> None:
                         help="shared default profiles, created if missing (default: ./model_profiles)")
     parser.add_argument("--mcp-servers-dir", type=Path, default=Path("./mcp_servers"), metavar="PATH",
                         help="shared MCP server library, created if missing (default: ./mcp_servers)")
+    parser.add_argument("--config", type=Path, default=Path("./config/model-servers.ini"), metavar="PATH",
+                        help="model server configuration (default: ./config/model-servers.ini)")
     parser.add_argument("--version", action="version",
                         version=f"AgentWiz {__version__} (modelSpell {modelspell.__version__})")
     args = parser.parse_args(argv)
+
+    try:
+        server_config.initialize(args.config)
+        servers = server_config.load(args.config)
+    except (server_config.ServerConfigError, OSError) as exc:
+        reason = str(exc) if isinstance(exc, server_config.ServerConfigError) else f"{args.config.absolute()}: cannot initialize configuration"
+        _say(f"cannot load model server configuration: {reason}", err=True)
+        sys.exit(1)
 
     try:
         ws = open_workspace(Path(args.workspaces_dir), args.workspace)
@@ -131,7 +142,8 @@ def main(argv: list[str] | None = None) -> None:
         try:
             try:
                 server = UIServer(args.port, workspace=ws, profiles_dir=args.profiles_dir,
-                                  mcp_servers_dir=args.mcp_servers_dir)
+                                  mcp_servers_dir=args.mcp_servers_dir, servers=servers,
+                                  config_path=args.config.absolute())
             except (OSError, OverflowError) as exc:
                 reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
                 _say(f"cannot listen on 127.0.0.1:{args.port}: {reason}", err=True)
@@ -170,7 +182,10 @@ def main(argv: list[str] | None = None) -> None:
                     _say(f"shutdown failed ({type(exc).__name__})", err=True)
                     os._exit(1)
             if not left:
-                ws.close()
+                if server is not None:
+                    server.close_workspace()
+                else:
+                    ws.close()
     except (KeyboardInterrupt, TerminationRequested):
         pass
 

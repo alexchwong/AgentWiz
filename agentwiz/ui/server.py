@@ -6,8 +6,9 @@ Binds to 127.0.0.1 only. Every request must carry the per-launch session token (
 `t` parameter, or the X-Session-Token header), so other web pages in the browser cannot drive the
 server or spend API credit. Settings are shared by all tabs and checked per request by revision;
 API keys are write-only and held in memory. Profiles are workspace-local copies of shared defaults;
-the server never opens or closes a workspace itself. Error text reaching the page or terminal
-is limited to text that cannot contain a credential (techspec 7.6, 7.7).
+the server prepares and adopts a destination workspace before switching, and never serves two workspace
+states at once. Error text reaching the page or terminal is limited to text that cannot contain a
+credential (techspec 7.6, 7.7).
 """
 from __future__ import annotations
 
@@ -15,11 +16,14 @@ import dataclasses
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import socket
 import sys
 import threading
+import time
 import traceback
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import TCPServer
@@ -29,9 +33,10 @@ from urllib.parse import parse_qs, unquote, urlparse
 import modelspell
 from modelspell import ModelSpellError
 
-from .. import (__version__, attachments, checks, contracts, history, insertion, jsonio, mcp_ops, model_call, model_step,
-                runner, runs, tool_forms, tutorial_topics)
+from .. import (__version__, attachments, checks, contract_schema, contract_service, contracts, history, insertion, jsonio, mcp_ops, model_call, model_step,
+                output_protocol, runner, runs, tool_forms, tutorial_topics, workshop)
 from .. import workspace as wsmod
+from .. import workspace_admin
 from ..errors import ShuttingDown, report_internal  # noqa: F401  (re-exported; defined in errors.py since 0.1.4)
 from ..mcp_client import MCPError
 from ..model_call import SettingsError, describe_error
@@ -42,10 +47,18 @@ from ..state import (SHUTDOWN_GRACE_S, BlockUnusable, DefaultConflict, NoSuchBlo
 from ..workspace import NAME_RE, Workspace
 
 INDEX = Path(__file__).with_name("index.html")
+# The one static script the page loads besides itself (overhaul spec 15.4): an explicit allowlist entry, never
+# path-based file serving. It is read once, like the page, and needs the session token like every route.
+ASSETS = {"/assets/contracts.js": (Path(__file__).with_name("contracts.js"), "text/javascript; charset=utf-8")}
 JSON = "application/json"
 UPLOAD_LIMIT = 52_428_800          # 50 MiB; the JSON cap is insertion.REQUEST_LIMIT. Tests may lower both.
 UPLOAD_ROUTE = "/api/attachments/extract"
+WORKSPACES_ROUTE = "/api/workspaces"
 _HEX = set("0123456789abcdefABCDEF")
+
+
+def _is_workspace_admin_path(path: str) -> bool:
+    return path == WORKSPACES_ROUTE or path.startswith(WORKSPACES_ROUTE + "/")
 
 
 class BodyError(ValueError):
@@ -108,22 +121,91 @@ def decode_filename(header: str | None) -> str:
     return name
 
 
+class WorkspaceGate:
+    """Refuse ordinary requests while a workspace is being switched, reset or copied.
+
+    Normal requests hold a shared slot. A workspace operation takes the exclusive slot after existing
+    requests have finished; new ordinary requests receive 503 `busy` rather than waiting indefinitely.
+    """
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._readers = 0
+        self._admin = False
+        self._closed = False
+
+    @contextmanager
+    def shared(self):
+        with self._condition:
+            if self._closed or self._admin:
+                raise workspace_admin.WorkspaceAdminError("busy", "the workspace is being changed", 503)
+            self._readers += 1
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._readers -= 1
+                self._condition.notify_all()
+
+    @contextmanager
+    def admin(self, timeout: float = 2.0):
+        deadline = time.monotonic() + timeout
+        with self._condition:
+            while self._readers or self._admin:
+                if self._closed:
+                    raise workspace_admin.WorkspaceAdminError("workspace_busy", "AgentWiz is shutting down", 503)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not self._condition.wait(remaining):
+                    raise workspace_admin.WorkspaceAdminError(
+                        "workspace_busy", "a request is still running; stop it before changing workspaces", 409)
+            self._admin = True
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._admin = False
+                self._condition.notify_all()
+
+    def active_readers(self) -> int:
+        with self._condition:
+            return self._readers
+
+    def close(self) -> None:
+        with self._condition:
+            self._closed = True
+            self._condition.notify_all()
+
+
 class UIServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, port: int = 0, *, workspace: Workspace, profiles_dir: Path, page_timeout: float = 30.0,
-                 request_limit: int = 8, mcp_servers_dir: Path | None = None):
+                 request_limit: int = 8, mcp_servers_dir: Path | None = None, servers=None, config_path=None):
         self.token = secrets.token_urlsafe(24)
         from ..tutorial import Tutorial
         self.tutorial = Tutorial(self)
         self.tutorial_session = None
-        self.workspace = workspace  # opened and closed by the caller
-        self.state = ProcessState(workspace, request_limit, profiles_dir=profiles_dir,
-                                  mcp_servers_dir=mcp_servers_dir if mcp_servers_dir is not None
-                                  else Path("./mcp_servers"))
+        self.workspace = workspace  # the current workspace; close_workspace() closes it
+        self.profiles_dir = Path(profiles_dir).resolve()
+        self.mcp_servers_dir = (Path(mcp_servers_dir) if mcp_servers_dir is not None
+                                else Path("./mcp_servers")).resolve()
+        self.workspace_root = Path(workspace.path).parent.resolve()
+        self.request_limit = request_limit
+        if servers is None:
+            from .. import server_config
+            config_path = Path(config_path or "./config/model-servers.ini").absolute()
+            server_config.initialize(config_path)
+            servers = server_config.load(config_path)
+        self.servers = servers
+        self.config_path = config_path
+        self.workspace_gate = WorkspaceGate()
+        self._admin_lock = threading.Lock()
+        self._workspace_close_lock = threading.Lock()
+        self.state = self._new_state(workspace)
         self.page_timeout = page_timeout
         self.grace_s = SHUTDOWN_GRACE_S               # tests lower it; the tutorial's Exit uses it for its bounded waits
         self.index = INDEX.read_bytes()
+        self.assets = {route: (path.read_bytes(), ctype) for route, (path, ctype) in ASSETS.items()}
         super().__init__(("127.0.0.1", port), Handler)
 
     def server_bind(self) -> None:
@@ -140,13 +222,204 @@ class UIServer(ThreadingHTTPServer):
         if exc is not None:
             report_internal("connection", exc)
 
+    def _new_state(self, workspace: Workspace) -> ProcessState:
+        return ProcessState(workspace, self.request_limit, profiles_dir=self.profiles_dir,
+                            mcp_servers_dir=self.mcp_servers_dir, servers=self.servers,
+                            config_path=self.config_path)
+
+    @property
+    def workspace_admin_enabled(self) -> bool:
+        """Tutorial child servers must never switch or reset their isolated workspace."""
+        return self.tutorial_session is None
+
+    def _workspace_view(self) -> dict:
+        return {"name": self.workspace.name, "path": str(self.workspace.path)}
+
+    def _protected_paths(self) -> tuple[Path, Path]:
+        return self.profiles_dir, self.mcp_servers_dir
+
+    def _active_work(self) -> list[dict]:
+        state = self.state
+        active = []
+        for kind, count in (
+                ("page_attempt", getattr(state.budget, "in_flight", 0)),
+                ("block_attempt", state.store.running_count()),
+                ("block_run", len(state.store.active_block_runs())),
+                ("mcp_operation", state.mcp_ops.active_count()),
+                ("script", state.scripts.in_flight)):
+            if count:
+                active.append({"kind": kind, "count": count})
+        outstanding = state.writers.outstanding()
+        if outstanding:
+            active.append({"kind": "writer", "count": len(outstanding)})
+        if state.workshop.active:
+            active.append({"kind": "workshop_batch", "count": 1})
+        return active
+
+    def _require_admin(self) -> None:
+        if not self.workspace_admin_enabled:
+            raise workspace_admin.WorkspaceAdminError("workspace_admin_disabled",
+                                                      "workspace administration is unavailable in the tutorial", 409)
+
+    def _require_tutorial_idle(self) -> None:
+        if self.tutorial.active():
+            raise workspace_admin.WorkspaceAdminError("tutorial_active", "exit the tutorial before changing workspaces", 409)
+
+    def _require_idle(self) -> None:
+        active = self._active_work()
+        if active:
+            raise workspace_admin.WorkspaceAdminError(
+                "workspace_busy", "stop running requests and Workshop batches before changing workspaces", 409,
+                active=active)
+
+    def _discard_state(self, state: ProcessState | None, workspace: Workspace) -> None:
+        if state is not None:
+            try:
+                state.shutdown(grace_s=self.grace_s, wait=True)
+            except Exception as exc:  # noqa: BLE001 - the new state was never served
+                report_internal("workspace", exc)
+        workspace.close()
+
+    def close_workspace(self) -> None:
+        """Close the currently open workspace's lock. Idempotent; callers use it after a drained shutdown."""
+        with self._workspace_close_lock:
+            workspace, self.workspace = self.workspace, None
+        if workspace is not None:
+            workspace.close()
+
+
+    def switch_workspace(self, name: str, *, create: bool = False) -> dict:
+        """Open and adopt another workspace in the same root, or create and adopt a new one."""
+        self._require_admin()
+        self._require_tutorial_idle()
+        if not create and name == self.workspace.name:
+            return self._workspace_view()
+        if create:
+            workspace_admin.validate_new(self.workspace_root, name)
+        else:
+            workspace_admin.validate_existing(self.workspace_root, name)
+        self._require_idle()
+        try:
+            target_ws = wsmod.open_workspace(self.workspace_root, name)
+        except wsmod.WorkspaceInUse as exc:
+            raise workspace_admin.WorkspaceAdminError(
+                "workspace_in_use", "the workspace is in use by another AgentWiz process", 409,
+                holder=exc.holder) from None
+        except wsmod.WorkspaceError:
+            raise workspace_admin.WorkspaceAdminError(
+                "workspace_io_error", "the workspace could not be opened", 500) from None
+        if create and not target_ws.created:
+            target_ws.close()
+            raise workspace_admin.WorkspaceAdminError("workspace_exists", "a workspace with that name appeared", 409)
+        new_state = None
+        swapped = False
+        try:
+            try:
+                new_state = self._new_state(target_ws)
+            except Exception:
+                raise workspace_admin.WorkspaceAdminError(
+                    "workspace_unavailable", "the destination workspace could not be opened", 503) from None
+            with self.workspace_gate.admin():
+                if self._active_work():
+                    self._require_idle()
+                old_state, old_ws = self.state, self.workspace
+                old_state.shutdown(grace_s=self.grace_s, wait=True)
+                old_ws.close()
+                self.state, self.workspace = new_state, target_ws
+                new_state = None
+                swapped = True
+            return self._workspace_view()
+        finally:
+            if not swapped:
+                self._discard_state(new_state, target_ws)
+                if create and target_ws.created:
+                    try:
+                        workspace_admin.delete_workspace(self.workspace_root, name, protected=self._protected_paths())
+                    except Exception:  # noqa: BLE001 - best effort for a workspace this call just created
+                        pass
+
+    def reset_workspace_by_name(self, name: str) -> dict:
+        """Reset a workspace; resetting the current one rebuilds its ProcessState in place."""
+        self._require_admin()
+        self._require_tutorial_idle()
+        path = workspace_admin.validate_existing(self.workspace_root, name)
+        protected = self._protected_paths()
+        workspace_admin.check_protected(path, protected)
+        if name != self.workspace.name:
+            try:
+                with wsmod.acquire_existing_lock(self.workspace_root, name):
+                    workspace_admin.reset_contents(path, self.profiles_dir, protected)
+            except wsmod.WorkspaceInUse as exc:
+                raise workspace_admin.WorkspaceAdminError(
+                    "workspace_in_use", "the workspace is in use by another AgentWiz process", 409,
+                    path=str(path), holder=exc.holder) from None
+            except wsmod.WorkspaceError:
+                raise workspace_admin.WorkspaceAdminError(
+                    "workspace_io_error", "the workspace could not be locked for reset", 500,
+                    path=str(path)) from None
+            return {"name": name, "path": str(path), "reset": True}
+
+        self._require_idle()
+        with self.workspace_gate.admin():
+            if self._active_work():
+                self._require_idle()
+            old_state = self.state
+            old_state.shutdown(grace_s=self.grace_s, wait=True)
+            try:
+                workspace_admin.reset_contents(path, self.profiles_dir, protected)
+                self.workspace.problems = []
+                self.workspace.read_only = False
+                new_state = self._new_state(self.workspace)
+            except workspace_admin.WorkspaceAdminError:
+                raise
+            except Exception:
+                raise workspace_admin.WorkspaceAdminError(
+                    "workspace_unavailable", "the workspace was reset but could not be reopened; restart AgentWiz",
+                    503, path=str(path)) from None
+            self.state = new_state
+        return {"name": name, "path": str(path), "reset": True}
+
+    def clone_workspace_from(self, source: str, target: str, include_evidence: bool = False) -> dict:
+        self._require_admin()
+        self._require_tutorial_idle()
+        workspace_admin.validate_existing(self.workspace_root, source)
+        workspace_admin.validate_new(self.workspace_root, target)
+        if source != self.workspace.name:
+            try:
+                with wsmod.acquire_existing_lock(self.workspace_root, source):
+                    return workspace_admin.clone_workspace(self.workspace_root, source, target, include_evidence)
+            except wsmod.WorkspaceInUse as exc:
+                raise workspace_admin.WorkspaceAdminError(
+                    "workspace_in_use", "the source workspace is in use by another AgentWiz process", 409,
+                    holder=exc.holder) from None
+            except wsmod.WorkspaceError:
+                raise workspace_admin.WorkspaceAdminError(
+                    "workspace_io_error", "the source workspace could not be locked", 500) from None
+        self._require_idle()
+        with self.workspace_gate.admin():
+            if self._active_work():
+                self._require_idle()
+            return workspace_admin.clone_workspace(self.workspace_root, source, target, include_evidence)
+
+    def delete_workspace_by_name(self, name: str) -> dict:
+        self._require_admin()
+        self._require_tutorial_idle()
+        return workspace_admin.delete_workspace(self.workspace_root, name, current=self.workspace.name,
+                                                protected=self._protected_paths())
+
     def server_close(self, *, wait: bool = True) -> list[str]:
         """Close the listening socket and shut the process state down (10.10): the tutorial's session first
         (bounded), then admission, cancellation and the drain. Returns the labels still outstanding (empty once
-        drained; non-empty only with `wait=False`). Idempotent: a drained state answers at once."""
-        pending = self.tutorial.begin_shutdown(take_pending=wait)
-        super().server_close()
-        left = self.state.shutdown(grace_s=self.grace_s, wait=wait)
+        drained; non-empty only with `wait=False`). Idempotent: a drained state answers at once.
+
+        The workspace lock is not closed here. The owner calls close_workspace() after a drained shutdown;
+        a workspace switch closes the old lock itself only after its state has drained.
+        """
+        with self._admin_lock:
+            self.workspace_gate.close()
+            pending = self.tutorial.begin_shutdown(take_pending=wait)
+            super().server_close()
+            left = self.state.shutdown(grace_s=self.grace_s, wait=wait)
         self.tutorial.finish(pending)             # a pending tutorial session, only after this state has drained
         return left
 
@@ -303,6 +576,15 @@ class Handler(BaseHTTPRequestHandler):
         """Run a route, mapping every failure to a reply that cannot contain a credential."""
         try:
             fn()
+        except workshop.WorkshopError as exc:
+            self._reply_safely(exc.status, {"error": "Workshop request refused", "code": exc.code, **({"issues": exc.issues} if exc.issues else {}), **({"plan": exc.plan} if hasattr(exc, "plan") else {})})
+        except workspace_admin.WorkspaceAdminError as exc:
+            payload = {"error": str(exc), "code": exc.code}
+            for key in ("path", "holder", "active", "limit", "cleanup"):
+                value = getattr(exc, key, None)
+                if value is not None:
+                    payload[key] = value
+            self._reply_safely(exc.status, payload)
         except _ReadTimeout:
             self.close_connection = True
         except TooLarge as exc:
@@ -346,17 +628,18 @@ class Handler(BaseHTTPRequestHandler):
             self._reply_safely(404, {"error": "no such MCP server", "code": "no_such_server"})
         except mcp_ops.NoSuchOperation:
             self._reply_safely(404, {"error": "no such tool operation", "code": "no_such_operation"})
-        except contracts.NoSuchContract:  # contract names are not echoed
-            self._reply_safely(404, {"error": "no such contract", "code": "no_such_contract"})
-        except contracts.ContractExists:
-            self._reply_safely(409, {"error": "a contract with that name already exists", "code": "exists"})
-        except contracts.ContractUnusable as exc:  # names a file, a code and a rule; never a value
-            self._reply_safely(409, {"error": f"the existing contract has a problem and cannot be replaced: {exc}",
-                                     "code": "contract_unusable", "problem": dataclasses.asdict(exc.problem)})
-        except contracts.ContractInvalid as exc:  # locations and rules, never values
-            first = exc.issues[0] if exc.issues else {"location": "contract", "message": "is not valid"}
-            self._reply_safely(400, {"error": f"ContractError: {first['location']}: {first['message']}",
-                                     "code": "contract_error", "issues": exc.issues, "issue_count": exc.total})
+        except contracts.StoreError as exc:  # codes, locations and rules; contract names/values are not echoed
+            self._reply_safely(exc.status, {"format_version": 2, "error": exc.message, **exc.body()})
+        except model_step.SnapshotUnavailable as exc:
+            self._reply_safely(409, {"error": "the captured contract snapshot cannot be restored for execution",
+                                     "code": exc.code})
+        except contract_schema.DefinitionError as exc:
+            code = exc.issues[0].get('code', 'contract_invalid') if exc.issues else 'contract_invalid'
+            self._reply_safely(400, {'code': code, 'message': 'the contract definition or edit is invalid',
+                                     'issues': exc.issues, 'issue_count': exc.total})
+        except (contract_service.ValidationUnavailable, checks.ValidationUnavailable):
+            self._reply_safely(503, {'code': 'validation_unavailable',
+                                     'message': 'repair the AgentWiz validator installation'})
         except runs.RepairRefused as exc:
             self._reply_safely(exc.status, {"error": exc.message, "code": exc.code})
         except runs.NoSuchAttempt:
@@ -390,23 +673,62 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             self.close_connection = True
 
+    def _reply_workspace_error(self, exc: workspace_admin.WorkspaceAdminError) -> None:
+        payload = {"error": str(exc), "code": exc.code}
+        for key in ("path", "holder", "active", "limit", "cleanup"):
+            value = getattr(exc, key, None)
+            if value is not None:
+                payload[key] = value
+        self._reply_safely(exc.status, payload)
+
+    def _dispatch_gated(self, path: str, fn: Callable[[], None]) -> None:
+        try:
+            with self.server.workspace_gate.shared():
+                self._dispatch(path, fn)
+        except workspace_admin.WorkspaceAdminError as exc:
+            self._reply_workspace_error(exc)
+
     # --- routes ------------------------------------------------------------------------------
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
-        self._dispatch(path, lambda: self._get(path))
+        if _is_workspace_admin_path(path):
+            self._dispatch(path, lambda: self._get(path))
+        else:
+            self._dispatch_gated(path, lambda: self._get(path))
 
     def _get(self, path: str) -> None:
         if not self._authorised():
             return self._send(403, {"error": "missing or invalid session token"})
         if path == "/":
             return self._send(200, self.server.index, "text/html; charset=utf-8")
+        if path in self.server.assets:
+            return self._send(200, *self.server.assets[path])
+        if path == WORKSPACES_ROUTE:
+            return self._workspaces_get()
+        if path == WORKSPACES_ROUTE + "/launch":
+            return self._workspaces_launch()
+        if path.startswith("/api/workshop/") and not path.startswith("/api/workshop/tickets/"):
+            return self._workshop_get(path[len("/api/workshop/"):])
+        if path.startswith("/api/workshop/tickets/"):
+            return self._send(200, self.server.state.workshop_ticket_status(path[len("/api/workshop/tickets/"):]))
         if path == "/api/state":
             return self._send(200, self._state_body(self.server.state.view()))
         if path == "/api/tutorial":
             session = self.server.tutorial_session
             return self._send(200, session.info() if session else {"active": False})
+        if path == "/api/contracts":
+            return self._send(200, self.server.state.contracts_listing())
         if path.startswith("/api/contracts/"):
-            return self._send(200, self.server.state.get_contract(path[len("/api/contracts/"):]))
+            query = parse_qs(urlparse(self.path).query)
+            revision = None
+            if set(query) - {"revision"}:
+                raise contracts.StoreError("invalid", 400, "unknown query parameter")
+            if "revision" in query:
+                text = query["revision"]
+                if len(text) != 1 or not re.fullmatch(r"[1-9][0-9]{0,8}", text[0]):
+                    raise contracts.StoreError("invalid", 400, "revision must be a positive integer")
+                revision = int(text[0])
+            return self._send(200, self.server.state.contract_detail(unquote(path[len("/api/contracts/"):]), revision))
         if path == "/api/blocks":
             query = parse_qs(urlparse(self.path).query)
             listing = self.server.state.block_listing(reload=query.get("reload") == ["1"])
@@ -425,15 +747,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
-        self._dispatch(path, lambda: self._post(path))
+        if _is_workspace_admin_path(path):
+            self._dispatch(path, lambda: self._post(path))
+        else:
+            self._dispatch_gated(path, lambda: self._post(path))
 
     def _post(self, path: str) -> None:
         if not self._authorised():
             return self._send(403, {"error": "missing or invalid session token"})
-        routes = {"/api/tutorial/start": self._tutorial_start,
+        if path.startswith(WORKSPACES_ROUTE + "/"):
+            return self._workspaces_post(path)
+        if path.startswith("/api/workshop/") and path != "/api/workshop/tickets":
+            return self._workshop_post(path[len("/api/workshop/"):], self._body())
+        routes = {"/api/workshop/tickets": self._workshop_ticket, "/api/tutorial/start": self._tutorial_start,
                   "/api/tutorial/step": self._tutorial_step,
                   "/api/tutorial/exit": self._tutorial_exit,
-                  "/api/config": self._config, "/api/models": self._models,
+                  "/api/config": self._config, "/api/openrouter-key": self._openrouter_key, "/api/models": self._models,
                   "/api/providers": self._providers, "/api/complete": self._complete,
                   "/api/complete/stop": self._complete_stop, "/api/repair/preview": self._repair_preview,
                   "/api/repair": self._repair, "/api/history/switch": self._history_switch,
@@ -444,7 +773,13 @@ class Handler(BaseHTTPRequestHandler):
                   "/api/task_settings/save": self._task_save, "/api/roles/save": self._roles_save, "/api/blocks/run": self._block_run,
                   "/api/blocks/stop": self._block_stop,
                   "/api/contracts/save": self._contract_save, "/api/contracts/delete": self._contract_delete,
-                  "/api/contracts/check": self._contract_check,
+                  "/api/contracts/check": self._contract_check, "/api/contracts/family": self._contract_family,
+                  "/api/contracts/restore": self._contract_restore,
+                  "/api/contracts/project": self._contract_project, "/api/contracts/edit": self._contract_edit,
+                  "/api/contracts/instructions": self._contract_instructions,
+                  "/api/contracts/synthesis/plan": self._synthesis_plan,
+                  "/api/contracts/synthesis/start": self._synthesis_start,
+                  "/api/contracts/synthesis/apply": self._synthesis_apply,
                   "/api/mcp/servers": self._mcp_servers, "/api/mcp/token": self._mcp_token,
                   "/api/mcp/tools": self._mcp_tools, "/api/mcp/call": self._mcp_call,
                   "/api/mcp/cancel": self._mcp_cancel}
@@ -456,10 +791,167 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "not found"})
         handler(body)
 
-    @staticmethod
-    def _state_body(view: dict) -> dict:
-        return {**view, "agentwiz_version": __version__, "modelspell_version": modelspell.__version__,
-                "limits": {"request_bytes": insertion.REQUEST_LIMIT, "upload_bytes": UPLOAD_LIMIT}}
+    def _state_body(self, view: dict) -> dict:
+        out = {**view, "agentwiz_version": __version__, "modelspell_version": modelspell.__version__,
+               "limits": {"request_bytes": insertion.REQUEST_LIMIT, "upload_bytes": UPLOAD_LIMIT}}
+        out["workspace"] = {**view["workspace"], "admin": self.server.workspace_admin_enabled}
+        return out
+
+    def _workspaces_get(self) -> None:
+        info = workspace_admin.list_workspaces(self.server.workspace_root, self.server.workspace.name)
+        info.update({"format_version": 1, "admin": self.server.workspace_admin_enabled,
+                     "tutorial_active": self.server.tutorial.active()})
+        self._send(200, info)
+
+    def _workspaces_launch(self) -> None:
+        query = parse_qs(urlparse(self.path).query)
+        name = query.get("name", [self.server.workspace.name])[0]
+        port = None
+        if "port" in query:
+            try:
+                port = int(query["port"][0])
+            except (TypeError, ValueError):
+                raise workspace_admin.WorkspaceAdminError("invalid_workspace_name",
+                                                          "port must be an integer from 0 to 65535", 400) from None
+        command = workspace_admin.launch_command(self.server.workspace_root, name, self.server.profiles_dir,
+                                                 self.server.mcp_servers_dir, port)
+        self._send(200, {"format_version": 1, "command": command})
+
+    def _workspaces_post(self, path: str) -> None:
+        body = self._body()
+        if type(body.get("format_version")) is not int or body.get("format_version") != 1:
+            raise workspace_admin.WorkspaceAdminError("invalid_workspace_name", "format_version must be 1", 400)
+        action = path[len(WORKSPACES_ROUTE) + 1:]
+        name = body.get("name")
+        if action in ("switch", "create", "reset", "delete"):
+            if not isinstance(name, str):
+                raise workspace_admin.WorkspaceAdminError("invalid_workspace_name", "name must be a string", 400)
+        if action in ("reset", "delete") and body.get("confirm") != name:
+            raise workspace_admin.WorkspaceAdminError("confirmation_required",
+                                                      "type the workspace name exactly to confirm", 400)
+        with self.server._admin_lock:
+            if action == "switch":
+                result = self.server.switch_workspace(name)
+            elif action == "create":
+                result = self.server.switch_workspace(name, create=True)
+            elif action == "clone":
+                source, target = body.get("source"), body.get("target")
+                evidence = body.get("include_evidence", False)
+                if not isinstance(source, str) or not isinstance(target, str) or type(evidence) is not bool:
+                    raise workspace_admin.WorkspaceAdminError("invalid_workspace_name",
+                                                              "source and target must be names", 400)
+                result = self.server.clone_workspace_from(source, target, evidence)
+            elif action == "reset":
+                result = self.server.reset_workspace_by_name(name)
+            elif action == "delete":
+                result = self.server.delete_workspace_by_name(name)
+            else:
+                return self._send(404, {"error": "not found", "code": "missing"})
+        self._send(200, {"format_version": 1, "workspace": self.server._workspace_view(), **result})
+
+    def _workshop_get(self, path):
+        service = self.server.state.workshop
+        parts = path.split('/')
+        query = parse_qs(urlparse(self.path).query)
+        if path == 'starters':
+            from ..workshop_editor import STARTERS, examples
+            result = {'format_version': 1, 'starters': [{'id': k, 'version': 1, 'examples': examples(k)} for k in STARTERS]}
+        elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'revisions':
+            result = service.assets.revisions(parts[1])
+        elif len(parts) == 4 and parts[0] == 'blocks' and parts[2] == 'revisions':
+            result = service.preview({'key': parts[1], 'revision': parts[3]})
+        elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'examples':
+            result = service.collection(parts[1])
+        elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'support':
+            result = service.support(parts[1])
+        elif len(parts) == 2 and parts[0] in ('batches', 'comparisons'):
+            result = service.batch(parts[1])
+        elif path == 'batches':
+            result = {'active': service.active, 'latest': service.latest}
+        elif path == 'comparisons':
+            result = service.comparisons()
+        else:
+            return self._send(404, {'code': 'missing'})
+        self._send(200, result)
+
+    def _workshop_post(self, path, body):
+        try:
+            return self._workshop_post_checked(path, body)
+        except (KeyError, TypeError, ValueError, checks.ContractError):
+            raise workshop.WorkshopError('invalid', 400) from None
+
+    def _workshop_post_checked(self, path, body):
+        service = self.server.state.workshop
+        if body.get('format_version') != 1 or type(body.get('format_version')) is not int:
+            raise workshop.WorkshopError('invalid', 400)
+        body = {k: v for k, v in body.items() if k != 'format_version'}
+        parts = path.split('/')
+        if path == 'input-value':
+            from ..workshop_editor import input_value
+            result = {'text':jsonio.encode_exact(input_value(body['value']))}
+        elif path == 'render-value':
+            from ..workshop_editor import typed
+            result = typed(jsonio.decode_exact(body['text']))
+        elif path == 'answer-view':
+            from ..workshop_editor import typed
+            _, value = checks.check_answer_value(checks.contract_from_text(body['contract_text']), body['text'])
+            result = {'available': value is not checks.NO_VALUE}
+            if result['available']:
+                result.update(value=typed(value), text=jsonio.encode_exact(value))
+        elif path == 'preview':
+            result = service.preview(body)
+        elif path == 'plans':
+            result = service.plan(body.get('action'), body.get('request', {}))
+        elif path == 'save':
+            result = service.save(body)
+        elif path in ('test', 'batches'):
+            result = service.start(path, body)
+        elif path == 'assist':
+            result = service.assist(body)
+        elif path == 'proposals/apply':
+            result = service.apply(body)
+        elif len(parts) == 3 and parts[0] == 'batches' and parts[2] == 'stop':
+            result = service.stop(parts[1])
+        elif len(parts) == 4 and parts[0] == 'blocks' and parts[2:] == ['support', 'preview']:
+            result = service.support_preview(parts[1], body)
+        else:
+            return self._send(404, {'code': 'missing'})
+        self._send(200, result)
+
+    def do_PUT(self):
+        path = urlparse(self.path).path
+        def put():
+            if not self._authorised():
+                return self._send(403, {'error': 'missing or invalid session token'})
+            parts = path.split('/')
+            body = self._body()
+            if body.pop('format_version', None) != 1:
+                raise workshop.WorkshopError('invalid', 400)
+            if len(parts) == 6 and parts[1:3] == ['api', 'workshop'] and parts[3] == 'blocks' and parts[5] == 'examples':
+                return self._send(200, self.server.state.workshop.save_examples(parts[4], body))
+            if len(parts) == 8 and parts[1:4] == ['api', 'workshop', 'blocks'] and parts[5] == 'revisions' \
+                    and parts[7] == 'description':
+                return self._send(200, self.server.state.workshop.save_description(parts[4], parts[6], body))
+            if len(parts) == 5 and parts[1:4] == ['api', 'workshop', 'reviews']:
+                return self._send(200, self.server.state.workshop.review(parts[4], body))
+            self._send(404, {'code': 'missing'})
+        self._dispatch_gated(path, put)
+
+    def do_DELETE(self):
+        path = urlparse(self.path).path
+        def delete():
+            if not self._authorised():
+                return self._send(403, {'error': 'missing or invalid session token'})
+            parts = path.split('/')
+            if len(parts) == 5 and parts[1:4] == ['api', 'workshop', 'comparisons']:
+                return self._send(200, self.server.state.workshop.delete_comparison(parts[4]))
+            self._send(404, {'code': 'missing'})
+        self._dispatch_gated(path, delete)
+
+    def _workshop_ticket(self, body: dict) -> None:
+        if body != {"format_version": 1} or type(body.get("format_version")) is not int:
+            raise workshop.WorkshopError("invalid", 400)
+        self._send(200, self.server.state.workshop_ticket())
 
     def _tutorial_start(self, body: dict) -> None:
         session = self.server.tutorial_session
@@ -513,6 +1005,9 @@ class Handler(BaseHTTPRequestHandler):
         revision = _revision(body)
         self._send(200, self._state_body(self.server.state.apply_config(body, revision)))
 
+    def _openrouter_key(self, body: dict) -> None:
+        self._send(200, self._state_body(self.server.state.set_openrouter_key(body.get("api_key"), _revision(body))))
+
     def _profile_save(self, body: dict) -> None:
         _profile_name(body)
         revision = _revision(body)
@@ -534,7 +1029,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _roles_save(self, body: dict) -> None:
         revision = _revision(body)
-        self._send(200, self._state_body(self.server.state.save_roles(body.get("roles"), revision)))
+        self._send(200, self._state_body(self.server.state.save_roles(body.get("roles"), revision, body.get("definitions"))))
 
     # --- block runs (techspec 0.1.4, 10.9, 15.3) --------------------------------------------------------
     def _block_run(self, body: dict) -> None:
@@ -578,43 +1073,128 @@ class Handler(BaseHTTPRequestHandler):
             raise BodyError("the block name must follow the name rule")
         return name
 
-    # --- contracts (techspec 0.1.3, 7.8, 13.3) ----------------------------------------------------
+    # --- contracts (overhaul spec 13) -------------------------------------------------------------
     @staticmethod
-    def _contract_name(body: dict) -> str:
-        name = body.get("name")
-        if not isinstance(name, str):
-            raise BodyError("name must be a string")
-        return name
+    def _v2(body, required, optional=()):
+        """A version 2 contract request: exactly the listed members, no boolean integer substitutes."""
+        if (not isinstance(body, dict) or type(body.get('format_version')) is not int or body['format_version'] != 2
+                or not set(required) <= set(body) or set(body) - {'format_version', *required, *optional}):
+            raise contracts.StoreError('invalid', 400, 'requires exactly the version 2 request members')
+        return body
+
+    @staticmethod
+    def _contract_draft_body(body, fields):
+        Handler._v2(body, fields)
+
+    @staticmethod
+    def _name_field(body):
+        if not wsmod.valid_name(body.get('name')):
+            raise contracts.StoreError('invalid', 400, 'name must follow the name rule')
+        return body['name']
+
+    @staticmethod
+    def _token_field(body, nullable=False):
+        token = body.get('expected_file_token')
+        if token is None and nullable:
+            return None
+        if not isinstance(token, str) or contracts.DIGEST_RE.match(token) is None:
+            raise contracts.StoreError('invalid', 400, 'expected_file_token must be a sha256 file token'
+                                       + (' or null' if nullable else ''))
+        return token
+
+    @staticmethod
+    def _text_field(body, key):
+        if not isinstance(body.get(key), str):
+            raise contracts.StoreError('invalid', 400, f'{key} must be text')
+        return body[key]
+
+    def _contract_project(self, body):
+        self._v2(body, {'definition_text'})
+        self._send(200, {'format_version': 2, **contract_service.project(body['definition_text'])})
+
+    def _contract_edit(self, body):
+        self._v2(body, {'definition_text', 'edit'})
+        self._send(200, {'format_version': 2, **contract_service.apply_edit(body['definition_text'], body['edit'])})
 
     def _contract_save(self, body: dict) -> None:
-        name = self._contract_name(body)
-        text = body.get("text")
-        if not isinstance(text, str):
-            raise BodyError("text must be a string")
-        revision = body.get("revision")
-        if revision is not None and (not isinstance(revision, int) or isinstance(revision, bool)):
-            raise BodyError("revision must be an integer, or null to create a contract")
-        view, contract, notes = self.server.state.save_contract(name, text, revision)
-        self._send(200, {**self._state_body(view), "contract": contract, "notes": notes})
+        self._v2(body, {'name', 'family', 'expected_file_token', 'definition_text', 'label'}, {'proposal_id'})
+        name = self._name_field(body)
+        token = self._token_field(body, nullable=True)
+        family, label = self._text_field(body, 'family'), self._text_field(body, 'label')
+        text = self._text_field(body, 'definition_text')
+        origin, basis = 'manual', None
+        if 'proposal_id' in body:
+            contracts.parse_definition(text)               # located issues before the proposal is consulted
+            origin, basis = self.server.state.workshop.synthesis_origin(body['proposal_id'], text)
+        result = self.server.state.save_contract(name, family, token, text, label, origin=origin, basis=basis)
+        self._send(200, {'format_version': 2, **result})
+
+    def _contract_family(self, body: dict) -> None:
+        self._v2(body, {'name', 'expected_file_token', 'family'})
+        result = self.server.state.set_contract_family(self._name_field(body), self._token_field(body),
+                                                       self._text_field(body, 'family'))
+        self._send(200, {'format_version': 2, **result})
+
+    def _contract_restore(self, body: dict) -> None:
+        self._v2(body, {'name', 'expected_file_token', 'revision', 'label'})
+        revision = body['revision']
+        if type(revision) is not int or revision < 1:
+            raise contracts.StoreError('invalid', 400, 'revision must be a positive integer')
+        result = self.server.state.restore_contract(self._name_field(body), self._token_field(body), revision,
+                                                    self._text_field(body, 'label'))
+        self._send(200, {'format_version': 2, **result})
 
     def _contract_delete(self, body: dict) -> None:
-        name = self._contract_name(body)
-        revision = _revision(body)
-        self._send(200, self._state_body(self.server.state.delete_contract(name, revision)))
+        self._v2(body, {'name', 'expected_file_token'})
+        result = self.server.state.delete_contract(self._name_field(body), self._token_field(body))
+        self._send(200, {'format_version': 2, **result})
 
     def _contract_check(self, body: dict) -> None:
-        """Check pasted text against contract text, saved or not. No revision: nothing shared is used,
-        and no model is called (R4-19)."""
-        contract_text, text = body.get("contract_text"), body.get("text")
-        if not isinstance(contract_text, str):
-            raise BodyError("contract_text must be a string")
-        if not isinstance(text, str):
-            raise BodyError("text must be a string")
-        try:
-            contract = checks.contract_from_text(contract_text)
-        except checks.ContractError as exc:
-            raise contracts.ContractInvalid(exc.issues, exc.total) from None
-        self._send(200, {"check": checks.check_answer(contract, text)})
+        """A Contract check of pasted text: no model call, save or acceptance (spec 13)."""
+        self._v2(body, {'definition_text', 'value_text'})
+        self._send(200, {'format_version': 2, 'label': 'Contract check',
+                         **contract_service.check(body['definition_text'], body['value_text'])})
+
+    def _contract_instructions(self, body: dict) -> None:
+        """The exact direct-value section a Checked request would append for this pinned revision (spec 8, 13.1).
+        Resolved like the send itself, so a missing revision or changed digest refuses here too."""
+        self._v2(body, {'name', 'revision', 'digest'})
+        name, revision, digest = self._name_field(body), body['revision'], body['digest']
+        if type(revision) is not int or revision < 1:
+            raise contracts.StoreError('invalid', 400, 'revision must be a positive integer')
+        if not isinstance(digest, str) or contracts.DIGEST_RE.match(digest) is None:
+            raise contracts.StoreError('invalid', 400, 'digest must be a sha256 contract digest')
+        found = self.server.state.contract_for_request(name, revision, digest)
+        self._send(200, {'format_version': 2, 'name': name, 'revision': found.revision, 'digest': found.digest,
+                         'text': output_protocol.single_value_instructions(found.contract)})
+
+    # --- contract synthesis (overhaul spec 14.3) ------------------------------------------------------
+    _SYNTHESIS = ('task_description', 'output_name', 'definition_text', 'role')
+    _SYNTHESIS_OPTIONAL = ('settings_text', 'max_tokens')
+
+    def _synthesis_body(self, body, extra=()):
+        self._v2(body, self._SYNTHESIS + tuple(extra), self._SYNTHESIS_OPTIONAL)
+        return {k: v for k, v in body.items() if k != 'format_version'}
+
+    def _synthesis_plan(self, body):
+        result = self.server.state.workshop.synthesis_plan(self._synthesis_body(body))
+        self._send(200, {'format_version': 2, **result})
+
+    def _synthesis_start(self, body):
+        self._v2(body, self._SYNTHESIS + ('expected_plan', 'ticket'), self._SYNTHESIS_OPTIONAL + ('confirmations',))
+        clean = {k: v for k, v in body.items() if k != 'format_version'}
+        if 'confirmations' in body:
+            clean['confirmations'] = body['confirmations']
+        result = self.server.state.workshop.synthesis_start(clean)
+        self._send(200, {'format_version': 2, **result})
+
+    def _synthesis_apply(self, body):
+        self._v2(body, {'proposal_id', 'definition_text'})
+        text = body['definition_text']
+        if text is not None and not isinstance(text, str):
+            raise contracts.StoreError('invalid', 400, 'definition_text must be text or null')
+        result = self.server.state.workshop.synthesis_apply(body['proposal_id'], text)
+        self._send(200, {'format_version': 2, **result})
 
     # --- MCP (Sections 9, 10.7) -------------------------------------------------------------
     def _mcp_servers(self, body: dict) -> None:
@@ -792,6 +1372,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, self._state_body(self.server.state.update_profiles(body, _revision(body))))
 
     def _discovery_endpoint(self, body: dict):
+        if "base_url" in body or "api_key" in body:
+            raise SettingsError("server connections are configured in the model server configuration file")
         if "kind" not in body:
             raise BodyError("kind is required")
         base_url = body.get("base_url")
@@ -842,10 +1424,13 @@ class Handler(BaseHTTPRequestHandler):
                 raise BodyError("a Chat request takes no contract")
         else:
             ref = body.get("contract")
-            if (not isinstance(ref, dict) or not wsmod.valid_name(ref.get("name"))
-                    or not isinstance(ref.get("revision"), int) or isinstance(ref.get("revision"), bool)):
-                raise BodyError("a Checked request needs contract: {name, revision}")
-            contract_ref = (ref["name"], ref["revision"])
+            # The concrete pin the page reviewed: never "latest" (spec 13.1).
+            if (not isinstance(ref, dict) or set(ref) != {"name", "revision", "digest"}
+                    or not wsmod.valid_name(ref.get("name"))
+                    or type(ref.get("revision")) is not int or ref["revision"] < 1
+                    or not isinstance(ref.get("digest"), str) or contracts.DIGEST_RE.match(ref["digest"]) is None):
+                raise BodyError("a Checked request needs contract: {name, revision, digest}")
+            contract_ref = (ref["name"], ref["revision"], ref["digest"])
         snapshot = state.snapshot(revision)                     # 409 on a stale revision
         if snapshot.model.strip() == "":
             raise SettingsError("choose a model in Model settings")
@@ -853,8 +1438,9 @@ class Handler(BaseHTTPRequestHandler):
         arguments = model_call.task_arguments(task, snapshot.kind, snapshot.provider)
         copy_ = None
         if contract_ref is not None:
-            entry = state.contract_for_request(*contract_ref)   # 404, 409 stale_revision, 409 contract_unusable
-            copy_ = model_step.ContractCopy.of(entry.name, entry.revision, entry.contract)
+            found = state.contract_for_request(*contract_ref)   # 404, 409 digest_mismatch / contract_unusable
+            copy_ = model_step.ContractCopy.reference(contract_ref[0], found.revision, found.digest, found.contract)
+            checks.require_validation([copy_.parsed])
         writer = state.register_writer(f"{source} attempt")      # 503 once shutdown has begun (10.10)
         try:
             budget = state.budget
@@ -939,11 +1525,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _repair_preview(self, body: dict) -> None:
         _run, record, number = self.server.state.store.admit_repair(self._attempt_id(body), reserve=False)
+        self.server.state.key_for(record["endpoint"]["kind"], record["endpoint"]["base_url"])
         plan = model_step.repair_plan(record)
         contract = plan["contract"]
         self._send(200, {"parent_id": record["id"], "attempt": number, "messages": plan["messages"],
                          "settings": plan["settings"],
-                         "contract": {"name": contract.name, "revision": contract.revision},
+                         "contract": {"name": contract.name, "revision": contract.revision,
+                                      "digest": contract.digest},
                          "repair_message": plan["repair_message"], "repair_reason": plan["repair_reason"]})
 
     def _repair(self, body: dict) -> None:

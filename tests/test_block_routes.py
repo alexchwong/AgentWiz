@@ -4,13 +4,17 @@ import pytest
 from conftest import failure_of, get_state, request, write_block
 from test_blocks import MODEL_FILES, model_block, script_block, tool_block
 
-needs_checks = pytest.mark.needs_checks
 
 
 def test_state_body_carries_roles_blocks_and_scripts(ui):
     state = get_state(ui)
-    assert state["roles"] == {"map": {}, "revision": 1, "read_only": False,
-                              "path": str(ui.workspace.path / "roles.json"), "problem": None, "unresolved": []}
+    roles = state["roles"]
+    assert {k: roles[k] for k in ("map", "revision", "read_only", "path", "problem")} == {
+        "map": {}, "revision": 1, "read_only": False,
+        "path": str(ui.workspace.path / "roles.json"), "problem": None}
+    assert set(roles["definitions"]) == {"fast", "assistant", "reasoning", "write_contract", "write_block_description"}
+    assert roles["defaults"] == roles["definitions"]
+    assert {u["role"] for u in roles["unresolved"]} == set(roles["definitions"])
     assert state["blocks"] == {"path": str(ui.workspace.path / "blocks"), "active_runs": 0}
     assert state["scripts"] == {"running": 0, "limit": 4}
 
@@ -34,10 +38,13 @@ def test_listing_and_detail(ui):
     assert all(f["sha256"] and f["unavailable"] is None for f in detail["files"])
     assert detail["inputs"] == [{"name": "text", "description": "", "format": "text",
                                  "contract_text": detail["contracts"]["inputs"]["text"]["text"],
+                                 "reference": None, "digest": detail["contracts"]["inputs"]["text"]["digest"],
                                  "form": None, "form_notes": []}]
+    assert detail["contracts"]["inputs"]["text"]["name"] is None                  # an inline capture
     assert detail["outputs"][0]["name"] == "out" and detail["outputs"][0]["format"] == "text"
     assert "description" not in detail["outputs"][0]
-    assert detail["step"] == {"id": "s", "kind": "model", "role": "fast", "max_repairs": 2}
+    assert detail["step"] == {"id": "s", "kind": "model", "role": "fast", "max_repairs": 2,
+                              "response_mode": "named_json", "task_resets": []}
     assert detail["budget"] == {"max_seconds": 1800, "max_model_tokens": None}
     assert request(ui, "/api/blocks/t")["step"] == {"id": "call", "kind": "tool", "server": "docs", "tool": "lookup"}
     script = request(ui, "/api/blocks/sc")
@@ -56,7 +63,6 @@ def test_a_block_with_a_problem_still_returns_the_files_it_can_read(ui):
     assert detail["step"] is None and detail["inputs"] == []
 
 
-@needs_checks
 def test_a_json_input_carries_its_form(ui):
     block = model_block()
     block["inputs"]["doc"] = {"description": "The doc", "contract": {

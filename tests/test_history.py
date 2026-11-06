@@ -9,7 +9,7 @@ import pytest
 
 from agentwiz import history, jsonio, runs
 from agentwiz.workspace import open_workspace
-from conftest import (DONE, KEY, TEXT_CONTRACT, Reply, add_server, answer, complete, configure, contract_item, delta,
+from conftest import (contract_pin, contract_token, DONE, KEY, TEXT_CONTRACT, Reply, add_server, answer, complete, configure, contract_item, delta,
                       failure_of, final_of, get_state, history_dir, iter_events, poll_attempt, read_run_files,
                       read_until, record_of, repair_attempt, request, run_folders, save_contract, set_token,
                       status_of, switch_history, wait_until, write_ws_file)
@@ -18,7 +18,7 @@ SSE = {"Content-Type": "text/event-stream"}
 
 
 def checked(ui, name="c", prompt="hi", **kw):
-    return complete(ui, prompt, source="checked_request", contract=(name, contract_item(ui, name)["revision"]), **kw)
+    return complete(ui, prompt, source="checked_request", contract=contract_pin(ui, name), **kw)
 
 
 def held_chat(ui, **body):
@@ -40,7 +40,7 @@ def test_the_switch_is_read_when_the_run_is_created(ui, server):
     server.reply(Reply(body=[delta("nope")], headers=SSE, hold=True, after_release=[delta(finish="stop"), DONE]))
     resp = request(ui, "/api/complete", {"source": "checked_request", "prompt": "hi", "system": "",
                                          "revision": get_state(ui)["revision"],
-                                         "contract": {"name": "c", "revision": contract_item(ui, "c")["revision"]}},
+                                         "contract": dict(zip(("name", "revision", "digest"), contract_pin(ui, "c")))},
                    raw=True)
     it = iter_events(resp)
     off_run = read_until(it, "text")[0]
@@ -60,7 +60,7 @@ def test_the_switch_is_read_when_the_run_is_created(ui, server):
     server.reply(Reply(body=[delta("nope")], headers=SSE, hold=True, after_release=[delta(finish="stop"), DONE]))
     resp = request(ui, "/api/complete", {"source": "checked_request", "prompt": "hi", "system": "",
                                          "revision": get_state(ui)["revision"],
-                                         "contract": {"name": "c", "revision": contract_item(ui, "c")["revision"]}},
+                                         "contract": dict(zip(("name", "revision", "digest"), contract_pin(ui, "c")))},
                    raw=True)
     it = iter_events(resp)
     started = read_until(it, "started")[-1]

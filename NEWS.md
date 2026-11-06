@@ -1,4 +1,64 @@
 # NEWS
+## 0.2.0
+- The contract editor preserves a new choice while an earlier edit finishes.
+- Workshop Design places revision selection above Save as new revision and Overwrite selected revision.
+- Confirmed overwrite preserves the selected revision number, unrelated default and existing run evidence.
+- Overwrite clears the selected revision’s standard description.
+- Select, test or compare eligible retained v3 revisions without changing the default. Results identify the revision used.
+- Edit a retained selection or use Restore to draft before saving it as a new revision.
+- Standard descriptions belong to individual saved revisions and leave the executable block intact.
+- Describe block uses the `write_block_description` role and shows the destination before sending.
+- Review a proposed description with Save description, Refine or Discard. Edit description supports manual editing.
+- A new revision starts without a standard description.
+- Assist's describe opens the same Describe flow; Improve and Explain failure no longer edit description sections.
+- Workspaces created earlier list `write_block_description` among missing default roles until it is added.
+- The port field is now labelled Declared meaning; per-port Documentation in the description is display-only.
+- Contract synthesis shows sanitized model-call errors, including missing API keys, instead of only a generic failure.
+- Roles flags default roles missing from the saved workspace and explains how to add them without replacing existing roles.
+- Contracts support Text literal rules, a restricted JSON Schema vocabulary and Any JSON. JSON numbers are exact.
+- Legacy `checks` and `strict` contract definitions are refused.
+- Saved contracts keep revisions in one file per name, with families, restore-as-new and stale-edit protection.
+- Deletion is refused while blocks use a contract. Version 1 contract files require recreation or rewriting.
+- Executable blocks use format 3 and pin saved contracts by name, revision and digest.
+- Runs and repairs retain contract snapshots. Executable v1 blocks report `migration_required`.
+- Workshop → Contracts replaces the Workbench Contracts tab; `#contracts` opens it.
+- The contract library searches, filters by family, shows revisions and restores old ones as new revisions.
+- A readable Text/Structured JSON/Any JSON editor; advanced source is optional and follows the same rules.
+- Contract saves show a review of changes first; stale saves keep the draft.
+- Used by lists blocks pinning a contract; deletion is refused while any do.
+- Block ports choose Inline or a pinned saved contract revision; newer revisions are never adopted automatically.
+- Ports offer Select newer, Make local copy and Save inline as reusable.
+- Checked request selects Latest or a numbered revision and previews the exact generated contract section.
+- The new `write_contract` role drafts JSON contracts with stated assumptions; applying and saving stay separate steps.
+- JSON Schema validation is now included in every installation; the optional checks extra is removed.
+- Workshop Design uses three responsive columns with editable input/output tables and Save in the settings pane.
+- Design adds a model-role dropdown and paired temperature and reasoning controls that show inherited defaults.
+- Additional repairs sits below Outputs. Revision naming sits near Save.
+- Assist and Revision actions share the mode action row.
+- Block revisions have stable per-block numbers, optional names and an inline selector; restoring saves a new revision.
+- Structured-variable editors appear immediately after format selection; a contract type change that drops content previews it first.
+- Model-server connections now come from `config/model-servers.ini`; OpenRouter keys have a separate session-only button and environment fallback.
+- Model blocks return one named JSON envelope: several independently checked outputs, published together or not at all.
+- Each model step now sends generated output instructions; `{{output.name}}` describes an output inside prompts.
+- Design shows system instructions, per-output structured fields and a Request preview with Copy of the exact messages sent.
+- Temperature and reasoning can inherit a role's default, be set per block, or be reset to the backend default.
+- Roles can save a default temperature and reasoning (roles file format 3); older versions cannot read it.
+- Workshop assistance has its own temperature and reasoning controls, separate from the block it proposes.
+- Saved examples and expected values use typed forms; a new empty group must gain a field before saving.
+- Workshop reports located block validation errors instead of misleading file-permission failures.
+- Test retains usable inputs and separates one-off input from pending or saved examples.
+- Output renames preserve step bindings.
+- Roles show one editor at a time, with location and family filters, suggested families and custom family creation.
+- Browsing preserves unsaved edits; Save all changes saves every role.
+- Starter roles (`fast`, `assistant`, `reasoning`) have a guided editor with model details and setup links.
+- Local/Cloud assignments are enforced. Local roles require loopback model servers; no automatic cloud fallback.
+- New-block creation validates keys without losing inputs, lists model roles, and discovers tools from configured MCP servers in dropdowns.
+- Design, test and compare individual blocks in Workshop with saved revisions, examples and correctness reviews.
+- Review bounded assistance proposals before applying them to a draft.
+- Workspaces dialog: switch, create, clone, reset and delete workspaces in the launch folder.
+- Switching reloads the page and releases the old workspace lock; active work must be stopped first.
+- Clone can include saved runs and comparisons; reset and delete require typing the workspace name.
+
 ## 0.1.4
 - Blocks tab: run single-step blocks saved as folders in the workspace, with a generated input form and trace.
 - Block files are JSON, with prompts in Markdown files; AgentWiz reads them and never writes them.

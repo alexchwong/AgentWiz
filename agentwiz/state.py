@@ -26,11 +26,12 @@ import threading
 import time
 from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 
 import modelspell
 from modelspell import Endpoint
 
-from . import blocks, checks, contracts, history, mcp_client, mcp_ops, roles, runs, script_step, writers
+from . import workshop, blocks, checks, contracts, history, mcp_client, mcp_ops, roles, runs, script_step, writers
 from . import mcp_library as ml
 from . import profiles as pf
 from . import task_settings as ts
@@ -124,7 +125,9 @@ class RoleUnresolved(Exception):
 
     MESSAGES = {"undefined": "role {role} is not defined",
                 "no_profile": "role {role} names a profile that does not exist",
-                "no_model": "role {role}'s profile has no model"}
+                "no_model": "role {role}'s profile has no model",
+                "unconfigured": "role {role} is not configured; open Settings → Roles",
+                "location": "role {role}'s profile is incompatible with its local/cloud location"}
 
     def __init__(self, role: str, reason: str):
         super().__init__(self.MESSAGES[reason].format(role=role))
@@ -190,12 +193,26 @@ def supported_view(kind: str) -> dict:
             for level in levels}
 
 
+@dataclasses.dataclass(frozen=True)
+class RoleCapture:
+    """One role as a model call uses it: the destination snapshot and the role's saved defaults, taken
+    under one lock acquisition so the two can never come from different versions of `roles.json`."""
+
+    role: str
+    profile: str
+    snapshot: RequestSnapshot
+    defaults: Mapping[str, object]      # detached copy; empty means the backend's own defaults
+    revision: int                       # the roles revision the two were read at
+
+
 class ProcessState:
     def __init__(self, workspace: Workspace, request_limit: int = 8, *, profiles_dir: Path,
-                 mcp_servers_dir: Path | None = None):
+                 mcp_servers_dir: Path | None = None, servers, config_path=None):
         self.budget = RequestBudget(request_limit)
         self.workspace = workspace
         self._lock = threading.Lock()
+        self.servers = MappingProxyType(dict(servers))
+        self.config_path = config_path
         self._settings = ModelSettings()
         self._revision = 1
         self._keys: dict[tuple[str, str], str] = {}
@@ -232,11 +249,13 @@ class ProcessState:
             loaded_roles = roles.read(workspace.path)
             self._roles_problem: Problem | None = loaded_roles.problem
             self._roles = dict(loaded_roles.roles)
+            self._role_definitions = dict(loaded_roles.definitions)
             self._roles_revision = 1
             # Block definitions (8.8) and the script-process budget (11.4).
             self.blocks = blocks.BlockStore(workspace.path, self.contracts)
             self.scripts = RequestBudget(4)
             self.writers = writers.WriterBarrier()
+            self.workshop_operations = workshop.Operations()
             self.cleanups = script_step.Registry()            # cleanup owners and running script steps
             self._deliveries: set = set()                       # objects with interrupt(), under their own lock
             self._deliveries_lock = threading.Lock()
@@ -246,7 +265,9 @@ class ProcessState:
             self._save_runs = bool(raw.get("save_runs")) if raw and problem is None and not workspace.read_only else False
             self._history_revision = 1
             self._credentials: set[str] = set()      # typed keys and tokens, kept until the process exits
-            self._env_names: set[str] = set()        # environment variables read for credentials
+            if self.servers:
+                self._credentials.update(s.api_key for s in self.servers.values() if s.api_key)
+            self._env_names: set[str] = {"OPENROUTER_API_KEY"}
             self.store = runs.AttemptStore()
             self.history = history.Writer(workspace.path, self.store, self.credentials)
             # The MCP library (Section 9.1), its revision and typed tokens (bound to a URL).
@@ -260,6 +281,8 @@ class ProcessState:
             self._mcp = ml.LibraryFile(None)
             with self.mcp_library.locked():
                 self._refresh_mcp_locked(initial=True)
+            from .workshop_service import Service
+            self.workshop = Service(self)
 
     def _refresh_defaults_locked(self, initial=False):
         signature = pf.fingerprint(self.library.path)
@@ -278,6 +301,18 @@ class ProcessState:
                       if name in self._defaults.profiles and self._defaults.profiles[name] != settings)
 
     # --- views -------------------------------------------------------------------------------
+    def _configured_settings(self, settings: ModelSettings) -> ModelSettings:
+        return dataclasses.replace(settings, base_url=self.servers[settings.kind].base_url)
+
+    def _endpoint(self, settings: ModelSettings, api_key=None) -> Endpoint:
+        settings = self._configured_settings(settings)
+        if api_key is None:
+            api_key = self.servers[settings.kind].api_key
+        return _endpoint(settings, api_key)
+
+    def _location(self, settings: ModelSettings) -> str:
+        return roles.profile_location(self._configured_settings(settings))
+
     @property
     def problems(self) -> list[Problem]:
         """Workspace problems, then the profile problem, if any (for the terminal at launch)."""
@@ -295,17 +330,25 @@ class ProcessState:
 
     def _view_locked(self) -> dict:
         s = self._settings
-        ep = _endpoint(s)
+        ep = self._endpoint(s)
         if (ep.kind, ep.base_url) in self._keys:
             key_source = "session"
         elif ep.api_key_env and os.environ.get(ep.api_key_env, "").strip():
             key_source = "env:" + ep.api_key_env
+        elif self.servers and self.servers[s.kind].api_key:
+            key_source = "config"
         else:
             key_source = "none"
         ws = self.workspace
         active = self._active
-        return {"kind": s.kind, "base_url": s.base_url, "model": s.model, "provider": s.provider,
+        router = self._endpoint(ModelSettings(kind="openrouter"))
+        router_source = ("session" if (router.kind, router.base_url) in self._keys else
+                         "env:OPENROUTER_API_KEY" if os.environ.get("OPENROUTER_API_KEY", "").strip() else "none")
+        return {"kind": s.kind, "base_url": ep.base_url if self.servers else s.base_url, "model": s.model, "provider": s.provider,
                 "key_source": key_source,
+                "openrouter_key_source": router_source, "server_config_path": str(self.config_path or ""),
+                "legacy_server_profiles": sorted(n for n, p in self._profiles.items()
+                    if self.servers and p.base_url and p.base_url.rstrip("/") != self.servers[p.kind].base_url),
                 "revision": self._revision,
                 "task": {"saved": self._task_saved.saved_shape(), "revision": self._task_revision,
                          "read_only": self._task_read_only_locked(),
@@ -322,6 +365,8 @@ class ProcessState:
                               "read_only": ws.read_only,
                               "problems": [dataclasses.asdict(p) for p in self._problems_locked()]},
                 "profiles": {"names": sorted(self._profiles), "active": active,
+                             "details": {n: {**dataclasses.asdict(self._configured_settings(p)), "location": self._location(p)}
+                                         for n, p in self._profiles.items()},
                              "path": str(self.profiles_path / pf.PROFILES_FILE),
                               "defaults_path": str(self.library.path / pf.PROFILES_FILE),
                               "defaults_read_only": self._defaults.problem is not None,
@@ -338,17 +383,20 @@ class ProcessState:
         """Why `role` cannot be resolved now (7.4), or None."""
         profile = self._roles.get(role)
         if profile is None:
-            return RoleUnresolved(role, "undefined")
+            return RoleUnresolved(role, "unconfigured" if role in self._role_definitions else "undefined")
         settings = self._profiles.get(profile)
         if settings is None:
             return RoleUnresolved(role, "no_profile")
+        definition = self._role_definitions.get(role)
+        if definition and definition["location"] != self._location(settings):
+            return RoleUnresolved(role, "location")
         if not settings.model.strip():
             return RoleUnresolved(role, "no_model")
         return None
 
     def _unresolved_roles_locked(self) -> list[dict]:
         out = []
-        for role in sorted(self._roles):
+        for role in sorted(self._roles.keys() | self._role_definitions.keys()):
             failure = self._role_failure_locked(role)
             if failure is not None:
                 out.append({"role": role, "reason": str(failure)})
@@ -356,15 +404,18 @@ class ProcessState:
 
     def _roles_view_locked(self) -> dict:
         return {"map": dict(sorted(self._roles.items())), "revision": self._roles_revision,
+                "definitions": copy.deepcopy(self._role_definitions), "defaults": copy.deepcopy(roles.DEFAULTS),
                 "read_only": self._roles_read_only_locked(), "path": str(self.workspace.path / roles.FILE),
                 "problem": dataclasses.asdict(self._roles_problem) if self._roles_problem else None,
                 "unresolved": self._unresolved_roles_locked()}
 
     def _contracts_view_locked(self) -> dict:
         available, detail = checks.schema_support()
-        return {"items": [entry.list_view() for entry in self.contracts.entries()],
+        return {"format_version": contracts.FORMAT_VERSION,
+                "items": [entry.list_view() for entry in self.contracts.entries()],
+                "families": self.contracts.families(),
                 "read_only": self.workspace.read_only, "path": str(self.contracts.path),
-                "checks": {"available": available, "detail": detail}}
+                "validation": {"available": available, "detail": detail}}
 
     def _history_view_locked(self) -> dict:
         return {"save_runs": self._save_runs and not self.workspace.read_only, "revision": self._history_revision,
@@ -384,16 +435,10 @@ class ProcessState:
     # --- settings ----------------------------------------------------------------------------
     def _settings_and_keys_locked(self, body: Mapping) -> tuple[ModelSettings, dict]:
         """The settings and keys a /api/config body would produce; changes nothing."""
+        if "base_url" in body or "api_key" in body:
+            raise SettingsError("server URLs and keys are configured outside model settings")
         new = settings_from_body(self._settings, body)
-        ep = _endpoint(new)
-        slot = (ep.kind, ep.base_url)
-        keys = dict(self._keys)
-        api_key = body.get("api_key")
-        if api_key == "":
-            keys.pop(slot, None)
-        elif api_key is not None:
-            keys[slot] = validate_key(api_key)
-        return new, keys
+        return new, dict(self._keys)
 
     def apply_config(self, body: Mapping, revision: int) -> dict:
         with self._lock:
@@ -405,6 +450,22 @@ class ProcessState:
                 self._settings, self._keys = new, keys
                 self._credentials.update(keys.values())
                 self._revision += 1
+            return self._view_locked()
+
+    def set_openrouter_key(self, value: object, revision: int) -> dict:
+        with self._lock:
+            self._refresh_locked()
+            if revision != self._revision:
+                raise StaleRevision(self._revision)
+            ep = self._endpoint(ModelSettings(kind="openrouter"))
+            slot = (ep.kind, ep.base_url)
+            if value == "":
+                self._keys.pop(slot, None)
+            else:
+                key = validate_key(value)
+                self._keys[slot] = key
+                self._credentials.add(key)
+            self._revision += 1
             return self._view_locked()
 
     # --- profiles ----------------------------------------------------------------------------
@@ -578,7 +639,7 @@ class ProcessState:
 
     # --- roles (techspec 0.1.4, 7.3, 7.4) -----------------------------------------------------
     @_writes("roles save")
-    def save_roles(self, roles_body: object, revision: int) -> dict:
+    def save_roles(self, roles_body: object, revision: int, definitions=None) -> dict:
         """Save the role map under the state lock (7.3). The writer-barrier registration the route makes before
         taking this lock arrives with the barrier (Phase B)."""
         with self._lock:
@@ -594,39 +655,68 @@ class ProcessState:
                 raise ReadOnly([disk.problem], False, "roles")
             try:
                 parsed = roles.parse_roles(roles_body)
+                if definitions is None:
+                    # Legacy clients may change assignments, but cannot remove existing routing policy.
+                    defined = {}
+                    if disk.raw.get("format_version") in (2, 3):
+                        defined = copy.deepcopy(dict(self._role_definitions))
+                    for n, p in parsed.items():
+                        if n not in defined and p in self._profiles:
+                            defined[n] = {"description": "", "location": self._location(self._profiles[p])}
+                else:
+                    defined = roles.parse_definitions(definitions)
+                    if not set(parsed) <= set(defined):
+                        raise roles.RolesError("every assigned role requires a definition")
             except roles.RolesError as exc:
                 raise SettingsError(str(exc)) from None
             for role, profile in parsed.items():
                 if profile not in self._profiles:
                     raise RoleProfileMissing(role)
-            raw = roles.build_raw(disk.raw, parsed)
+                if role in defined and defined[role]["location"] != self._location(self._profiles[profile]):
+                    raise SettingsError(f"role {role}'s profile is incompatible with its local/cloud location")
+            raw = roles.build_raw(disk.raw, parsed, defined)
             if disk.exists and raw == disk.raw:
                 self._roles = parsed
+                self._role_definitions = defined
                 return self._view_locked()
             try:
                 roles.write(self.workspace.path, raw)
             except OSError as exc:
                 raise WriteFailed(str(self.workspace.path / roles.FILE), exc.strerror or type(exc).__name__) from None
             self._roles = parsed
+            self._role_definitions = defined
             self._roles_revision += 1
             return self._view_locked()
 
-    def resolve_role(self, role: str) -> RequestSnapshot:
-        """The snapshot a block step uses for `role` (7.4), built from the profile's saved settings. Raises
-        RoleUnresolved."""
+    def role_capture(self, role: str) -> RoleCapture:
+        """The destination snapshot and the saved defaults of `role`, read together under the state lock
+        (7.4). Raises RoleUnresolved."""
         with self._lock:
             failure = self._role_failure_locked(role)
             if failure is not None:
                 raise failure
             profile = self._roles[role]
             s = self._profiles[profile]
-            ep = _endpoint(s)
+            ep = self._endpoint(s)
             key = self._keys.get((ep.kind, ep.base_url))
             if ep.api_key_env:
                 self._env_names.add(ep.api_key_env)
-            return RequestSnapshot(endpoint=_endpoint(s, key), model=s.model, kind=s.kind,
-                                   provider=s.provider if s.kind == "openrouter" else "",
-                                   profile_name=profile, profile_modified=False)
+            snapshot = RequestSnapshot(endpoint=self._endpoint(s, key), model=s.model, kind=s.kind,
+                                       provider=s.provider if s.kind == "openrouter" else "",
+                                       profile_name=profile, profile_modified=False)
+            defaults = copy.deepcopy(dict((self._role_definitions.get(role) or {}).get("task_defaults") or {}))
+            return RoleCapture(role, profile, snapshot, defaults, self._roles_revision)
+
+    def resolve_role(self, role: str) -> RequestSnapshot:
+        """The snapshot a block step uses for `role` (7.4), built from the profile's saved settings. Raises
+        RoleUnresolved."""
+        return self.role_capture(role).snapshot
+
+    def workshop_ticket(self) -> dict:
+        return self.workshop_operations.issue()
+
+    def workshop_ticket_status(self, ticket: object) -> dict:
+        return self.workshop_operations.lookup(ticket)
 
     # --- block definitions (techspec 0.1.4, 8.8) ------------------------------------------------
     def block_listing(self, reload: bool = False) -> dict:
@@ -660,48 +750,78 @@ class ProcessState:
                 raise NoSuchBlock()
             return blocks.detail(loaded)
 
-    # --- contracts (techspec 0.1.3, 7.8) ------------------------------------------------------
-    def get_contract(self, name: object) -> dict:
-        """One contract with its text as stored; 404 (NoSuchContract) if there is none."""
+    # --- contracts (overhaul spec 9-13) ---------------------------------------------------------
+    def contracts_listing(self) -> dict:
         with self._lock:
             self.contracts.rescan()
-            entry = self.contracts.get(name) if isinstance(name, str) else None
-            if entry is None:
-                raise contracts.NoSuchContract()
-            return entry.full_view()
+            return self._contracts_view_locked()
 
-    @_writes("contract save")
-    def save_contract(self, name: str, text: str, revision: int | None) -> tuple[dict, dict, list[str]]:
-        """Create (revision None) or update a contract under the state lock. Returns the state view, the
-        contract's view and the notes. Raises the contracts.* exceptions the server maps, StaleRevision,
-        ReadOnly, SettingsError (a bad name) and WriteFailed."""
-        with self._lock:
-            try:
-                entry, notes = self.contracts.save(name, text, revision, self.workspace.read_only)
-            except contracts.StaleContract as exc:
-                raise StaleRevision(exc.current) from None
-            except contracts.WorkspaceReadOnly:
-                raise ReadOnly(list(self.workspace.problems), True) from None
-            except contracts.BadName as exc:
-                raise SettingsError(str(exc)) from None
-            except OSError as exc:
-                raise WriteFailed(str(self.contracts.path / (name + contracts.SUFFIX)),
-                                  exc.strerror or type(exc).__name__) from None
-            return self._view_locked(), entry.full_view(), notes
+    def _used_by(self, name: str, latest: int | None) -> tuple[list, list]:
+        from .workshop_assets import reference_scan
+        return reference_scan(self.workspace.path / blocks.DIRECTORY, name, latest)
 
-    @_writes("contract delete")
-    def delete_contract(self, name: str, revision: int) -> dict:
+    def contract_detail(self, name: object, revision: int | None = None) -> dict:
+        """One contract read from its current bytes: identity, file token, the selected numbered revision (the
+        latest at this read by default), its exact definition text, revision summaries and Used by. A file with
+        a problem returns its metadata and problem but no editable projection. Raises contracts.StoreError."""
+        if not wsmod.valid_name(name):
+            raise contracts.StoreError("no_such_contract", 404, "no such contract")
+        entry = contracts.ContractStore(self.workspace.path).read_current(name)     # never the stat cache
+        if entry is None:
+            raise contracts.StoreError("no_such_contract", 404, "no such contract")
         with self._lock:
+            self.contracts.rescan()
+        blockers, unreadable = self._used_by(name, entry.latest if entry.problem is None else None)
+        out = {"format_version": contracts.FORMAT_VERSION, "name": entry.name, "family": entry.family,
+               "file_token": entry.token, "problem": entry.problem_view(),
+               # complete is false whenever some definition could not be inspected: an empty item list is
+               # then not evidence that the contract is unused.
+               "used_by": {"items": blockers, "unreadable": unreadable, "complete": not unreadable},
+               "read_only": self.workspace.read_only}
+        if entry.problem is not None:
+            return {**out, "latest": None, "revision": None, "revisions": []}
+        selected = entry.revisions[-1] if revision is None else entry.revision(revision)
+        if selected is None:
+            raise contracts.StoreError("no_such_revision", 404, "no such revision")
+        return {**out, "latest": entry.latest, "revision": selected.revision, "digest": selected.digest,
+                "label": selected.label, "origin": selected.origin, "created_at": selected.created_at,
+                "basis": selected.basis, "definition_text": selected.definition_text(),
+                "revisions": [r.summary() for r in entry.revisions]}
+
+    def _contract_write(self, label: str, operation):
+        """Writer registration first, then the logical registry reservation (claimed under C6, which is released
+        at once); the filesystem work holds neither C1 nor C6. The shared cache is refreshed briefly after."""
+        if self.workspace.read_only:
+            raise contracts.StoreError("read_only", 409, "the workspace is read-only")
+        with self.writing(label):
             try:
-                self.contracts.delete(name, revision, self.workspace.read_only)
-            except contracts.StaleContract as exc:
-                raise StaleRevision(exc.current) from None
-            except contracts.WorkspaceReadOnly:
-                raise ReadOnly(list(self.workspace.problems), True) from None
+                with self.workshop.assets.registry():
+                    before_write(label)
+                    result = operation(contracts.ContractStore(self.workspace.path))
             except OSError as exc:
-                raise WriteFailed(str(self.contracts.path / (name + contracts.SUFFIX)),
-                                  exc.strerror or type(exc).__name__) from None
-            return self._view_locked()
+                raise WriteFailed(str(self.contracts.path), exc.strerror or type(exc).__name__) from None
+            finally:
+                with self._lock:
+                    self.contracts.rescan()
+            return result
+
+    def save_contract(self, name: str, family: str, expected_token: str | None, definition_text: str, label: str,
+                      *, origin: str = "manual", basis: dict | None = None) -> dict:
+        return self._contract_write("contract save", lambda store: store.save(
+            name, family, expected_token, definition_text, label, origin=origin, basis=basis,
+            read_only=self.workspace.read_only))
+
+    def set_contract_family(self, name: str, expected_token: str, family: str) -> dict:
+        return self._contract_write("contract family", lambda store: store.set_family(
+            name, expected_token, family, read_only=self.workspace.read_only))
+
+    def restore_contract(self, name: str, expected_token: str, revision: int, label: str) -> dict:
+        return self._contract_write("contract restore", lambda store: store.restore(
+            name, expected_token, revision, label, read_only=self.workspace.read_only))
+
+    def delete_contract(self, name: str, expected_token: str) -> dict:
+        return self._contract_write("contract delete", lambda store: store.delete(
+            name, expected_token, lambda n: self._used_by(n, None), read_only=self.workspace.read_only))
 
     # --- MCP library, tokens and snapshots (Sections 9.1, 9.2) ------------------------------
     def _refresh_mcp_locked(self, initial: bool = False) -> None:
@@ -817,20 +937,20 @@ class ProcessState:
             return mcp_client.Snapshot(server, config.url, config.idle_timeout_s, config.call_deadline_s,
                                        config.discovery_deadline_s, token)
 
-    # --- contracts for a request (techspec 5.2, step 2) ---------------------------------------
-    def contract_for_request(self, name: str, revision: int) -> contracts.Entry:
-        """The usable contract a Checked request names, at that revision. NoSuchContract (404), StaleRevision
-        (409) or ContractUnusable (409)."""
-        with self._lock:
-            self.contracts.rescan()
-            entry = self.contracts.get(name) if isinstance(name, str) else None
-            if entry is None:
-                raise contracts.NoSuchContract()
-            if entry.problem is not None:
-                raise contracts.ContractUnusable(entry.problem)
-            if entry.revision != revision:
-                raise StaleRevision(entry.revision)
-            return entry
+    # --- contracts for a request (overhaul spec 13.1) ----------------------------------------
+    def contract_for_request(self, name: str, revision: int, digest: str):
+        """The exact pinned revision a Checked request reviewed, read from the current bytes. A newer appended
+        revision does not invalidate it; a missing revision, an unusable file or a different digest refuses
+        before dispatch. Raises contracts.StoreError."""
+        if not wsmod.valid_name(name):
+            raise contracts.StoreError("no_such_contract", 404, "no such contract")
+        entry = contracts.ContractStore(self.workspace.path).read_current(name)
+        found, refused = contracts.resolve_pin(entry, name, revision, digest)
+        if found is None:
+            code, message = refused
+            status = 404 if code in ("no_such_contract", "no_such_revision") else 409
+            raise contracts.StoreError(code, status, message)
+        return found
 
     # --- run history (techspec 10.1) -------------------------------------------------------------
     def credentials(self) -> list[str]:
@@ -925,6 +1045,9 @@ class ProcessState:
             first = not self._shutdown_started
             self._shutdown_started = True
         if first:
+            self.workshop_operations.close()
+            if self.workshop.active:
+                self.workshop.stop(self.workshop.active)
             self.writers.close()                      # 1. close admission, one gate at a time
             self.store.close()
             self.mcp_ops.close()
@@ -960,12 +1083,12 @@ class ProcessState:
             if revision != self._revision:
                 raise StaleRevision(self._revision)
             s = self._settings
-            ep = _endpoint(s)
+            ep = self._endpoint(s)
             key = self._keys.get((ep.kind, ep.base_url))
             if ep.api_key_env:
                 self._env_names.add(ep.api_key_env)
             active = self._active
-            return RequestSnapshot(endpoint=_endpoint(s, key), model=s.model, kind=s.kind,
+            return RequestSnapshot(endpoint=self._endpoint(s, key), model=s.model, kind=s.kind,
                                    provider=s.provider if s.kind == "openrouter" else "",
                                    profile_name=active,
                                    profile_modified=active is not None and self._profiles.get(active) != s)
@@ -975,22 +1098,22 @@ class ProcessState:
         repair, which sends to the endpoint its parent captured (techspec 9.2)."""
         with self._lock:
             ep = Endpoint(kind, base_url or None)
+            if ep.base_url != self.servers[kind].base_url:
+                raise SettingsError("the recorded server differs from the configured server; repair is unavailable")
             if ep.api_key_env:
                 self._env_names.add(ep.api_key_env)
-            return self._keys.get((ep.kind, ep.base_url))
+            return self._keys.get((ep.kind, ep.base_url)) or self.servers[kind].api_key
 
     def discovery_endpoint(self, kind: object, base_url: object, api_key: object) -> Endpoint:
-        """Endpoint for Load models / Load providers, from the dialog's typed values."""
-        typed = settings_from_body(ModelSettings(), {"kind": kind, "base_url": base_url})
-        ep = _endpoint(typed)
-        if api_key is None or api_key == "":
-            with self._lock:
-                key = self._keys.get((ep.kind, ep.base_url))
-        else:
-            key = validate_key(api_key)
-            with self._lock:
-                self._credentials.add(key)
-        return _endpoint(typed, key)
+        """Discovery uses the same fixed server and session key as model execution."""
+        if base_url not in (None, "") or api_key not in (None, ""):
+            raise SettingsError("server URLs and keys are configured outside model settings")
+        if not isinstance(kind, str) or kind not in self.servers:
+            raise SettingsError("invalid model source")
+        with self._lock:
+            ep = self._endpoint(ModelSettings(kind=kind))
+            key = self._keys.get((ep.kind, ep.base_url))
+            return self._endpoint(ModelSettings(kind=kind), key)
 
 
 __all__ = ["DefaultConflict", "NoSuchProfile", "NoSuchBlock", "NoSuchServer", "ProcessState", "ReadOnly", "RequestBudget",

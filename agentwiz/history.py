@@ -273,6 +273,12 @@ class Writer:
             return []
         return sorted((m.group(1), int(m.group(2))) for n in names if (m := ATTEMPT_FILE_RE.match(n)))
 
+    def saved_folder(self, run_id):
+        for name, found_id, link in self._entries():
+            if found_id == run_id and not link:
+                return self.path / name
+        raise NoSuchRun()
+
     def read_run(self, run_id: str) -> dict:
         for name, found_id, link in self._entries():
             if found_id == run_id and not link:
@@ -299,7 +305,17 @@ class Writer:
                 result = self._read(folder / RESULT_FILE)
             except (OSError, ValueError) as exc:
                 problems.append(self._problem(str(folder / RESULT_FILE), exc))
-        return {"run": run, "attempts": attempts, "result": result, "problems": problems}
+        reviews = []
+        for file in folder.glob('review-*.json'):
+            suffix = file.stem[len('review-'):]
+            if suffix.isdigit() and not file.is_symlink():
+                try:
+                    reviews.append(self._read(file))
+                except (OSError, ValueError) as exc:
+                    problems.append(self._problem(str(file), exc))
+        reviews.sort(key=lambda r: r.get('revision', 0))
+        return {"run": run, "attempts": attempts, "result": result, "problems": problems,
+                "reviews": reviews, "current_review": reviews[-1] if reviews else None}
 
     # --- deleting (10.5) ----------------------------------------------------------------------------------
     def delete_run(self, run_id: str, *, read_only: bool) -> None:
@@ -315,7 +331,7 @@ class Writer:
         folder = self.path / name
         if link or folder.parent != self.path or not FOLDER_RE.match(name):
             raise NotDeletable()
-        run = self.store.reserve_delete(run_id)        # RunActive
+        run = self.store.reserve_delete(run_id, protect_absent=True)        # RunActive
         ok, changed, text = False, True, ""
         try:
             try:
@@ -327,7 +343,7 @@ class Writer:
                 report_internal("history delete", exc)
                 changed, text = True, type(exc).__name__
         finally:
-            self.store.settle_delete(run, ok=ok, changed=changed)
+            self.store.settle_delete(run, ok=ok, changed=changed, run_id=run_id)
         if not ok:
             raise DeleteFailed(f"could not delete the run's folder ({text})")
 

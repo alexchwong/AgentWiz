@@ -25,8 +25,9 @@ def test_save_two_roles_and_survive_restart(ui, restart):
     assert state["roles"]["map"] == {"fast": "fast-p", "reasoning": "big-p"}
     assert state["roles"]["revision"] == 2
     assert state["roles"]["problem"] is None and state["roles"]["unresolved"] == []
-    assert json.loads(roles_file(ui).read_text()) == {"format_version": 1,
-                                                      "roles": {"fast": "fast-p", "reasoning": "big-p"}}
+    assert json.loads(roles_file(ui).read_text()) == {"format_version": 3,
+        "roles": {"fast": "fast-p", "reasoning": "big-p"},
+        "definitions": {name: {"description": "", "location": "local"} for name in ("fast", "reasoning")}}
     again = restart(ui)
     assert get_state(again)["roles"]["map"] == {"fast": "fast-p", "reasoning": "big-p"}
 
@@ -79,15 +80,18 @@ def test_unknown_top_level_fields_survive_a_save(make_ui, tmp_path):
     ui = make_ui(workspace=ws)
     two_profiles(ui)
     save_roles(ui, {"fast": "fast-p"})
-    assert json.loads(roles_file(ui).read_text()) == {"format_version": 1, "roles": {"fast": "fast-p"},
-                                                      "note": {"a": 1}}
+    assert json.loads(roles_file(ui).read_text()) == {"format_version": 3, "roles": {"fast": "fast-p"},
+        "definitions": {"fast": {"description": "", "location": "local"}}, "note": {"a": 1}}
 
 
 @pytest.mark.parametrize("text, code", [
     ("{not json", "invalid_json"),
     (json.dumps({"format_version": 1}), "invalid_field"),
     (json.dumps({"format_version": 1, "roles": {"fast": 5}}), "invalid_field"),
-    (json.dumps({"format_version": 2, "roles": {}}), "newer_format"),
+    (json.dumps({"format_version": 4, "roles": {}}), "newer_format"),
+    (json.dumps({"format_version": 3, "roles": {}}), "invalid_field"),
+    (json.dumps({"format_version": 2, "roles": {}}), "invalid_field"),
+    (json.dumps({"format_version": 2, "roles": {"fast": "p"}, "definitions": {}}), "invalid_field"),
     (json.dumps({"format_version": True, "roles": {}}), "invalid_field"),
 ])
 def test_a_damaged_file_is_a_problem_and_is_never_written(make_ui, tmp_path, text, code):
@@ -161,3 +165,85 @@ def test_resolve_role_builds_the_profile_snapshot(ui):
     with pytest.raises(RoleUnresolved) as gone:
         ui.state.resolve_role("fast")
     assert str(gone.value) == "role fast names a profile that does not exist"
+
+
+def test_starter_definitions_are_unconfigured_and_not_written(ui, restart):
+    state = get_state(ui)["roles"]
+    assert set(state["definitions"]) == {"fast", "assistant", "reasoning", "write_contract", "write_block_description"}
+    assert {u["role"] for u in state["unresolved"]} == set(state["definitions"])
+    assert not roles_file(ui).exists()
+    request(ui, "/api/roles/save", {"roles": {}, "definitions": state["definitions"], "revision": state["revision"]})
+    again = get_state(restart(ui))["roles"]
+    assert again["definitions"] == state["definitions"] and again["map"] == {}
+
+
+@pytest.mark.parametrize("kind,url,location", [
+    ("lmstudio", "", "local"),
+    ("lmstudio", "http://models.example/v1", "cloud"),
+    ("openai_compat", "http://127.0.0.1:8080/v1", "local"),
+    ("openai_compat", "http://[::1]:8080/v1", "local"),
+    ("openai_compat", "http://localhost:8080/v1", "local"),
+    ("openai_compat", "http://192.168.1.2:8080/v1", "cloud"),
+    ("openai_compat", "https://localhost.example/v1", "cloud"),
+    ("openrouter", "", "cloud"),
+    ("openrouter", "http://127.0.0.1:8080/v1", "cloud"),
+])
+def test_role_location_is_enforced_at_save_and_resolution(ui, kind, url, location):
+    from agentwiz.state import RoleUnresolved
+    save_profile(ui, "p", model="m", kind=kind, base_url=url, provider="")
+    definitions = {"r": {"description": "Test role", "location": location}}
+    state = request(ui, "/api/roles/save", {"roles": {"r": "p"}, "definitions": definitions,
+                                            "revision": get_state(ui)["roles"]["revision"]})
+    assert state["roles"]["unresolved"] == []
+    assert ui.state.resolve_role("r").model == "m"
+    opposite = "cloud" if location == "local" else "local"
+    fail = failure_of(lambda: request(ui, "/api/roles/save", {
+        "roles": {"r": "p"}, "definitions": {"r": {"description": "", "location": opposite}},
+        "revision": state["roles"]["revision"]}))
+    assert fail.status == 400
+    before = file_stat(roles_file(ui))
+    if opposite == "cloud":
+        save_profile(ui, "p", model="m", kind="openrouter", base_url="", provider="")
+    else:
+        save_profile(ui, "p", model="m", **FIELDS)
+    with pytest.raises(RoleUnresolved) as failure:
+        ui.state.resolve_role("r")
+    assert failure.value.reason == "location"
+    assert get_state(ui)["roles"]["unresolved"][0]["role"] == "r"
+    # A legacy API save cannot erase the persisted policy or route around it.
+    assert failure_of(lambda: save_roles(ui, {"r": "p"})).status == 400
+    assert file_stat(roles_file(ui)) == before
+
+
+@pytest.mark.parametrize("definitions", [[], {"r": {}}, {"r": {"description": "", "location": "any"}},
+                                          {"r": {"description": 5, "location": "local"}},
+                                          {"r": {"description": "", "location": "local", "family": " "}},
+                                          {"r": {"description": "", "location": "local", "family": 7}}])
+def test_invalid_definitions_are_refused_without_writing(ui, definitions):
+    fail = failure_of(lambda: request(ui, "/api/roles/save", {
+        "roles": {}, "definitions": definitions, "revision": get_state(ui)["roles"]["revision"]}))
+    assert fail.status == 400 and not roles_file(ui).exists()
+
+
+def test_changed_role_location_refuses_block_without_dispatch(ui, server):
+    from conftest import run_block
+    from test_runner import result_of, setup_model
+    setup_model(ui, server)
+    state = get_state(ui)["roles"]
+    request(ui, "/api/roles/save", {"roles": state["map"], "revision": state["revision"],
+                                    "definitions": {"fast": {"description": "", "location": "local"}}})
+    profile = state["map"]["fast"]
+    save_profile(ui, profile, model="m", kind="openrouter", base_url="", provider="")
+    result = result_of(run_block(ui, "b", {"text": "private input"}))
+    assert result["outcome"] == "rejected"
+    assert server.requests == []
+
+
+def test_custom_role_family_survives_restart_and_assignment_only_save(ui, restart):
+    two_profiles(ui)
+    definition = {"description": "Support helper", "location": "local", "family": "Customer support"}
+    request(ui, "/api/roles/save", {"roles": {"support": "fast-p"}, "definitions": {"support": definition},
+                                    "revision": get_state(ui)["roles"]["revision"]})
+    again = restart(ui)
+    assert get_state(again)["roles"]["definitions"]["support"] == definition
+    assert save_roles(again, {"support": "big-p"})["roles"]["definitions"]["support"] == definition

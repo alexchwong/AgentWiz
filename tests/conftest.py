@@ -16,6 +16,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from types import MappingProxyType
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,19 +25,7 @@ import pytest
 
 from agentwiz.ui.server import UIServer
 from agentwiz.workspace import open_workspace
-
-def pytest_collection_modifyitems(config, items):
-    """Tests marked needs_checks skip, with a reason, only where the checks extra is really absent: CI's
-    Python 3.10 jobs (techspec 0.1.3, 18.1). Everywhere else they run; the no-extra path is tested by
-    making checks.schema_support() report the extra as missing."""
-    from agentwiz import checks
-    if checks.schema_support()[0]:
-        return
-    skip = pytest.mark.skip(reason="the checks extra is not installed")
-    for item in items:
-        if "needs_checks" in item.keywords:
-            item.add_marker(skip)
-
+from agentwiz.server_config import ServerSettings
 
 PROXY_VARS = [v for n in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY") for v in (n, n.lower())]
 KEY = "sk-SENTINEL-1234567890"
@@ -223,6 +212,13 @@ def delta(content=None, reasoning=None, finish=None, usage=None) -> bytes:
 def answer(text: str = "ok", **kw) -> Reply:
     """A streamed answer: one content delta, finish 'stop', [DONE]."""
     return Reply(body=[delta(text), delta(finish="stop"), DONE], headers={"Content-Type": "text/event-stream"}, **kw)
+def block_answer(**values) -> Reply:
+    """A model-block reply: one named JSON envelope. `block_answer(out="OK")` answers the output `out`."""
+    from agentwiz import jsonio as _exact
+    return answer(_exact.encode_exact(values if values else {"out": "ok"}))
+
+
+
 
 
 # --- LM Studio replies (techspec 0.1.2, Section 15.2) -------------------------------------------
@@ -269,6 +265,11 @@ def make_ui(tmp_path):
             opened.append(workspace)
         kwargs.setdefault("profiles_dir", tmp_path / "model_profiles")
         kwargs.setdefault("mcp_servers_dir", kwargs.pop("mcp_dir", tmp_path / "mcp_servers"))
+        kwargs.setdefault("servers", {
+            "lmstudio": ServerSettings("http://localhost:1234/v1"),
+            "openrouter": ServerSettings("https://openrouter.ai/api/v1"),
+            "openai_compat": ServerSettings("http://127.0.0.1:9/v1"),
+        })
         srv = UIServer(0, workspace=workspace, **kwargs)
         srv.transcript = []  # every response body the helpers received, for "never echoed" checks
         threading.Thread(target=srv.serve_forever, args=(0.02,), daemon=True).start()
@@ -280,6 +281,7 @@ def make_ui(tmp_path):
     for srv in servers:
         srv.shutdown()
         srv.server_close()
+        srv.close_workspace()
     for ws in opened:
         ws.close()
 
@@ -297,11 +299,11 @@ def restart(make_ui):
         old.shutdown()
         old.server_close()
         ws = old.workspace
-        ws.close()
+        old.close_workspace()
         reopened = open_workspace(ws.path.parent, ws.name)
         make_ui.opened.append(reopened)
         return make_ui(workspace=reopened, profiles_dir=old.state.library.path,
-                       mcp_servers_dir=old.state.mcp_library.folder)
+                       mcp_servers_dir=old.state.mcp_library.folder, servers=old.state.servers)
 
     return again
 
@@ -381,6 +383,7 @@ def get_state(ui) -> dict:
 
 def save_profile(ui, name, revision=None, **settings) -> dict:
     """POST /api/profiles/save with the current configuration revision unless one is given."""
+    configure_server(ui, settings)
     rev = get_state(ui)["revision"] if revision is None else revision
     return request(ui, "/api/profiles/save", {"name": name, "revision": rev, **settings})
 
@@ -408,20 +411,44 @@ def write_block(ui_or_path, name, block, files=None) -> Path:
     return folder
 
 
+def configure_server(ui, fields):
+    """Test-only machine configuration setup, never a browser/API override."""
+    if "base_url" not in fields and "api_key" not in fields:
+        return
+    kind = fields.get("kind", get_state(ui)["kind"])
+    url = fields.pop("base_url", ui.state.servers[kind].base_url) or {
+        "lmstudio": "http://localhost:1234/v1", "openrouter": "https://openrouter.ai/api/v1",
+    }.get(kind, ui.state.servers[kind].base_url)
+    key = fields.pop("api_key", None)
+    servers = dict(ui.state.servers)
+    previous = servers[kind]
+    if key is None:
+        key = previous.api_key if previous.base_url == url.rstrip("/") else None
+    servers[kind] = ServerSettings(url.rstrip("/"), key or None)
+    ui.servers = MappingProxyType(servers)
+    ui.state.servers = ui.servers
+    if key:
+        ui.state._credentials.add(key)
+
+
 def configure(ui, backend, kind="openai_compat", **fields) -> dict:
     body = {"kind": kind, "base_url": backend.url + "/v1", "model": "m", **fields}
+    key = body.pop("api_key", None) if kind == "openrouter" else None
+    configure_server(ui, body)
+    if key is not None:
+        request(ui, "/api/openrouter-key", {"revision": get_state(ui)["revision"], "api_key": key})
     body.setdefault("revision", get_state(ui)["revision"])
     return request(ui, "/api/config", body)
 
 
 def complete(ui, prompt, system="", revision=None, raw=False, task=None, source="chat", contract=None):
-    """POST /api/complete. `contract` is (name, revision) and goes with source="checked_request"."""
+    """POST /api/complete. `contract` is (name, revision, digest) and goes with source="checked_request"."""
     rev = get_state(ui)["revision"] if revision is None else revision
     body = {"source": source, "prompt": prompt, "system": system, "revision": rev}
     if task is not None:
         body["task"] = task
     if contract is not None:
-        body["contract"] = {"name": contract[0], "revision": contract[1]}
+        body["contract"] = {"name": contract[0], "revision": contract[1], "digest": contract[2]}
     resp = request(ui, "/api/complete", body, raw=True)
     return resp if raw else events(resp, ui)
 
@@ -949,27 +976,33 @@ def cancel(ui, op_id):
     return request(ui, "/api/mcp/cancel", {"operation_id": op_id})
 
 
-# --- contract helpers (techspec 0.1.3, 18.2) ----------------------------------------------------
+# --- contract helpers (overhaul spec 5, 9, 10) ---------------------------------------------------
+def pinned(name, revision, parsed):
+    """A captured contract copy: inline when name is None, otherwise an exact pin with its computed digest."""
+    from agentwiz.contract_schema import contract_digest
+    from agentwiz.model_step import ContractCopy
+    if name is None:
+        return ContractCopy.inline(parsed)
+    return ContractCopy.reference(name, revision, contract_digest(parsed.raw), parsed)
+
+
 # Contract texts are written as literal text, never built from Python floats, so that exact numbers
 # reach AgentWiz digit for digit.
-TEXT_CONTRACT = '{"format": "text", "checks": [{"type": "contains", "value": "pong"}]}'
+TEXT_CONTRACT = '{"format": "text", "contains": ["pong"]}'
 JSON_CONTRACT = """{
   "format": "json",
   "description": "Fields pulled from a report",
   "schema": {"type": "object", "required": ["id", "ratio"],
-             "properties": {"id": {"type": "integer"}, "ratio": {"type": "number", "maximum": 1}}},
-  "checks": [{"type": "contains", "value": "\\"id\\""},
-             {"type": "json_equals", "value": {"id": 9007199254740993, "ratio": 0.10000000000000000001}}]
+             "properties": {"id": {"type": "integer"}, "ratio": {"type": "number", "maximum": 1}}}
 }"""
-JSON_CONTRACT_NO_SCHEMA = """{
-  "format": "json",
-  "checks": [{"type": "json_equals", "value": {"id": 9007199254740993, "ratio": 0.10000000000000000001}}]
-}"""
+JSON_CONTRACT_NO_SCHEMA = '{"format": "json", "description": "Any JSON value"}'
 
 
-def save_contract(ui, name, text, revision=None):
-    """POST /api/contracts/save; returns the response body."""
-    return request(ui, "/api/contracts/save", {"name": name, "text": text, "revision": revision})
+def save_contract(ui, name, text, token=None, family="General", label="", **extra):
+    """POST /api/contracts/save (version 2). `token` is the expected file token; None creates."""
+    return request(ui, "/api/contracts/save", {"format_version": 2, "name": name, "family": family,
+                                               "expected_file_token": token, "definition_text": text,
+                                               "label": label, **extra})
 
 
 def contract_files(ui) -> Path:
@@ -977,8 +1010,22 @@ def contract_files(ui) -> Path:
 
 
 def contract_item(ui, name) -> dict:
-    """The named contract's entry in /api/state, or None."""
-    return next((c for c in get_state(ui)["contracts"]["items"] if c["name"] == name), None)
+    """The named contract's row in GET /api/contracts, or None."""
+    return next((c for c in request(ui, "/api/contracts")["items"] if c["name"] == name), None)
+
+
+def contract_detail(ui, name, revision=None) -> dict:
+    return request(ui, f"/api/contracts/{name}" + (f"?revision={revision}" if revision is not None else ""))
+
+
+def contract_pin(ui, name, revision=None) -> tuple:
+    """(name, revision, digest) of the selected (default latest) revision, as a page would review it."""
+    detail = contract_detail(ui, name, revision)
+    return (name, detail["revision"], detail["digest"])
+
+
+def contract_token(ui, name) -> str:
+    return contract_detail(ui, name)["file_token"]
 
 
 # --- block runs (techspec 0.1.4, 20.1) ------------------------------------------------------------------------------
