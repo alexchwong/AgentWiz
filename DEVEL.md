@@ -35,11 +35,9 @@ Do not add repository-document-content tests to enforce this organization (T2).
 
 For work in an area, read the relevant sections of [the architecture reference](docs/architecture.md) and preserve their
 behavior contracts, including field/protocol/format and lifecycle details. Relocation is not
-permission to weaken a requirement. Follow the agreed specification; the 0.2.0 build reference
-is *AgentWiz 0.2.0 technical specification*, version 4, together with its final review,
-ahead of plan v14. Treat 0.1.4 as the implemented baseline.
-Consult [the decision history](docs/decisions.md) for inherited specification precedence and superseded directions,
-and `HANDOVER.md` for build departures. Raise conflicts rather than silently choosing a departure.
+permission to weaken a requirement. Use current source and tests with the architecture reference.
+Consult [the decision history](docs/decisions.md) for accepted departures and historical design
+references, and `HANDOVER.md` for current verification. Raise conflicts explicitly.
 
 ## Workflow and scope
 
@@ -224,13 +222,17 @@ anything unverified. Required release tooling checks and smoke remain separate f
 
 ## Documentation and release preparation
 
-Follow the placement table above; update owning documents, not an omnibus guide. Any change to
-`agentwiz/**`, `pyproject.toml`, `README.md` or `LICENSE` requires a version bump and NEWS entry
-before merge into `main`. Non-shipped tests, scripts, workflows and maintenance docs do not by
-themselves require a release. Follow [release operations](docs/releases.md) for release mechanics when authorized.
+Follow the placement table above and update owning documents. Before merging shipped changes
+to `main`, use a version newer than the published version they change and a corresponding
+NEWS section. Keep using that version and section for further edits while it remains unreleased.
+Shipped inputs are `agentwiz/**`, `pyproject.toml`, `README.md`, `LICENSE` and
+`config/model-servers.ini.template`. The template ships under `agentwiz/` in the wheel.
+The current automated guard omits the template source, so apply the rule to template-only
+changes during review. Non-shipped tests, scripts, workflows and maintenance docs do not
+by themselves require a release. Follow [release operations](docs/releases.md) when authorized.
 
 NEWS contains user-visible changes only, newest release first, one change per bullet and at most
-20 words per bullet. Never edit released sections. Keep internal maintenance changes out of NEWS.
+20 words per whole bullet, including continuation lines. Never edit released sections. Keep internal maintenance changes out of NEWS.
 Keep handover check results factual and task-specific; do not copy historical passes into current
 validation claims. Nothing in this guide, `docs/`, `.clinerules`, `tests/`, `scripts/` or `.github/`
 ships in the release wheel.

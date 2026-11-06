@@ -1,25 +1,25 @@
 # NEWS
 ## 0.2.0
-- Workshop Design groups revision selection above distinct Save as new revision and Overwrite selected
-  revision controls. Confirmed overwrite preserves the selected revision's number without changing an
-  unrelated current default or existing run evidence; its standard description starts empty.
-- Any retained Workshop revision can be selected, tested and compared without changing the default; results
-  name the revision they ran. Selecting a revision no longer turns it into an unsaved draft: use
-  Revision actions → Restore to draft (or edit it) before saving it as a new revision.
-- Standard descriptions now belong to one saved revision and never change the executable block. Describe block
-  uses the new `write_block_description` role, shows the destination first, and offers Save description,
-  Refine or Discard; Edit description writes one by hand without a model. A new revision starts without one.
+- Workshop Design places revision selection above Save as new revision and Overwrite selected revision.
+- Confirmed overwrite preserves the selected revision number, unrelated default and existing run evidence.
+- Overwrite clears the selected revision’s standard description.
+- Select, test or compare eligible retained v3 revisions without changing the default. Results identify the revision used.
+- Edit a retained selection or use Restore to draft before saving it as a new revision.
+- Standard descriptions belong to individual saved revisions and leave the executable block intact.
+- Describe block uses the `write_block_description` role and shows the destination before sending.
+- Review a proposed description with Save description, Refine or Discard. Edit description supports manual editing.
+- A new revision starts without a standard description.
 - Assist's describe opens the same Describe flow; Improve and Explain failure no longer edit description sections.
 - Workspaces created earlier list `write_block_description` among missing default roles until it is added.
 - The port field is now labelled Declared meaning; per-port Documentation in the description is display-only.
 - Contract synthesis shows sanitized model-call errors, including missing API keys, instead of only a generic failure.
 - Roles flags default roles missing from the saved workspace and explains how to add them without replacing existing roles.
-- Contracts are Text, JSON with a small schema vocabulary, or Any JSON; literal Text rules and exact
-  numbers; legacy `checks`/`strict` definitions are refused.
-- Saved contracts keep every revision in one file per name, with families, restore-as-new and
-  stale-edit protection; deletion is refused while blocks use them. Version 1 contract files are not converted.
-- Blocks are `format_version` 3 and pin saved contracts by name, revision and digest; runs and repairs keep
-  their own copies. Version 1 block files are refused with `migration_required`.
+- Contracts support Text literal rules, a restricted JSON Schema vocabulary and Any JSON. JSON numbers are exact.
+- Legacy `checks` and `strict` contract definitions are refused.
+- Saved contracts keep revisions in one file per name, with families, restore-as-new and stale-edit protection.
+- Deletion is refused while blocks use a contract. Version 1 contract files require recreation or rewriting.
+- Executable blocks use format 3 and pin saved contracts by name, revision and digest.
+- Runs and repairs retain contract snapshots. Executable v1 blocks report `migration_required`.
 - Workshop → Contracts replaces the Workbench Contracts tab; `#contracts` opens it.
 - The contract library searches, filters by family, shows revisions and restores old ones as new revisions.
 - A readable Text/Structured JSON/Any JSON editor; advanced source is optional and follows the same rules.
@@ -31,8 +31,9 @@
 - The new `write_contract` role drafts JSON contracts with stated assumptions; applying and saving stay separate steps.
 - JSON Schema validation is now included in every installation; the optional checks extra is removed.
 - Workshop Design uses three responsive columns with editable input/output tables and Save in the settings pane.
-- Design now has a model-role dropdown, paired temperature/reasoning controls with visible inherited defaults,
-  repairs below Outputs, and revision naming beside Save. Assist and Revision actions share the mode action row.
+- Design adds a model-role dropdown and paired temperature and reasoning controls that show inherited defaults.
+- Additional repairs sits below Outputs. Revision naming sits near Save.
+- Assist and Revision actions share the mode action row.
 - Block revisions have stable per-block numbers, optional names and an inline selector; restoring saves a new revision.
 - Structured-variable editors appear immediately after format selection; a contract type change that drops content previews it first.
 - Model-server connections now come from `config/model-servers.ini`; OpenRouter keys have a separate session-only button and environment fallback.
@@ -43,7 +44,6 @@
 - Roles can save a default temperature and reasoning (roles file format 3); older versions cannot read it.
 - Workshop assistance has its own temperature and reasoning controls, separate from the block it proposes.
 - Saved examples and expected values use typed forms; a new empty group must gain a field before saving.
-- 0.1.x model blocks naming a step output now load as invalid; README shows the one-line rewrite.
 - Workshop reports located block validation errors instead of misleading file-permission failures.
 - Test retains usable inputs and separates one-off input from pending or saved examples.
 - Output renames preserve step bindings.

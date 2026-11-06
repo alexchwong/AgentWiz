@@ -7,20 +7,15 @@ Historical choices may have been superseded; do not restore retired behavior fro
 
 ## Specification lineage
 
-The owner-authorised *AgentWiz contract overhaul — implementation plan and technical specification*,
-version 1.0 (5 November 2026), supersedes contradictory contract recommendations in discussion v2
-and contract-related plan-v14 directions. It keeps the existing 0.2.0 development version and
-authorises moving `jsonschema>=4.26,<5` into required dependencies, not changing modelSpell or
-adding other runtime dependencies. Its Phase 1 and Phase 2 gates both remain required;
-foundation checks are not evidence of full implementation. On 5 November 2026 the owner requested
-Phase 1A completion and moved cumulative overhaul progress to `../contract_overhaul_handover.md`;
-the release handover retains a pointer rather than a duplicate progress log. This overrides the
-specification's original progress-file destination, not its behaviour or completion requirements.
+The owner-authorised contract overhaul specification v1.0 (5 November 2026) superseded
+contradictory contract recommendations in discussion v2 and plan v14. It retained the 0.2.0
+development version and made `jsonschema>=4.26,<5` required while keeping the modelSpell pin.
+The owner moved its progress records to the [overhaul handover](https://github.com/alexchwong/AgentWiz/blob/e937d268069a0c7815fc525f16e7c37ae6c0bb16/contract_overhaul_handover.md).
+The 0.2.0 v4 build specification, final review and plan v14 are historical design references.
 
-Usage is documented in `../README.md`; the build reference
-for 0.1.4 is *AgentWiz 0.1.4 — Technical Specification* (version 5), which takes precedence over
-release plan version 13; its Section 24 lists every departure, and `../HANDOVER.md` lists the ones found
-while building it. The build reference for 0.1.3 was *AgentWiz 0.1.3 — Technical Specification* (version 4), which took precedence over
+Usage is documented in `../README.md`. The 0.1.4 build used technical specification v5 ahead of
+plan v13. Its Section 24 and the [0.1.4 handover](https://github.com/alexchwong/AgentWiz/blob/e0b91d26b72d2e96d85828356e4c88cf05eb2f18/HANDOVER.md) record departures.
+The build reference for 0.1.3 was *AgentWiz 0.1.3 — Technical Specification* (version 4), which took precedence over
 Section 8 of the release plan (*AgentWiz 0.1.x — Release Plan and 0.2 Design*, version 11) and over
 Sections 11–12 of version 10.1, which the plan carries forward; its Section 22 lists every
 departure. The build reference for 0.1.2 was *AgentWiz 0.1.2 — Technical Specification* (version
@@ -81,7 +76,7 @@ owner direction under "Historical release-review directions"; live checks remain
 
 The build order is specification Section 23, in gated phases (P prepare, 0 baseline, A definitions, B
 runs of blocks, C the page, D the tutorial, E finish); every gate is `python -m pytest -q -m "not live"`
-on Python 3.13 and 3.10 with no failures, errors or skips. The checkpoint log is in `HANDOVER.md`
+on Python 3.13 and 3.10 with no failures, errors or skips. The checkpoint log is in the [0.1.4 handover](https://github.com/alexchwong/AgentWiz/blob/e0b91d26b72d2e96d85828356e4c88cf05eb2f18/HANDOVER.md)
 (written as the build went; the original procedure referred to `BUILD_LOG_0.1.4.md`'s "NEXT ACTION"
 for interrupted builds; that working log is not present in this checkout).
 The final steps are, offline and on a throwaway local commit that is never pushed,
@@ -249,7 +244,7 @@ list, without GitHub commits or publication.
 
 The owner authorized Phase 2 to completion and requested a cumulative changed-files
 ZIP and root `0.2.0 handover.md`, with no GitHub commit; the owner later asked for that
-note and `HANDOVER.md` to be merged into the single `HANDOVER.md`. The presentation now uses
+note merged into the [0.2.0 build handover](https://github.com/alexchwong/AgentWiz/blob/e937d268069a0c7815fc525f16e7c37ae6c0bb16/HANDOVER.md). The presentation now uses
 the existing headless plans/tickets rather than duplicating admission policy. The
 legacy inspector remains a compatibility view within Workshop; its browser Start
 uses the same ticketed coordinator. Public legacy endpoints remain compatible.
@@ -267,18 +262,19 @@ or model transport change was introduced.
 ### 4 November 2026 — block authoring, named outputs and role defaults
 
 Dispositions recorded in `proposal_block_ui_improvement.md` (sections 3 and 12) as given by the owner during the
-build; this entry restates them and records nothing further.
+build. The proposal is an owner-held design reference.
 
 - **Generated output instructions.** Approved: a model step sends its declared outputs' names, descriptions, formats
   and schemas, but never check definitions, example data or private metadata. This replaces 0.1.4's
   "a contract is never sent to the model"; the architecture contract was rewritten accordingly. Local acceptance
-  remains authoritative.
+  remains authoritative. The 5 November overhaul superseded the exclusion of rendered Text rules and full JSON schemas.
 - **`{{output.NAME}}`.** Approved: it describes a declared output in model prompts; it is not a reference to a future
   answer, and post-run or inter-step references remain out of scope.
 - **One transport, no legacy mode.** Owner direction: "no-one is using 0.1.4, disregard reverse incompatibility
   concerns". The named JSON envelope is the only model-step mode, with no conversion workflow; a model step
   carrying `output` loads as invalid and README gives the rewrite. Executable format stays 1 (additive keys that a
-  strict older reader refuses); format 2 stays reserved for Workshop managed heads.
+  strict older reader refuses). The 5 November overhaul superseded executable v1 with v3.
+  Format 2 remains reserved for Workshop managed heads.
 - **Workspace data.** The default workspace's one block and the other workspaces were deleted once, by hand, under the
   workspace lock; `roles.json` and profiles were kept. No cleanup was added to startup or upgrade.
 - **Role defaults.** Approved: `temperature` and `reasoning` only, applied to every role-based model call including
@@ -289,8 +285,7 @@ build; this entry restates them and records nothing further.
 
 ### 5 November 2026 — contract overhaul Phases 1B and 1C
 
-Build reference: `contract_overhaul_tech_specs.md` version 1.0 (owner-authorised; it supersedes the contract
-portions of plan v14 and discussion v2). Executable definitions move to `format_version` 3; format 2 stays the
+The contract overhaul specification v1.0 superseded the contract portions of plan v14 and discussion v2. Executable definitions move to `format_version` 3; format 2 stays the
 Workshop managed head. Local implementation choices recorded here, none changing a specified format or route:
 
 - **Family on append.** A save naming a different family for an existing contract is refused (400 `invalid`)
@@ -301,7 +296,7 @@ Workshop managed head. Local implementation choices recorded here, none changing
 - **Legacy string references** are counted conservatively by the deletion reference scan (revision null) so an
   old block cannot be silently orphaned; they still fail to load.
 - **Checked request page body.** The existing tab now sends the concrete latest `revision` and `digest` it lists;
-  the reviewed revision selector and preview remain Phase 2B work.
+  the revision selector and preview were delivered in the Phase 2 UI work below.
 
 ### 5 November 2026 — contract overhaul Phase 2 (UI)
 
@@ -322,3 +317,17 @@ Same build reference. Local implementation choices, none changing a specified fi
   now defers to the central recognizer instead of its own keyword list.
 - **Change type.** A format or field type change that would drop rules, choices, bounds or children previews the
   current and replacement definitions and needs **Change type**; non-lossy changes apply directly.
+
+### 6 November 2026 — 0.2.0 documentation close-out
+
+Executable blocks use v3. Model steps use one named JSON envelope. User contracts support
+Text literal rules and a restricted JSON vocabulary. Revision descriptions are non-executable
+sidecars. Overwrite replaces the selected generation in its numbered slot and leaves existing
+run evidence intact. See [architecture](architecture.md) for current behaviour.
+
+The [contract overhaul specification v1.0](https://github.com/alexchwong/AgentWiz/blob/e937d268069a0c7815fc525f16e7c37ae6c0bb16/contract_overhaul_tech_specs.md)
+at the pre-cleanup commit resolves historical section citations in code and tests. The block
+metadata refactor specification v2 and block UI improvement proposal are owner-held references.
+The [pre-cleanup handover](https://github.com/alexchwong/AgentWiz/blob/e937d268069a0c7815fc525f16e7c37ae6c0bb16/HANDOVER.md) retains the build history,
+including the bounded experiments and the owner dispositions. A broader parser, schema-generation
+or routing change needs a separate decision.

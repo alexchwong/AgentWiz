@@ -54,18 +54,23 @@ passed them (`github.sha`, never a re-read of `main`):
   still fetched) and runs the smoke check, then creates release `vX.Y.Z` tagged at that commit, with
   the wheel, the NEWS section as notes and a pinned install line with the sha256. A failed check
   stops the job before anything is published.
-- **If `vX.Y.Z` already exists:** fails if any shipped file changed since the tag; otherwise skips
+- **If `vX.Y.Z` already exists:** fails if a path covered by the shipped-file guard changed since the tag; otherwise skips
   building and publishing the wheel.
 - **Finally, once the release is there** (new, or unchanged with the guard passing): re-attaches
   `scripts/install.sh` to `vX.Y.Z` with `--clobber`, so `releases/latest/download/install.sh`
   always serves the current installer without a new release.
 
-**Shipped-file rule (defined in `../DEVEL.md`).** Any change to `agentwiz/**` (Python, HTML, CSS or
-JavaScript), `pyproject.toml`, `README.md` or `LICENSE` needs a version bump and a NEWS entry before
-a merge into `main`. Changes to tests, scripts, workflows, `DEVEL.md`, `docs/**` and `.clinerules` merge without
-a release. The rule is enforced by `release.yml` (`build_release.py --changed-since <tag>`), so
-`devel` may carry shipped-file edits without a bump; the run for that merge fails if the bump is
-missing, and no release is published.
+The workflow also accepts manual dispatch and uses the selected ref's event SHA. The current
+workflow can publish from a non-main ref. For release recovery or installer re-attachment,
+dispatch only on `main` while its head is the authorised merge commit. If `main` has advanced,
+prefer re-running the authorised workflow run for the original commit where available.
+
+**Shipped-file rule.** [DEVEL.md](../DEVEL.md#documentation-and-release-preparation) defines
+the policy and shipped inputs, including the force-included `config/model-servers.ini.template`.
+The existing `build_release.py --changed-since <tag>` guard compares committed `HEAD` with the
+candidate version's existing tag over `agentwiz/**`, `pyproject.toml`, `README.md` and `LICENSE`.
+It exits 1 when those paths differ and performs no build. Review template-only changes against
+the version policy because the guard omits the template source. README supplies wheel metadata.
 
 **Release checks.** `build_release.py` runs these on every build (not with `--changed-since`),
 after building and before any smoke test, reading only the archived `HEAD` tree and the wheel.
@@ -73,8 +78,8 @@ They are release tooling under the owner's exception to T2, not tests:
 
 | Check | Passes when |
 | --- | --- |
-| RC1 | `NEWS.md` has exactly one line `## <version>`; its section has at least one `- ` bullet, each of at most 20 words. |
-| RC2 | The wheel is `agentwiz-<version>-py3-none-any.whl`; every member is under `agentwiz/` or `agentwiz-<version>.dist-info/`; `agentwiz/ui/index.html` is present; the `.dist-info` members are exactly `METADATA`, `WHEEL`, `RECORD`, `entry_points.txt`, `licenses/LICENSE`. |
+| RC1 | `NEWS.md` has exactly one line `## <version>`; its section has at least one `- ` bullet, each opening bullet line of at most 20 words. Review the entire bullet, including continuation lines, against the policy. |
+| RC2 | The wheel is `agentwiz-<version>-py3-none-any.whl`; every member is under `agentwiz/` or `agentwiz-<version>.dist-info/`; `agentwiz/ui/index.html` and `agentwiz/model-servers.ini.template` are present; the `.dist-info` members are exactly `METADATA`, `WHEEL`, `RECORD`, `entry_points.txt`, `licenses/LICENSE`. |
 | RC3 | `METADATA` has `Name: AgentWiz`, `Version: <version>`, `License-Expression: MIT`, the required `jsonschema>=4.26,<5`, and exactly one other runtime dependency: modelSpell's direct URL, identical to the pinned release-wheel URL and sha256 in `pyproject.toml`. |
 
 Each prints `RCn ok` or `RCn FAILED: <reason>`; all three run; on any failure nothing is copied to
@@ -83,8 +88,10 @@ judgement.
 
 ### Release checklist
 
-1. On `devel`, bump `agentwiz/_version.py` for shipped changes, add the version section to
-   `NEWS.md` and update user documentation as needed. Commit and push when authorized.
+1. On `devel`, check the exact target tag and releases with credentials that can see drafts
+   and prereleases. Resolve any matching tag or release before preparing a new one. For shipped
+   changes, use a version newer than the published version they change and its NEWS section.
+   Keep the same version for further edits while it is unreleased. Commit and push when authorized.
 2. Confirm the offline CI matrix passes on Ubuntu and macOS, Python 3.10 and 3.13. A Linux-only
    local pass does not verify macOS. Optional subjective review/live checks are not gates.
 3. Run `python scripts/build_release.py --smoke` on the intended committed tree; require

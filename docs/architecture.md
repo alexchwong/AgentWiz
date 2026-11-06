@@ -60,25 +60,34 @@ Paths in this table are relative to the repository root.
 | `agentwiz/errors.py` | yes | **0.1.4.** `report_internal` (re-exported by `ui/server.py`) and `ShuttingDown`, the base of every "admission closed" error. |
 | `agentwiz/roles.py` | yes | **0.1.4.** `roles.json`: parsing, reading, writing. Called from `state.py` under the state lock. No HTTP. |
 | `agentwiz/templates.py` | yes | **0.1.4.** `{{inputs.x.y}}` scanning and filling (text and typed), with provenance. No HTTP. |
-| `agentwiz/blocks.py` | yes | **0.1.4.** The block loader, problems, the block store (fingerprints, effective revisions, cache) and the `GET /api/blocks/<name>` view. Reads legacy or managed executable generations. Workshop publication lives in workshop_assets. No HTTP. |
+| `agentwiz/blocks.py` | yes | **0.1.4.** The block loader, problems, the block store (fingerprints, effective revisions, cache) and the `GET /api/blocks/<name>` view. Reads unmanaged executable v3 blocks and v3 generations selected by managed v2 heads. Workshop publication lives in workshop_assets. No HTTP. |
 | `agentwiz/script_step.py` | yes | **0.1.4.** The script step: the single `selectors` supervisor owning the pipes, process-group handling, `Retained` cleanup owners. Hooks `spawn`, `after_spawn`. No HTTP. |
 | `agentwiz/executor.py` | yes | **0.1.4.** `execute_step` for model, tool and script steps; token tally; step results. Called only by `runner.py`. No HTTP. |
 | `agentwiz/runner.py` | yes | **0.1.4.** `run_block`: input checks, admission, preparation, the executor, the one finaliser, the observer, timers (`make_timer`, `before_run_end`). No HTTP. |
 | `agentwiz/tutorial.py`, `agentwiz/tutorial_topics.py` | yes | The tutorial session manager (child UI, seeding, the pending session) and, **0.1.4**, the topic registry the server, page and tests read. |
 | `agentwiz/tutorial_support/blocks/` | yes | **0.1.4.** The four example blocks (`extract_fields`, `echo_numbers`, `word_count`, `wait_for_stop`) copied byte for byte into the tutorial's temporary workspace. |
+| `agentwiz/output_protocol.py` | yes | Renders named outputs, prompt placeholders and direct-value instructions from captured contracts. |
+| `agentwiz/workshop.py`, `agentwiz/workshop_service.py` | yes | Workshop coordinator support, plans, tickets, batches and contract synthesis. |
+| `agentwiz/workshop_assets.py` | yes | Managed generations, publication, retention, pins and captured assets. |
+| `agentwiz/workshop_editor.py`, `agentwiz/workshop_assist.py` | yes | Draft editing, starters and reviewed assistance. |
+| `agentwiz/workshop_license.txt` | yes | License resource included with generated Workshop starter assets. |
+| `agentwiz/server_config.py`, `config/model-servers.ini.template` | yes | Loads server configuration. The template ships as `agentwiz/model-servers.ini.template`. |
+| `agentwiz/ui/contracts.js` | yes | Shared contract editor and Workshop Contracts interface. |
 | `agentwiz/ui/server.py` | yes | The HTTP server; the only module that knows HTTP. `Handler.write_event` is the one writer of stream events. |
 | `agentwiz/ui/index.html` | yes | Workshop/Workbench/History, shared Settings dialogs; one framework-free file with no build step. |
 | `pyproject.toml`, `README.md`, `LICENSE` | metadata | Packaging, wheel description, MIT license. |
-| `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`; 0.1.3: `test_checks.py`, `test_contracts.py`, `test_runs.py`, `test_model_step.py`, `test_attempts.py`, `test_history.py`, `test_page.py`, `test_live_judgement.py`; 0.1.4: `test_roles.py`, `test_templates.py`, `test_blocks.py`, `test_block_routes.py`, `test_block_tool.py`, `test_scripts.py`, `test_script_cleanup.py`, `test_runner.py`, `test_shutdown.py`, `test_signals.py`, `test_tutorial.py`; 0.2.0: `test_workspace_admin.py`, `test_workspace_lifecycle.py`), opt-in live checks (`test_live.py`, with the pure judgement function `live_stop.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
+| `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`; 0.1.3: `test_checks.py`, `test_contracts.py`, `test_runs.py`, `test_model_step.py`, `test_attempts.py`, `test_history.py`, `test_page.py`, `test_live_judgement.py`; 0.1.4: `test_roles.py`, `test_templates.py`, `test_blocks.py`, `test_block_routes.py`, `test_block_tool.py`, `test_scripts.py`, `test_script_cleanup.py`, `test_runner.py`, `test_shutdown.py`, `test_signals.py`, `test_tutorial.py`; 0.2.0: `test_workspace_admin.py`, `test_workspace_lifecycle.py`, `test_named_outputs.py`, `test_contract_overhaul.py`, `test_workshop_descriptions.py`), opt-in live checks (`test_live.py`, with the pure judgement function `live_stop.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
 | `docs/attachment_interface.md` | no | The attachment interface (companion document, version 3, draft). |
 | `scripts/build_release.py` | no | Builds the release wheel from `HEAD`, runs release checks RC1–RC3; `--smoke`; `--no-isolation`; `--modelspell-wheel` (offline smoke); `--changed-since`. |
+| `scripts/replay_output.py` | no | Replays captured named-output evidence using the current checker. |
+| `scripts/workshop_experiment.py` | no | Prepares Workshop fixtures and compares outcomes through the coordinator. |
 | `scripts/smoke_installed.py` | no | Smoke check (S1–S15) against an installed wheel. |
 | `scripts/dev_setup.sh` | no | Developer setup: `./.venv` with an editable install, pytest, `jsonschema`, Playwright and Chromium. |
 | `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for trying the UI without a model; logs the sampling fields and message roles each request carries. Models `json-pass`, `json-repair` and `slow-headers` serve the README tour. |
 | `scripts/stub_mcp_server.py` | no | Scripted MCP server (`--era dual|modern|legacy`, `--token`) for trying the MCP tools tab; logs every request, disconnect, notice and `DELETE`. |
 | `scripts/install.sh` | no | Installer behind the README one-liner; refuses to run in a checkout without `--dir`; installs required validation dependencies; re-attached to every release as `install.sh`. |
 | `DEVEL.md`, `docs/`, `HANDOVER.md`, `NEWS.md`, `.clinerules` | no | Agent directives, technical/release/history references, task handover, changelog and agent workflow. |
-| `.github/workflows/` | no | `tests.yml` (push, PR) and `release.yml` (push to `main`). |
+| `.github/workflows/` | no | `tests.yml` (push, PR) and `release.yml` (push to `main`, manual dispatch). See [release operations](releases.md#branches-and-releases) for dispatch restrictions. |
 
 ## The modelSpell dependency
 
@@ -405,6 +414,10 @@ a load failure is shown in the banner and ports show that the editor is unavaila
 `contract_view` is `contract_service.project` plus `source_text`. The former Workshop `contract-form` route
 and the `property_form`, `contract` and `rename_field` draft edits were removed.
 
+The validation engine details below cover server-owned internal schemas as well as the
+shared exact-number machinery. User definitions go through the restricted recognizer first.
+In particular, users cannot supply `$schema`, `$ref`, `$dynamicRef` or `pattern`.
+
 - **Validation copy.** `jsonschema` picks its validator class from `$schema`, in `check_schema` and
   while following `$ref`, so extending its `integer` check does not reach every path. AgentWiz
   therefore validates a **copy** of the schema and of the value in which every whole-number decimal is
@@ -419,10 +432,9 @@ and the `property_form`, `contract` and `rename_field` draft edits were removed.
 - **Validator installation.** `jsonschema>=4.26,<5` is required in every installation and CI job.
   `checks.schema_support()` remains a defensive probe for damaged or unsupported installations.
   Tests never skip schema validation because a dependency is missing.
-- **One dialect.** Every `$schema` on an actual schema, at the root or reached from it, must be
+- **Internal schema dialect.** Every `$schema` on an internal schema, at the root or reached from it, must be
   Draft 2020-12; `$ref` and `$dynamicRef` must start with `#`; a `$schema` key inside literal data
-  (`const`, `enum`, `default`, `examples`) is data. A missing local target is not refused at save; it
-  gives `contract_error` when applied.
+  (`const`, `enum`, `default`, `examples`) is data. An unresolved local target in an internal schema produces `contract_error` when applied.
 
 ## Contracts and repair
 
@@ -441,7 +453,7 @@ repair preview. Only a `complete` attempt whose check `pass`es is accepted.
 
 **Named envelope.** A block model step uses `response_mode: "named_json"`; `checks.check_named_answer` is
 its only acceptance path (Workbench attempts keep `check_answer_value`). It parses the answer once through
-`envelope_contract()` (non-strict, one JSON value, duplicate keys refused, the same parser policy as above),
+`envelope_contract()` (one JSON value with duplicate keys refused, using the same answer parser as above),
 requires the exact key *set* in any order, requires a JSON string for a text output, then checks each
 already-parsed value with `check_value` against that output's own captured contract. It returns one
 aggregate result with the bounded, located per-output results under `check["outputs"]`, and a value only when
@@ -523,13 +535,12 @@ rescanned.
   retain edits. Save submits all drafts, not just filtered matches. Suggested families are UI hints;
   custom families are stored on role definitions and offered across locations. No empty-family
   registry is persisted. Adding a role inherits active filters; adding defaults never duplicates names.
-- **Model step format and settings.** Executable format stays 1: the model step keys are `id, kind, role,
+- **Model step format and settings.** Executable definitions use v3. The model step keys are `id, kind, role,
   system, prompt, response_mode, task, task_resets, repair`. `response_mode` is required and only `"named_json"`
   is accepted; `output` on a model step is refused with a located issue (tool steps keep `output`); 1–50 outputs
   are declared from `outputs` alone. `task_resets` is a bounded list of `temperature` and/or `reasoning`; a name
   may not also appear in `task`, and an explicit `null` temperature or blank reasoning is normalised to a reset.
-  A strict older reader rejects the unfamiliar keys instead of misexecuting the block; format 2 stays reserved for
-  Workshop managed heads. `task_settings.resolve_effective(task, resets, role_defaults)` resolves each setting
+  The loader refuses executable v1 with `migration_required`. Format 2 identifies Workshop managed heads. `task_settings.resolve_effective(task, resets, role_defaults)` resolves each setting
   independently (step value, then reset, then role default, then backend default; zero is a value) and records
   the source of each in `Effective.sources`, without mutating a role or a `TaskSettings`.
 - **One preparation path.** `runner.model_messages` fills the prompts, composes the generated section,
@@ -882,7 +893,7 @@ python -m pip install -e ../modelSpell
 Never commit that change. Releases always use the pinned wheel; reinstall with
 `python -m pip install -e '.[dev]' --force-reinstall` to return to it.
 
-### Workshop headless services and Phase 2 integration
+### Workshop services and interface
 
 `ProcessState.workshop` is the public headless service. `workshop_assets.Assets`
 owns publication, source capture, generation pins and the saved loader, `workshop_editor` owns typed
@@ -947,11 +958,12 @@ main action. Tutorial configuration never touches the owner's workspace or keys.
 
 #### Wire conventions
 
-All new POST/PUT envelopes have integer `format_version: 1`. Editable data numbers
+Workshop POST/PUT envelopes use integer `format_version: 1`. The separate Contract API, including
+synthesis entry points, uses v2 envelopes. Editable data numbers
 and expected values travel as source strings. A draft is:
 
 ```json
-{"key":"example","definition_text":"<exact v1 executable JSON>","files":{"scripts/main.py":"<UTF-8 source>"},"metadata":{"format_version":1,"origin":"manual","effects":"unknown","support":[]}}
+{"key":"example","definition_text":"<exact v3 executable JSON>","files":{"scripts/main.py":"<UTF-8 source>"},"metadata":{"format_version":1,"origin":"manual","effects":"unknown","support":[]}}
 ```
 
 Files may alternatively be `{encoding:"base64",text:"..."}` records for binary
@@ -1041,7 +1053,7 @@ Only complete accepted evidence is reviewable. Redacted replay evidence is refus
 #### Storage, locks and recovery
 
 A v2 `blocks/<key>/block.json` contains only format_version/current/retained.
-Executable v1 assets and Workshop metadata live under
+Executable v3 assets and v1 generation metadata live under
 `.workshop/revisions/<128-bit-id>/`. Publication stages on the same filesystem,
 validates with the existing loader and atomically replaces the head last. Asset
 fingerprints cover length, path and exact bytes. The metadata records source and
@@ -1058,8 +1070,8 @@ the head. Submitted/copied numbers are not authoritative; IDs, head v2 schema an
 tokens are unchanged. Revision summaries and save responses expose the number and name additively.
 Unnumbered retained histories project oldest-first numbers starting at 1 without read-time writes. The
 first new generation anchors the baseline so pruning does not renumber survivors. Already-pruned lifetime
-history cannot be recovered. Legacy v1 import saves original=1 and edited=2; new blocks and duplicates
-start at 1. Restore appends, never rewrites an old generation. The UI starts a new revision label blank;
+history cannot be recovered. The first confirmed Workshop save of a valid unmanaged v3 block captures the original as
+revision 1 and the edited block as revision 2. New blocks and duplicates start at 1. Restore appends, never rewrites an old generation. The UI starts a new revision label blank;
 Overwrite replaces the selected retained entry with a fresh immutable generation, preserving its number
 and list position. The default changes only when its entry is replaced. The expected head identity and
 review plan bind the target; old IDs leave retention while pinned readers finish against unchanged files.

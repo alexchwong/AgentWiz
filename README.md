@@ -11,8 +11,8 @@ What 0.2.0 adds:
 
 - **Workshop:** create, understand, save, test and compare one model, tool or Python block at a time.
 - **Nine starters** and blank blocks, exact structured fields, prompt preview and a standard description for each saved revision.
-- **Saved revisions:** display names, duplicate, restore, explicit legacy conversion and newest-20 retention. Any retained
-  revision can be selected, described, tested and compared without changing the default.
+- **Saved revisions:** display names, duplicate, restore, explicit import of unmanaged v3 blocks and newest-20 retention. Eligible retained
+  revisions can be selected, described, tested and compared without changing the default.
 - **Examples and correctness:** exact outputs, field assertions or human review, independently of contract acceptance.
 - **Assistance:** create, improve, suggest examples and explain a failure, reviewed before Apply; Describe drafts a saved
   revision's standard description with its own `write_block_description` role, reviewed before Save description.
@@ -27,25 +27,24 @@ Scripts run with your filesystem and network access. AgentWiz uses the pinned mo
 
 ## Install
 
-Requires Python 3.10 or later.
+This guide covers AgentWiz 0.2.0, which requires Python 3.10 or later.
 
 ```bash
 curl -fsSL https://github.com/alexchwong/AgentWiz/releases/latest/download/install.sh | bash
 ```
 
-The script creates `.venv` in the current directory, checks the newest release wheel against the
-sha256 GitHub publishes, installs it, and prints how to launch. Pin a release with
-`… | bash -s -- --version 0.2.0`; download the script first if you want to read it before running it.
-JSON Schema validation is included in the standard installation.
+The script creates `.venv` in the current directory, checks the latest published release wheel against
+the SHA-256 GitHub publishes and prints how to launch. Run `.venv/bin/agentwiz --version` to confirm
+what was installed. To pin a published release, pass `--version` followed by its version number
+(`… | bash -s -- --version 0.1.4` is an example). You can download the script first to inspect it.
+For a development checkout, follow [the developer setup](DEVEL.md#environment-and-required-commands).
 
-Working from a clone? See DEVEL.md for the developer setup.
+**Upgrading a development workspace.** Executable format-1 blocks and format-1 saved contract
+files report `migration_required`. Recreate or deliberately rewrite them as executable v3 blocks
+and current Text/JSON contracts. Reusable contract references need exact revision pins. For model
+steps, update the reply instructions to match the [named JSON envelope](#named-outputs).
 
-**Upgrading a development workspace:** contract files and executable block files written before the
-contract overhaul (contract version 1, executable block version 1) are refused with `migration_required`;
-nothing migrates a workspace automatically. Recreate them as new contracts and blocks.
-
-Prefer to do it by hand? Download the wheel from the release page (the wheel, not the source zip),
-then run:
+If you already have a locally built 0.2.0 wheel or have downloaded its published wheel, install it with:
 
 ```bash
 python3 -m venv .venv
@@ -53,9 +52,8 @@ python3 -m venv .venv
 python -m pip install ./agentwiz-0.2.0-py3-none-any.whl
 ```
 
-For checksum verification, use `python -m pip install` with the wheel URL and `#sha256=…` fragment
-from the release notes instead of the local filename. Both methods also install modelSpell 0.3.0,
-pinned by URL and checksum.
+For a published wheel, you can pass the URL with the `#sha256=…` fragment from the release notes
+to pip instead of the local filename. Both methods install the URL- and checksum-pinned modelSpell 0.3.0.
 
 **JSON Schema validation is required and installed automatically** (`jsonschema>=4.26,<5`).
 It brings `rpds-py`, a compiled package; a platform without a published wheel needs a Rust
@@ -235,9 +233,9 @@ Overwrite is unavailable until the block has a saved revision. Concurrent change
 Numbers survive restart and pruning; restoring an older version and saving creates the next number.
 Duplicates start their own sequence. Existing unnumbered histories are numbered oldest first from the
 retained history available at upgrade, not from already-pruned lifetime history. Internal IDs remain unchanged.
-Opening a legacy v1
-block never converts it. Its first Save captures the original and edited definitions in a managed v2
-head, numbered 1 (original) and 2 (edited). Only the newest 20 revisions are retained, including that original.
+The first confirmed Workshop Save of a valid unmanaged v3 block captures its original definition
+as revision 1 and the edited definition as revision 2 under a managed v2 head. Only the newest
+20 revisions are retained.
 The Save plan identifies revisions
 being pruned. Duplicate keeps the original key intact and offers explicit copying of examples. Restore to
 draft loads a retained definition into a draft; a deliberate Save creates a new revision, without rerunning it.
@@ -310,8 +308,10 @@ has not been saved yet.
 A new revision starts without a saved description, even when restored from an older one. Revisions saved
 before this release show their stored prose as **Existing description** until you save a new one. A
 description that changed elsewhere since you opened it is refused rather than overwritten; reload and
-review it again. A damaged, linked or newer-format description file is shown as **Description unavailable**
-and is never overwritten from AgentWiz; the revision still runs. Pruning a revision also removes its description.
+review it again. An unreadable, linked or newer-format sidecar shows **Description unavailable**
+and is protected from writes. An invalid or mismatched v1 sidecar can be replaced if AgentWiz
+can read its freshness token. The sidecar is independent of execution. Pruning a revision also
+removes its description.
 
 ## Settings
 
@@ -679,56 +679,79 @@ check, and the first 20 issues.
 
 ## Blocks
 
-A block is a folder directly under `<workspace>/blocks/`; its name is the folder name and the `name` in
-its `block.json`. Legacy format-1 folders can still be edited externally and run in place. The saved-block inspector
-inside Workshop retains Reload and the original run/Stop/trace controls. Workshop Save creates the
-managed format-2 head described above; use Workshop to edit managed revisions rather than changing
-their immutable captured assets.
+A block lives directly under `<workspace>/blocks/<key>/`. An unmanaged block has an executable
+v3 `block.json` with a matching `name`. A Workshop-managed root has a v2 `block.json` that points
+to its saved generations. Edit managed blocks through Workshop so the captured assets stay intact.
+The saved-block inspector retains Reload and the run, Stop and trace controls.
 
-```
-<workspace>/blocks/extract_fields/
-    block.json
-    prompts/system.md
-    prompts/user.md
-    scripts/clean.py        (script steps only)
-```
-
-`block.json` (format version 1). Every key not listed here is refused, with its location, so a
-mistyped key never silently does nothing.
+The table describes the executable v3 definition. Unknown keys are refused with their locations.
 
 | Key | Meaning |
 | --- | --- |
 | `format_version` | `3`. Version 1 blocks are refused with `migration_required`; a greater number means a newer AgentWiz. |
-| `name` | The folder name (1 to 64 letters, digits, `.`, `_`, `-`). |
+| `name` | The folder name (1 to 64 ASCII letters, digits, `.`, `_`, `-`, starting with a letter or digit). |
 | `description` | Optional text shown in the list. |
 | `inputs` | Object: input name to `{"contract": ..., "description": ...}`. The contract is an inline definition or an exact saved-contract pin `{"name", "revision", "digest"}`. Names follow `[A-Za-z_][A-Za-z0-9_]{0,63}`. May be empty. |
 | `outputs` | Same shape, at least one. |
 | `steps` | A list of **exactly one** step. |
 | `budget` | `{"max_seconds": 1..86400 (default 1800), "max_model_tokens": integer >= 1 or absent}`. |
 
-A model step:
+Save this complete example as `<workspace>/blocks/count_identifiers/block.json` and assign the
+`fast` role before running it:
 
 ```json
-{"id": "extract", "kind": "model", "role": "fast",
- "system": {"file": "prompts/system.md"},
- "prompt": {"file": "prompts/user.md"},
- "task": {"temperature": 0, "max_tokens": 1024},
- "output": "fields",
- "repair": {"max_repairs": 2}}
+{
+  "format_version": 3,
+  "name": "count_identifiers",
+  "description": "Count synthetic identifier mentions",
+  "inputs": {
+    "source": {"contract": {"format": "text", "min_length": 1}}
+  },
+  "outputs": {
+    "summary": {
+      "description": "Short tally",
+      "contract": {"format": "text", "min_length": 1}
+    },
+    "count": {
+      "description": "Number of identifier mentions, including repeats",
+      "contract": {"format": "json", "schema": {"type": "integer", "minimum": 0}}
+    }
+  },
+  "steps": [{
+    "id": "extract",
+    "kind": "model",
+    "role": "fast",
+    "response_mode": "named_json",
+    "prompt": {"text": "Count each mention of a token starting with ID- in the source below. Include a short tally and the total number of mentions.\n\nSource:\n{{inputs.source}}"}
+  }]
+}
 ```
 
-`system` (optional) and `prompt` are `{"file": "prompts/..."}` or `{"text": "..."}`. `task` takes the
-same settings as a request panel. `output` names the one declared output. A model or tool block
-declares exactly one output.
+Use `ID-ALPHA, ID-BETA, ID-ALPHA` as the plain-text Test input. One passing reply is
+`{"summary":"Three mentions","count":3}`. A quoted count, missing key or extra key fails. A count
+of 2 is structurally valid. An example expectation on `count` can test correctness separately.
 
-A tool step calls a tool on a server from the MCP servers dialog:
+Model steps declare one or more outputs. The optional `system` and required `prompt` each use
+`{"file":"prompts/…"}` or `{"text":"…"}`. The optional `task` uses request-panel settings.
+
+For a tool block, replace the `inputs`, `outputs` and `steps` fields with the following fields,
+and use a block name matching its folder. This example requires a configured MCP server
+named `docs` that advertises a `lookup` tool accepting `id` and `label`:
 
 ```json
-{"id": "lookup", "kind": "tool", "server": "docs", "tool": "lookup",
- "arguments": {"id": "{{inputs.id}}", "label": "n={{inputs.id}}"}, "output": "result"}
+{
+  "inputs": {"id": {"contract": {"format": "text"}}},
+  "outputs": {"result": {"contract": {"format": "json"}}},
+  "steps": [{
+    "id": "lookup", "kind": "tool", "server": "docs", "tool": "lookup",
+    "arguments": {"id": "{{inputs.id}}", "label": "n={{inputs.id}}"}, "output": "result"
+  }]
+}
 ```
 
-A script step runs a Python file (see **Script steps**):
+The tool step's `output` binds its one declared output. A script step has a different shape.
+This step fragment requires your own `scripts/clean.py` and output declarations matching its
+[standard output](#script-steps):
 
 ```json
 {"id": "clean", "kind": "script", "file": "scripts/clean.py", "timeout_s": 60}
@@ -820,13 +843,13 @@ placeholders written exactly as `{{inputs.name}}` or with a dotted path into a J
 
 ## Contracts in blocks
 
-- **A model step sends the output format, not the checks.** AgentWiz adds a generated section to the
-  system message naming each declared output, its description, its format and, for a structured output,
-  its complete schema ([Named outputs](#named-outputs)). Check rules (`contains`, `length` and so on),
-  examples and saved contract names are never sent. The contract still alone decides whether the answer is
-  accepted, and the generated section does not replace it.
-- **How answers are read.** In strict mode the whole trimmed answer is parsed. Otherwise a single
-  fenced code block is used, with any prose around it ignored, or else the whole answer.
+- **Generated output instructions.** AgentWiz renders each output's name, declared meaning,
+  contract description, format, Text rules and complete JSON schema where applicable. The
+  generated section excludes saved contract identifiers and example data. The checker evaluates
+  the result against the captured contracts.
+- **How JSON answers are read.** With no fenced block, the parser reads the whole trimmed answer.
+  With exactly one, it reads that block and ignores surrounding prose. Multiple fences, duplicate
+  keys and invalid JSON are refused. The parser performs no coercion or arbitrary substring extraction.
 - **The truncation rule.** A block never accepts a cut-off answer, even one whose check passes: a
   truncated attempt is repaired (with a message saying it was cut off) or, if repair is exhausted,
   fails the step. The step result shows the truncated attempts and the cap that applied, so you can
@@ -842,16 +865,9 @@ whose top-level keys are exactly the names in the block's `outputs`**, for one o
 is checked against that output's own contract, and the outputs are published together or not at all: a failed,
 truncated or stopped answer exposes no partial output. A repair asks for the whole object again.
 
-```json
-{"id": "request", "kind": "model", "role": "fast", "response_mode": "named_json",
- "system": {"text": "Extract facts without inventing missing values."},
- "prompt": {"text": "Read {{inputs.source}}. Return {{output.text}} and {{output.structured_table}}."},
- "task": {"temperature": 0.2, "reasoning": "low"}, "repair": {"max_repairs": 2}}
-```
-
-**What is sent.** The system message is your system text with its input placeholders filled, then a section
-that begins and ends with marker lines and states these rules (the wording comes from
-`agentwiz/output_protocol.py`; Request preview shows the real text):
+**What is sent.** AgentWiz fills your prompt templates and appends a generated section to your
+system instructions. With no authored system instructions, the section is the system message.
+**Request preview** shows both messages. The generated section asks the model to:
 
 - Return exactly one JSON object and nothing else: no words before or after it, and no Markdown fence around it.
 - Its top-level keys are exactly these output names, in any order, one value each.
@@ -863,27 +879,17 @@ that begins and ends with marker lines and states these rules (the wording comes
   JSON requires, and any formatting the task asks for goes inside that string.
 - A JSON output is the value itself, placed directly under its key, not a string containing JSON.
 
-Each output is then described with its purpose and, when structured, its complete JSON Schema. The section is
-generated for every run and is never written into your block files, so repeated previews cannot duplicate it.
-It asks for key order of no kind, because acceptance checks the key *set*; the prohibition on prose and fences
-applies outside the object, so a text value may contain Markdown.
+The section is generated for each request. A Text value inside the JSON envelope may contain
+Markdown. The prohibition on fences in the instructions applies to the envelope itself.
 
-**`{{output.name}}`** in a model step's system or user prompt inserts that output's description, format and
-schema on one line. It describes the output; it can never refer to the answer the model has not yet given.
-`{{output.a.b}}`, `{{ output.a }}` and `{{output.}}` are refused when the block loads, and so is a name the block
-does not declare. Text inserted into a prompt is never scanned again, so braces inside an input value, a
-description or a schema stay literal.
+**`{{output.name}}`** inserts the named output's declaration in a model prompt. The declaration
+may span multiple lines, so place the placeholder on its own line when you use it.
+`{{output.a.b}}`, `{{ output.a }}`, `{{output.}}` and undeclared names are refused. Filled text is
+never scanned again. Structured outputs require a working JSON Schema validator.
 
-**Parsing is unchanged.** The whole trimmed answer is parsed, or a single fenced block when the contract is not
-strict; duplicate keys are refused. Nothing is repaired, guessed or extracted from surrounding prose. Output
-checks for structured values need a working validator installation; otherwise a block that needs them refuses to run
-instead of skipping the check. Checks establish structure and the rules you configured, not that an answer is true.
-
-**Older blocks.** A 0.1.x model block named its single output on the step. Such a block now loads as invalid
-with the location `steps[0].output`; AgentWiz does not convert it. Edit `block.json`: delete the step's
-`"output": "name"` line, add `"response_mode": "named_json"`, and keep `outputs` as it is. Update the prompt
-if it described the old reply, since the model must now answer with the object above. Old saved attempts remain
-readable. A block carrying the new key is refused by older AgentWiz versions rather than run wrongly.
+**Older blocks.** Executable v1 definitions report `migration_required` before step keys are
+checked. Rewrite the definition and its contracts for v3. If a v3 model step still contains
+`output`, remove that key and use `response_mode: "named_json"`. Old saved attempts remain readable.
 
 **Sampling precedence.** Temperature and reasoning are resolved separately for each setting: a value the step
 sets wins; `task_resets` naming the setting asks for the backend's default and stops the role's default being
@@ -905,8 +911,8 @@ prompt evaluation.
 ## Script steps
 
 A script step runs one of your Python files under `scripts/`. The block's inputs arrive on standard
-input as one JSON object; the script prints one JSON object on standard output whose keys are the
-block's output names (every declared output must be present).
+input as one JSON object. The script prints one JSON object on standard output whose keys exactly
+match the block's declared output names.
 
 - The script runs with an allow-listed environment (`PATH`, `HOME`, `LANG`, `TMPDIR`), so it holds no
   credentials, in its own process group, with a time limit (`timeout_s`, default 60, at most 3,600).
@@ -1123,9 +1129,9 @@ Stopping the original AgentWiz process also closes its tutorial.
   and (if on) saved runs/comparisons survive a restart. Keys and typed MCP tokens are held in memory only and must be
   re-entered after a restart.
 - **Inputs are not kept.** Each tab's fields are lost when the page reloads.
-- **Checks are syntactic.** They check format, structure and stated values, not whether an answer is
-  right. Regular expressions use Python's dialect, in `regex` checks and in a schema's `pattern`; a
-  pathological expression can take a long time on a long answer.
+- **Checks are syntactic.** They check structure and declared requirements. Use examples or
+  review to judge correctness. User contracts refuse unsupported schema keywords such as
+  `$ref`, `pattern`, `format` and `oneOf`. The contract's top-level `format` still selects Text or JSON.
 - **Number limits.** Exact checks stop at 4,300-digit integers and a 2,100-digit decimal precision;
   beyond them a check reports not run, never an approximation.
 - **JSON Schema** is included in the standard installation and brings the compiled package `rpds-py`.
@@ -1167,14 +1173,14 @@ Stopping the original AgentWiz process also closes its tutorial.
   AgentWiz; their reasoning text is still displayed. On LM Studio's native route (reasoning "off"),
   truncation is modelSpell's estimate. Stop, contracts and repair on LM Studio and llama-server are
   covered by optional live checks; results require an available configured backend.
-- **Blocks.** One step per block: no wiring, routing or nesting yet. Workshop writes managed revisions; externally edited v1 blocks remain supported. Scripts are not sandboxed and need POSIX process groups; a script that
+- **Blocks.** One step per block: no wiring, routing or nesting yet. Workshop writes managed revisions. Scripts run without a sandbox and need POSIX process groups. A script that
   starts its own session escapes group termination. The token budget is a soft, reported-usage
   allowance; time budgets are not an exact ceiling. Block runs continue after the page closes, up to
   their time budget, holding their slots; they do not survive a restart. Results are held for 100
   runs and 256 MiB; older ones are available from History only if saving was on. A stopped or
-  timed-out tool call may still have run. The parser stays strict, and the truncation rule fails
-  steps whose check passed. Graceful exit can wait for a script group that will not die; a second
-  Ctrl-C exits immediately and skips cleanup. The tutorial doubles process budgets while it is open.
+  timed-out tool call may still have run. A truncated attempt cannot publish outputs even when its
+  checks pass. Graceful exit can wait for a script group that will not die. A second Ctrl-C exits
+  immediately and skips cleanup. The tutorial doubles process budgets while it is open.
 - **The page** is checked in a headless Chromium by the developer tests; other browsers are covered
   only by the tour above.
 - **WSL2** is not checked by the automated tests.
