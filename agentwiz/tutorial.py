@@ -183,7 +183,20 @@ class Tutorial:
                 state.save_profile({"name":"tutorial-assistant","kind":"openai_compat",
                                     "model":"workshop-" + action}, state.view()["revision"])
                 state.select_profile(None, state.view()["revision"])
-                state.save_roles({ROLE:ROLE_PROFILE, "assistant":"tutorial-assistant"},state.view()["roles"]["revision"])
+                assignments = {ROLE: ROLE_PROFILE, "assistant": "tutorial-assistant"}
+                if action == "describe":
+                    # Describe uses its own dedicated role, bound to the same local stand-in, and a saved
+                    # managed fixture: a description belongs to a saved revision.
+                    from .roles import DEFAULTS
+                    from .tutorial_support.workshop import ensure_describe_fixture
+                    assignments["write_block_description"] = "tutorial-assistant"
+                    current = state.view()["roles"]
+                    definitions = {**current.get("definitions", {}),
+                                   "write_block_description": dict(DEFAULTS["write_block_description"])}
+                    state.save_roles(assignments, current["revision"], definitions)
+                    ensure_describe_fixture(state.workshop)
+                else:
+                    state.save_roles(assignments, state.view()["roles"]["revision"])
             self.topic = topic.id
             self.last_seen = time.monotonic()
             state.apply_config({"kind": "openai_compat",

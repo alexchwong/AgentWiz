@@ -959,14 +959,14 @@ def test_page_roles_flags_missing_defaults(ui, server, open_page):
     tid(page, 'header-roles').click()
     notice = tid(page, 'roles-missing-defaults')
     expect(notice).to_be_visible()
-    expect(notice).to_have_attribute('data-missing', 'fast,assistant,reasoning')
+    expect(notice).to_have_attribute('data-missing', 'fast,assistant,reasoning,write_block_description')
     tid(page, 'roles-defaults').click()
     expect(notice).to_be_visible()  # Still absent from the saved workspace until Save.
     tid(page, 'roles-save').click()
     has(page, 'roles-dialog', 'data-state', 'saved')
     expect(notice).to_be_hidden()
     assert get_state(ui)['roles']['map'] == {'write_contract': 'p'}
-    assert set(get_state(ui)['roles']['definitions']) == {'fast', 'assistant', 'reasoning', 'write_contract'}
+    assert set(get_state(ui)['roles']['definitions']) == {'fast', 'assistant', 'reasoning', 'write_contract', 'write_block_description'}
 
 
 def test_page_roles(ui, server, open_page):
@@ -995,7 +995,7 @@ def test_page_roles(ui, server, open_page):
     tid(page, "roles-save").click()
     has(page, "roles-dialog", "data-state", "stale")
     expect(page.locator('[data-test="roles-row"]')).to_have_count(1)
-    expect(tid(page, "roles-selection").locator('option')).to_have_count(5)    # four defaults (write_contract) + slow
+    expect(tid(page, "roles-selection").locator('option')).to_have_count(6)    # five defaults (write_contract, write_block_description) + slow
     assert get_state(ui)["roles"]["map"] == {"fast": "p", "slow": "p"}
     # the profile is deleted: its roles are unresolved
     request(ui, "/api/profiles/delete", {"name": "p", "revision": get_state(ui)["revision"]})
@@ -1114,7 +1114,7 @@ def test_roles_filter_profiles_and_preserve_unsaved_edits(ui, server, open_page)
     expect(row.locator('[data-key="profile"]')).to_have_value("cloud")
     tid(page, "roles-defaults").click()
     expect(page.locator('[data-test="roles-row"]')).to_have_count(1)
-    expect(tid(page, "roles-selection").locator('option')).to_have_count(4)
+    expect(tid(page, "roles-selection").locator('option')).to_have_count(5)
     tid(page, "roles-save").click()
     has(page, "roles-dialog", "data-state", "saved")
     saved = get_state(ui)["roles"]
@@ -1142,7 +1142,7 @@ def test_roles_single_editor_filters_families_and_retains_other_edits(ui, open_p
     tid(page, "roles-add-family").click()
     expect(tid(page, "roles-family")).to_have_value("Customer support")
     tid(page, "roles-location-filter").select_option("local")
-    expect(tid(page, "roles-selection").locator('option')).to_have_count(32)
+    expect(tid(page, "roles-selection").locator('option')).to_have_count(33)
     expect(row.locator('[data-key="description"]')).to_have_value("Unsaved fast purpose")
     tid(page, "roles-family-filter").select_option("Coding & engineering")
     expect(row).to_have_count(0)
@@ -1639,3 +1639,96 @@ def test_workshop_example_dialog_offers_an_input_the_example_lacks(ui, open_page
     expect(tid(dialog, 'ws-field-text')).to_have_value('one two')
     expect(tid(dialog, 'ws-field-extra')).to_have_count(1)
     expect(tid(dialog, 'ws-field-extra')).to_have_value('')
+
+
+# --- block_metadata_refactor spec v2, M08 --------------------------------------------------------------------
+@pytest.mark.parametrize("width", [390, 1280])
+def test_workshop_revision_selection_describe_refine_save_and_test(ui, server, open_page, width):
+    from conftest import Reply, answer, request, save_profile, save_roles
+    def send(route, **body):
+        return request(ui, "/api/workshop/" + route, {"format_version": 1, **body})
+    def publish(draft, expected=None):
+        body = {"draft": draft, "expected_identity": expected}
+        plan = send("plans", action="save", request=body)
+        return send("save", **body, expected_plan=plan["expected_plan"],
+                    confirmations=[{"kind": r["kind"], "digest": r["digest"]} for r in plan["required_confirmations"]])
+    save_profile(ui, "p", model="m", kind="openai_compat", base_url=server.url + "/v1", provider="")
+    save_roles(ui, {"write_block_description": "p"})
+    draft = send("preview", starter="count_text", key="journey")["draft"]
+    first = publish(draft)
+    characters = send("preview", draft=draft, edit={"kind": "starter_parameters", "parameters": {"unit": "characters"}})["draft"]
+    second = publish(characters, first["base_digest"])
+    sections = {k: ("Counts words in the text." if k == "use" else "") for k in
+                ("use", "exclusions", "effects", "limitations", "missing_data", "failures")}
+    generated = {"format_version": 1, "action": "describe",
+                 "payload": {"sections": sections, "port_summaries": {"inputs": {"text": "Text to count."}, "outputs": {}}}}
+    server.reply(Reply(body=answer(jsonio.encode_exact({"proposal": generated})).body,
+                       headers={"Content-Type": "text/event-stream"}, delay=1.0))
+    page = open_page(ui)
+    page.set_viewport_size({"width": width, "height": 850})
+    tid(page, "ws-list").select_option("journey")
+    picker = tid(page, "ws-choice-block-revision")
+    expect(picker).to_have_attribute("data-selected", second["durable_id"])
+    picker.select_option(first["durable_id"])                                 # a clean selection: no dialog
+    expect(picker).to_have_attribute("data-selected", first["durable_id"])
+    expect(picker).to_have_attribute("data-current", second["durable_id"])
+    expect(tid(page, "ws-save-revision")).to_be_disabled()
+    panel = tid(page, "ws-standard-description")
+    expect(panel).to_have_attribute("data-status", "missing")
+    expect(tid(panel, "ws-description-label")).to_contain_text("revision 1")
+    dialog = tid(page, "ws-dialog")
+    tid(panel, "ws-describe-block").click()
+    expect(tid(dialog, "ws-describe-plan")).to_have_attribute("data-locality", "local")
+    expect(tid(dialog, "ws-describe-remote")).to_have_count(0)
+    tid(dialog, "ws-confirm").click()
+    expect(tid(page, "ws-describe-stop")).to_be_visible()                       # Stop during the call
+    expect(tid(dialog, "ws-description-proposal")).to_be_visible()
+    expect(tid(dialog, "ws-proposed-use")).to_have_text("Counts words in the text.")
+    refined = {"format_version": 1, "action": "describe",
+               "payload": {"sections": {"limitations": "Splits on whitespace only."}}}
+    server.reply(answer(jsonio.encode_exact({"proposal": refined})))
+    tid(dialog, "ws-refine").click()
+    tid(dialog, "ws-describe-feedback").fill("Mention how words are split.")
+    tid(dialog, "ws-send-feedback").click()
+    tid(dialog, "ws-confirm").click()
+    expect(tid(dialog, "ws-description-changed")).to_contain_text("Limitations")
+    expect(tid(dialog, "ws-proposed-limitations")).to_have_text("Splits on whitespace only.")
+    tid(dialog, "ws-save-description").click()
+    has(page, "ws-status", "data-state", "description_saved")
+    expect(tid(page, "ws-dialog")).to_have_count(0)                             # no executable save dialog
+    expect(panel).to_have_attribute("data-status", "saved")
+    expect(picker).to_have_attribute("data-dirty", "false")
+    expect(tid(page, "ws-save-revision")).to_be_disabled()
+    assert "Unsaved" not in page.locator("h2").first.inner_text()
+    assert len(server.requests) == 2
+    # Manual editing needs no model: unassign the role, edit the newer revision.
+    save_roles(ui, {})
+    picker.select_option(second["durable_id"])
+    expect(tid(page, "ws-standard-description")).to_have_attribute("data-status", "missing")
+    tid(page, "ws-edit-description").click()
+    tid(dialog, "ws-description-field-use").fill("Counts characters in the text.")
+    tid(dialog, "ws-save-description").click()
+    has(page, "ws-status", "data-state", "description_saved")
+    expect(tid(page, "ws-standard-description")).to_have_attribute("data-status", "saved")
+    assert len(server.requests) == 2
+    # Reopen older and newer revisions; each keeps its own prose.
+    picker.select_option(first["durable_id"])
+    expect(tid(page, "ws-description-limitations")).to_contain_text("Splits on whitespace only.")
+    picker.select_option(second["durable_id"])
+    expect(tid(page, "ws-description-use")).to_contain_text("Counts characters in the text.")
+    # Test the older revision through its explicit saved selector; the default stays put.
+    picker.select_option(first["durable_id"])
+    tid(page, "ws-test").click()
+    expect(tid(page, "ws-run-source")).to_have_attribute("data-clean", "true")
+    tid(page, "ws-field-text").fill("one two")
+    tid(page, "ws-run-test").click()
+    tid(dialog, "ws-confirm").click()
+    expect(tid(page, "ws-output")).to_have_text("2")
+    expect(tid(page, "ws-trial").locator("strong")).to_contain_text("revision 1")
+    assert request(ui, "/api/workshop/blocks/journey/revisions")["current"] == second["durable_id"]
+    # An edit makes the selection a draft: Describe is disabled until it is saved or discarded.
+    tid(page, "ws-design").click()
+    tid(page, "ws-field-purpose").fill("Edited purpose")
+    expect(tid(page, "ws-describe-block")).to_be_disabled()
+    expect(tid(page, "ws-save-revision")).to_be_enabled()
+    expect(tid(page, "ws-choice-block-revision")).to_have_attribute("data-dirty", "true")

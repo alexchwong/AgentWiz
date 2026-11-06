@@ -40,6 +40,8 @@ Paths in this table are relative to the repository root.
 | `agentwiz/contract_service.py` | yes | Headless draft projection, targeted edits and sample checks. Never writes. |
 | `agentwiz/contract_examples.py` | yes | Five illustrative starter definitions with synthetic valid, invalid and structurally-valid-but-wrong values. |
 | `agentwiz/prompts/write_contract.md` | yes | Packaged synthesis prompt (`write_contract`, version 1). |
+| `agentwiz/prompts/write_block_description.md` | yes | Packaged Describe/Refine prompt (`write_block_description`, version 1). |
+| `agentwiz/workshop_descriptions.py` | yes | Revision descriptions: sidecar records, prose validation, projections, the guarded write helpers and the server-owned Describe/Refine context, schema and patch materialisation. No HTTP, no lock of its own. |
 | `agentwiz/runs.py` | yes | **0.1.3.** `CancelToken`; runs; the attempt store: identity, records, end point, commit, summaries, retention, save status, deletion reservation. No HTTP. |
 | `agentwiz/model_step.py` | yes | **0.1.3.** `run_attempt`, the headless model-step function, and the hook `before_end_point`. No HTTP. |
 | `agentwiz/history.py` | yes | **0.1.3.** The run-history writer (run folders, redaction), listing, reading and deleting saved runs; `remove_tree`. No HTTP. |
@@ -883,9 +885,9 @@ Never commit that change. Releases always use the pinned wheel; reinstall with
 ### Workshop headless services and Phase 2 integration
 
 `ProcessState.workshop` is the public headless service. `workshop_assets.Assets`
-owns publication and source capture, `workshop_editor` owns typed projections and
-versioned starter renderers, and `workshop_assist` owns closed proposal schemas and
-compilation. HTTP handlers translate requests only. All execution uses
+owns publication, source capture, generation pins and the saved loader, `workshop_editor` owns typed
+projections and versioned starter renderers, `workshop_assist` owns the generic closed proposal schemas
+and compilation, and `workshop_descriptions` owns revision descriptions and the Describe request. HTTP handlers translate requests only. All execution uses
 `runner.run_block(..., frozen=FrozenSource(...))`; existing callers retain live
 resolution. A frozen source captures the destination, credentials, settings,
 contracts, source bytes and save preference once. Script cleanup owners retain the
@@ -918,13 +920,27 @@ revision selector as well as the editor until publication/reload completes.
 Each variable table row retains expandable contract/source controls; structured format selection exposes
 its editor immediately. Destructive format replacement requires confirmation. Stable row identity is
 separate from the edited name; pending form edits flush before contract operations.
-The primary Save lives in Design, not the shared navigation. The block-revision dropdown loads a historical
-draft through Save/Discard/Stay, preserving same-block example/input state. Selected/current block revision
-IDs are separate from the example collection's revision. Historical restore still uses captured contracts
-and the existing save acknowledgement. Compare and revision actions share numeric/name display labels.
+The primary Save lives in Design, not the shared navigation. The block-revision dropdown is rendered by
+the common Workshop path (Design, Test and Compare). It opens a clean saved selection through
+Save/Discard/Stay, preserving same-block example/input state; the page takes the selected ID from the
+preview's `selector`, never from the separately loaded revision list. A clean selection runs through its
+explicit `{key, revision}` selector; any edit makes it a draft, labelled with its base revision and
+**Unsaved**, which uses the draft path. A clean older selection disables Save until an edit or Revision
+actions → Restore to draft (a saved projection loaded into draft mode). The page holds the last saved
+projection and its durable ID separately from the mutable draft and clears it for a new block, a
+duplicate or a workspace change (page reload). Selected/current block revision IDs are separate from the
+example collection's revision. Restore still uses captured contracts and the existing save acknowledgement.
+Compare and revision actions share numeric/name display labels; results and prepared previews name the
+revision they ran. The Standard description panel, manual editor and Describe/Refine review update only
+the description readout: they never mark the executable form dirty, reset inputs or examples, or change
+the picker. Late Describe results for a selection that is no longer current are ignored. Model prose is
+rendered as DOM text.
 
 Five deterministic proposal models named `workshop-<action>` are packaged in the
-isolated tutorial backend. `tutorial_support.workshop` supplies their closed responses.
+isolated tutorial backend. `tutorial_support.workshop` supplies their closed responses; `workshop-describe`
+returns the Describe envelope for the saved managed fixture `tutorial_described` (an `extract_fields`
+starter published when the Describe topic is prepared), with `write_block_description` bound to the same
+local stand-in. Other assistance topics keep their bindings.
 The three block topics now prepare Workshop Test; one authoring topic and five
 assistance topics bring the registry to fourteen. Their browser drivers run every
 main action. Tutorial configuration never touches the owner's workspace or keys.
@@ -944,7 +960,10 @@ file may be undeclared: the executable's references plus selected support must
 account for the complete set. The server constructs assistant-generated filenames.
 `definition_text` remains the advanced escape hatch. Preview returns port contract
 projections, exact source, facts, descriptions, freshness, setup issues and a filled
-prompt/arguments when inputs are supplied. Port contracts are projected by the shared contract service; a
+prompt/arguments when inputs are supplied. A saved preview (an explicit `{key, revision}`, or a bare
+`{key}` of a managed block) is built from the generation's own captured contracts and adds `selector`,
+`revision_number`, `revision_name`, `run_issues` (what live validation would refuse) and
+`standard_description`. Port contracts are projected by the shared contract service; a
 definition outside the user vocabulary is never projected.
 Preview also returns `valid` and declared `input_ports`, and projects independently usable contracts
 even when another part of the definition is invalid. Save/Start planning rejects invalid drafts with
@@ -965,19 +984,20 @@ constraints. Reference/shape-changing schemas refuse visual editing.
 | --- | --- |
 | GET `starters` | Nine starter IDs, versions and two packaged examples each. |
 | POST `render-value`, `input-value`, `answer-view` | Exact literal text to typed presentation, or typed input back to exact text; checked answers use the existing checker/parser for display. |
-| POST `preview` | Accept draft, starter/key/binding, or key/revision/support selection. No dispatch/publication. |
+| POST `preview` | Accept draft, starter/key/binding, key/support, or a clean saved `{key, revision}` selection. No dispatch/publication. |
 | POST `plans` | `{action,request}` returns `expected_plan`, effective descriptor and required confirmations. |
 | POST `save` | Draft/source, `expected_identity`, expected plan and confirmations publish one revision. |
-| GET `blocks/<key>/revisions[/<id>]` | Revision summaries or exact historical preview. |
+| GET `blocks/<key>/revisions[/<id>]` | Revision summaries or the saved preview of one retained revision. |
+| PUT `blocks/<key>/revisions/<id>/description` | Accept a description proposal or save a manual description for that revision only. |
 | GET `blocks/<key>/support` | Bounded root candidates and captured support set. |
 | POST `blocks/<key>/support/preview` | Explicit `replace`/`remove` paths update a draft, retaining old revisions. |
 | GET/PUT `blocks/<key>/examples` | Collection with revision or save using `expected_revision`. |
-| POST `test` | One source and input-text map start a frozen normal run. |
+| POST `test` | One source (draft, key, or saved `{key, revision}`) and input-text map start a frozen normal run. |
 | POST `batches` | One/two candidates and ordered exact examples start serial independent trials. |
 | GET `batches` | Current and latest completed session batch IDs. |
-| GET `batches/<id>` | Rows, child run IDs, evidence summaries and denominators. |
+| GET `batches/<id>` | Rows, child run IDs, evidence summaries and denominators; a Describe batch returns its allowlisted projection instead. |
 | POST `batches/<id>/stop` | Cancel current child and remaining trials. |
-| POST `assist` | One independently requested action using an assigned assistant role. |
+| POST `assist` | One independently requested action using an assigned assistant role, or the server-owned Describe/Refine request. |
 | POST `proposals/apply` | Proposal ID, matching draft and expected plan produce draft/examples only. |
 | PUT `reviews/<run>` | Result-bound rating and optional durable review, with expected revision. |
 | GET `comparisons[/<id>]`, DELETE `comparisons/<id>` | Saved comparison listing/read or independent deletion. |
@@ -990,13 +1010,17 @@ No automatic restart/replay is performed. Configuration/context/save changes req
 a new plan. Schema observations are evidence, excluded from the action binding.
 
 A source selector uses `key` and optional durable `revision`; drafts use `draft`.
-`preview` also accepts `duplicate_key`, `display_name`, or an `edit` operation.
+An explicit `{key, revision}` is a clean saved selection: it refuses `draft`, `starter`, `edit`,
+`duplicate_key`, `display_name`, `support` and `metadata` (400, located), bypasses `Service.source()`
+(no current-head provenance, no authoring mutation) and reads the generation through `Assets.saved`.
+`preview` also accepts `duplicate_key`, `display_name`, or an `edit` operation on the draft and key-only paths.
 `starter_parameters` regenerates a current version only after an actual edit.
 `contract` identifies side/port/path and exact `set` values, or `source_text`.
-`description` explicitly reviews the six semantic sections against the current basis.
-Historical selectors read captured contracts through a private snapshot resolver and
-restore drafts that keep their original pins; publication resolves them against the
-live store again. `make_local_copy` (side/port) explicitly replaces one pin with the
+The retired `description` edit and draft-carried `description_sections` answer 409 `describe_moved`.
+Saved previews and Describe read captured contracts through the private snapshot resolver
+(`Assets.snapshot`), never granted to a caller-supplied draft. Runs validate the same saved files against
+the live registry and the revision's exact pins and never resolve to latest. Restore drafts keep their
+original pins; publication resolves them against the live store again. `make_local_copy` (side/port) explicitly replaces one pin with the
 generation's captured definition. Nothing is inlined silently.
 
 Examples contain id/version/label, named input source texts, expectation,
@@ -1087,3 +1111,76 @@ Truncation remains an acceptance failure. The tool never sends network requests 
 never installs a production recovery rule.
 
 Experiment fixture submission uses scripts/workshop_experiment.py with --task label or --task extract. Offline --print-fixture writes no workspace data. Live submission uses the same ticket, plan and batch APIs. No execution engine or automatic parser promotion is provided by that client.
+
+#### Operating revisions
+
+`Assets.pin(key, revision=None)` is the shared current/historical pin: it validates the ID shape, registers
+the pin under the leaf lock, re-reads the head and confirms retention before opening the generation,
+rejects symbolic links on the path, and is released in `finally`. A no-longer-retained or malformed ID is
+404; a retained ID without its folder is a damaged generation (409 `unusable`). Publication's reaper skips
+pinned generations, so a reader either holds its pin or sees the ID leave retention. `Assets.saved` copies
+every asset listed in the generation's metadata, verifies digests, rechecks retention before returning, and
+refuses executable formats older than 3 with 400 `migration_required`. Once Start owns the capture copy, a
+later prune cannot change the admitted run.
+
+A saved run candidate binds `block_revision_id` and `block_revision_number` in the plan candidate (so two
+byte-identical generations stay distinct), batch rows and `result.workshop`. Its draft carries no head
+token, so a plan survives a default-pointer change; Restore and editing keep the optimistic
+`base_digest`. Older records omit these additive fields. Shared comparison examples are checked against
+each arm's input names: a mismatch is 400 `example_incompatible` naming the example, the revision and the
+missing/extra ports.
+
+#### Revision descriptions
+
+One record per retained managed generation lives at `blocks/<key>/.workshop/descriptions/<id>.json`, outside
+the immutable generation and every executable asset map. Version 1 is closed:
+`{format_version, basis, origin, sections, port_summaries}`. `basis` is the exact JSON digest of
+`{key, revision, asset_digest, contracts_digest}` from a verified executable-v3 generation; without both
+digests there is no basis and the status is `unavailable`. `origin` is `manual` or `model`. All six
+`workshop_editor.SECTIONS` are required and trimmed; `use` is nonblank; each section is at most 600
+characters. `port_summaries` holds `inputs` and `outputs` objects keyed only by declared ports, each a
+nonblank summary of at most 240 characters; an absent key shows the declared meaning. Prose rejects invalid
+Unicode and control characters other than newline and tab. The encoded record is at most 16 KiB.
+
+The projection (`standard_description` in a saved preview, and the PUT result) carries `status`
+(`saved`, `legacy` for `workshop.json.description_sections` with no sidecar, `missing`, or `unavailable`
+for no basis or an unreadable, linked, unknown-format, mismatched or invalid sidecar), `basis`, `token`
+(SHA-256 of the exact sidecar bytes, `null` when absent), prose, executable `fallback` text, `issues` and
+`writable`. Unreadable, linked and unknown-format records are never overwritten; a mismatched or invalid
+version-1 record may be replaced with its token.
+
+`PUT .../description` takes either `{proposal_id, expected_token}` or `{expected_token, basis, sections,
+port_summaries}` (both closed). Under the workspace writer and the per-block reservation shared with
+publication it rechecks retention (404), basis and token (409 `stale`), validates prose (400
+`description_invalid`, located), refuses known credentials (409 `credential_in_asset`) and writes
+atomically. A proposal for revision A never targets revision B (409 `proposal_target`). New publication
+strips `description_sections`/`description_basis` and never inherits a sidecar. Publication and startup
+recovery remove regular sidecars with recognised IDs for pruned generations after the head commits;
+links and foreign names are skipped and a cleanup failure never fails publication.
+
+Describe/Refine reuse `plans` (action `assist`) and `assist` with closed request shapes
+(`action:"describe"`, `mode`, `key`, `revision`, and for Refine `proposal_id` and `feedback` of at most
+2,000 characters). They are routed before generic capability enumeration and role selection. The server
+resolves `write_block_description` (409 `role_unresolved` before any call), reads the revision through the
+snapshot resolver and builds an allowlisted context: key, kind, purpose, exact port names, bounded declared
+meanings, compact contract facts; for model blocks the role and decoded system/user prompt; for scripts the
+main source and starter name; for tools the server, tool and binding structure with literal values replaced.
+Each excerpt is at most 4,000 characters and the serialised context at most 16 KiB (optional constraints,
+then meanings, then excerpts are shed; otherwise 400 `context_too_large`). Known credentials are redacted;
+one remaining anywhere in the outbound context or response schema refuses dispatch with 409
+`credential_in_context`. The ephemeral block uses the named-output path with a closed response schema
+restricted to the captured ports and sections, a 2,048-token cap and one repair. `saving` is forced off, so
+no run record or comparison manifest is written even with Save runs on.
+
+After a complete call, `describe_complete` validates normalised prose, Refine patch semantics (missing keys
+keep prior text, an empty string clears an optional section, `null` removes a port summary, an empty patch
+needs a note), whole-record bytes and credentials. Failure is the terminal `description_invalid` outcome
+with located issues and no proposal; an unchanged Refine is `unchanged` and keeps the prior proposal. A
+success stores a `description` proposal (opaque ID, target key/ID/basis, base token, candidate, note,
+changed labels) in the bounded proposal cache unless cancellation already won. `description_proposal`
+reads only that cache, never run envelopes, batch retention or history, and expires proposals whose
+revision is pruned (410). The generic Apply route refuses this kind. Public plans, confirmation errors and
+batch reads of a Describe request use `describe_public`/`describe_public_batch`: target, destination with
+locality, persistence, progress, outcome, bounded issues and the validated proposal; never context,
+feedback, prior prose, raw answers, prepared requests or child run IDs. The full private descriptor still
+binds the plan.

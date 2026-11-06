@@ -184,6 +184,13 @@ def drive_assist(page):
     dialog=tid(page,"ws-dialog")
     tid(dialog,"ws-prepare-request").click()
     tid(dialog,"ws-confirm").click()
+    if tid(page,"tutorial-box").get_attribute("data-topic") == "assist-describe":
+        # Describe reviews a description of the saved managed fixture and saves only that description.
+        expect(tid(dialog,"ws-description-proposal")).to_be_visible()
+        tid(dialog,"ws-save-description").click()
+        has(page,"ws-status","data-state","description_saved")
+        has(page,"ws-standard-description","data-status","saved")
+        return
     if tid(page,"tutorial-box").get_attribute("data-topic") == "assist-improve":
         tid(dialog,"ws-discard").click()
         has(page,"ws-status","data-state","proposal_discarded")

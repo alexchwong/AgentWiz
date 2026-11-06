@@ -1,5 +1,14 @@
 # NEWS
 ## 0.2.0
+- Any retained Workshop revision can be selected, tested and compared without changing the default; results
+  name the revision they ran. Selecting a revision no longer turns it into an unsaved draft: use
+  Revision actions → Restore to draft (or edit it) before saving it as a new revision.
+- Standard descriptions now belong to one saved revision and never change the executable block. Describe block
+  uses the new `write_block_description` role, shows the destination first, and offers Save description,
+  Refine or Discard; Edit description writes one by hand without a model. A new revision starts without one.
+- Assist's describe opens the same Describe flow; Improve and Explain failure no longer edit description sections.
+- Workspaces created earlier list `write_block_description` among missing default roles until it is added.
+- The port field is now labelled Declared meaning; per-port Documentation in the description is display-only.
 - Contract synthesis shows sanitized model-call errors, including missing API keys, instead of only a generic failure.
 - Roles flags default roles missing from the saved workspace and explains how to add them without replacing existing roles.
 - Contracts are Text, JSON with a small schema vocabulary, or Any JSON; literal Text rules and exact

@@ -13,7 +13,7 @@ from pathlib import Path
 from . import blocks, checks, contract_schema, history, jsonio, model_step, runner, runs, task_settings as ts, templates
 from . import workshop_editor as editor
 from .state import RoleUnresolved
-from .workshop import WorkshopError
+from .workshop import TOKEN, WorkshopError
 from .workshop_assets import Assets, Capture, decode_files, document, fail, fingerprint, head, key_name, read, relative, wire_files
 from .workspace import write_atomic_bytes
 
@@ -208,138 +208,172 @@ class Service:
             draft.setdefault('metadata', {})['display_name'] = body['display_name']
         return draft
 
+    # Fields an explicit saved selector never accepts (spec v2 2.1(3)): a saved request is a clean selection.
+    SAVED_FORBIDDEN = ('draft', 'starter', 'edit', 'duplicate_key', 'display_name', 'support', 'metadata')
+
+    def saved_selection(self, body, *, key_only=False):
+        """The SavedGeneration a request explicitly selects, or None for the draft/key-only paths.
+
+        An explicit `{key, revision}` is always a clean saved selection and refuses authoring fields. With
+        `key_only`, a bare `{key}` of a managed block also resolves its current generation once (previews);
+        runs keep the existing key-only path."""
+        if not isinstance(body, dict):
+            fail()
+        if 'revision' in body:
+            bad = [k for k in self.SAVED_FORBIDDEN if k in body]
+            if bad:
+                raise WorkshopError('invalid', 400, [{'location': name, 'message': 'is not accepted with an explicit saved revision; '
+                                                      'use Restore to draft to edit a revision'} for name in bad])
+            return self.assets.saved(key_name(body.get('key')), body['revision'])
+        if not key_only or any(k in body for k in self.SAVED_FORBIDDEN):
+            return None
+        root = self.assets.path / key_name(body.get('key'))
+        if not root.exists() or head(self.assets.root(body['key'])) is None:
+            return None
+        return self.assets.saved(body['key'])
+
     def preview(self, body):
+        saved = self.saved_selection(body, key_only=True)
+        if saved is not None:
+            return self.saved_preview(saved, body)
         draft = self.source(body)
         with self.assets.validate(draft) as captured:
-            p = captured.parsed
-            result = {'format_version': 1, 'draft': draft, 'source_digest': captured.digest,
-                      'issues': list(p.problem.issues) if p.problem else [], 'kind': p.kind,
-                      'classification': editor.classification(draft) if p.kind == 'script' else None}
-            definition = jsonio.decode_exact(draft['definition_text'])
-            result['valid'] = p.problem is None
-            result['input_ports'] = list(definition.get('inputs', {}))
-            result['contracts'] = {'inputs': {}, 'outputs': {}}
-            contract_store = self.assets.contracts()
-            for side in ('inputs', 'outputs'):
-                for name, declaration in definition.get(side, {}).items():
-                    raw = declaration.get('contract') if isinstance(declaration, dict) else None
-                    if isinstance(raw, dict) and 'format' not in raw:
-                        try:
-                            found, _refused = contract_store.resolve(raw.get('name'), raw.get('revision'), raw.get('digest'))
-                        except (TypeError, AttributeError):
-                            found = None
-                        raw = dict(found.contract.raw) if found is not None else None
-                    if isinstance(raw, dict):
-                        try:
-                            result['contracts'][side][name] = editor.contract_view(jsonio.encode_exact(raw))
-                        except (checks.ContractError, contract_schema.DefinitionError, WorkshopError):
-                            pass
-            step = next(iter(definition.get('steps', [])), {})
-            def asset_text(value):
-                if 'file' in value:
-                    return captured.files[value['file']].decode()
-                return value.get('text', '')
-            result['design'] = {'purpose': definition.get('description', ''), 'kind': step.get('kind'),
-                'binding': step.get('role', step.get('server', '')), 'system': asset_text(step.get('system', {})),
-                'behaviour': asset_text(step.get('prompt', {})) if step.get('kind') == 'model' else
-                    captured.files.get(step.get('file'), b'').decode() if step.get('kind') == 'script' else step.get('tool', ''),
-                'arguments': jsonio.encode_exact(step.get('arguments', {})), 'budget': jsonio.encode_exact(definition.get('budget', {})), 'settings': jsonio.encode_exact(step.get('task', {})),
-                'repairs': str(step.get('repair', {}).get('max_repairs', 2)),
-                'sampling': {k:str(v) for k,v in step.get('task',{}).items() if k != 'advanced'},
-                'resets': [name for name in step.get('task_resets', []) if isinstance(name, str)],
-                'limits': {k:str(v) for k,v in definition.get('budget',{}).items() if v is not None}}
-            for side in ('inputs', 'outputs'):
-                result['design'][side] = [{'name': name, 'description': declaration.get('description', ''),
-                    'format': (declaration['contract'].get('format', 'shared') if isinstance(declaration['contract'], dict) else 'shared'),
-                    'reference': ({k: declaration['contract'].get(k) for k in ('name', 'revision', 'digest')}
-                                  if isinstance(declaration['contract'], dict) and 'format' not in declaration['contract'] else None),
-                    'source': jsonio.encode_exact(declaration['contract'])} for name, declaration in definition.get(side, {}).items()]
-            if p.block:
-                result['contracts'] = {side: {name: editor.contract_view(c.text) for name, c in ports.items()}
-                                       for side, ports in p.block.contracts.items()}
-                result['requires_checks'] = any(port.parsed.schema is not None for ports in p.block.contracts.values() for port in ports.values())
-                result['setup_issues'] = []
-                try:
-                    if p.kind == 'model':
-                        snapshot = self.state.resolve_role(p.block.step.role)
-                        result['destination'] = {'role': p.block.step.role, 'kind': snapshot.kind, 'base_url': snapshot.endpoint.base_url, 'model': snapshot.model, 'provider': snapshot.provider}
-                        from .model_call import task_arguments
-                        task_arguments(p.block.step.task, snapshot.kind, snapshot.provider)
-                    elif p.kind == 'tool':
-                        snapshot = self.state.mcp_snapshot_for_block(p.block.step.server)
-                        result['destination'] = {'server': p.block.step.server, 'tool': p.block.step.tool, 'url': snapshot.url}
-                    elif p.kind == 'script':
-                        result['script_source'] = captured.files[p.block.step.script_file].decode('utf-8')
-                        result['script_warning'] = 'Python runs with user-level filesystem and network access.'
-                except Exception:
-                    result['setup_issues'].append({'location': 'behaviour', 'code': 'setup_unavailable'})
-                result['facts'] = {'purpose': p.description, 'kind': p.kind,
-                                   'inputs': [d.name for d in p.block.inputs], 'outputs': [d.name for d in p.block.outputs],
-                                   'field_meanings': {side: {d.name: d.description for d in getattr(p.block, side)} for side in ('inputs', 'outputs')},
-                                   'role': p.block.step.role, 'server': p.block.step.server,
-                                   'limits': p.block.budget.view()}
-                # Freshness follows executable meaning and captured bytes, not
-                # JSON formatting or the draft's base64/plain-text wire spelling.
-                step = p.block.step
-                try:
-                    basis_defaults = dict(self.state.role_capture(step.role).defaults) if p.kind == 'model' else {}
-                    sources = dict(ts.resolve_effective(step.task, step.task_resets, basis_defaults).sources) \
-                        if p.kind == 'model' else {}
-                except Exception:                       # an unresolved role is reported by setup_issues
-                    basis_defaults, sources = {}, {}
-                result['design']['sampling_source'] = sources
-                result['design']['role_defaults'] = basis_defaults
-                basis = digest({'purpose': p.description, 'budget': p.block.budget.view(),
-                    'role_defaults': basis_defaults,
-                    'ports': {side: {d.name: {'description': d.description,
-                        'contract': jsonio.decode_exact(p.block.contracts[side][d.name].text)}
-                        for d in getattr(p.block, side)} for side in ('inputs', 'outputs')},
-                    'step': {'kind': step.kind, 'role': step.role,
-                        'task': step.task.request_shape() if step.task else None,
-                        'response_mode': step.response_mode, 'task_resets': list(step.task_resets),
-                        'system': step.system or '', 'prompt': step.prompt, 'repairs': step.max_repairs,
-                        'server': step.server, 'tool': step.tool, 'arguments': step.arguments,
-                        'file': step.script_file, 'timeout': step.timeout_s},
-                    'assets': {path: hashlib.sha256(data).hexdigest() for path, data in captured.files.items()
-                               if path != 'block.json'}})
-                if draft.get('metadata', {}).get('origin') == 'starter' and draft['metadata'].get('description_basis') is None:
-                    draft['metadata']['description_basis'] = basis
-                if body.get('edit', {}).get('kind') == 'description':
-                    draft['metadata']['description_basis'] = basis
-                result['description'] = {'sections': draft.get('metadata', {}).get('description_sections', {}),
-                                         'basis': basis, 'needs_refresh': draft.get('metadata', {}).get('description_basis') != basis}
-                inputs = body.get('inputs')
-                if inputs is not None:
-                    self.input_shape(p.block, inputs)
-                    checked = runner.check_inputs(p.block, inputs)
-                    result['input_checks'] = checked.results
-                    if checked.passed and p.kind == 'model':
-                        # The one preparation path: a preview shows exactly what a run would send.
-                        try:
-                            role_capture = self.state.role_capture(p.block.step.role)
-                            messages = runner.model_messages(p.block, checked.values, role_capture.defaults)
-                        except RoleUnresolved as exc:
-                            result.setdefault('prepared_issues', []).append({'location': 'steps[0].role',
-                                                                             'message': str(exc)})
-                        except (ts.TaskSettingError, templates.FillError) as exc:
-                            location = getattr(exc, 'location', None)
-                            result.setdefault('prepared_issues', []).append(
-                                {'location': 'steps[0].task' if isinstance(exc, ts.TaskSettingError) else location,
-                                 'message': getattr(exc, 'message', None) or str(exc)})
-                        else:
-                            result['prepared'] = {
-                                'system': messages.system_author, 'generated': messages.generated,
-                                'system_sent': messages.system_sent, 'prompt': messages.prompt,
-                                'response_mode': p.block.step.response_mode,
-                                'task': messages.effective.task.request_shape(),
-                                'sources': dict(messages.effective.sources),
-                                'role_defaults': dict(role_capture.defaults),
-                                'outputs': [{'name': spec.name, 'description': spec.description,
-                                             'format': spec.label(), 'schema': spec.schema_text()}
-                                            for spec in messages.plan.specs()]}
-                    elif checked.passed and p.kind == 'tool':
-                        result['prepared'] = {'arguments_text': jsonio.encode_exact(templates.fill_arguments(p.block.step.arguments, checked.values)[0])}
+            return self._project(draft, captured, body)
+
+    def saved_preview(self, saved, body):
+        """The read-only projection of a saved generation, built from its own captured contracts. Live
+        contract validation that a run would apply is reported separately as `run_issues`."""
+        from . import workshop_descriptions as descriptions
+        with self.assets.snapshot(saved) as captured:
+            draft = saved.draft(base_digest=self.assets.identity(saved.key))
+            result = self._project(draft, captured, body)
+            result['selector'] = saved.selector
+            result['revision_number'] = saved.number
+            result['revision_name'] = saved.name
+            result['run_issues'] = self.live_issues(saved)
+            result['standard_description'] = descriptions.projection(self.assets.root(saved.key), saved,
+                                                                     captured.parsed)
             return result
+
+    def live_issues(self, saved):
+        """The located issues a run of `saved` would meet under live contract validation, or []."""
+        try:
+            with self.assets.validate(saved.draft()) as live:
+                return list(live.parsed.problem.issues) if live.parsed.problem else []
+        except WorkshopError as exc:
+            return [{'location': 'block', 'message': 'the revision cannot be validated (' + exc.code + ')'}]
+
+    def _project(self, draft, captured, body):
+        p = captured.parsed
+        result = {'format_version': 1, 'draft': draft, 'source_digest': captured.digest,
+                  'issues': list(p.problem.issues) if p.problem else [], 'kind': p.kind,
+                  'classification': editor.classification(draft) if p.kind == 'script' else None}
+        definition = jsonio.decode_exact(draft['definition_text'])
+        result['valid'] = p.problem is None
+        result['input_ports'] = list(definition.get('inputs', {}))
+        result['contracts'] = {'inputs': {}, 'outputs': {}}
+        contract_store = self.assets.contracts()
+        for side in ('inputs', 'outputs'):
+            for name, declaration in definition.get(side, {}).items():
+                raw = declaration.get('contract') if isinstance(declaration, dict) else None
+                if isinstance(raw, dict) and 'format' not in raw:
+                    try:
+                        found, _refused = contract_store.resolve(raw.get('name'), raw.get('revision'), raw.get('digest'))
+                    except (TypeError, AttributeError):
+                        found = None
+                    raw = dict(found.contract.raw) if found is not None else None
+                if isinstance(raw, dict):
+                    try:
+                        result['contracts'][side][name] = editor.contract_view(jsonio.encode_exact(raw))
+                    except (checks.ContractError, contract_schema.DefinitionError, WorkshopError):
+                        pass
+        step = next(iter(definition.get('steps', [])), {})
+        def asset_text(value):
+            if 'file' in value:
+                return captured.files[value['file']].decode()
+            return value.get('text', '')
+        result['design'] = {'purpose': definition.get('description', ''), 'kind': step.get('kind'),
+            'binding': step.get('role', step.get('server', '')), 'system': asset_text(step.get('system', {})),
+            'behaviour': asset_text(step.get('prompt', {})) if step.get('kind') == 'model' else
+                captured.files.get(step.get('file'), b'').decode() if step.get('kind') == 'script' else step.get('tool', ''),
+            'arguments': jsonio.encode_exact(step.get('arguments', {})), 'budget': jsonio.encode_exact(definition.get('budget', {})), 'settings': jsonio.encode_exact(step.get('task', {})),
+            'repairs': str(step.get('repair', {}).get('max_repairs', 2)),
+            'sampling': {k:str(v) for k,v in step.get('task',{}).items() if k != 'advanced'},
+            'resets': [name for name in step.get('task_resets', []) if isinstance(name, str)],
+            'limits': {k:str(v) for k,v in definition.get('budget',{}).items() if v is not None}}
+        for side in ('inputs', 'outputs'):
+            result['design'][side] = [{'name': name, 'description': declaration.get('description', ''),
+                'format': (declaration['contract'].get('format', 'shared') if isinstance(declaration['contract'], dict) else 'shared'),
+                'reference': ({k: declaration['contract'].get(k) for k in ('name', 'revision', 'digest')}
+                              if isinstance(declaration['contract'], dict) and 'format' not in declaration['contract'] else None),
+                'source': jsonio.encode_exact(declaration['contract'])} for name, declaration in definition.get(side, {}).items()]
+        if p.block:
+            result['contracts'] = {side: {name: editor.contract_view(c.text) for name, c in ports.items()}
+                                   for side, ports in p.block.contracts.items()}
+            result['requires_checks'] = any(port.parsed.schema is not None for ports in p.block.contracts.values() for port in ports.values())
+            result['setup_issues'] = []
+            try:
+                if p.kind == 'model':
+                    snapshot = self.state.resolve_role(p.block.step.role)
+                    result['destination'] = {'role': p.block.step.role, 'kind': snapshot.kind, 'base_url': snapshot.endpoint.base_url, 'model': snapshot.model, 'provider': snapshot.provider}
+                    from .model_call import task_arguments
+                    task_arguments(p.block.step.task, snapshot.kind, snapshot.provider)
+                elif p.kind == 'tool':
+                    snapshot = self.state.mcp_snapshot_for_block(p.block.step.server)
+                    result['destination'] = {'server': p.block.step.server, 'tool': p.block.step.tool, 'url': snapshot.url}
+                elif p.kind == 'script':
+                    result['script_source'] = captured.files[p.block.step.script_file].decode('utf-8')
+                    result['script_warning'] = 'Python runs with user-level filesystem and network access.'
+            except Exception:
+                result['setup_issues'].append({'location': 'behaviour', 'code': 'setup_unavailable'})
+            result['facts'] = {'purpose': p.description, 'kind': p.kind,
+                               'inputs': [d.name for d in p.block.inputs], 'outputs': [d.name for d in p.block.outputs],
+                               'field_meanings': {side: {d.name: d.description for d in getattr(p.block, side)} for side in ('inputs', 'outputs')},
+                               'role': p.block.step.role, 'server': p.block.step.server,
+                               'limits': p.block.budget.view()}
+            # Freshness follows executable meaning and captured bytes, not
+            # JSON formatting or the draft's base64/plain-text wire spelling.
+            step = p.block.step
+            try:
+                basis_defaults = dict(self.state.role_capture(step.role).defaults) if p.kind == 'model' else {}
+                sources = dict(ts.resolve_effective(step.task, step.task_resets, basis_defaults).sources) \
+                    if p.kind == 'model' else {}
+            except Exception:                       # an unresolved role is reported by setup_issues
+                basis_defaults, sources = {}, {}
+            result['design']['sampling_source'] = sources
+            result['design']['role_defaults'] = basis_defaults
+            inputs = body.get('inputs')
+            if inputs is not None:
+                self.input_shape(p.block, inputs)
+                checked = runner.check_inputs(p.block, inputs)
+                result['input_checks'] = checked.results
+                if checked.passed and p.kind == 'model':
+                    # The one preparation path: a preview shows exactly what a run would send.
+                    try:
+                        role_capture = self.state.role_capture(p.block.step.role)
+                        messages = runner.model_messages(p.block, checked.values, role_capture.defaults)
+                    except RoleUnresolved as exc:
+                        result.setdefault('prepared_issues', []).append({'location': 'steps[0].role',
+                                                                         'message': str(exc)})
+                    except (ts.TaskSettingError, templates.FillError) as exc:
+                        location = getattr(exc, 'location', None)
+                        result.setdefault('prepared_issues', []).append(
+                            {'location': 'steps[0].task' if isinstance(exc, ts.TaskSettingError) else location,
+                             'message': getattr(exc, 'message', None) or str(exc)})
+                    else:
+                        result['prepared'] = {
+                            'system': messages.system_author, 'generated': messages.generated,
+                            'system_sent': messages.system_sent, 'prompt': messages.prompt,
+                            'response_mode': p.block.step.response_mode,
+                            'task': messages.effective.task.request_shape(),
+                            'sources': dict(messages.effective.sources),
+                            'role_defaults': dict(role_capture.defaults),
+                            'outputs': [{'name': spec.name, 'description': spec.description,
+                                         'format': spec.label(), 'schema': spec.schema_text()}
+                                        for spec in messages.plan.specs()]}
+                elif checked.passed and p.kind == 'tool':
+                    result['prepared'] = {'arguments_text': jsonio.encode_exact(templates.fill_arguments(p.block.step.arguments, checked.values)[0])}
+        return result
 
     def check_new_groups(self, draft):
         """Save and Start refuse a guided group with no field that the saved block did not already hold empty.
@@ -378,9 +412,23 @@ class Service:
             fail('newer_format', 409)
         return obj
 
-    def validate_examples(self, examples, block):
+    def validate_examples(self, examples, block, arm=None):
         if not isinstance(examples, list) or len(examples) > 50:
             fail()
+        if arm is not None:
+            # A shared example that does not fit one arm's inputs is named with its revision (spec v2 2.1(5)).
+            names = {d.name for d in block.inputs}
+            for index, ex in enumerate(examples):
+                if isinstance(ex, dict) and isinstance(ex.get('inputs'), dict):
+                    missing, extra = sorted(names - set(ex['inputs'])), sorted(set(ex['inputs']) - names)
+                    if missing or extra:
+                        label = ex.get('label') if isinstance(ex.get('label'), str) and ex.get('label') else ex.get('id')
+                        raise WorkshopError('example_incompatible', 400, [{
+                            'location': f'examples[{index}].inputs',
+                            'message': f'example "{label}" does not fit {arm}'
+                                       + (': missing ' + ', '.join(missing) if missing else '')
+                                       + ('; extra ' + ', '.join(extra) if extra else '')
+                                       + '. Run the revisions individually, or choose a compatible example.'}])
         ids = set()
         for ex in examples:
             if not isinstance(ex, dict) or set(ex) - {'id', 'version', 'label', 'inputs', 'expectation', 'origin', 'verified', 'held_out'}:
@@ -449,7 +497,16 @@ class Service:
         captures = []
         original = body
         validators = None
-        if action == 'contract_synthesize':
+        describe = None
+        if action == 'assist' and isinstance(body, dict) and body.get('action') == 'describe':
+            # Server-owned Describe/Refine (spec v2 4.2), routed before capability enumeration, role selection
+            # or draft forwarding. The builder owns the role, context, prompt, schema and options.
+            if not checks.schema_support()[0]:
+                fail('validation_unavailable', 503)
+            describe = self.describe_request({k: v for k, v in body.items()
+                                              if k not in ('expected_plan', 'confirmations', 'ticket')})
+            body = {**body, 'draft': describe['draft'], 'inputs': describe['inputs']}
+        elif action == 'contract_synthesize':
             if not checks.schema_support()[0]:
                 fail('validation_unavailable', 503)
             # Entirely server-built: nothing from the caller is merged into the definition.
@@ -487,7 +544,9 @@ class Service:
                     selected[field], changed = history.redact(selected[field], self.state.credentials())
             body = {**body, **workshop_assist.request(selected)}
         descriptor = {'format_version': 1, 'action': action, 'body_digest': digest({k: v for k, v in original.items() if k not in ('expected_plan', 'confirmations', 'ticket')}),
-                      'saving': self.state.save_runs_now(), 'read_only': self.state.workspace.read_only}
+                      # Describe/Refine is session-only even when Save runs is on (spec v2 4.3).
+                      'saving': False if describe is not None else self.state.save_runs_now(),
+                      'read_only': self.state.workspace.read_only}
         confirmations = []
         if action == 'save':
             draft = self.source(body)
@@ -547,7 +606,15 @@ class Service:
                 # The private policy is only for the complete ephemeral definition
                 # generated above. Do not apply caller edit/duplicate/source options
                 # to that server-owned definition before granting internal policy.
-                draft = copy.deepcopy(body['draft']) if internal else self.source(candidate)
+                saved = None if internal else self.saved_selection(candidate)
+                if internal:
+                    draft = copy.deepcopy(body['draft'])
+                elif saved is not None:
+                    # A clean saved selection bypasses source(): the generation's own metadata, no authoring
+                    # mutation and no current-head token in the run binding (spec v2 2.1(3)-(4)).
+                    draft = saved.draft()
+                else:
+                    draft = self.source(candidate)
                 if captures and draft['key'] != jsonio.decode_exact(captures[0].files['block.json'].decode())['name']:
                     fail('different_block', 400)
                 c = (self.assets._validate(draft, internal_contracts=True, validators=validators) if internal
@@ -567,7 +634,8 @@ class Service:
                         for capture in captures:
                             capture.close()
                         raise
-                self.validate_examples(examples, b)
+                arm = ('revision ' + str(saved.number)) if saved is not None else 'the current draft' if 'draft' in candidate else 'the saved block'
+                self.validate_examples(examples, b, arm if action == 'batches' else None)
                 snapshot = self.state.resolve_role(b.step.role) if b.step.kind == 'model' else self.state.mcp_snapshot_for_block(b.step.server) if b.step.kind == 'tool' else None
                 role_capture = None
                 if b.step.kind == 'model':
@@ -593,6 +661,9 @@ class Service:
                 record = {'source_digest': c.digest, 'draft': draft, 'kind': b.step.kind, 'effects': draft.get('metadata', {}).get('effects', 'unknown'),
                           'contracts': {side: {n: port.text for n, port in ports.items()} for side, ports in b.contracts.items()},
                           'backend_conditions': {'quantisation': 'unknown', 'backend_template': 'unknown', 'implementation': 'unknown'}}
+                if saved is not None:
+                    # The explicit durable ID is part of the binding, so byte-identical generations stay distinct.
+                    record.update(saved.provenance)
                 if b.step.kind == 'model':
                     record['destination'] = {'kind': snapshot.kind, 'base_url': snapshot.endpoint.base_url, 'model': snapshot.model, 'provider': snapshot.provider}
                     record['settings'] = editor.typed(effective.task.request_shape())
@@ -651,7 +722,11 @@ class Service:
             descriptor['synthesis'] = {k: v for k, v in original.items() if k not in ('expected_plan', 'confirmations', 'ticket')}
             descriptor['synthesis']['source_digest'] = source_digest(original.get('definition_text'))
             descriptor['synthesis']['prompt'] = {'id': SYNTHESIS_PROMPT_ID, 'version': SYNTHESIS_PROMPT_VERSION}
-        if action == 'assist':
+        if describe is not None:
+            # Private: binds the target, the prior proposal and the feedback. Public routes use describe_public.
+            descriptor['describe'] = describe['target']
+            descriptor['assistance'] = {k: v for k, v in original.items() if k not in ('expected_plan', 'confirmations', 'ticket')}
+        elif action == 'assist':
             descriptor['assistance'] = {k: v for k, v in original.items() if k not in ('expected_plan', 'confirmations', 'ticket')}
             descriptor['assistance']['capabilities'] = selected['capabilities']
         binding = copy.deepcopy(descriptor)
@@ -669,6 +744,11 @@ class Service:
         plan, captures = self.prepare(action, body)
         for c in captures:
             c.close()
+        return self.public_plan(plan)
+
+    def public_plan(self, plan):
+        if plan['descriptor'].get('describe'):
+            return {**plan, 'descriptor': self.describe_public(plan['descriptor'])}
         return plan
 
     def check_plan(self, plan, body):
@@ -676,7 +756,7 @@ class Service:
         actual = {(r.get('kind'), r.get('digest')) for r in body.get('confirmations', []) if isinstance(r, dict)}
         if body.get('expected_plan') != plan['expected_plan'] or not expected <= actual:
             error = WorkshopError('confirmation_required', 409)
-            error.plan = plan
+            error.plan = self.public_plan(plan)
             raise error
 
     def save(self, body):
@@ -686,6 +766,9 @@ class Service:
             draft = plan['descriptor']['draft']
             metadata = copy.deepcopy(draft.get('metadata', {}))
             metadata['format_version'] = 1
+            # A new generation starts without standard prose and never inherits one (spec v2 section 3).
+            metadata.pop('description_sections', None)
+            metadata.pop('description_basis', None)
             if 'source_review' in plan['descriptor']:
                 metadata['source_review'] = plan['descriptor']['source_review']
             from .workshop_assets import captured_maps, contract_maps_digest
@@ -732,7 +815,8 @@ class Service:
                     if i % 2:
                         order.reverse()
                     for arm in order:
-                        rows.append({'trial_id': secrets.token_hex(16), 'arm': arm, 'example': ex, 'state': 'not_run'})
+                        rows.append({'trial_id': secrets.token_hex(16), 'arm': arm, 'example': ex, 'state': 'not_run',
+                                     **revision_provenance(plan['descriptor'], arm)})
                 batch = {'format_version': 1, 'id': ident, 'action': action, 'state': 'running', 'plan': plan['descriptor'],
                          'rows': rows, 'saving': plan['descriptor']['saving'], 'cancelled': False, 'active_run': None,
                          'preview_bytes': 0, 'ticket': body['ticket']}
@@ -817,7 +901,8 @@ class Service:
                     metadata['source_review'] = fingerprint({p: b for p, b in capture.files.items() if p != 'block.json'})
                 start = time.monotonic()
                 frozen = runner.FrozenSource(capture.snapshot, batch['saving'], {'batch_id': batch['id'], 'trial_id': row['trial_id'],
-                    'snapshot_id': capture.digest, 'example_id': row['example']['id'], 'example_version': row['example']['version']}, capture,
+                    'snapshot_id': capture.digest, 'example_id': row['example']['id'], 'example_version': row['example']['version'],
+                    **revision_provenance(batch['plan'], row['arm'])}, capture,
                     getattr(capture, 'role_capture', None))
                 observer = Observer()
                 try:
@@ -861,7 +946,9 @@ class Service:
                         while len(self.proposals) > 200:
                             self.proposals.pop(next(iter(self.proposals)))
                     row['proposal_id'] = proposal_id
-                if batch['action'] == 'assist' and record['outcome'] == 'complete':
+                if batch['plan'].get('describe') and record['outcome'] == 'complete':
+                    self.describe_complete(batch, row, record)
+                elif batch['action'] == 'assist' and record['outcome'] == 'complete':
                     response_text = record['outputs']['proposal']['text']
                     if len(response_text.encode()) > 512 << 10:
                         fail('proposal_too_large', 409)
@@ -941,6 +1028,8 @@ class Service:
                         row['correctness'] = review['judgement']
                 except history.NoSuchRun:
                     row['evidence_available'] = False
+        if result.get('plan', {}).get('describe'):
+            return self.describe_public_batch(result)
         result['metrics'] = self.metrics(result)
         return result
 
@@ -1110,6 +1199,212 @@ class Service:
             fail('validation_unavailable', 503)
         return self.start('assist', body)
 
+    # --- revision descriptions (block_metadata_refactor spec v2) -----------------------------------------
+    def describe_request(self, body):
+        """The server-built ephemeral Describe/Refine request for one saved revision. Raises before dispatch."""
+        from . import workshop_descriptions as descriptions
+        mode, feedback = descriptions.check_request(body)
+        key = key_name(body['key'])
+        try:
+            self.state.resolve_role(descriptions.ROLE)
+        except RoleUnresolved as exc:
+            # A setup failure, shown before anything is admitted. Manual editing stays available.
+            raise WorkshopError('role_unresolved', 409, [{'location': 'role', 'message': str(exc)}]) from None
+        saved = self.assets.saved(key, body['revision'])
+        root = self.assets.root(key)
+        prior = proposal_id = None
+        with self.assets.snapshot(saved) as captured:
+            parsed = captured.parsed
+            if parsed.block is None or saved.basis is None:
+                raise WorkshopError('description_unavailable', 409,
+                                    list(parsed.problem.issues) if parsed.problem else [])
+            ports = descriptions.ports_of(parsed.block)
+            if mode == 'refine':
+                proposal = self.description_proposal(body['proposal_id'])
+                if (proposal['key'], proposal['revision']) != (key, saved.revision):
+                    fail('proposal_target', 409)
+                if proposal['basis'] != saved.basis:
+                    fail('stale', 409)
+                prior, base_token, proposal_id = proposal['candidate'], proposal['base_token'], body['proposal_id']
+            else:
+                state, data = descriptions.read_sidecar(root, saved.revision)
+                base_token = descriptions.token(data) if state == 'present' else None
+            context = descriptions.build_context(saved, parsed, proposal=prior, feedback=feedback,
+                                                 credentials=self.state.credentials())
+        definition = descriptions.ephemeral_definition(mode, ports)
+        # The response schema names every port, so a credential in a field name would still travel there.
+        if history.redact(jsonio.encode_exact(definition), self.state.credentials())[1]:
+            raise WorkshopError('credential_in_context', 409, [
+                {'location': 'context', 'message': 'a known credential remains in the outbound request; remove it first'}])
+        draft = {'key': definition['name'], 'definition_text': jsonio.encode_exact(definition), 'files': {},
+                 'metadata': {'format_version': 1, 'origin': 'manual', 'prompt_id': descriptions.PROMPT_ID,
+                              'prompt_version': descriptions.PROMPT_VERSION}}
+        target = {'mode': mode, 'key': key, 'revision': saved.revision, 'revision_number': saved.number,
+                  'basis': saved.basis, 'base_token': base_token, 'ports': ports, 'prior': prior,
+                  'proposal_id': proposal_id,
+                  'prompt': {'id': descriptions.PROMPT_ID, 'version': descriptions.PROMPT_VERSION}}
+        return {'draft': draft, 'inputs': {'context': context}, 'target': target}
+
+    def describe_complete(self, batch, row, record):
+        """Validate a completed Describe/Refine answer and store a session-only proposal. A failure is the
+        normal terminal `description_invalid` outcome: no proposal ID, the prior proposal kept."""
+        from . import workshop_descriptions as descriptions
+        target = batch['plan']['describe']
+        try:
+            response = jsonio.decode_exact(record['outputs']['proposal']['text'])
+            candidate, note, changed = descriptions.materialise(
+                target['mode'], response, target['ports'], target['prior'], self.state.credentials())
+        except descriptions.DescriptionInvalid as exc:
+            with self.lock:
+                row['description_issues'] = exc.issues
+                batch['describe_outcome'] = 'description_invalid'
+            return
+        except (KeyError, TypeError, ValueError):
+            with self.lock:
+                row['description_issues'] = [{'location': 'proposal', 'message': 'could not be read'}]
+                batch['describe_outcome'] = 'description_invalid'
+            return
+        before = target['prior']
+        if before is None:
+            root = self.assets.path / target['key']
+            try:
+                saved = self.assets.saved(target['key'], target['revision'])
+                with self.assets.snapshot(saved) as captured:
+                    current = descriptions.projection(root, saved, captured.parsed)
+                if current['sections'] is not None:
+                    before = {'sections': current['sections'], 'port_summaries': current['port_summaries']}
+            except WorkshopError:
+                before = None
+        labels = descriptions.changed_labels(before, candidate)
+        with self.lock:
+            if batch['cancelled']:
+                batch['describe_outcome'] = 'stopped'          # cancellation won: no new candidate
+                return
+            row['description_note'] = note
+            if target['mode'] == 'refine' and not changed:
+                batch['describe_outcome'] = 'unchanged'         # the prior proposal stays the reviewable one
+                row['description_proposal_id'] = target['proposal_id']
+                return
+            proposal_id = secrets.token_hex(16)
+            self.proposals[proposal_id] = {
+                'kind': 'description', 'key': target['key'], 'revision': target['revision'],
+                'revision_number': target['revision_number'], 'basis': target['basis'],
+                'base_token': target['base_token'], 'candidate': candidate, 'note': note, 'labels': labels}
+            while len(self.proposals) > 200:
+                self.proposals.pop(next(iter(self.proposals)))
+            row['description_proposal_id'] = proposal_id
+            batch['describe_outcome'] = 'proposal'
+
+    def description_proposal(self, ident):
+        """A session-only description proposal from the bounded cache. Never consults run envelopes, batch
+        retention or history. Expired, evicted, wrong-kind or pruned-target proposals answer 410."""
+        if not isinstance(ident, str) or TOKEN.fullmatch(ident) is None:
+            fail('proposal_expired', 410)
+        with self.lock:
+            value = copy.deepcopy(self.proposals.get(ident))
+        if value is None or value.get('kind') != 'description':
+            fail('proposal_expired', 410)
+        try:
+            self.assets.retained(value['key'], value['revision'])
+        except WorkshopError:
+            fail('proposal_expired', 410)
+        return value
+
+    def describe_public(self, descriptor):
+        """The allowlisted plan projection of Describe/Refine: target, destination and persistence only. Never
+        the context, feedback, prior proposal, prepared request or child run identifiers."""
+        from types import SimpleNamespace
+
+        from .roles import profile_location
+        target = descriptor['describe']
+        candidate = (descriptor.get('candidates') or [{}])[0]
+        destination = dict(candidate.get('destination') or {})
+        locality = 'unknown'
+        if destination.get('kind'):
+            locality = profile_location(SimpleNamespace(kind=destination['kind'],
+                                                        base_url=destination.get('base_url')))
+        return {'format_version': 1, 'action': 'assist',
+                'describe': {'mode': target['mode'], 'key': target['key'], 'revision': target['revision'],
+                             'revision_number': target['revision_number']},
+                'destination': {'role': 'write_block_description', **destination, 'locality': locality},
+                'saving': False, 'read_only': descriptor.get('read_only', False), 'trial_count': 1,
+                'persistence': 'Session only. Only an accepted description is saved.'}
+
+    def describe_public_batch(self, batch):
+        rows = []
+        proposal = None
+        for row in batch.get('rows', []):
+            rows.append({k: row[k] for k in ('state', 'outcome', 'reason', 'description_issues',
+                                              'description_note') if k in row})
+            ident = row.get('description_proposal_id')
+            if ident:
+                with self.lock:
+                    value = copy.deepcopy(self.proposals.get(ident))
+                if value is not None and value.get('kind') == 'description':
+                    proposal = {'proposal_id': ident, 'key': value['key'], 'revision': value['revision'],
+                                'revision_number': value['revision_number'], 'base_token': value['base_token'],
+                                'sections': value['candidate']['sections'],
+                                'port_summaries': value['candidate']['port_summaries'],
+                                'note': row.get('description_note') or value['note'], 'changed': value['labels']}
+        outcome = batch.get('describe_outcome') or ('stopped' if batch.get('state') in ('stopped', 'interrupted')
+                                                    else None)
+        return {'format_version': 1, 'id': batch['id'], 'action': 'assist', 'state': batch['state'],
+                'reason': batch.get('reason'), 'cancelled': batch.get('cancelled', False),
+                'outcome': outcome, 'plan': self.describe_public(batch['plan']), 'rows': rows,
+                'proposal': proposal, 'saving': False}
+
+    def save_description(self, key, ident, body):
+        """PUT .../revisions/<id>/description: an accepted proposal or a manual edit. Writes only the sidecar."""
+        from . import workshop_descriptions as descriptions
+        kind = descriptions.check_write_body(body)
+        key_name(key)
+        if not isinstance(ident, str) or TOKEN.fullmatch(ident) is None:
+            fail('missing', 404)
+        proposal = None
+        if kind == 'generated':
+            proposal = self.description_proposal(body['proposal_id'])
+            if (proposal['key'], proposal['revision']) != (key, ident):
+                fail('proposal_target', 409)
+        if self.state.workspace.read_only:
+            fail('read_only', 409)
+        writer = self.state.register_writer('Workshop description')
+        try:
+            with self.assets.reserve(key):
+                saved = self.assets.saved(key, ident)                  # recheck retention: 404 when pruned
+                root = self.assets.root(key)
+                with self.assets.snapshot(saved) as captured:
+                    parsed = captured.parsed
+                    basis = saved.basis if parsed.block is not None else None
+                    if basis is None:
+                        fail('description_unavailable', 409)
+                    ports = descriptions.ports_of(parsed.block)
+                    if (body['basis'] if kind == 'manual' else proposal['basis']) != basis:
+                        fail('stale', 409)
+                    if kind == 'generated' and proposal['base_token'] != body['expected_token']:
+                        fail('stale', 409)
+                    source = proposal['candidate'] if kind == 'generated' else body
+                    try:
+                        sections, summaries = descriptions.normalise(source['sections'], source['port_summaries'],
+                                                                     ports)
+                        data = descriptions.encode_record(basis, 'model' if kind == 'generated' else 'manual',
+                                                          sections, summaries)
+                    except descriptions.DescriptionInvalid as exc:
+                        raise descriptions.invalid(exc) from None
+                    self.reject_credentials({'sections': sections, 'port_summaries': summaries})
+                    state, existing = descriptions.read_sidecar(root, ident)
+                    if state == 'unusable':
+                        fail('description_unavailable', 409)
+                    if state == 'present':
+                        _record, reason = descriptions.parse_record(existing, basis, ports)
+                        if reason in ('unreadable', 'unknown_format'):
+                            fail('description_unavailable', 409)       # never overwrite what cannot be read
+                    if descriptions.token(existing) != body['expected_token']:
+                        fail('stale', 409)
+                    descriptions.write_sidecar(root, ident, data)
+                    return descriptions.projection(root, saved, parsed)
+        finally:
+            writer.release()
+
     # --- contract synthesis (overhaul spec 14) ----------------------------------------------------------
     def synthesis_plan(self, body):
         plan = self.plan('contract_synthesize', body)
@@ -1269,6 +1564,14 @@ class Service:
         redacted, changed = history.redact(value, self.state.credentials())
         if changed:
             fail('credential_in_asset', 409)
+
+
+def revision_provenance(descriptor, arm):
+    """The additive saved-revision provenance of one arm (block_revision_id, block_revision_number), or {}."""
+    candidates = descriptor.get('candidates') or []
+    if arm >= len(candidates):
+        return {}
+    return {k: candidates[arm][k] for k in ('block_revision_id', 'block_revision_number') if k in candidates[arm]}
 
 
 def synthesis_provenance(plan):

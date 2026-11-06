@@ -169,7 +169,7 @@ def test_resolve_role_builds_the_profile_snapshot(ui):
 
 def test_starter_definitions_are_unconfigured_and_not_written(ui, restart):
     state = get_state(ui)["roles"]
-    assert set(state["definitions"]) == {"fast", "assistant", "reasoning", "write_contract"}
+    assert set(state["definitions"]) == {"fast", "assistant", "reasoning", "write_contract", "write_block_description"}
     assert {u["role"] for u in state["unresolved"]} == set(state["definitions"])
     assert not roles_file(ui).exists()
     request(ui, "/api/roles/save", {"roles": {}, "definitions": state["definitions"], "revision": state["revision"]})

@@ -168,19 +168,28 @@ def test_assist_uses_runner_and_applies_without_publication(ui, server):
     save_profile(ui, 'p', model='m', kind='openai_compat', base_url=server.url + '/v1', provider='')
     save_roles(ui, {'assistant': 'p'})
     draft = send(ui, 'preview', starter='count_text', key='draft_only')['draft']
-    response = {'format_version': 1, 'action': 'describe', 'payload': {'description_sections': {
-        k: 'Reviewed description' for k in ('use', 'exclusions', 'effects', 'limitations', 'missing_data', 'failures')}},
-        'assumptions': [], 'unmet_requirements': []}
+    response = {'format_version': 1, 'action': 'improve', 'payload': {'purpose': 'Reviewed purpose'},
+                'assumptions': [], 'unmet_requirements': []}
     server.reply(answer(json.dumps({'proposal': response})))
-    started = start_planned(ui, 'assist', {'action': 'describe', 'role': 'assistant', 'draft': draft, 'task': 'Describe this counter.'})
+    started = start_planned(ui, 'assist', {'action': 'improve', 'role': 'assistant', 'draft': draft,
+                                           'task': 'Improve this counter.', 'sections': ['purpose']})
     batch = completed(ui, started['batch_id'])
     assert batch['rows'][0]['outcome'] == 'complete', batch
     proposal = batch['rows'][0]['proposal_id']
     apply_body = {'proposal_id': proposal, 'draft': draft}
     plan = send(ui, 'plans', action='proposals/apply', request=apply_body)
     applied = send(ui, 'proposals/apply', **apply_body, expected_plan=plan['expected_plan'], confirmations=[])
-    assert applied['draft']['metadata']['description_sections']['use'] == 'Reviewed description'
+    assert json.loads(applied['draft']['definition_text'])['description'] == 'Reviewed purpose'
     assert request(ui, '/api/blocks')['total'] == 0
+    assert len(server.requests) == 1
+    # The legacy draft-based Describe shape is retired: standard prose belongs to a saved revision now.
+    refusal = failure_of(lambda: send(ui, 'plans', action='assist', request={
+        'action': 'describe', 'role': 'assistant', 'draft': draft, 'task': 'Describe this counter.'}))
+    assert refusal.status == 409 and refusal.body['code'] == 'describe_moved'
+    for sections in (['description_sections'], ['purpose', 'description_sections']):
+        refusal = failure_of(lambda: send(ui, 'plans', action='assist', request={
+            'action': 'improve', 'role': 'assistant', 'draft': draft, 'task': 'x', 'sections': sections}))
+        assert refusal.body['code'] == 'describe_moved'
     assert len(server.requests) == 1
 
 
@@ -369,7 +378,7 @@ def test_all_packaged_assistance_actions_use_checked_requests(ui, server):
     save_profile(ui, 'p', model='m', kind='openai_compat', base_url=server.url + '/v1', provider='')
     save_roles(ui, {'assistant': 'p', 'fast': 'p'})
     draft = send(ui, 'preview', starter='extract_fields', key='extractor', role='fast')['draft']
-    for action in ('create', 'improve', 'describe', 'suggest_examples', 'explain_failure'):
+    for action in ('create', 'improve', 'suggest_examples', 'explain_failure'):
         server.reply(answer('{"proposal":' + proposal(action) + '}'))
         batch = completed(ui, start_planned(ui, 'assist', {'action': action, 'role': 'assistant', 'draft': draft,
                           'task': 'Prepare this proposal.', 'evidence': {}})['batch_id'])
@@ -381,7 +390,16 @@ def test_all_packaged_assistance_actions_use_checked_requests(ui, server):
         if action == 'suggest_examples':
             assert not result['examples'][0]['verified']
     assert request(ui, '/api/blocks')['total'] == 0
-    assert len(server.requests) == 5
+    assert len(server.requests) == 4
+    # The packaged Describe stand-in answers the server-owned request for a saved revision of the same starter.
+    save_roles(ui, {'assistant': 'p', 'fast': 'p', 'write_block_description': 'p'})
+    saved = plan_save(ui, draft)
+    server.reply(answer('{"proposal":' + proposal('describe') + '}'))
+    batch = completed(ui, start_planned(ui, 'assist', {'action': 'describe', 'mode': 'generate', 'key': 'extractor',
+                                                        'revision': saved['durable_id']})['batch_id'])
+    assert batch['outcome'] == 'proposal', batch
+    assert batch['proposal']['port_summaries'] == {'inputs': {'text': 'The order text to read.'},
+                                                   'outputs': {'out': 'The product and any explicit quantity.'}}
 
 
 def test_legacy_conversion_confirmation_and_retention(ui):
@@ -513,20 +531,24 @@ def test_visual_forms_keep_exact_values_and_remove_required_members(ui):
     assert failure_of(lambda: send(ui, 'contract-form', source=source)).status == 404
 
 
-def test_display_rename_keeps_description_review_until_behaviour_changes(ui):
-    """A visual no-op must not invalidate reviewed prose by changing wire formatting."""
-    p = send(ui,'preview',starter='count_text',key='freshness')
-    p = send(ui,'preview',draft=p['draft'],edit={'kind':'description','sections':{
-        k:'Reviewed' for k in ('use','exclusions','effects','limitations','missing_data','failures')}})
-    d = p['design']
-    edit = {'kind':'design_form','name':'Renamed','purpose':d['purpose'],
-        'ports':{side:[{**r,'original':r['name']} for r in d[side]] for side in ('inputs','outputs')},
-        'behaviour':d['behaviour'],'binding':d['binding'],'system':d['system'],
-        'settings':d['settings'],'budget':d['budget'],'repairs':d['repairs']}
-    renamed = send(ui,'preview',draft=p['draft'],edit=edit)
-    assert not renamed['description']['needs_refresh']
-    changed = send(ui,'preview',draft=renamed['draft'],edit={**edit,'behaviour':d['behaviour']+'\n# changed source\n'})
-    assert changed['description']['needs_refresh']
+def test_standard_prose_is_not_carried_by_drafts_or_new_saves(ui):
+    """The draft-carried description edit and its needs_refresh projection are retired (spec v2 section 3):
+    a new revision starts without standard prose and never inherits it, while starter prose may remain a
+    draft display hint."""
+    from agentwiz import jsonio
+    p = send(ui, 'preview', starter='count_text', key='freshness')
+    assert 'description' not in p
+    assert p['draft']['metadata']['description_sections']['use']          # starter hint, draft only
+    refusal = failure_of(lambda: send(ui, 'preview', draft=p['draft'], edit={'kind': 'description', 'sections': {
+        k: 'Reviewed' for k in ('use', 'exclusions', 'effects', 'limitations', 'missing_data', 'failures')}}))
+    assert refusal.status == 409 and refusal.body['code'] == 'describe_moved'
+    saved = plan_save(ui, p['draft'])
+    folder = ui.workspace.path / 'blocks/freshness/.workshop/revisions' / saved['durable_id']
+    metadata = jsonio.decode_file_exact((folder / 'workshop.json').read_bytes())
+    assert 'description_sections' not in metadata and 'description_basis' not in metadata
+    current = send(ui, 'preview', key='freshness')
+    assert current['standard_description']['status'] == 'missing'
+    assert current['standard_description']['fallback']['purpose'] == 'count text'
 
 
 def test_review_goes_stale_when_role_defaults_declaration_or_protocol_change(ui, server, monkeypatch):

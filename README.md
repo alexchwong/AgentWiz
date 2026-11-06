@@ -10,10 +10,12 @@ stream back, followed by token usage, cost and a clear outcome.
 What 0.2.0 adds:
 
 - **Workshop:** create, understand, save, test and compare one model, tool or Python block at a time.
-- **Nine starters** and blank blocks, exact structured fields, prompt preview and editable standard descriptions.
-- **Saved revisions:** display names, duplicate, restore, explicit legacy conversion and newest-20 retention.
+- **Nine starters** and blank blocks, exact structured fields, prompt preview and a standard description for each saved revision.
+- **Saved revisions:** display names, duplicate, restore, explicit legacy conversion and newest-20 retention. Any retained
+  revision can be selected, described, tested and compared without changing the default.
 - **Examples and correctness:** exact outputs, field assertions or human review, independently of contract acceptance.
-- **Five assistance actions:** create, improve, describe, suggest examples and explain a failure. Review proposals before Apply.
+- **Assistance:** create, improve, suggest examples and explain a failure, reviewed before Apply; Describe drafts a saved
+  revision's standard description with its own `write_block_description` role, reviewed before Save description.
 - **Contracts:** a Workshop section for reusable Text and JSON contracts with append-only revisions, a readable
   editor (advanced source optional), sample checks, Used by and reviewable model-drafted proposals.
 - **Workbench:** Chat, Documents, MCP tools and Checked request remain independent utilities.
@@ -163,7 +165,8 @@ The block key is an internal identifier, not a display title: use 1–64 ASCII l
 underscores or hyphens, starting with a letter or digit (for example, `summarise_notes`); no spaces.
 **Start with** chooses an initial template, not an output prefix. Model roles are aliases assigned to
 saved profiles in Settings → Roles, not chat-message roles. The dialog lists defined roles and marks
-unresolved assignments. Fresh workspaces define unconfigured `fast`, `assistant` and `reasoning` roles;
+unresolved assignments. Fresh workspaces define unconfigured `fast`, `assistant` and `reasoning` roles,
+plus the dedicated `write_contract` and `write_block_description` roles;
 drafts can be designed before profiles are assigned. Use **Configure roles** before running.
 Assistance separately selects an assistant role.
 Only fields relevant to the selected block type are shown. Tool blocks list configured MCP servers and
@@ -177,7 +180,8 @@ A model block's Design form has three unlabelled columns on wide screens: block 
 and **User prompt** on the left; variable tables in the middle; identity, saving and settings on the right.
 The form stacks on narrow screens. Insert buttons add
 `{{inputs.name}}` and `{{output.name}}` placeholders (see [Named outputs](#named-outputs)). Each input and
-output is an editable row with field name and meaning, and its contract below it: **Inline** uses the same
+output is an editable row with field name and **Declared meaning** (part of the executable block; an output's
+declared meaning can contribute to the model request), and its contract below it: **Inline** uses the same
 readable contract editor as Workshop → Contracts; **Saved contract** pins one numbered revision (see
 [Contracts](#contracts)). A type change that would drop fields, choices or bounds previews the before and
 after definitions first; contract edits are unsaved block edits until **Save revision**.
@@ -192,7 +196,7 @@ is declared, the backend default applies and no numeric value is guessed.
 **Model advanced settings** holds explicit backend-default bypasses for both settings, the output cap,
 budgets and source editors. **Additional repairs** is always visible below Outputs; zero allows no
 repair attempts after the initial response. The optional revision name sits beside **Save revision**;
-the historical Block revision selector sits above the editor. **Assist** and **Revision actions** share
+the **Block revision** selector sits beside the editor in Design, Test and Compare. **Assist** and **Revision actions** share
 the Design/Test/Compare action row in all three modes. Test's **Preview
 instructions** shows the actual filled prompt or arguments for the supplied inputs.
 
@@ -210,8 +214,16 @@ validation and assistance use the validator included in the standard installatio
 installation if it becomes unavailable.
 
 **Save revision**, in Design's right-hand controls, previews the effective action and its required
-acknowledgements. **Block revision** selects a retained revision into the draft, not the saved head;
-unsaved changes offer Save, Discard or Stay. Revisions display per-block numbers starting at 1 and an
+acknowledgements. A new revision becomes the default. **Block revision** opens any retained revision as a
+clean saved selection: its design, contracts and standard description are shown, Test and Compare run that
+revision, and the default (marked **(current)**) does not change. Unsaved changes offer Save, Discard or
+Stay before switching. Editing a selection makes it an unsaved draft, labelled with its base revision and
+**Unsaved**, which runs through the draft path. On a clean older selection **Save revision** stays disabled
+until you edit it or choose **Revision actions → Restore to draft**; saving then publishes it as the new
+default. Results and the prepared preview name the revision they ran. A retained revision runs with today's
+model roles, MCP settings and exact saved-contract pins: a missing or changed pinned contract blocks the run
+with a located error but still lets you view and describe the revision's captured interface. Older-format
+revisions are listed and show **Migration required** on selection. Revisions display per-block numbers starting at 1 and an
 optional name of up to 120 characters. Enter a name before saving; names need not be unique and do not
 rename the block. A new revision's name defaults to blank. Historical names are not edited in place.
 Numbers survive restart and pruning; restoring an older version and saving creates the next number.
@@ -221,8 +233,8 @@ Opening a legacy v1
 block never converts it. Its first Save captures the original and edited definitions in a managed v2
 head, numbered 1 (original) and 2 (edited). Only the newest 20 revisions are retained, including that original.
 The Save plan identifies revisions
-being pruned. Duplicate keeps the original key intact and offers explicit copying of examples. Restore
-loads a retained definition into a draft; a deliberate Save creates a new revision, without rerunning it.
+being pruned. Duplicate keeps the original key intact and offers explicit copying of examples. Restore to
+draft loads a retained definition into a draft; a deliberate Save creates a new revision, without rerunning it.
 Renaming the display name also requires Save; the stable key remains in Details.
 
 Python starters expose validated parameters and captured runtime identity. Actual source/support edits
@@ -247,8 +259,9 @@ can compare exact named outputs, assert explicit field paths or ask for human re
 before using it for automatic correctness. Editing an example invalidates prior verification. An accepted,
 well-typed result may still be incorrect. Human ratings bind the exact result and never transfer to a rerun.
 
-Compare selects a saved baseline and either a saved candidate or the current draft, using the same ordered
-examples. Review source differences, destinations, trial/repair bounds, effects and saving before Start.
+Compare selects a saved baseline and either a saved candidate, the selected revision or the current unsaved
+draft, using the same ordered examples. A shared example that does not fit one revision's inputs is named,
+with its missing or extra input names; run such revisions individually. Review source differences, destinations, trial/repair bounds, effects and saving before Start.
 Trials alternate arm order between examples. Results show execution, checks and correctness separately,
 with paired answers, trace, denominators, reported usage and timing coverage. Unknown usage is not zero;
 with no correct result, time per correct result is undefined. Backend internals and cold starts can vary.
@@ -259,11 +272,40 @@ Recent runs and comparisons and deleted independently. Stop cancels the current 
 Reload reattaches to retained work by ID without dispatching it again. Real tool/script calls may change
 external state, and an unknown tool outcome is never automatically retried.
 
-Assist offers five independent actions. Choose the action, role, task, stage or Improve sections, then review
-the destination, settings and selected context before sending. Apply changes only the matching draft or
+Assist offers four independent draft actions. Choose the action, role, task, stage or Improve sections, then review
+the destination, settings and selected context before sending. Assist's **describe** is a shortcut to
+**Describe block** (below) and ignores the role, task and settings in this dialog. Apply changes only the matching draft or
 unsaved example suggestions. Discard sends nothing further. Generated custom Python is displayed for source
 acknowledgement. A stale or expired proposal requires a deliberate new request. Assistance never publishes
 a block or executes its proposal automatically.
+
+### Standard descriptions
+
+Each saved revision has its own standard description: six short sections (use, when not to use, effects,
+limitations, missing data, failures) and optional per-port **Documentation**. Design's **Standard
+description** panel shows it for the selected revision, with the purpose, each port's exact name and format,
+the configured role or server, declared effects and any dependency problems. A port without documentation
+shows its declared meaning. Documentation is for readers only: it never changes what the block sends or
+checks, and describing a revision never creates, changes or reruns a revision.
+
+**Describe block** asks the `write_block_description` role (unassigned by default; assign it in Settings →
+Roles) for a description of the selected saved revision. It first shows the role, backend, model and whether
+the endpoint is on this computer; a remote endpoint carries a warning that source excerpts or feedback may be
+confidential. The request contains the revision's interface and up to 4,000 characters of its active prompt,
+main script or tool binding (argument names and input paths; literal values omitted). Support files,
+examples, inputs, history and known credentials are not sent; other confidential text in the source can be.
+It never runs the block, calls a tool or saves run evidence, even with Save runs on. **Stop** cancels the call.
+Review the proposal, then **Save description**, **Refine** (one feedback note and one further model call;
+requests to change behaviour are declined) or **Discard**. **Edit description** writes it by hand without a
+model. Saving changes only that revision's description, never the executable block, the default or your
+inputs and examples. Both are disabled while the executable form has unsaved changes, and for a block that
+has not been saved yet.
+
+A new revision starts without a saved description, even when restored from an older one. Revisions saved
+before this release show their stored prose as **Existing description** until you save a new one. A
+description that changed elsewhere since you opened it is refused rather than overwritten; reload and
+review it again. A damaged, linked or newer-format description file is shown as **Description unavailable**
+and is never overwritten from AgentWiz; the revision still runs. Pruning a revision also removes its description.
 
 ## Settings
 
@@ -726,7 +768,8 @@ retains unsaved edits; **Save all changes** saves every role, including roles hi
 Profile choices show backend, endpoint and model. **Create / edit model profiles**
 opens model settings and returns without losing role edits. **Set up defaults** adds missing starter
 roles without replacing existing definitions. A notice lists default roles missing from the saved workspace;
-it remains until those roles are added and saved. Save persists assignments and definitions in
+it remains until those roles are added and saved. Workspaces created before `write_block_description` existed
+list it there until it is added. Save persists assignments and definitions in
 `<workspace>/roles.json`. Saved role names are stable; removing a role warns about references in blocks.
 
 **Local means this machine:** LM Studio or an OpenAI-compatible server (including llama-server)

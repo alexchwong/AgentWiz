@@ -12,7 +12,7 @@ def test_state_body_carries_roles_blocks_and_scripts(ui):
     assert {k: roles[k] for k in ("map", "revision", "read_only", "path", "problem")} == {
         "map": {}, "revision": 1, "read_only": False,
         "path": str(ui.workspace.path / "roles.json"), "problem": None}
-    assert set(roles["definitions"]) == {"fast", "assistant", "reasoning", "write_contract"}
+    assert set(roles["definitions"]) == {"fast", "assistant", "reasoning", "write_contract", "write_block_description"}
     assert roles["defaults"] == roles["definitions"]
     assert {u["role"] for u in roles["unresolved"]} == set(roles["definitions"])
     assert state["blocks"] == {"path": str(ui.workspace.path / "blocks"), "active_runs": 0}

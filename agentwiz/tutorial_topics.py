@@ -95,6 +95,9 @@ TOPICS: tuple[Topic, ...] = (
                 [{"id": "wait-script", "label": "Try a script that waits"}]), "ws-run-test"),
     Topic("workshop-design", "Create a Workshop block", "Save the word counter and confirm its captured runtime. In Test, use New input and Run test for a one-off run, or select a prepared example. Add example keeps the current inputs in memory; Save example collection persists pending examples separately. Review correctness. Return to Design, change Count unit to Characters, Apply parameters and Save again. In Compare, choose the earlier baseline and compare the same examples; inspect both answers and totals.", "workshop", "0.2.0", "complete", False, _page("workshop.tutorialCreate"), "ws-save-revision"),
     *(Topic("assist-" + action, "Assist · " + action.replace("_", " "),
+            "Open Assist, choose describe and confirm the destination. Save, refine or discard the proposed "
+            "description of this saved revision; the executable block does not change."
+            if action == "describe" else
             "Open Assist, prepare the request and inspect its destination. Apply or discard the returned proposal.",
             "workshop", "0.2.0", "complete", False,
             _page("workshop.tutorialAssist", [action]), "ws-assist")

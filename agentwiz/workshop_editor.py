@@ -427,11 +427,9 @@ def edit(draft, operation):
         obj[side][name]['contract'] = definition
         result['definition_text'] = jsonio.encode_exact(obj)
     elif operation.get('kind') == 'description':
-        if set(operation['sections']) != set(SECTIONS) or not all(isinstance(v, str) for v in operation['sections'].values()):
-            fail()
-        result['metadata']['description_sections'] = operation['sections']
-        from .workshop_service import digest
-        result['metadata']['description_basis'] = digest({'definition': result['definition_text'], 'files': result['files']})
+        # Standard descriptions belong to a saved revision now (block_metadata_refactor spec v2, section 3).
+        from .workshop_assist import moved
+        raise moved()
     else:
         fail()
     return result

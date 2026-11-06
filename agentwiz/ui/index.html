@@ -96,7 +96,7 @@
 .ws-port-table .ws-port-main label{font-size:0}.ws-port-table td input,.ws-port-table td select{font-size:13px;padding:.4rem}
 .ws-port-table tbody{border-bottom:1px solid var(--line)}.ws-port-table details{margin:.3rem 0}
 .ws-misc{display:flex;flex-direction:column;gap:.4rem}.ws-misc>button{align-self:start}
-.ws-revision-save,.ws-model-settings{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.6rem;align-items:end}.ws-model-settings{grid-template-columns:repeat(2,minmax(0,1fr))}.ws-misc .ws-field{margin:.3rem 0}.ws-revision-save>button{margin-bottom:.3rem}.ws-model-settings input::placeholder{color:var(--muted);opacity:1}.ws-role-field{grid-template-columns:minmax(0,1fr) auto;align-items:center}.ws-role-field select{grid-column:1/-1;grid-row:2}.ws-role-config{font-size:12px;padding:0 4px;grid-column:2;grid-row:1}.ws-revision-picker{max-width:20rem}.ws-revision-picker .ws-field{margin:0}.ws-workshop-nav{flex-wrap:wrap}
+.ws-revision-save,.ws-model-settings{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.6rem;align-items:end}.ws-model-settings{grid-template-columns:repeat(2,minmax(0,1fr))}.ws-misc .ws-field{margin:.3rem 0}.ws-revision-save>button{margin-bottom:.3rem}.ws-model-settings input::placeholder{color:var(--muted);opacity:1}.ws-role-field{grid-template-columns:minmax(0,1fr) auto;align-items:center}.ws-role-field select{grid-column:1/-1;grid-row:2}.ws-role-config{font-size:12px;padding:0 4px;grid-column:2;grid-row:1}.ws-revision-picker{max-width:20rem}.ws-hint{color:var(--muted);font-size:13px}.ws-standard-description{border:1px solid var(--line);padding:.6rem;margin:.4rem 0}.ws-standard-description h3{margin:0 0 .3rem}.ws-revision-picker .ws-field{margin:0}.ws-workshop-nav{flex-wrap:wrap}
 @media(max-width:1100px){.ws-design-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.ws-misc{grid-column:1/-1}}
 @media(max-width:720px){.ws-design-grid{grid-template-columns:minmax(0,1fr)}.ws-layout aside{grid-template-columns:minmax(0,1fr)}.ws-revision-save,.ws-model-settings{grid-template-columns:minmax(0,1fr)}.ws-revision-save>button{justify-self:start}.ws-port-table td input,.ws-port-table td select{padding:.25rem}}
 </style>
@@ -2626,7 +2626,7 @@ async function tutorialInit() {
 
 // Block Workshop. Drafts and typed inputs stay in page memory. All execution and plans are server-owned.
 const wsPanel = $("panel-workshop");
-const ws = {draft:null, projection:null, dirty:false, view:"design", inputs:{}, examples:[], revision:null, examplesDirty:false, selectedExample:"", batch:null, proposal:null, selectedRevision:null, revisionRows:[], currentRevision:null};
+const ws = {draft:null, projection:null, dirty:false, view:"design", inputs:{}, examples:[], revision:null, examplesDirty:false, selectedExample:"", batch:null, proposal:null, selectedRevision:null, revisionRows:[], currentRevision:null, saved:null, describe:null};
 const wsApi = (path, body) => api("/api/workshop/" + path, body === undefined ? undefined : {format_version:1,...body});
 async function wsPut(path, body) {
   const response = await fetch("/api/workshop/"+path,{method:"PUT",headers:{"Content-Type":"application/json","X-Session-Token":TOKEN},body:JSON.stringify({format_version:1,...body})});
@@ -2661,7 +2661,11 @@ function wsChoice(parent,label,values,selected){
   if(selected!=null)el.value=selected;
   parent.append(h("label",{class:"ws-field"},label,el));return el;
 }
-function wsDirty(){ws.dirty=true;wsHeading.textContent=(ws.draft?.metadata?.display_name||ws.draft?.key||"New block")+" · Unsaved";}
+function wsDirty(){ws.dirty=true;wsHeading.textContent=(ws.draft?.metadata?.display_name||ws.draft?.key||"New block")+" · Unsaved";
+  const picker=wsRevisionPicker.querySelector("select");
+  if(picker){picker.dataset.dirty="true";const option=[...picker.options].find(o=>o.value===ws.selectedRevision);if(option&&!option.text.endsWith(" · Unsaved"))option.text+=" · Unsaved";}
+  const save=wsBody.querySelector('[data-test="ws-save-revision"]');if(save&&save.disabled&&save.dataset.historical){save.disabled=false;delete save.dataset.historical;save.title="Saving creates a new revision; older revisions remain unchanged.";}
+  for(const b of wsBody.querySelectorAll('[data-test="ws-describe-block"], [data-test="ws-edit-description"]')){b.disabled=true;b.title="Save or discard the executable changes before describing this revision.";}}
 window.addEventListener("beforeunload",e=>{if(ws.dirty||ws.examplesDirty||(TABS.contracts&&TABS.contracts.dirty&&TABS.contracts.dirty())){e.preventDefault();e.returnValue="";}});
 function wsDialog(title,content,choices,beforeClose){
   return new Promise(resolve=>{
@@ -2706,7 +2710,7 @@ async function wsPlan(action,request){
   for(const c of d.candidates||[]){
     const dest=c.destination||{},url=dest.base_url||dest.url;let locality=c.kind==="script"?"Local script":"Remote or unknown";
     if(url){try{locality=["localhost","127.0.0.1","[::1]"].includes(new URL(url).hostname)?"Local endpoint":"Remote endpoint";}catch(e){}}
-    disclosure.append(wsShowValue({destination:c.destination||c.kind,location:locality,effects:c.effects}));if(c.settings)disclosure.append(wsTyped(c.settings));
+    disclosure.append(wsShowValue({source:c.block_revision_number?"Saved revision "+c.block_revision_number:"Unsaved draft",destination:c.destination||c.kind,location:locality,effects:c.effects}));if(c.settings)disclosure.append(wsTyped(c.settings));
   }
   if(d.candidates?.length===2){const [a,b]=d.candidates;disclosure.append(wsShowValue({definition_changed:a.source_digest!==b.source_digest,baseline:a.source_digest,candidate:b.source_digest}));
     disclosure.append(wsSource("Compare exact definitions",a.draft.definition_text+"\n\nCandidate\n"+b.draft.definition_text));}
@@ -2763,7 +2767,11 @@ async function wsLoad(source,dirty){
   const versions=ws.draft.base_digest?await wsApi("blocks/"+encodeURIComponent(ws.draft.key)+"/revisions"):{current:null,revisions:[]};
   if(generation!==wsLoadGeneration)return;
   ws.revisionRows=versions.revisions;ws.currentRevision=versions.current;
-  ws.selectedRevision=source.revision||(source.draft&&sameBlock?ws.selectedRevision:versions.current);
+  const keepSaved=source.draft&&sameBlock&&!source.duplicate_key;
+  // A saved preview resolves its selection once; take the ID from the response, not the revision list.
+  ws.selectedRevision=preview.selector?.revision||(keepSaved?ws.selectedRevision:versions.current);
+  if(preview.selector)ws.saved={selector:preview.selector,number:preview.revision_number,name:preview.revision_name||"",description:preview.standard_description,runIssues:preview.run_issues||[]};
+  else if(!keepSaved)ws.saved=null;
   ws.draft.metadata.revision_name=source.draft?(ws.draft.metadata.revision_name||""):"";
   await wsRefresh();
   const collection=await wsApi("blocks/"+encodeURIComponent(ws.draft.key)+"/examples");
@@ -2848,8 +2856,26 @@ function wsRender(){
   if(activeFrag==="workshop")history.replaceState(null,"","#workshop/"+encodeURIComponent(ws.draft.key)+"/"+ws.view);
   for(const view of ["design","test","compare"]){const b=wsButton(view[0].toUpperCase()+view.slice(1),()=>wsView(view));b.setAttribute("aria-pressed",String(ws.view===view));wsNav.append(b);}
   wsNav.append(wsButton("Assist",wsAssist),wsButton("Revision actions",wsRevisions));
+  wsPicker();
   if(ws.view==="design")wsDesign();else wsTrials(ws.view==="compare");
 }
+// The revision selector, common to Design, Test and Compare. Selecting a retained revision opens a clean saved
+// selection (the default pointer stays where it is); Revision actions → Restore to draft enters draft mode.
+function wsPicker(){
+  const rows=ws.revisionRows;
+  const label=r=>wsRevisionLabel(r)+(r.id===ws.currentRevision?" (current)":"")+(ws.dirty&&r.id===ws.selectedRevision?" · Unsaved":"");
+  const revision=wsChoice(wsRevisionPicker,"Block revision",rows.length?rows.map(r=>[r.id,label(r)]):[["","Unsaved draft"]],ws.selectedRevision);
+  revision.dataset.current=ws.currentRevision||"";revision.dataset.selected=ws.selectedRevision||"";revision.dataset.dirty=String(!!ws.dirty);
+  revision.disabled=!rows.length;
+  revision.oninput=e=>e.stopPropagation();
+  revision.onchange=async e=>{e.stopPropagation();const selected=revision.value;revision.disabled=true;try{
+    if(await wsLeave()){const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};await wsLoad({key:ws.draft.key,revision:selected},false);Object.assign(ws,keep);wsRender();}
+  }catch(error){if(error.status===404){wsNote.dataset.state="error";wsNote.dataset.code="missing";wsNote.textContent="That revision is no longer retained. Choose another revision.";const versions=await wsApi("blocks/"+encodeURIComponent(ws.draft.key)+"/revisions").catch(()=>null);if(versions){ws.revisionRows=versions.revisions;ws.currentRevision=versions.current;}wsRender();}else wsError(error);}finally{if(revision.isConnected){revision.value=ws.selectedRevision||"";revision.disabled=!ws.revisionRows.length;}}};
+}
+// A clean managed selection runs through its explicit saved selector; edits use the existing draft path.
+function wsClean(){return !ws.dirty&&!!ws.saved&&ws.saved.selector.key===ws.draft?.key&&ws.saved.selector.revision===ws.selectedRevision;}
+function wsSourceOf(extra){return wsClean()?{key:ws.draft.key,revision:ws.selectedRevision,...extra}:{draft:ws.draft,...extra};}
+function wsSelectionLabel(){return ws.saved?("Revision "+ws.saved.number+(ws.saved.name?" — "+ws.saved.name:"")+(ws.dirty?" · Unsaved edits":"")):"Unsaved draft";}
 function wsDesign(){
   const p=ws.projection,form=h("div",{class:"ws-design-grid"}),d=p.design||{};
   wsBody.append(form);
@@ -2857,23 +2883,19 @@ function wsDesign(){
   form.append(instructions,variables,misc);
   const title=wsField(misc,"Display name",ws.draft.metadata.display_name||ws.draft.key),purpose=wsField(instructions,"Purpose",d.purpose,true);
   purpose.parentElement.firstChild.textContent="Block description";purpose.setAttribute("aria-label","Block description");instructions.append(purpose.parentElement);
-  const revision=wsChoice(wsRevisionPicker,"Block revision",ws.revisionRows.length?ws.revisionRows.map(r=>[r.id,wsRevisionLabel(r)+(r.id===ws.currentRevision?" (current)":"")]):[["","Unsaved draft"]],ws.selectedRevision);
-  revision.dataset.current=ws.currentRevision||"";revision.dataset.selected=ws.selectedRevision||"";
-  revision.disabled=!ws.revisionRows.length;
-  revision.oninput=e=>e.stopPropagation();
-  revision.onchange=async e=>{e.stopPropagation();const selected=revision.value;revision.disabled=true;try{
-    if(await wsLeave()){const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};await wsLoad({key:ws.draft.key,revision:selected},true);Object.assign(ws,keep);wsRender();}
-  }catch(error){wsError(error);}finally{revision.value=ws.selectedRevision||"";revision.disabled=false;}};
   const revisionSave=h("div",{class:"ws-revision-save"});misc.append(revisionSave);
   const revisionName=wsField(revisionSave,"Revision name (optional)",ws.draft.metadata.revision_name||"");revisionName.maxLength=120;
   const save=wsButton("Save revision",wsSave);save.title="Saving creates a new revision; older revisions remain unchanged.";revisionSave.append(save);
+  const historical=()=>wsClean()&&ws.selectedRevision!==ws.currentRevision;
+  if(historical()){save.disabled=true;save.dataset.historical="true";save.title="Edit this revision or use Revision actions → Restore to draft before saving it as a new revision.";}
   const rows={};wsPorts=[];
   for(const side of ["inputs","outputs"]){
     const area=h("fieldset",{},h("legend",{text:side==="inputs"?"Inputs":"Outputs"}));variables.append(area);rows[side]=[];
-    const table=h("table",{class:"ws-port-table"},h("thead",{},h("tr",{},...["Field name","Meaning"].map(text=>h("th",{scope:"col",text})))));area.append(table);
+    const table=h("table",{class:"ws-port-table"},h("thead",{},h("tr",{},...["Field name","Declared meaning"].map(text=>h("th",{scope:"col",text})))));area.append(table);
+    if(side==="outputs"&&d.kind==="model")area.append(h("p",{class:"ws-hint","data-test":"ws-declared-meaning-note",text:"A declared output meaning is part of the executable block and can contribute to the model request. Standard description documentation does not."}));
     function port(name,format,description,source){
       const line=h("tbody",{class:"ws-port","data-test":"ws-port","data-side":side,"data-port":name}),cells=[h("td"),h("td")];line.append(h("tr",{class:"ws-port-main"},...cells));
-      const n=wsField(cells[0],"Field name",name),desc=wsField(cells[1],"Meaning",description);
+      const n=wsField(cells[0],"Field name",name),desc=wsField(cells[1],"Declared meaning",description);
       const detail=h("td",{colspan:"2"});line.append(h("tr",{},detail));
       const item={original:name,n,desc,format,source};rows[side].push(item);
       // Inline | Saved contract (overhaul spec 15.3): the shared editor and pinned selector from contracts.js.
@@ -2938,7 +2960,7 @@ function wsDesign(){
     for(const output of d.outputs||[])instructions.append(wsButton("Insert output "+output.name,()=>{behavior.setRangeText("{{output."+output.name+"}}",behavior.selectionStart,behavior.selectionEnd,"end");changed();}));
     variables.append(h("p",{text:"Response: named JSON envelope — one top-level key per output."}));
     instructions.append(wsButton("Request preview",async()=>{
-      await wsFlush();const p=await wsApi("preview",{draft:ws.draft,inputs:ws.inputs}),box=h("div",{"data-test":"ws-request-messages"});
+      await wsFlush();const p=await wsApi("preview",wsSourceOf({inputs:ws.inputs})),box=h("div",{"data-test":"ws-request-messages"},h("p",{"data-test":"ws-request-source",text:wsSelectionLabel()}));
       if(p.prepared){
         for(const [name,label,text] of [["system","System message sent",p.prepared.system_sent],["prompt","User message sent",p.prepared.prompt]]){
           const pre=h("pre",{"data-test":"ws-request-"+name,text});box.append(h("h3",{text:label}),h("div",{class:"panelhead"},copyControl("ws-request-copy-"+name,()=>text,()=>pre)),pre);
@@ -2986,9 +3008,144 @@ function wsDesign(){
     }
     area.append(wsButton("Apply parameters",async()=>{await wsFlush();await wsLoad({draft:ws.draft,edit:{kind:"starter_parameters",parameters:read()}},true);}));
   }else if(d.kind==="script")instructions.append(h("p",{text:p.classification==="unsupported_starter_version"?"This starter version is unavailable. Captured source is preserved; parameter editing is disabled.":"Custom Python source; parameter controls are disabled."}));
-  const desc=h("details",{},h("summary",{text:"Standard description"+(p.description?.needs_refresh?" · Needs refresh":"")}));
-  const sections={};for(const key of ["use","exclusions","effects","limitations","missing_data","failures"])sections[key]=wsField(desc,key.replaceAll("_"," "),ws.draft.metadata.description_sections?.[key]||"",true);
-  desc.append(wsButton("Apply description",async()=>{await wsFlush();const projected=await wsApi("preview",{draft:ws.draft,edit:{kind:"description",sections:Object.fromEntries(Object.entries(sections).map(([n,f])=>[n,f.value]))}});ws.draft=projected.draft;ws.projection=projected;wsDirty();wsRender();}));misc.append(desc);more.append(wsSource("Details · stable key",ws.draft.key));
+  misc.append(wsDescriptionPanel());more.append(wsSource("Details · stable key",ws.draft.key));
+}
+
+// --- Standard description of the selected saved revision (block_metadata_refactor spec v2, section 5) ---------
+const WS_SECTIONS=[["use","Use"],["exclusions","Do not use for"],["effects","Effects"],["limitations","Limitations"],["missing_data","Missing data"],["failures","Failures"]];
+let wsDescribeGeneration=0;
+function wsSameSelection(saved){return !!ws.saved&&ws.saved.selector.key===saved.selector.key&&ws.saved.selector.revision===saved.selector.revision;}
+function wsDescriptionPanel(){
+  const saved=ws.saved,sd=saved?.description;
+  const box=h("section",{class:"ws-standard-description","data-test":"ws-standard-description","data-status":sd?.status||"none"},h("h3",{text:"Standard description"}));
+  if(!saved||!sd||saved.selector.key!==ws.draft.key){box.append(h("p",{"data-test":"ws-description-label",text:"Save this block first. A standard description belongs to one saved revision."}));return box;}
+  const status={saved:"Saved description",legacy:"Existing description",missing:"No saved description; showing executable text",unavailable:"Description unavailable"}[sd.status]||sd.status;
+  box.append(h("p",{"data-test":"ws-description-label",text:"Description of revision "+saved.number+(saved.name?" — "+saved.name:"")+" · "+status+(ws.dirty?" · executable changes are unsaved and not described":"")}));
+  for(const issue of sd.issues||[])box.append(h("p",{class:"ws-hint","data-test":"ws-description-issue","data-code":issue.code,text:issue.message}));
+  const facts=h("dl",{class:"ws-facts","data-test":"ws-description-readout"});box.append(facts);
+  const row=(label,text,hint,test)=>facts.append(h("dt",{text:label}),h("dd",{...(test?{"data-test":test}:{})},h("span",{text}),...(hint?[h("span",{class:"ws-hint",text:" · "+hint})]:[])));
+  row("Purpose",sd.fallback.purpose||"Not stated","block description");
+  if(sd.sections)for(const [key,label] of WS_SECTIONS)if(sd.sections[key])row(label,sd.sections[key],"",""+"ws-description-"+key);
+  const contracts=ws.projection?.contracts||{};
+  for(const side of ["inputs","outputs"])for(const [name,meaning] of Object.entries(sd.fallback.ports[side]||{})){
+    const c=contracts[side]?.[name],root=c?.fields?.find(f=>!f.path.length),type=c?c.format+(root?" · "+root.type:""):"";
+    const doc=sd.port_summaries?.[side]?.[name];
+    row((side==="inputs"?"Input ":"Output ")+name+(type?" ("+type+")":""),doc||meaning||"No meaning declared",doc?"documentation":"declared meaning");
+  }
+  const binding=ws.projection?.design?.binding;
+  row("Configured requirement",binding?(ws.projection.design.kind==="tool"?"MCP server "+binding:"Model role "+binding):ws.projection?.design?.kind==="script"?"Python on this computer":"None recorded","current configuration");
+  row("Declared effects",ws.draft.metadata?.effects||"unknown","executable metadata");
+  if(saved.runIssues?.length)box.append(h("div",{"data-test":"ws-run-issues"},h("p",{text:"This revision cannot run until these dependencies are repaired. Its description is unaffected."}),wsShowValue(saved.runIssues)));
+  const blocked=ws.dirty?"Save or discard the executable changes before describing this revision.":!sd.basis?"This revision has no usable description basis.":!sd.writable?"This description record cannot be replaced safely here.":"";
+  const describe=wsButton("Describe block",()=>wsDescribe(),"ws-describe-block"),edit=wsButton("Edit description",()=>wsEditDescription(),"ws-edit-description");
+  for(const b of [describe,edit]){b.disabled=!!blocked;if(blocked)b.title=blocked;}
+  box.append(h("div",{class:"row"},describe,edit));
+  return box;
+}
+function wsRenderDescription(){const panel=wsBody.querySelector('[data-test="ws-standard-description"]');if(panel)panel.replaceWith(wsDescriptionPanel());}
+async function wsReloadDescription(saved){
+  const preview=await wsApi("blocks/"+encodeURIComponent(saved.selector.key)+"/revisions/"+encodeURIComponent(saved.selector.revision));
+  if(wsSameSelection(saved)){ws.saved.description=preview.standard_description;wsRenderDescription();}
+}
+async function wsSaveDescription(saved,body){
+  const target=saved.selector;
+  const projection=await wsPut("blocks/"+encodeURIComponent(target.key)+"/revisions/"+encodeURIComponent(target.revision)+"/description",body);
+  // A description write updates only the readout: no executable dirty flag, inputs, examples or picker change.
+  if(wsSameSelection(saved)){ws.saved.description=projection;wsRenderDescription();}
+  wsNote.dataset.state="description_saved";delete wsNote.dataset.code;wsNote.textContent="Description saved for revision "+saved.number;
+}
+async function wsEditDescription(){
+  await wsFlush();
+  if(!wsClean())throw new ApiError("Save or discard the executable changes before describing this revision.",409,"describe_unsaved");
+  const saved=ws.saved,sd=saved.description,start=sd.sections||{},fields={},ports={inputs:{},outputs:{}};
+  const box=h("div",{"data-test":"ws-description-editor"},h("p",{text:"Description of revision "+saved.number+". Saving changes only this description, never the executable block."}));
+  for(const [key,label] of WS_SECTIONS){fields[key]=wsField(box,label,start[key]||"",true);fields[key].dataset.test="ws-description-field-"+key;}
+  box.append(h("p",{class:"ws-hint",text:"Documentation is for readers only and does not change what the block sends or checks. Leave a field blank to show the port's declared meaning."}));
+  for(const side of ["inputs","outputs"])for(const [name,meaning] of Object.entries(sd.fallback.ports[side]||{})){
+    const field=wsField(box,"Documentation · "+(side==="inputs"?"input ":"output ")+name,sd.port_summaries?.[side]?.[name]||"");
+    field.placeholder=meaning||"";field.dataset.test="ws-description-port";field.dataset.side=side;field.dataset.port=name;ports[side][name]=field;
+  }
+  const error=h("p",{role:"alert","data-test":"ws-description-error"});box.append(error);
+  await wsDialog("Edit description",box,["Save description","Cancel"],async action=>{
+    if(action!=="Save description")return true;
+    error.textContent="";
+    const body={expected_token:sd.token,basis:sd.basis,sections:Object.fromEntries(Object.entries(fields).map(([k,f])=>[k,f.value])),port_summaries:{inputs:{},outputs:{}}};
+    for(const side of ["inputs","outputs"])for(const [name,f] of Object.entries(ports[side]))if(f.value.trim())body.port_summaries[side][name]=f.value;
+    try{await wsSaveDescription(saved,body);return true;}
+    catch(e){error.dataset.code=e.code||"error";error.textContent=wsErrorText(e);if(e.code==="stale"){await wsReloadDescription(saved).catch(()=>{});error.append(" The saved description changed; it has been reloaded. Review it and try again.");}return false;}
+  });
+}
+async function wsRolesNeeded(){
+  wsNote.dataset.state="error";wsNote.dataset.code="role_unresolved";
+  wsNote.textContent="Describe needs the write_block_description model role. Assign it in Roles, or use Edit description to write it yourself. ";
+  wsNote.append(wsButton("Open Roles",()=>$("open-roles").click(),"ws-open-roles"));
+}
+// One user-requested model call: plan with destination disclosure, confirm, start, follow with Stop.
+async function wsDescribeCall(saved,request){
+  let plan;
+  try{plan=await wsApi("plans",{action:"assist",request});}
+  catch(e){if(e.code==="role_unresolved"){await wsRolesNeeded();return null;}throw e;}
+  const d=plan.descriptor,dest=d.destination||{},box=h("div",{"data-test":"ws-describe-plan","data-locality":dest.locality||"unknown"});
+  box.append(wsShowValue({revision:"Revision "+d.describe.revision_number,request:d.describe.mode==="refine"?"Refine the pending proposal":"Describe this revision",role:dest.role,backend:dest.kind||"unknown",model:dest.model||"unknown",...(dest.provider?{provider:dest.provider}:{}),endpoint:dest.locality==="local"?"Local endpoint":"Remote or unknown endpoint",persistence:d.persistence}));
+  if(dest.locality!=="local")box.append(h("p",{"data-test":"ws-describe-remote",class:"err-text",text:"This endpoint is not on this computer. Source excerpts or feedback may contain confidential data and will be sent to it."}));
+  box.append(h("p",{text:"Describe sends this revision's interface and an excerpt of its active prompt, script or tool binding. It never runs the block or calls a tool. Known credentials are removed; other confidential text in the source can still be sent."}));
+  if(await wsDialog("Review describe request",box,["Confirm","Cancel"])!=="Confirm")return null;
+  const bound={...request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations.map(({kind,digest})=>({kind,digest}))};
+  const ticket=(await wsApi("tickets",{})).ticket;let op;
+  try{op=await wsApi("assist",{...bound,ticket});}catch(e){op=await wsApi("tickets/"+ticket).catch(()=>({}));if(!op.operation_id)throw e;}
+  const generation=++wsDescribeGeneration,id=op.operation_id;
+  const stop=wsButton("Stop",async()=>{await wsApi("batches/"+id+"/stop",{});},"ws-describe-stop");
+  wsNote.dataset.state="describing";delete wsNote.dataset.code;wsNote.replaceChildren(h("span",{text:"Describing revision "+saved.number+"… "}),stop);
+  let batch;
+  for(;;){batch=await wsApi("batches/"+id);if(batch.state!=="running")break;await new Promise(r=>setTimeout(r,250));}
+  stop.remove();
+  if(generation!==wsDescribeGeneration||!wsSameSelection(saved)){wsNote.dataset.state="describe_ignored";wsNote.textContent="A description request finished for a revision that is no longer selected. Nothing was saved.";return null;}
+  return batch;
+}
+function wsDescribeOutcome(batch){
+  if(batch.outcome==="description_invalid"){
+    wsNote.dataset.state="error";wsNote.dataset.code="description_invalid";
+    wsNote.textContent="The model's description could not be used: "+(batch.rows[0]?.description_issues||[]).map(i=>i.location+": "+i.message).join("; ")+". The saved description is unchanged.";return false;}
+  if(!batch.proposal){wsNote.dataset.state="describe_stopped";delete wsNote.dataset.code;wsNote.textContent=(batch.outcome==="stopped"?"Describe stopped.":"Describe finished without a proposal.")+" The saved description is unchanged.";return false;}
+  return true;
+}
+async function wsDescribe(){
+  await wsFlush();
+  if(!wsClean())throw new ApiError("Save or discard the executable changes before describing this revision.",409,"describe_unsaved");
+  const saved=ws.saved,target={key:saved.selector.key,revision:saved.selector.revision};
+  const first=await wsDescribeCall(saved,{action:"describe",mode:"generate",...target});
+  if(!first||!wsDescribeOutcome(first))return;
+  let proposal=first.proposal,problem="";
+  for(;;){
+    const box=h("div",{"data-test":"ws-description-proposal","data-proposal":proposal.proposal_id},h("p",{text:"Proposed description for revision "+saved.number+". Check its meaning before saving; nothing is saved until you choose Save description."}));
+    if(problem)box.append(h("p",{role:"alert","data-test":"ws-describe-problem",text:problem}));
+    if(proposal.note)box.append(h("p",{class:"ws-hint","data-test":"ws-description-note",text:"Model note: "+proposal.note}));
+    if(proposal.changed?.length)box.append(h("p",{"data-test":"ws-description-changed",text:"Changed: "+proposal.changed.map(l=>(WS_SECTIONS.find(([k])=>k===l)?.[1])||l.replace(".", " ")).join(", ")}));
+    const dl=h("dl",{class:"ws-facts"});box.append(dl);
+    for(const [key,label] of WS_SECTIONS)dl.append(h("dt",{text:label}),h("dd",{"data-test":"ws-proposed-"+key,text:proposal.sections[key]||"—"}));
+    const contracts=ws.projection?.contracts||{};
+    for(const side of ["inputs","outputs"])for(const [name,meaning] of Object.entries(saved.description.fallback.ports[side]||{})){
+      const c=contracts[side]?.[name],doc=proposal.port_summaries[side]?.[name];
+      dl.append(h("dt",{text:(side==="inputs"?"Input ":"Output ")+name+(c?" ("+c.format+")":"")}),h("dd",{},h("span",{text:doc||meaning||"No meaning declared"}),h("span",{class:"ws-hint",text:doc?" · documentation":" · declared meaning"})));
+    }
+    const choice=await wsDialog("Review description",box,["Save description","Refine","Discard"]);
+    if(choice==="Save description"){
+      try{await wsSaveDescription(saved,{proposal_id:proposal.proposal_id,expected_token:proposal.base_token});}
+      catch(e){wsError(e);if(e.code==="stale")await wsReloadDescription(saved).catch(()=>{});}
+      return;
+    }
+    if(choice!=="Refine"){wsNote.dataset.state="proposal_discarded";delete wsNote.dataset.code;wsNote.textContent="Proposal discarded. The saved description is unchanged.";return;}
+    const form=h("div"),feedback=wsField(form,"Feedback","",true);feedback.dataset.test="ws-describe-feedback";feedback.maxLength=2000;
+    form.append(h("p",{class:"ws-hint",text:"Describe what to change in the prose. Requests to change the block's behaviour are outside this action."}));
+    if(await wsDialog("Refine description",form,["Send feedback","Cancel"])!=="Send feedback"){problem="";continue;}
+    let next=null;
+    try{next=await wsDescribeCall(saved,{action:"describe",mode:"refine",...target,proposal_id:proposal.proposal_id,feedback:feedback.value});}
+    catch(e){problem=wsErrorText(e)+". The previous proposal is kept.";continue;}
+    if(!next){if(!wsSameSelection(saved))return;problem="";continue;}
+    if(next.proposal){proposal=next.proposal;problem=next.outcome==="unchanged"?"The feedback did not change the proposal.":"";}
+    else problem=(next.outcome==="description_invalid"?"The refined description could not be used: "+(next.rows[0]?.description_issues||[]).map(i=>i.location+": "+i.message).join("; "):"Refine stopped.")+" The previous proposal is kept.";
+    wsNote.dataset.state="proposal_review";delete wsNote.dataset.code;wsNote.textContent="Reviewing a proposed description";
+  }
 }
 function wsRevisionLabel(r){return String(r.revision_number)+(r.revision_name?" — "+r.revision_name:"");}
 async function wsRevisions(){
@@ -3008,8 +3165,11 @@ async function wsAssist(initialAction){
   const stage=wsChoice(box,"Create stage",[["","Complete block"],["fields","Fields only"],["behaviour","Behaviour only"]]);
   const assistantSettings={},assistantModes={};
   for(const key of ["temperature","reasoning"]){assistantModes[key]=wsChoice(box,"Assistant "+key+" source",[["inherit","Inherit role default"],["custom","Custom"],["reset","Backend default"]]);assistantSettings[key]=key==="reasoning"?wsChoice(box,"Assistant reasoning",["off","low","medium","high"].map(x=>[x,x])):wsField(box,"Assistant temperature","");assistantSettings[key].parentElement.hidden=true;assistantModes[key].onchange=()=>assistantSettings[key].parentElement.hidden=assistantModes[key].value!=="custom";}
-  const sections=[];for(const name of ["purpose","inputs","outputs","behaviour","description_sections"]){const check=h("input",{type:"checkbox",checked:true});sections.push([name,check]);box.append(h("label",{},check," Improve "+name.replaceAll("_"," ")));}
+  const sections=[];for(const name of ["purpose","inputs","outputs","behaviour"]){const check=h("input",{type:"checkbox",checked:true});sections.push([name,check]);box.append(h("label",{},check," Improve "+name.replaceAll("_"," ")));}
+  const describeNote=h("p",{class:"ws-hint","data-test":"ws-assist-describe-note",text:"Describe writes the standard description of the selected saved revision with the write_block_description role. The role, task and settings above are not used."});box.append(describeNote);
+  const showDescribe=()=>{describeNote.hidden=action.value!=="describe";};action.addEventListener("change",showDescribe);showDescribe();
   if(await wsDialog("Block assistance",box,["Prepare request","Cancel"])!=="Prepare request")return;
+  if(action.value==="describe")return wsDescribe();     // the same server-owned action as Standard description
   const snap=ws.draft,body={action:action.value,role:role.value,task:task.value,draft:snap};
   body.settings_text=Object.fromEntries(Object.entries(assistantModes).filter(([,m])=>m.value==="custom").map(([key])=>[key,assistantSettings[key].value]));
   body.task_resets=Object.entries(assistantModes).filter(([,m])=>m.value==="reset").map(([key])=>key);
@@ -3048,7 +3208,7 @@ function wsResults(){
   const panel=$("ws-results");if(!panel||!ws.batch)return;panel.replaceChildren();
   if(ws.batch.live)panel.append(wsShowValue({child:ws.batch.active_run,progress:ws.batch.live.state,attempts:ws.batch.live.attempts||[]}));
   for(const row of ws.batch.rows){
-    const result=h("article",{"data-test":"ws-trial","data-outcome":row.outcome||row.state,"data-attempts":row.attempts??0,"data-correctness":row.correctness||"unreviewed","data-arm":row.arm},h("strong",{text:(row.arm===0?"Baseline":"Candidate")+" · "+(row.example.label||row.example.id)+" · "+(row.outcome||row.state)}));
+    const result=h("article",{"data-test":"ws-trial","data-outcome":row.outcome||row.state,"data-attempts":row.attempts??0,"data-correctness":row.correctness||"unreviewed","data-arm":row.arm},h("strong",{text:(row.arm===0?"Baseline":"Candidate")+(row.block_revision_number?" · revision "+row.block_revision_number:" · draft")+" · "+(row.example.label||row.example.id)+" · "+(row.outcome||row.state)}));
     for(const [name,v] of Object.entries(row.outputs||{}))result.append(h("h4",{text:name}),v.format==="json"?h("div",{},wsStructured(v.text),h("details",{},h("summary",{text:"Exact answer"}),h("pre",{"data-test":"ws-output","data-output":name,text:v.text}))):h("pre",{"data-test":"ws-output","data-output":name,text:v.text}),copyControl("ws-copy-output",()=>v.text,null));
     if(row.output_checks)result.append(wsShowValue(row.output_checks));
     if(typeof row.raw_answer==="string")result.append(h("details",{},h("summary",{text:"Raw model answer (not accepted output)"}),h("pre",{"data-test":"ws-raw-answer",text:row.raw_answer}),copyControl("ws-copy-raw-answer",()=>row.raw_answer,null)));
@@ -3145,6 +3305,8 @@ function wsTrials(compare){
   const form=h("div"),results=h("div",{id:"ws-results","aria-live":"polite"});wsBody.append(form,results);
   const valid=ws.projection.valid!==false;
   if(!valid)form.append(h("div",{"data-test":"ws-validation","data-state":"invalid"},h("p",{text:"Correct these definition issues in Design before saving or running. Your inputs are kept."}),wsShowValue(ws.projection.issues)));
+  form.append(h("p",{"data-test":"ws-run-source","data-clean":String(wsClean()),text:"Runs use: "+wsSelectionLabel()}));
+  if(wsClean()&&ws.saved.runIssues?.length)form.append(h("div",{"data-test":"ws-run-issues"},h("p",{text:"This revision's saved dependencies need repair before it can run."}),wsShowValue(ws.saved.runIssues)));
   const inputArea=h("fieldset",{"data-test":"ws-inputs"},h("legend",{text:"Inputs — one-off test or selected example"}));form.append(inputArea);
   const select=wsChoice(inputArea,"Example",[["","New input — run once without saving an example"],...ws.examples.map(e=>[e.id,e.label])],ws.selectedExample);
   const selectedInfo=h("div");form.append(selectedInfo);
@@ -3161,19 +3323,19 @@ function wsTrials(compare){
   examplesArea.append(selection);
   const chosen=()=>selected.filter(([,check])=>check.checked).map(([ex])=>ex);
   wsPending=async()=>{await values();};
-  if(compare){const baseline=wsChoice(form,"Baseline revision",[]),candidate=wsChoice(form,"Candidate",[["","Current draft"]]);
+  if(compare){const baseline=wsChoice(form,"Baseline revision",[]),candidate=wsChoice(form,"Candidate",[["",wsClean()?"Selected revision "+ws.saved.number:"Current draft"]]);
     wsApi("blocks/"+ws.draft.key+"/revisions").then(x=>{if(!baseline.isConnected)return;baseline.replaceChildren(...x.revisions.map(r=>new Option(wsRevisionLabel(r),r.id)));for(const r of x.revisions)candidate.add(new Option(wsRevisionLabel(r),r.id));}).catch(wsError);
-    form.append(wsButton("Compare versions",()=>wsStart("batches",{candidates:[{key:ws.draft.key,revision:baseline.value},candidate.value?{key:ws.draft.key,revision:candidate.value}:{draft:ws.draft}],examples:chosen()})));
+    form.append(wsButton("Compare versions",()=>wsStart("batches",{candidates:[{key:ws.draft.key,revision:baseline.value},candidate.value?{key:ws.draft.key,revision:candidate.value}:wsSourceOf()],examples:chosen()})));
   }else{
-    inputArea.append(wsButton("Preview instructions",async()=>{const p=await wsApi("preview",{draft:ws.draft,inputs:await values()});await wsDialog("Prepared behaviour",wsShowValue(p.prepared||p.input_checks||p.issues),["Close"]);}),
+    inputArea.append(wsButton("Preview instructions",async()=>{const p=await wsApi("preview",wsSourceOf({inputs:await values()}));await wsDialog("Prepared behaviour · "+wsSelectionLabel(),wsShowValue(p.prepared||p.input_checks||p.issues),["Close"]);}),
       wsButton("Run test",async()=>{
         const input=await values(),ex=ws.examples.find(e=>e.id===select.value);
-        if(ex&&(Object.keys(ex.inputs).some(n=>!inputs[n])||Object.keys(ex.inputs).every(n=>ex.inputs[n]===input[n])))return wsStart("batches",{candidates:[{draft:ws.draft}],examples:[ex]});
-        return wsStart("test",{draft:ws.draft,inputs:input});
+        if(ex&&(Object.keys(ex.inputs).some(n=>!inputs[n])||Object.keys(ex.inputs).every(n=>ex.inputs[n]===input[n])))return wsStart("batches",{candidates:[wsSourceOf()],examples:[ex]});
+        return wsStart("test",wsSourceOf({inputs:input}));
       }),
       wsButton("Add example",async()=>{const input=await values(),box=h("div"),label=wsField(box,"Example label"),criterion=wsField(box,"Review criterion","Review against the source");if(await wsDialog("Add example",box,["Save","Cancel"])!=="Save")return;
         const id=crypto.randomUUID();ws.examples.push({id,version:1,label:label.value||"Example",inputs:input,expectation:{kind:"review",criterion:criterion.value},origin:"manual",verified:false});ws.selectedExample=id;ws.examplesDirty=true;wsRender();},"ws-save-as-example"));
-    examplesArea.append(wsButton("Edit selected example",()=>wsEditExample(select.value)),wsButton("Save example collection",wsPersistExamples),wsButton("Run saved examples",()=>wsStart("batches",{candidates:[{draft:ws.draft}],examples:chosen()})));
+    examplesArea.append(wsButton("Edit selected example",()=>wsEditExample(select.value)),wsButton("Save example collection",wsPersistExamples),wsButton("Run saved examples",()=>wsStart("batches",{candidates:[wsSourceOf()],examples:chosen()})));
   }
   for(const button of form.querySelectorAll('[data-test="ws-run-test"], [data-test="ws-run-saved-examples"], [data-test="ws-compare-versions"], [data-test="ws-save-as-example"], [data-test="ws-edit-selected-example"]'))if(!valid)button.disabled=true;
   form.append(wsButton("Recent runs and comparisons",wsRecords));
@@ -3186,7 +3348,7 @@ async function wsRecords(){
   for(const row of runs.runs.filter(r=>r.block===key))box.append(wsButton((row.created_at||row.run_id)+" · "+row.outcome,async()=>{selectTab("history");await TABS.history.openRun(row.run_id);box.closest("dialog").querySelector('[data-test="ws-close"]').click();}));
   box.append(h("h3",{text:"Saved comparison records"}));
   for(const id of saved.comparisons){
-    const batch=await wsApi("comparisons/"+id);if(!batch.plan.candidates.some(c=>c.draft.key===key))continue;
+    const batch=await wsApi("comparisons/"+id);if(!(batch.plan?.candidates||[]).some(c=>c.draft?.key===key))continue;
     const line=h("div",{"data-test":"ws-comparison-record","data-comparison":id,"data-arms":batch.plan.candidates.length});box.append(line);line.append(wsButton(id.slice(0,8)+" · "+batch.state,async()=>{ws.batch=batch;wsResults();box.closest("dialog").querySelector('[data-test="ws-close"]').click();},"ws-open-comparison"),wsButton("Delete comparison",async()=>{
       const response=await fetch("/api/workshop/comparisons/"+id,{method:"DELETE",headers:{"X-Session-Token":TOKEN}});if(!response.ok)throw new Error((await response.json()).code);line.remove();
     },"ws-delete-comparison"));
@@ -3196,12 +3358,12 @@ async function wsRecords(){
 }
 wsSearch.oninput=wsFilter;wsList.onchange=async()=>{const key=wsList.value;try{if(key&&await wsLeave())await wsLoad({key},false);else wsFilter();}catch(e){wsError(e);}};
 wsPanel.append(wsHeading,h("div",{class:"ws-layout"},h("aside",{},wsSearch,wsList,wsButton("New block",wsNew),wsRevisionPicker),h("div",{},wsNav,wsNote,wsBody)));
-TABS.workshop={async tutorialAssist(action){ws.view="design";ws.tutorialAction=action;await wsLoad({key:"tutorial_extractor",starter:"extract_fields",role:"fast"},true);}, async tutorialPrepare(key,inputs){ws.view="test";await wsLoad({key,support:[]},false);ws.inputs=inputs;ws.batch=null;wsRender();},async tutorialCreate(){ws.view="design";await wsLoad({starter:"count_text",key:"tutorial_counter"},true);ws.examples=(await wsApi("starters")).starters.find(s=>s.id==="count_text").examples;wsRender();},async onShow(){try{await wsFlush();await wsRefresh();const parts=location.hash.slice(1).split("/");
+TABS.workshop={async tutorialAssist(action){ws.view="design";ws.tutorialAction=action;if(action==="describe"){await wsLoad({key:"tutorial_described"},false);return;}await wsLoad({key:"tutorial_extractor",starter:"extract_fields",role:"fast"},true);}, async tutorialPrepare(key,inputs){ws.view="test";await wsLoad({key,support:[]},false);ws.inputs=inputs;ws.batch=null;wsRender();},async tutorialCreate(){ws.view="design";await wsLoad({starter:"count_text",key:"tutorial_counter"},true);ws.examples=(await wsApi("starters")).starters.find(s=>s.id==="count_text").examples;wsRender();},async onShow(){try{await wsFlush();await wsRefresh();const parts=location.hash.slice(1).split("/");
   if(parts[1]&&wsBlocks.some(b=>b.name===parts[1])){
     if(!ws.draft||ws.draft.key!==parts[1]){if(!await wsLeave()){wsRender();return;}ws.view=["design","test","compare"].includes(parts[2])?parts[2]:"design";await wsLoad({key:parts[1]},false);}
     else {ws.view=["design","test","compare"].includes(parts[2])?parts[2]:"design";wsRender();}
   }else wsRender();
-  const active=await wsApi("batches"),id=active.active||active.latest;if(id){const batch=await wsApi("batches/"+id);const source=batch.plan.assistance?.draft||batch.plan.candidates[0]?.draft;
+  const active=await wsApi("batches"),id=active.active||active.latest;if(id){const batch=await wsApi("batches/"+id);const source=batch.plan?.describe?null:batch.plan?.assistance?.draft||batch.plan?.candidates?.[0]?.draft;
     if(!ws.draft&&source?.key===parts[1]){ws.view="test";await wsLoad({draft:source},true);}
     if(source?.key===ws.draft?.key)wsFollow(id).catch(wsError);
   }

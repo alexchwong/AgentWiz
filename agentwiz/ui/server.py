@@ -929,6 +929,9 @@ class Handler(BaseHTTPRequestHandler):
                 raise workshop.WorkshopError('invalid', 400)
             if len(parts) == 6 and parts[1:3] == ['api', 'workshop'] and parts[3] == 'blocks' and parts[5] == 'examples':
                 return self._send(200, self.server.state.workshop.save_examples(parts[4], body))
+            if len(parts) == 8 and parts[1:4] == ['api', 'workshop', 'blocks'] and parts[5] == 'revisions' \
+                    and parts[7] == 'description':
+                return self._send(200, self.server.state.workshop.save_description(parts[4], parts[6], body))
             if len(parts) == 5 and parts[1:4] == ['api', 'workshop', 'reviews']:
                 return self._send(200, self.server.state.workshop.review(parts[4], body))
             self._send(404, {'code': 'missing'})

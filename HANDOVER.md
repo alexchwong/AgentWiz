@@ -1,3 +1,49 @@
+# Block metadata refactor: operating revisions and revision descriptions (2026-11-06)
+
+Implements `block_metadata_refactor specs v2` (owner spec, supersedes v1 after review v1) against `devel`
+at `5bb5266`. All three build phases are in this change; Phase 3's cutover retires the legacy paths.
+
+- **Operating revisions.** `Assets.pin(key, revision)` is the shared current/historical pin (register under
+  the lock, re-read the head, confirm retention, reject links; 404 when pruned, 409 when a retained folder is
+  missing). `Assets.saved` is the clean saved loader; `Assets.snapshot` parses it with its own captured
+  contracts for previews and Describe only. Explicit `{key, revision}` selectors bypass `Service.source()`,
+  refuse authoring fields, carry no head token in their run binding, and add `block_revision_id` /
+  `block_revision_number` to plan candidates, batch rows and `result.workshop`. Saved previews add
+  `selector`, `revision_number`, `run_issues` and `standard_description`. Incompatible shared examples are
+  named (`example_incompatible`).
+- **Descriptions.** New `agentwiz/workshop_descriptions.py` and `PUT .../revisions/<id>/description`: sidecar
+  records, basis/token, statuses, guarded writes under the publication reservation, pruning on publication
+  and startup. New saves strip `description_sections`/`description_basis`.
+- **Describe/Refine.** New default role `write_block_description` (local, Workshop, unassigned) and prompt
+  `agentwiz/prompts/write_block_description.md` v1. Server-owned request builder routed before generic
+  assist; allowlisted, redacted, 16 KiB context; closed schema; forced session-only; post-merge validation
+  as the terminal `description_invalid` outcome; description proposals in the bounded cache, independent of
+  run envelopes and history; allowlisted public plan/batch projections.
+- **Retired (cutover).** The editor's `description` edit, draft-carried `description_sections`, generic
+  Describe (`ACTIONS` now has four entries), Improve/Explain-failure description sections, and the preview's
+  `description`/`needs_refresh` projection. Stale legacy requests and proposals answer 409 `describe_moved`.
+- **UI.** Revision picker rendered in Design/Test/Compare; selection is clean (no longer a dirty restore);
+  Save disabled on a clean older selection until an edit or Restore to draft; Standard description panel,
+  manual editor, Describe/Refine/Save review with destination disclosure and Stop; Test/Compare/previews use
+  the saved selector when clean; port field relabelled Declared meaning. Tutorial Describe uses the saved
+  managed fixture `tutorial_described` with `write_block_description` bound to its local stand-in.
+- **Tests.** New `tests/test_workshop_descriptions.py` (M01–M07) and an M08 browser journey at 390/1280 px in
+  `tests/test_page.py`. Replaced the legacy Describe-apply, all-actions and `needs_refresh` tests; updated
+  role-inventory, missing-defaults and roles-option-count assertions; the revision-picker page test now
+  edits (revision name) before saving a selected older revision; the tutorial driver saves a description.
+- **Departures and choices.** Spec §2.1(6) applied to key-only previews of managed blocks too (they resolve
+  the current generation once through the saved loader). A Refine whose result equals the prior proposal is
+  outcome `unchanged` and keeps the prior proposal ID. Describe-batch `outcome` values: `proposal`,
+  `unchanged`, `description_invalid`, `stopped`. A legacy request naming `draft`/`role`/`task`/`evidence`/
+  `sections` with `describe` answers 409 `describe_moved`; other extra fields 400. A mismatched-basis or
+  invalid version-1 sidecar is shown as unavailable but may be replaced with its token; unreadable, linked
+  and unknown-format records are never overwritten. Prior-revision description prefill remains deferred (§7).
+- Validation on Linux: Python 3.13.18 offline gate (`-m "not live"`) 933 passed, 10 live deselected,
+  including all page and tutorial checks; Python 3.10.20 (uv-managed) 128 passed for the Workshop, roles,
+  block-route and contract-overhaul suites. `git diff --check` clean. macOS, live providers and
+  installed-wheel smoke were not run.
+- No commits, pushes or publication; no new dependencies.
+
 # Synthesis error and missing-default-role UI fixes (2026-11-05)
 
 - Synthesis batch rows carry the existing sanitized model-attempt error to the Contracts pane,

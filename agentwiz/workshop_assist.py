@@ -9,7 +9,9 @@ from . import workshop_editor as editor
 from .task_settings import OVERRIDABLE, TaskSettingError, parse_task
 from .workshop_assets import fail, wire_files
 
-ACTIONS = ('create', 'improve', 'describe', 'suggest_examples', 'explain_failure')
+# Describe is no longer a generic draft action: it writes a saved revision's description through the
+# server-owned builder in workshop_service.describe_request (block_metadata_refactor spec v2).
+ACTIONS = ('create', 'improve', 'suggest_examples', 'explain_failure')
 TEXT = {'type': 'string', 'maxLength': 4096}
 LONG = {'type': 'string', 'maxLength': 131072}
 
@@ -26,7 +28,6 @@ def schema(action, sections=None, stage=None, capabilities=None):
     row = record(row_props, ['path', 'type', 'required', 'nullable', 'description'])
     port = record({'name': TEXT, 'description': TEXT, 'format': {'enum': ['text', 'json']}, 'fields': {'type': 'array', 'items': row, 'maxItems': 100}})
     ports = {'type': 'array', 'items': port, 'maxItems': 50}
-    descriptions = record({k: TEXT for k in editor.SECTIONS})
     limits = record({k: TEXT for k in ('max_seconds', 'max_model_tokens', 'max_repairs')}, [])
     from .task_settings import ADVANCED
     settings = record({'reasoning': TEXT, 'temperature': TEXT, 'max_tokens': TEXT,
@@ -48,7 +49,7 @@ def schema(action, sections=None, stage=None, capabilities=None):
         tools = sorted({name for names in capabilities.get('tools', {}).values() for name in names})
         tool['properties']['tool']['enum'] = [None, *tools]
     behaviour = {'oneOf': [model, tool, script]}
-    editable = {'purpose': TEXT, 'inputs': ports, 'outputs': ports, 'behaviour': behaviour, 'description_sections': descriptions}
+    editable = {'purpose': TEXT, 'inputs': ports, 'outputs': ports, 'behaviour': behaviour}
     improve = record({k: v for k, v in editable.items() if sections is None or k in sections}, [])
     improve['minProperties'] = 1
     field_expect = record({'output': TEXT, 'path': {'type': 'array', 'items': {'type': ['string', 'integer']}},
@@ -66,8 +67,6 @@ def schema(action, sections=None, stage=None, capabilities=None):
             payload = record({'behaviour': behaviour})
     elif action == 'improve':
         payload = improve
-    elif action == 'describe':
-        payload = record({'description_sections': descriptions})
     elif action == 'suggest_examples':
         payload = record({'examples': {'type': 'array', 'maxItems': 20, 'items': record({'label': TEXT,
             'inputs': {'type': 'object', 'additionalProperties': LONG}, 'expectation': expect, 'rationale': TEXT})}})
@@ -112,10 +111,20 @@ def _assist_task(body: dict) -> dict:
     return task
 
 
+def moved():
+    from .workshop import WorkshopError
+    from .workshop_descriptions import MOVED
+    return WorkshopError('describe_moved', 409, [{'location': 'action', 'message': MOVED}])
+
+
 def request(body):
     action = body.get('action')
+    if action == 'describe':
+        raise moved()
     if action not in ACTIONS:
         fail()
+    if 'description_sections' in (body.get('sections') or ()):
+        raise moved()
     contract = {'format': 'json', 'schema': schema(action, body.get('sections'), body.get('stage'), body.get('capabilities'))}
     instructions = ('You propose assets for one AgentWiz block. The `proposal` output\'s value must match the '
                     'supplied schema; the response protocol names the key it belongs under. '
@@ -136,6 +145,12 @@ def request(body):
 
 def apply(body, response):
     action, payload = response['action'], response['payload']
+    # A stale legacy Describe or Improve proposal may still name standard-description sections; they are
+    # written only through the selected revision's Standard description panel now.
+    if action == 'describe' or (isinstance(payload, dict) and 'description_sections' in payload) or \
+            (action == 'explain_failure' and isinstance(payload.get('corrections'), dict)
+             and 'description_sections' in payload['corrections']):
+        raise moved()
     draft = copy.deepcopy(body.get('draft'))
     if action == 'explain_failure':
         supplied = set(body.get('evidence', {}))
@@ -152,8 +167,6 @@ def apply(body, response):
     for side in ('inputs', 'outputs'):
         if side in payload:
             obj[side] = {p['name']: editor.port(p) for p in payload[side]}
-    if 'description_sections' in payload:
-        draft['metadata']['description_sections'] = payload['description_sections']
     if 'behaviour' in payload:
         b = payload['behaviour']
         step = {'id': 'request', 'kind': b['kind']}

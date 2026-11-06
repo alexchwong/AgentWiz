@@ -212,6 +212,83 @@ class Capture:
         self.close()
 
 
+class SavedGeneration:
+    """One retained managed generation read for a clean saved selection. Immutable by convention."""
+
+    def __init__(self, key, revision, number, name, metadata, files, definition):
+        self.key = key
+        self.revision = revision
+        self.number = number
+        self.name = name
+        self.metadata = metadata
+        self.files = files                  # every executable asset, including block.json
+        self.definition = definition
+
+    @property
+    def selector(self):
+        return {'key': self.key, 'revision': self.revision}
+
+    @property
+    def provenance(self):
+        return {'block_revision_id': self.revision, 'block_revision_number': self.number}
+
+    @property
+    def basis(self):
+        return description_basis(self.key, self.revision, self.metadata, self.definition)
+
+    def draft(self, base_digest=None):
+        """The wire draft of this generation. A run draft carries no head token (spec v2 2.1(4)); Restore and
+        the projection pass the current identity so an edit stays optimistic against the current head."""
+        files = {p: b for p, b in self.files.items() if p != 'block.json'}
+        metadata = copy.deepcopy(self.metadata)
+        metadata['support'] = list(self.metadata.get('support', []))
+        draft = {'key': self.key, 'definition_text': self.files['block.json'].decode('utf-8'),
+                 'files': wire_files(files), 'metadata': metadata}
+        if base_digest is not None:
+            draft['base_digest'] = base_digest
+        return draft
+
+
+def exact_digest(value):
+    """The Workshop's exact JSON digest (the same helper as workshop_service.digest)."""
+    return hashlib.sha256(jsonio.encode_exact(value).encode('utf-8')).hexdigest()
+
+
+def description_basis(key, revision, metadata, definition):
+    """The revision-description basis: None unless the generation is executable v3 with verified asset and
+    captured-contract digests. Excludes role/profile settings, sidecar prose and the default pointer."""
+    if not isinstance(definition, dict) or definition.get('format_version') != EXECUTABLE_VERSION:
+        return None
+    assets, contracts = metadata.get('asset_digest'), metadata.get('contracts_digest')
+    if not isinstance(assets, str) or not isinstance(contracts, str):
+        return None
+    return exact_digest({'key': key, 'revision': revision, 'asset_digest': assets, 'contracts_digest': contracts})
+
+
+DESCRIPTION_FOLDER = 'descriptions'
+
+
+def prune_descriptions(root, retained):
+    """Best effort: remove regular sidecar files with recognised IDs whose generations are no longer retained.
+    Symbolic links and foreign file names are skipped. Never raises."""
+    try:
+        workshop = root / '.workshop'
+        folder = workshop / DESCRIPTION_FOLDER
+        if workshop.is_symlink() or folder.is_symlink() or not folder.is_dir():
+            return
+        for path in folder.iterdir():
+            name = path.name
+            if not name.endswith('.json') or TOKEN.fullmatch(name[:-5]) is None or name[:-5] in retained:
+                continue
+            try:
+                if stat.S_ISREG(os.lstat(path).st_mode):
+                    path.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
 class Assets:
     def __init__(self, state, lock):
         self.state = state
@@ -243,13 +320,27 @@ class Assets:
             with self.lock:
                 self.reservations.discard(identity)
 
-    def pin(self, key):
+    def pin(self, key, revision=None):
+        """(physical generation folder, release) for the current generation, or for one explicitly retained
+        generation. The pin is registered under the lock before the head is re-read, so publication's reaper
+        either sees the pin or this reader sees the generation leave retention. Release in `finally`.
+
+        An explicit ID that is malformed or no longer retained is missing (404). A retained ID without its
+        folder is a damaged generation (unusable, 409). An unmanaged root has no generation: it returns the
+        root itself for the current request and refuses an explicit ID."""
         root = self.root(key)
+        if revision is not None and (not isinstance(revision, str) or TOKEN.fullmatch(revision) is None):
+            fail('missing', 404)
         for _ in range(3):
             h = head(root)
             if h is None:
+                if revision is not None:
+                    fail('missing', 404)
                 return root, lambda: None
-            identity = (key, h['current'])
+            ident = h['current'] if revision is None else revision
+            if revision is not None and ident not in h['retained']:
+                fail('missing', 404)
+            identity = (key, ident)
             with self.lock:
                 self.pins[identity] = self.pins.get(identity, 0) + 1
             released = [False]
@@ -264,22 +355,38 @@ class Assets:
                     else:
                         self.pins[identity] = count - 1
             try:
-                physical = root / '.workshop' / 'revisions' / h['current']
+                after = head(root)
+                if revision is None:
+                    if after != h:
+                        release()
+                        continue
+                elif after is None or ident not in after['retained']:
+                    fail('missing', 404)
+                physical = root / '.workshop' / 'revisions' / ident
                 paths = (root / '.workshop', physical.parent, physical)
                 if any(p.is_symlink() for p in paths):
                     fail('unusable', 409)
                 if any(not p.is_dir() for p in paths):
-                    if head(root) != h:
-                        release()
-                        continue
+                    latest = head(root)
+                    if revision is None:
+                        if latest != h:
+                            release()
+                            continue
+                    elif latest is None or ident not in latest['retained']:
+                        fail('missing', 404)
                     fail('unusable', 409)
-                if head(root) == h:
-                    return physical, release
+                return physical, release
             except BaseException:
                 release()
                 raise
-            release()
         fail('stale', 409)
+
+    def retained(self, key, revision):
+        """Raise missing (404) unless `revision` is still retained by the managed head of `key`."""
+        h = head(self.root(key))
+        if h is None or revision not in h['retained']:
+            fail('missing', 404)
+        return h
 
     def contracts(self):
         # Loader resolves all references against one coherent snapshot of the parsed entries.
@@ -362,6 +469,18 @@ class Assets:
             fail('undeclared_asset', 400)
         return captured
 
+    def snapshot(self, saved):
+        """A read-only capture of a saved generation parsed with its own captured contract maps (the server-
+        owned snapshot resolver). Used for previews and description context only, never for execution or
+        publication, and never granted to a caller-supplied draft."""
+        captured = Capture(dict(saved.files), saved.key, SnapshotContracts(saved.metadata), saved.metadata)
+        try:
+            self.check_references(captured)
+        except BaseException:
+            captured.close()
+            raise
+        return captured
+
     def check_references(self, captured):
         from . import blocks, templates
         from .workshop_editor import field_rows
@@ -406,24 +525,9 @@ class Assets:
     def export(self, key, revision=None, support=None):
         from . import blocks
         root = self.root(key)
+        # Pin while the complete revision is copied (the shared current/historical pin).
+        physical, release = self.pin(key, revision)
         h = head(root)
-        if revision is not None:
-            if h is None or revision not in h['retained']:
-                fail('missing', 404)
-            physical = root / '.workshop' / 'revisions' / revision
-            # Pin while the complete revision is copied.
-            identity = (key, revision)
-            with self.lock:
-                self.pins[identity] = self.pins.get(identity, 0) + 1
-            def release():
-                with self.lock:
-                    n = self.pins.get(identity, 1) - 1
-                    if n:
-                        self.pins[identity] = n
-                    else:
-                        self.pins.pop(identity, None)
-        else:
-            physical, release = self.pin(key)
         try:
             metadata = document(physical, 'workshop.json') if h else {'format_version': 1, 'origin': 'manual', 'effects': 'unknown'}
             if metadata.get('format_version') != 1:
@@ -450,12 +554,49 @@ class Assets:
             # Detect observed changes during capture.
             if any(read(physical, p) != b for p, b in files.items()):
                 fail('stale', 409)
+            if revision is not None:
+                self.retained(key, revision)
             metadata = {**metadata, 'support': selected}
             return {'key': key, 'definition_text': files.pop('block.json').decode('utf-8'),
                     'files': wire_files(files), 'metadata': metadata,
                     'base_digest': self.identity(key)}
         finally:
             release()
+
+    def saved(self, key, revision=None):
+        """A clean saved selection of one managed generation: every executable asset read from disk with the
+        generation's own metadata, unmodified. `revision=None` resolves the current generation once, with the
+        copy. Never applies authoring mutations or current-head provenance (spec v2 2.1(3))."""
+        root = self.root(key)
+        physical, release = self.pin(key, revision)
+        try:
+            if physical == root:
+                fail('not_managed', 409)
+            ident = physical.name
+            metadata = document(physical, 'workshop.json')
+            if metadata.get('format_version') != 1:
+                fail('newer_format', 409)
+            validate_generation(physical, metadata)
+            files = {relative(p): read(physical, relative(p)) for p in metadata['assets']}
+            if any(hashlib.sha256(b).hexdigest() != metadata['assets'][p] for p, b in files.items()):
+                fail('stale', 409)
+            try:
+                definition = jsonio.decode_exact(files['block.json'].decode('utf-8'))
+            except (KeyError, ValueError, UnicodeError):
+                fail('unusable', 409)
+            version = definition.get('format_version') if isinstance(definition, dict) else None
+            if type(version) is int and version < EXECUTABLE_VERSION:
+                fail('migration_required', 400)
+            if version != EXECUTABLE_VERSION:
+                fail('newer_format', 409)
+            self.retained(key, ident)
+        finally:
+            release()
+        row = next((r for r in self.revisions(key)['revisions'] if r['id'] == ident), None)
+        if row is None:
+            fail('missing', 404)
+        return SavedGeneration(key, ident, row['revision_number'], row['revision_name'], metadata, files,
+                               definition)
 
     def identity(self, key):
         root = self.path / key_name(key)
@@ -611,6 +752,8 @@ class Assets:
                                 shutil.rmtree(p)
                             except OSError:
                                 pass  # Reap this unreferenced generation at a later save/startup.
+                    # Descriptions of pruned generations; never fails or rolls back the committed head.
+                    prune_descriptions(root, h['retained'])
                     return {'key': key, 'durable_id': revision, 'base_digest': self.identity(key),
                             'revision_number': next_number, 'revision_name': metadata.get('revision_name', '').strip(),
                             'publication': 'durability_uncertain' if durability_uncertain else 'committed'}
@@ -649,6 +792,7 @@ class Assets:
                     for folder in revisions.iterdir():
                         if TOKEN.fullmatch(folder.name) and folder.name not in h['retained'] and folder.is_dir() and not folder.is_symlink():
                             shutil.rmtree(folder)
+                    prune_descriptions(root, h['retained'])
                 except (WorkshopError, OSError, ValueError):
                     # Damaged/newer heads and their assets remain intact for inspection.
                     continue
