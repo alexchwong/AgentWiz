@@ -1766,8 +1766,18 @@ def test_workshop_revision_selection_describe_refine_save_and_test(ui, server, o
     picker.select_option(second["durable_id"])
     expect(tid(page, "ws-description-use")).to_contain_text("Counts characters in the text.")
     # Test the older revision through its explicit saved selector; the default stays put.
-    picker.select_option(first["durable_id"])
+    held_previews = []
+    preview_url = "**/api/workshop/preview"
+    page.route(preview_url, lambda route: held_previews.append(route), times=1)
+    with page.expect_request(preview_url):
+        picker.select_option(first["durable_id"])
+    try:
+        # A slow revision load must block actions against the previous selection.
+        assert tid(page, "ws-test").evaluate("button => Boolean(button.closest('[inert]'))")
+    finally:
+        held_previews[0].continue_()
     tid(page, "ws-test").click()
+    expect(tid(page, "ws-run-source")).to_have_text("Runs use: Revision 1")
     expect(tid(page, "ws-run-source")).to_have_attribute("data-clean", "true")
     tid(page, "ws-field-text").fill("one two")
     tid(page, "ws-run-test").click()

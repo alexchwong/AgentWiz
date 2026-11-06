@@ -2871,7 +2871,14 @@ function wsPicker(){
   revision.disabled=!rows.length;
   revision.oninput=e=>e.stopPropagation();
   revision.onchange=async e=>{e.stopPropagation();const selected=revision.value;revision.disabled=true;try{
-    if(await wsLeave()){const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};await wsLoad({key:ws.draft.key,revision:selected},false);Object.assign(ws,keep);wsRender();}
+    if(await wsLeave()){
+      // Keep actions on the previous revision unavailable until the new selection is rendered.
+      wsBody.inert=true;wsNav.inert=true;
+      try{
+        const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};
+        await wsLoad({key:ws.draft.key,revision:selected},false);Object.assign(ws,keep);wsRender();
+      }finally{wsBody.inert=false;wsNav.inert=false;}
+    }
   }catch(error){if(error.status===404){wsNote.dataset.state="error";wsNote.dataset.code="missing";wsNote.textContent="That revision is no longer retained. Choose another revision.";const versions=await wsApi("blocks/"+encodeURIComponent(ws.draft.key)+"/revisions").catch(()=>null);if(versions){ws.revisionRows=versions.revisions;ws.currentRevision=versions.current;}wsRender();}else wsError(error);}finally{if(revision.isConnected){revision.value=ws.selectedRevision||"";revision.disabled=!ws.revisionRows.length;}}};
 }
 // A clean managed selection runs through its explicit saved selector; edits use the existing draft path.
