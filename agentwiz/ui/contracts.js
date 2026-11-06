@@ -94,6 +94,7 @@
       const p = opts.test || "contract";
       const root = h("div", { class: "cw-editor", "data-test": p + "-editor", "data-state": "pending" });
       let text = null, view = null, epoch = 0, chain = Promise.resolve(), sourceInvalid = false, locked = !!opts.readOnly;
+      const newChoices = new Map();              // unsubmitted choices survive rebuilding the guided editor
       let open = new Set([""]);                  // expanded rows by path key (the root starts open)
       const issues = h("div", { "data-test": p + "-issues" });
       const sourceArea = h("textarea", { class: "editor", spellcheck: "false", "data-test": p + "-source", "aria-label": "Contract source" });
@@ -117,6 +118,9 @@
       }
       function accept(result, notify) {
         text = result.definition_text; view = result;
+        for (const key of newChoices.keys()) {
+          if (!view.fields?.some((row) => row.type === "Choice" && pathKey(row.path) === key)) newChoices.delete(key);
+        }
         if (!sourceInvalid) sourceArea.value = text;
         issues.replaceChildren();
         render(); stateNow();
@@ -134,6 +138,7 @@
         return chain;
       }
       function set(newText, notify = false) {
+        newChoices.clear();
         epoch += 1; sourceInvalid = false; sourceIssues.replaceChildren();
         const mine = epoch;
         root.dataset.state = "pending";
@@ -327,10 +332,16 @@
             list.append(h("div", { class: "row" }, input, h("button", { type: "button", "data-test": p + "-remove-choice", text: "Remove",
               onclick: () => { inputs.splice(inputs.indexOf(input), 1); apply(); } })));
           });
-          const fresh = h("input", { "data-test": p + "-new-choice", "aria-label": "New choice" });
+          const key = pathKey(row.path);
+          const fresh = h("input", { "data-test": p + "-new-choice", "aria-label": "New choice", value: newChoices.get(key) ?? "" });
+          fresh.oninput = () => newChoices.set(key, fresh.value);
           box.append(h("label", { text: "Choices (null is added automatically when Allow null is on)" }), list,
             h("div", { class: "row" }, fresh, h("button", { type: "button", "data-test": p + "-add-choice", text: "Add choice",
-              onclick: () => edit({ op: "set_choices", path: row.path, choices: [...inputs.map((i) => i.value), fresh.value] }) })));
+              onclick: () => {
+                const value = fresh.value;
+                newChoices.delete(key);
+                return edit({ op: "set_choices", path: row.path, choices: [...inputs.map((i) => i.value), value] });
+              } })));
         }
         if (row.type === "Group") {
           const extra = h("select", { "data-test": p + "-extra", "aria-label": "Unknown properties" },

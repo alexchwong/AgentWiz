@@ -1,5 +1,6 @@
 # NEWS
 ## 0.2.0
+- The contract editor preserves a new choice while an earlier edit finishes.
 - Workshop Design places revision selection above Save as new revision and Overwrite selected revision.
 - Confirmed overwrite preserves the selected revision number, unrelated default and existing run evidence.
 - Overwrite clears the selected revision’s standard description.

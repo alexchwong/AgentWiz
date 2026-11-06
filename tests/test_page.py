@@ -426,12 +426,23 @@ def test_page_contract_library_builds_nested_exact_contracts_and_refuses_invalid
     add_field(page, "lines/[]", "status", "Choice")
     tid(editor_row(page, "lines/[]/status"), "contracts-row-nullable").check()
     detail = row_detail(page, "lines/[]/status")
-    change(tid(detail, "contracts-choice").first, "open")
-    expect(tid(row_detail(page, "lines/[]/status"), "contracts-choice").first).to_have_value("open")
-    detail = row_detail(page, "lines/[]/status")
+    editor = tid(page, "contracts-editor")
+    digest = editor.get_attribute("data-digest")
+    # Type the next choice before the earlier edit returns and rebuilds the editor.
+    held_edits = []
+    edit_url = "**/api/contracts/edit"
+    page.route(edit_url, lambda route: held_edits.append(route), times=1)
+    with page.expect_request(edit_url):
+        change(tid(detail, "contracts-choice").first, "open")
     tid(detail, "contracts-new-choice").fill("closed")
+    assert len(held_edits) == 1
+    held_edits[0].continue_()
+    expect(editor).not_to_have_attribute("data-digest", digest)
+    detail = row_detail(page, "lines/[]/status")
+    expect(tid(detail, "contracts-choice").first).to_have_value("open")
+    expect(tid(detail, "contracts-new-choice")).to_have_value("closed")
     tid(detail, "contracts-add-choice").click()
-    expect(tid(row_detail(page, "lines/[]/status"), "contracts-choice")).to_have_count(2)
+    expect(tid(row_detail(page, "lines/[]/status"), "contracts-choice").nth(1)).to_have_value("closed")
     quantity = row_detail(page, "lines/[]/quantity")
     change(quantity.locator('[data-test="contracts-bound"][data-keyword="minimum"]'), FINE)
     quantity = row_detail(page, "lines/[]/quantity")
