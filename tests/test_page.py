@@ -387,7 +387,7 @@ def add_field(page, parent, name, kind, prefix="contracts"):
 def change(locator, value):
     """Fill a control and commit it (the editor applies a targeted edit on change)."""
     locator.fill(value)
-    locator.dispatch_event("change")
+    locator.blur()
 
 
 def save_contract_from_page(page, state="saved"):
@@ -444,10 +444,14 @@ def test_page_contract_library_builds_nested_exact_contracts_and_refuses_invalid
     tid(detail, "contracts-add-choice").click()
     expect(tid(row_detail(page, "lines/[]/status"), "contracts-choice").nth(1)).to_have_value("closed")
     quantity = row_detail(page, "lines/[]/quantity")
+    digest = editor.get_attribute("data-digest")
     change(quantity.locator('[data-test="contracts-bound"][data-keyword="minimum"]'), FINE)
-    quantity = row_detail(page, "lines/[]/quantity")
+    # Each accepted edit rebuilds the controls. Wait for that rebuild before editing the next bound.
+    expect(editor).not_to_have_attribute("data-digest", digest)
+    digest = editor.get_attribute("data-digest")
     change(quantity.locator('[data-test="contracts-bound"][data-keyword="maximum"]'), BIG)
-    expect(row_detail(page, "lines/[]/quantity").locator('[data-test="contracts-bound"][data-keyword="maximum"]')).to_have_value(BIG)
+    expect(editor).not_to_have_attribute("data-digest", digest)
+    expect(quantity.locator('[data-test="contracts-bound"][data-keyword="maximum"]')).to_have_value(BIG)
     has(page, "contracts-editor", "data-state", "valid")
 
     # Advanced source is the same subset: an unsupported keyword stays in the buffer and cannot be saved.

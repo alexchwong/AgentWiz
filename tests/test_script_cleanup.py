@@ -170,12 +170,13 @@ def test_shutdown_services_an_owner_whose_thread_never_started(ui, fire_timers, 
         assert operation_of(result)["cleanup"] == "retained"
         assert ui.state.scripts.in_flight == 1 and len(ui.state.cleanups.cleanups()) == 1
         monkeypatch.setattr(script_step, "send_group", real_send)
-        kill_group(pgid)
-        ui.state.shutdown(grace_s=0.2, wait=False)                        # shutdown itself services the owner
-        assert wait_until(lambda: ui.state.scripts.in_flight == 0, 10)
+        # Give shutdown itself the bounded window to kill, reap and service the owner.
+        assert ui.state.shutdown(grace_s=10, wait=False) == []
+        assert ui.state.scripts.in_flight == 0
         assert ui.state.cleanups.cleanups() == [] and ui.state.shutdown(grace_s=0.2, wait=False) == []
-    finally:
-        kill_group(pgid)
+    except BaseException:
+        real_send(pgid, signal.SIGKILL)
+        raise
 
 
 # --- #114 (script half) ---------------------------------------------------------------------------------------------
