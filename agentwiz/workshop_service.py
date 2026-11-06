@@ -566,6 +566,13 @@ class Service:
             descriptor['current'] = self.assets.identity(draft['key'])
             if descriptor['current'] != body.get('expected_identity'):
                 fail('stale', 409)
+            if 'overwrite_revision' in body:
+                if not isinstance(body['overwrite_revision'], str):
+                    fail('invalid', 400)
+                target = self.assets.saved(draft['key'], body['overwrite_revision'])
+                descriptor['overwrite'] = {'id': target.revision, 'revision_number': target.number,
+                                           'revision_name': target.name}
+                confirmations.append('overwrite_revision')
             descriptor['metadata'] = draft.get('metadata', {})
             if descriptor['current'] is not None:
                 root = self.assets.root(draft['key'])
@@ -573,7 +580,8 @@ class Service:
                 if h is None:
                     confirmations.append('legacy_conversion')
                 else:
-                    descriptor['pruned'] = h['retained'][19:]
+                    descriptor['pruned'] = ([body['overwrite_revision']] if 'overwrite_revision' in body
+                                            else h['retained'][19:])
                     previous_metadata = document(root / '.workshop' / 'revisions' / h['current'], 'workshop.json')
                     descriptor['previous_starter_version'] = previous_metadata.get('starter_version')
                     descriptor['previous_runtime_digest'] = previous_metadata.get('runtime_digest')
@@ -775,7 +783,8 @@ class Service:
             metadata['contracts'], metadata['contract_pins'] = captured_maps(captures[0].parsed.block)
             metadata['contracts_digest'] = contract_maps_digest(metadata['contracts'], metadata['contract_pins'])
             self.reject_credentials({'definition': draft['definition_text'], 'files': {p: b.decode('utf-8', errors='replace') for p, b in decode_files(draft['files']).items()}, 'metadata': metadata})
-            result = self.assets.publish(draft, body.get('expected_identity'), metadata, captures[0])
+            result = self.assets.publish(draft, body.get('expected_identity'), metadata, captures[0],
+                                         overwrite_revision=body.get('overwrite_revision'))
             result['effective_revision'] = self.state.block_loaded(draft['key'], reload=True).revision
             return result
         finally:

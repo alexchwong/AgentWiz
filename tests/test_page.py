@@ -1342,6 +1342,40 @@ def test_workshop_numbered_revision_selection_keeps_dirty_edits_and_names(ui, op
     assert jsonio.decode_exact(saved['definition_text'])['steps'][0]['prompt']['text'] == 'Saved before switch {{inputs.text}}'
 
 
+def test_workshop_overwrite_selected_revision(ui, open_page):
+    from conftest import request
+    page = open_page(ui)
+    dialog = tid(page, 'ws-dialog')
+    tid(page, 'ws-new-block').click()
+    tid(dialog, 'ws-field-block-key').fill('overwrite')
+    tid(dialog, 'ws-choice-start-with').select_option('write_text')
+    tid(dialog, 'ws-create-draft').click()
+    expect(tid(page, 'ws-overwrite-revision')).to_be_disabled()
+    save_new_revision(page, ui, 'overwrite')
+    has(page, 'ws-status', 'data-state', 'saved')
+    first = current_revision(ui, 'overwrite')
+    tid(page, 'ws-field-instructions').fill('Second {{inputs.text}}')
+    save_new_revision(page, ui, 'overwrite')
+    second = current_revision(ui, 'overwrite')
+    has(page, 'ws-status', 'data-state', 'saved')
+    tid(page, 'ws-choice-block-revision').select_option(first)
+    if dialog.is_visible():
+        tid(dialog, 'ws-discard').click()
+    expect(tid(page, 'ws-save-revision')).to_be_disabled()
+    tid(page, 'ws-field-instructions').fill('Replacement {{inputs.text}}')
+    tid(page, 'ws-overwrite-revision').click()
+    tid(dialog, 'ws-cancel').click()
+    expect(tid(page, 'ws-field-instructions')).to_have_value('Replacement {{inputs.text}}')
+    tid(page, 'ws-overwrite-revision').click()
+    tid(dialog, 'ws-confirm').click()
+    expect(tid(page, 'ws-choice-block-revision')).not_to_have_value(first)
+    expect(tid(page, 'ws-field-instructions')).to_have_value('Replacement {{inputs.text}}')
+    rows = request(ui, '/api/workshop/blocks/overwrite/revisions')
+    assert rows['current'] == second
+    assert [r['revision_number'] for r in rows['revisions']] == [2, 1]
+    expect(tid(page, 'ws-choice-block-revision')).to_have_value(rows['revisions'][1]['id'])
+
+
 def test_workshop_variable_format_exposes_editor_and_confirms_data_loss(ui, open_page):
     """A fresh structured variable is editable immediately; cancelling format loss keeps its schema."""
     page = open_page(ui)

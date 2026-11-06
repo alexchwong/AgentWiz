@@ -1060,7 +1060,11 @@ Unnumbered retained histories project oldest-first numbers starting at 1 without
 first new generation anchors the baseline so pruning does not renumber survivors. Already-pruned lifetime
 history cannot be recovered. Legacy v1 import saves original=1 and edited=2; new blocks and duplicates
 start at 1. Restore appends, never rewrites an old generation. The UI starts a new revision label blank;
-historical names are immutable rather than editable in place. Retention remains 20.
+Overwrite replaces the selected retained entry with a fresh immutable generation, preserving its number
+and list position. The default changes only when its entry is replaced. The expected head identity and
+review plan bind the target; old IDs leave retention while pinned readers finish against unchanged files.
+Existing evidence retains its original ID and captured contents; replacement descriptions start empty.
+Revision names may be changed on overwrite. Restore-as-new still appends. Retention remains 20.
 
 C6 is the one Workshop leaf lock, shared with tickets. It protects reservations,
 pins, batch state, proposal references and session reviews. Existing locks may

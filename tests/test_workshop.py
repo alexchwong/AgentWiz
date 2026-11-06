@@ -29,11 +29,51 @@ def send(ui, route, **body):
     return request(ui, '/api/workshop/' + route, {'format_version': 1, **body})
 
 
-def plan_save(ui, draft, expected=None):
-    body = {'draft': draft, 'expected_identity': expected}
+def plan_save(ui, draft, expected=None, **options):
+    body = {'draft': draft, 'expected_identity': expected, **options}
     plan = send(ui, 'plans', action='save', request=body)
     return send(ui, 'save', **body, expected_plan=plan['expected_plan'],
                 confirmations=[{'kind': r['kind'], 'digest': r['digest']} for r in plan['required_confirmations']])
+
+
+def test_overwrite_selected_revision_keeps_number_order_and_default(ui, restart):
+    draft = send(ui, 'preview', starter='count_text', key='replace')['draft']
+    first = plan_save(ui, draft)
+    draft = send(ui, 'preview', key='replace')['draft']
+    second = plan_save(ui, draft, draft['base_digest'])
+    selected = send(ui, 'preview', key='replace', revision=first['durable_id'])['draft']
+    selected['metadata']['revision_name'] = 'Replacement'
+    body = {'draft': selected, 'expected_identity': selected['base_digest'],
+            'overwrite_revision': first['durable_id']}
+    plan = send(ui, 'plans', action='save', request=body)
+    assert plan['descriptor']['overwrite']['revision_number'] == 1
+    assert 'overwrite_revision' in [r['kind'] for r in plan['required_confirmations']]
+    failure = failure_of(lambda: send(ui, 'save', **body, expected_plan=plan['expected_plan'], confirmations=[]))
+    assert failure.body['code'] == 'confirmation_required'
+    physical, release = ui.state.workshop.assets.pin('replace', first['durable_id'])
+    try:
+        original_bytes = (physical / 'block.json').read_bytes()
+        replacement = plan_save(ui, selected, selected['base_digest'], overwrite_revision=first['durable_id'])
+        assert (physical / 'block.json').read_bytes() == original_bytes
+    finally:
+        release()
+    assert replacement['revision_number'] == 1
+    assert replacement['durable_id'] != first['durable_id']
+    rows = request(ui, '/api/workshop/blocks/replace/revisions')
+    assert rows['current'] == second['durable_id']
+    assert [r['revision_number'] for r in rows['revisions']] == [2, 1]
+    assert rows['revisions'][1]['revision_name'] == 'Replacement'
+    assert rows['revisions'][1]['id'] == replacement['durable_id']
+    stale = failure_of(lambda: plan_save(ui, selected, selected['base_digest'],
+                                         overwrite_revision=first['durable_id']))
+    assert stale.body['code'] == 'stale'
+    ui = restart(ui)
+    draft = send(ui, 'preview', key='replace')['draft']
+    replaced_head = plan_save(ui, draft, draft['base_digest'], overwrite_revision=second['durable_id'])
+    assert replaced_head['revision_number'] == 2
+    assert request(ui, '/api/workshop/blocks/replace/revisions')['current'] == replaced_head['durable_id']
+    draft = send(ui, 'preview', key='replace')['draft']
+    assert plan_save(ui, draft, draft['base_digest'])['revision_number'] == 3
 
 
 def test_revision_numbers_survive_retention_restore_duplicate_and_restart(ui, restart, monkeypatch):

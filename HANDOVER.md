@@ -1,3 +1,19 @@
+# Selected-revision overwrite controls (2026-11-06)
+
+- Owner-approved change: Design offers distinct Save as new revision and Overwrite selected revision
+  buttons, with the revision dropdown immediately above them. Test/Compare retain their selector above
+  the editor. New blocks cannot overwrite; the existing save review explicitly identifies replacement.
+- Overwrite preserves the selected number and retained position, publishes a fresh internal generation,
+  and changes the default only when replacing its entry. Old pinned files remain unchanged until cleanup;
+  existing evidence retains its original provenance. Replacement standard descriptions start empty.
+  Head freshness and plan confirmation bind the overwrite target. No dependencies or format changes.
+- Functional regressions cover historical/current replacement, confirmation, cancellation, stale saves,
+  pinned-reader preservation, restart, subsequent numbering and browser selection. User documentation,
+  architecture, NEWS and the existing Workshop tutorial were updated.
+- Linux / Python 3.13.13: focused Workshop/descriptions/tutorial suites 60 passed; new browser journey
+  passed; offline gate 935 passed, 10 live deselected. Final diff/check reviewed. macOS, live backends and
+  installed-wheel smoke were not run. No commits, pushes or publication.
+
 # Block metadata refactor: operating revisions and revision descriptions (2026-11-06)
 
 Implements `block_metadata_refactor specs v2` (owner spec, supersedes v1 after review v1) against `devel`

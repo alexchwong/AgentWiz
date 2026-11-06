@@ -2715,6 +2715,7 @@ async function wsPlan(action,request){
   if(d.candidates?.length===2){const [a,b]=d.candidates;disclosure.append(wsShowValue({definition_changed:a.source_digest!==b.source_digest,baseline:a.source_digest,candidate:b.source_digest}));
     disclosure.append(wsSource("Compare exact definitions",a.draft.definition_text+"\n\nCandidate\n"+b.draft.definition_text));}
   disclosure.append(wsShowValue({saving:d.saving,persistence:d.saving?"Saved evidence":"Session only; restart loses results",trials:d.trial_count??1,repairs:d.repair_bounds||[],pruned:(d.pruned||[]).map(id=>{const r=ws.revisionRows.find(r=>r.id===id);return r?wsRevisionLabel(r):id;})}));
+  if(d.overwrite)disclosure.append(h("p",{text:"Overwrite selected revision "+wsRevisionLabel(d.overwrite)+"? Its previous contents and standard description will be replaced. Other revisions and existing run evidence are unchanged."}));
   disclosure.append(h("p",{text:"Start makes real model, tool or script calls. Comparison order alternates by example; backend internals and cold starts may differ."}));
   if(d.assistance)disclosure.append(wsShowValue({action:d.assistance.action,task:d.assistance.task,stage:d.assistance.stage,sections:d.assistance.sections,evidence:d.assistance.evidence}));
   const reviewed=plan.required_confirmations.some(c=>c.kind==="generated_source"||c.kind==="support_set");
@@ -2737,13 +2738,13 @@ async function wsPlan(action,request){
   const go=await wsDialog("Review "+action,disclosure,["Confirm","Cancel"]);if(go!=="Confirm")return null;
   return {...request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations.map(({kind,digest})=>({kind,digest}))};
 }
-async function wsSave(){
+async function wsSave(overwrite=false){
   wsBody.inert=true;wsNav.inert=true;wsRevisionPicker.inert=true;
   try{
   await wsFlush();if(!ws.draft)return false;
   if(wsPorts.some(c=>c.invalid())){const e=new ApiError("A port's advanced contract source is invalid. Correct it and apply it, or discard the source edit, before saving.",400,"contract_invalid");throw e;}
-  const bound=await wsPlan("save",{draft:ws.draft,expected_identity:ws.draft.base_digest??null});if(!bound)return false;
-  const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};const saved=await wsApi("save",bound);await wsLoad({key:saved.key},false);Object.assign(ws,keep);wsRender();wsNote.dataset.state="saved";delete wsNote.dataset.code;wsNote.textContent="Revision saved";return true;
+  const bound=await wsPlan("save",{draft:ws.draft,expected_identity:ws.draft.base_digest??null,...(overwrite?{overwrite_revision:ws.selectedRevision}:{})});if(!bound)return false;
+  const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};const saved=await wsApi("save",bound);await wsLoad({key:saved.key,...(overwrite?{revision:saved.durable_id}:{})},false);Object.assign(ws,keep);wsRender();wsNote.dataset.state="saved";delete wsNote.dataset.code;wsNote.textContent=overwrite?"Selected revision overwritten":"New revision saved";return true;
   }finally{wsBody.inert=false;wsNav.inert=false;wsRevisionPicker.inert=false;}
 }
 async function wsRefresh(){
@@ -2857,6 +2858,7 @@ function wsRender(){
   for(const view of ["design","test","compare"]){const b=wsButton(view[0].toUpperCase()+view.slice(1),()=>wsView(view));b.setAttribute("aria-pressed",String(ws.view===view));wsNav.append(b);}
   wsNav.append(wsButton("Assist",wsAssist),wsButton("Revision actions",wsRevisions));
   wsPicker();
+  wsNav.after(wsRevisionPicker);
   if(ws.view==="design")wsDesign();else wsTrials(ws.view==="compare");
 }
 // The revision selector, common to Design, Test and Compare. Selecting a retained revision opens a clean saved
@@ -2885,7 +2887,10 @@ function wsDesign(){
   purpose.parentElement.firstChild.textContent="Block description";purpose.setAttribute("aria-label","Block description");instructions.append(purpose.parentElement);
   const revisionSave=h("div",{class:"ws-revision-save"});misc.append(revisionSave);
   const revisionName=wsField(revisionSave,"Revision name (optional)",ws.draft.metadata.revision_name||"");revisionName.maxLength=120;
-  const save=wsButton("Save revision",wsSave);save.title="Saving creates a new revision; older revisions remain unchanged.";revisionSave.append(save);
+  misc.append(wsRevisionPicker);
+  const saveActions=h("div",{class:"row"});misc.append(saveActions);
+  const save=wsButton("Save as new revision",()=>wsSave(),"ws-save-revision");save.title="Saving creates a new revision; older revisions remain unchanged.";
+  const overwrite=wsButton("Overwrite selected revision",()=>wsSave(true),"ws-overwrite-revision");overwrite.disabled=!ws.selectedRevision;saveActions.append(save,overwrite);
   const historical=()=>wsClean()&&ws.selectedRevision!==ws.currentRevision;
   if(historical()){save.disabled=true;save.dataset.historical="true";save.title="Edit this revision or use Revision actions → Restore to draft before saving it as a new revision.";}
   const rows={};wsPorts=[];

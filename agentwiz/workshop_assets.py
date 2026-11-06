@@ -636,7 +636,7 @@ class Assets:
             row['revision_name'] = row['metadata'].get('revision_name', '')
         return {'format_version': 1, 'current': h['current'], 'revisions': rows}
 
-    def publish(self, draft, expected, metadata, capture=None):
+    def publish(self, draft, expected, metadata, capture=None, overwrite_revision=None):
         key = key_name(draft['key'])
         if self.state.workspace.read_only:
             fail('read_only', 409)
@@ -668,6 +668,9 @@ class Assets:
                         fail('unusable', 409)
                     root = self.path / key
                     old = head(root) if expected is not None else None
+                    replacement = None
+                    if overwrite_revision is not None:
+                        replacement = self.saved(key, overwrite_revision)
                     if old:
                         next_number = self.revisions(key)['revisions'][0]['revision_number'] + 1
                     else:
@@ -682,6 +685,11 @@ class Assets:
                     revision = secrets.token_hex(16)
                     generations.append((revision, {**draft, 'metadata': metadata}))
                     retained = [revision] + ([generations[0][0]] if len(generations) == 2 else old['retained'] if old else [])
+                    if replacement is not None:
+                        # Replace the logical slot, not its physical files: pinned readers and
+                        # recorded provenance must continue to identify the original generation.
+                        next_number = replacement.number
+                        retained = [revision if ident == overwrite_revision else ident for ident in old['retained']]
                     for ident, value in generations:
                         files = decode_files(value['files'])
                         files['block.json'] = value['definition_text'].encode('utf-8')
@@ -711,6 +719,8 @@ class Assets:
                         fail('stale', 409)
                     check_root_sources()
                     h = {'format_version': 2, 'current': revision, 'retained': retained[:REVISION_LIMIT]}
+                    if replacement is not None and old['current'] != overwrite_revision:
+                        h['current'] = old['current']
                     if expected is None:
                         initial = stage / 'new'
                         destination = initial / '.workshop' / 'revisions'

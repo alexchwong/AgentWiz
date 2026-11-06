@@ -1,5 +1,8 @@
 # NEWS
 ## 0.2.0
+- Workshop Design groups revision selection above distinct Save as new revision and Overwrite selected
+  revision controls. Confirmed overwrite preserves the selected revision's number without changing an
+  unrelated current default or existing run evidence; its standard description starts empty.
 - Any retained Workshop revision can be selected, tested and compared without changing the default; results
   name the revision they ran. Selecting a revision no longer turns it into an unsaved draft: use
   Revision actions → Restore to draft (or edit it) before saving it as a new revision.

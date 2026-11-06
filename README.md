@@ -184,7 +184,7 @@ output is an editable row with field name and **Declared meaning** (part of the 
 declared meaning can contribute to the model request), and its contract below it: **Inline** uses the same
 readable contract editor as Workshop → Contracts; **Saved contract** pins one numbered revision (see
 [Contracts](#contracts)). A type change that would drop fields, choices or bounds previews the before and
-after definitions first; contract edits are unsaved block edits until **Save revision**.
+after definitions first; contract edits are unsaved block edits until **Save as new revision**.
 **Request preview** shows the exact system and user messages a run would send for the current inputs,
 with the generated output section and where each setting came from, each with Copy. On the right,
 **Model role** selects a configured role without silently replacing an unavailable saved binding.
@@ -195,15 +195,15 @@ is declared, the backend default applies and no numeric value is guessed.
 
 **Model advanced settings** holds explicit backend-default bypasses for both settings, the output cap,
 budgets and source editors. **Additional repairs** is always visible below Outputs; zero allows no
-repair attempts after the initial response. The optional revision name sits beside **Save revision**;
-the **Block revision** selector sits beside the editor in Design, Test and Compare. **Assist** and **Revision actions** share
+repair attempts after the initial response. The optional revision name sits above the revision selector and save controls;
+the **Block revision** selector sits above the save buttons in Design and above the editor in Test and Compare. **Assist** and **Revision actions** share
 the Design/Test/Compare action row in all three modes. Test's **Preview
 instructions** shows the actual filled prompt or arguments for the supplied inputs.
 
 Structured fields distinguish missing, null, false, zero and empty text. Numeric values travel as exact
 source text. Saved examples and their expected values use the same typed forms as Test. Editing an example
 also offers inputs it lacks, and keeps expected values for outputs the block no longer declares until you
-remove them. A new group needs at least one field before **Save revision** or a run: editing may pass through
+remove them. A new group needs at least one field before **Save as new revision** or a run: editing may pass through
 an empty group, and a group that was already empty in the saved block is left alone. A definition outside
 the supported vocabulary is never projected or overwritten: it stays in the advanced source with its
 located problems, and neither the port nor the block can be saved until it is corrected or discarded.
@@ -213,19 +213,25 @@ Shared edits happen in Workshop → Contracts, which shows the blocks that use e
 validation and assistance use the validator included in the standard installation; repair the
 installation if it becomes unavailable.
 
-**Save revision**, in Design's right-hand controls, previews the effective action and its required
+**Save as new revision**, in Design's right-hand controls, previews the effective action and its required
 acknowledgements. A new revision becomes the default. **Block revision** opens any retained revision as a
 clean saved selection: its design, contracts and standard description are shown, Test and Compare run that
 revision, and the default (marked **(current)**) does not change. Unsaved changes offer Save, Discard or
 Stay before switching. Editing a selection makes it an unsaved draft, labelled with its base revision and
-**Unsaved**, which runs through the draft path. On a clean older selection **Save revision** stays disabled
+**Unsaved**, which runs through the draft path. On a clean older selection **Save as new revision** stays disabled
 until you edit it or choose **Revision actions → Restore to draft**; saving then publishes it as the new
 default. Results and the prepared preview name the revision they ran. A retained revision runs with today's
 model roles, MCP settings and exact saved-contract pins: a missing or changed pinned contract blocks the run
 with a located error but still lets you view and describe the revision's captured interface. Older-format
 revisions are listed and show **Migration required** on selection. Revisions display per-block numbers starting at 1 and an
 optional name of up to 120 characters. Enter a name before saving; names need not be unique and do not
-rename the block. A new revision's name defaults to blank. Historical names are not edited in place.
+rename the block. A new revision's name defaults to blank.
+
+The revision dropdown sits immediately above **Save as new revision** and **Overwrite selected revision**.
+Overwrite confirms replacement of the selected revision's contents (and clears its standard description),
+keeping its number and position rather than adding another revision. Overwriting an older revision does
+not change the current default. The replacement remains selected; existing run evidence is unchanged.
+Overwrite is unavailable until the block has a saved revision. Concurrent changes require a fresh review.
 Numbers survive restart and pruning; restoring an older version and saving creates the next number.
 Duplicates start their own sequence. Existing unnumbered histories are numbered oldest first from the
 retained history available at upgrade, not from already-pruned lifetime history. Internal IDs remain unchanged.
