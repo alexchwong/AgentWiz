@@ -1046,8 +1046,16 @@ class ProcessState:
             self._shutdown_started = True
         if first:
             self.workshop_operations.close()
-            if self.workshop.active:
-                self.workshop.stop(self.workshop.active)
+            with self.workshop.lock:
+                active = self.workshop.active
+                workflow_job = active in self.workshop.workflows.jobs
+            if workflow_job:
+                self.workshop.workflows.stop(active, shutdown=True)
+            elif active:
+                try:
+                    self.workshop.stop(active)
+                except workshop.WorkshopError:
+                    pass
             self.writers.close()                      # 1. close admission, one gate at a time
             self.store.close()
             self.mcp_ops.close()

@@ -204,7 +204,7 @@ CASES = {
                               "steps[0].prompt"),
     "format_version 1": (lambda b: b.update(format_version=1), "migration_required", "format_version"),
     "format_version 2": (lambda b: b.update(format_version=2), "invalid", "format_version"),
-    "format_version 4": (lambda b: b.update(format_version=4), "newer_format", "format_version"),
+    "format_version 5": (lambda b: b.update(format_version=5), "newer_format", "format_version"),
     "format_version true": (lambda b: b.update(format_version=True), "invalid", "format_version"),
     "a missing saved contract": (lambda b: b["outputs"]["out"].update(contract=PIN_ABSENT), "unusable",
                                  "outputs.out.contract"),

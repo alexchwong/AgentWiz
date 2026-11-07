@@ -26,7 +26,7 @@ CLONE_FILE_LIMIT = 20_000
 CLONE_BYTE_LIMIT = 1 << 30
 SKIP_NAMES = {wsmod.LOCK_FILE, ".profiles.lock"}
 ALWAYS_PATHS = ("workspace.json", "task_settings.json", "roles.json", "model-profiles",
-                "contracts", "blocks", "workshop/examples")
+                "contracts", "blocks", "workflows", "workshop/examples")
 EVIDENCE_PATHS = ("runs", "workshop/comparisons")
 
 
@@ -300,7 +300,7 @@ def clone_workspace(root: Path, source: str, target: str, include_evidence: bool
         raise
     skipped = 0
     known = {"workspace.json", "task_settings.json", "roles.json", "model-profiles",
-             "contracts", "blocks", "workshop", "runs", *SKIP_NAMES}
+             "contracts", "blocks", "workflows", "workshop", "runs", *SKIP_NAMES}
     try:
         with os.scandir(source_path) as entries:
             for entry in entries:

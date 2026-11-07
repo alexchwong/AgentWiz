@@ -165,6 +165,8 @@ class OpContext:
         self.call_session: Session | None = None    # legacy: the session tools/call was sent in
         self.call_request_id: int | None = None
         self.snapshot: Snapshot | None = None
+        self.authorize: Callable[[], None] | None = None
+        self.allow_call_retry = True
 
     def _check_locked(self) -> None:
         if self.abandoned is not None:
@@ -616,6 +618,13 @@ class MCPClient:
             c = classify(stage, gate_passed=False, transport=reason)
             raise MCPError(c.outcome, c.reason, f"{_REASON_TEXT.get(c.reason, c.reason)} ({snap.server})") from None
         try:
+            if ctx.authorize is not None and gate.get("call"):
+                from .outbound_policy import Refused
+                try:
+                    ctx.authorize()
+                except Refused as exc:
+                    outcome = "unknown" if ctx.call_gate_passed else "rejected"
+                    raise MCPError(outcome, str(exc), "the protected destination changed") from None
             ctx.gate(post=True, **gate)                   # after connecting, immediately before writing
             data = encode_exact(body).encode("ascii") if body is not None else None
             try:
@@ -992,7 +1001,7 @@ class MCPClient:
         """A legacy request; a 404 to a request with a session ID re-initialises and resends once."""
         reply = self.exchange(ctx, snap, method, body, headers, request_id=rid, budget=budget, stage=stage,
                               gate=gate, on_message=on_message)
-        if reply.status == 404 and session.session_id is not None:
+        if reply.status == 404 and session.session_id is not None and (ctx.allow_call_retry or not (gate and gate.get("call"))):
             with self.session_lock:
                 still_current = self._sessions.get(session.identity) is session
             if still_current:

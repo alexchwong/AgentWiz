@@ -510,7 +510,7 @@
         body.replaceChildren();
         inline = editor({ test: p, text, onChange: (t, view) => opts.onChange(view.format, t) });
         body.append(inline.el, h("div", { class: "row" },
-          h("button", { type: "button", "data-test": p + "-save-reusable", text: "Save inline as reusable", disabled: readOnly(), onclick: () => saveReusable() })));
+          h("button", { type: "button", "data-test": p + "-save-reusable", text: "Save inline as reusable", disabled: readOnly() || opts.protected, onclick: () => saveReusable() })));
         pending = inline.ready();
       }
       function showSaved(pin) {
@@ -555,7 +555,7 @@
         const choice = await dialog("Save inline as reusable", box, ["Save contract", "Cancel"], async (c) => {
           if (c !== "Save contract") return true;
           try {
-            result = await v2("save", { name: name.value, family: family.value, expected_file_token: null, definition_text: inline.text(), label: label_.value });
+            result = await opts.onPublish({ name: name.value, family: family.value, label: label_.value });
             return true;
           } catch (e) { error.dataset.code = e.code || "error"; error.textContent = errorText(e); return false; }
         });

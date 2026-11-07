@@ -30,3 +30,63 @@ The implementation checkout has no new commit. The sole commit used for smoke is
 Apply the three deletions with the delivered files. Repeat the exact-tag and draft-aware release preflight before the authorised merge and require candidate CI.
 
 The v2 specification leaves three release tooling fixes separate. The shipped-file guard omits the source template, RC1 ignores words on NEWS continuation lines and manual release dispatch can publish from a non-main ref. The documentation records the corresponding review and operator rules.
+
+## 0.2.1 candidate
+
+Cumulative changes are based on `devel` at `cc44074bbe01b99478566a37fea9a19aa3bd8552`.
+The package version is 0.2.1. The checkout is uncommitted.
+
+### Delivered by phase
+
+1. V4 ports, transform starters, workspace-scoped destination trust, protected dispatch,
+   draft lineage, and reviewed block upgrades.
+2. Exact workflow bundles and immutable captures, graph planning, serial execution,
+   example batches, MCP confirmation, and workflow evidence.
+3. Workflow forms, run preflight and traces, examples, trust settings, History, and the
+   isolated tutorial. The form-only journey passed before the canvas was added.
+4. Canvas dragging and connections using the same form state and reviewed save,
+   keyboard positioning, release version and notes, and installed workflow smoke S16.
+
+### Verification
+
+- Phase 3 workflow and tutorial checkpoint passed 14 tests on Linux with Chromium.
+- Final focused workflow page tests passed five tests, including drag, form-only save
+  and execution, exact values, destination trust, and rebind against a missing source.
+- The Linux Python 3.12 offline suite passed 963 tests with ten live tests deselected.
+- A wheel built from an isolated uncommitted source snapshot passed RC1–RC3,
+  `pip check`, and installed smoke S1–S16. This used the release builder's existing
+  build and smoke functions and the hash-checked pinned modelSpell wheel.
+- Six focused browser and tutorial tests passed against the installed package in an
+  isolated Python 3.12 environment outside the checkout.
+- The Linux Python 3.10.22 and 3.13.17 offline suites each passed 963 tests with
+  ten live tests deselected. The supplementary browser test for both MCP
+  confirmation modes and Stop passed separately on all three Python versions.
+
+### Release follow-up
+
+Run the macOS Python 3.10 and 3.13 CI lanes and the WSL2 verification before sign-off.
+Use the normal release command on the intended committed candidate.
+
+### Obsolete files
+
+No deletions are required for this delivery. The deletion list in the historical
+0.2.0 close-out above is unrelated to this archive.
+
+### 0.2.1 implementation audit
+
+Reviewed the four-phase candidate against the v3 specification. The audit fixes
+cover workflow Start replay after a dropped response, cancellation before example
+output publication, reasons for skipped nodes and examples, and saved evidence.
+Start recovery reuses the reviewed request and ticket while the page is open.
+Saved runs recheck captured source bytes for newly known credentials and make the
+executable capture available from History.
+
+The Linux offline matrix passed 968 tests per interpreter on Python 3.10.22,
+3.12.14 and 3.13.17, with ten live tests deselected. After exposing the capture
+in History, the 15 workflow tests passed again on all three interpreters.
+The final wheel passed RC1–RC3, `pip check`, smoke S1–S16 and nine focused
+browser and tutorial tests. The macOS CI lanes and WSL2 verification remain
+pending.
+
+Apply the audit ZIP over the phases 1–4 ZIP. The audit requires no deletions.
+The implementation checkout remains at the original devel commit.

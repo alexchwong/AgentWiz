@@ -1,13 +1,12 @@
 """Versioned, closed assistance responses and server-owned asset compilation."""
 from __future__ import annotations
 
-import ast
 import copy
 
-from . import blocks, jsonio
+from . import blocks, jsonio, transforms
 from . import workshop_editor as editor
 from .task_settings import OVERRIDABLE, TaskSettingError, parse_task
-from .workshop_assets import fail, wire_files
+from .workshop_assets import fail
 
 # Describe is no longer a generic draft action: it writes a saved revision's description through the
 # server-owned builder in workshop_service.describe_request (block_metadata_refactor spec v2).
@@ -38,17 +37,19 @@ def schema(action, sections=None, stage=None, capabilities=None):
                           record({'argument': TEXT, 'source': {'const': 'literal'}, 'value_text': LONG})]}
     tool = record({'kind': {'const': 'tool'}, 'server': {'type': ['string', 'null']}, 'tool': {'type': ['string', 'null']},
                    'bindings': {'type': 'array', 'items': binding}, 'output': TEXT, 'limits': limits})
-    parameters = {'oneOf': [record({'unit': {'enum': ['whitespace_words', 'characters']}}),
-        record({'mappings': {'type': 'array', 'items': record({'source_path': path, 'destination': TEXT, 'required': {'type': 'boolean'}})}}),
-        record({'template': LONG}), record({})]}
-    script = record({'kind': {'const': 'script'}, 'mode': {'enum': ['starter', 'custom']}, 'starter': {'type': ['string', 'null']},
-                     'parameters': parameters, 'source': {'type': ['string', 'null'], 'maxLength': 131072}, 'timeout_s': TEXT, 'limits': limits})
     if capabilities is not None:
         model['properties']['role']['enum'] = [None, *capabilities.get('roles', [])]
         tool['properties']['server']['enum'] = [None, *capabilities.get('tools', {})]
         tools = sorted({name for names in capabilities.get('tools', {}).values() for name in names})
         tool['properties']['tool']['enum'] = [None, *tools]
-    behaviour = {'oneOf': [model, tool, script]}
+    transform = record({'kind': {'const': 'transform'}, 'operation': {'enum': list(transforms.OPERATIONS)},
+                        'parameters': {'oneOf': [
+                            record({'unit': {'enum': ['whitespace_words', 'characters']}}),
+                            record({'mappings': {'type': 'array', 'maxItems': 50, 'items': record({
+                                'source_path': path, 'destination': TEXT, 'required': {'type': 'boolean'}})}}),
+                            record({'template': LONG}),
+                        ]}})
+    behaviour = {'oneOf': [model, tool, transform]}
     editable = {'purpose': TEXT, 'inputs': ports, 'outputs': ports, 'behaviour': behaviour}
     improve = record({k: v for k, v in editable.items() if sections is None or k in sections}, [])
     improve['minProperties'] = 1
@@ -153,6 +154,10 @@ def apply(body, response):
         raise moved()
     draft = copy.deepcopy(body.get('draft'))
     if action == 'explain_failure':
+        corrections = payload.get('corrections') or {}
+        behaviour = corrections.get('behaviour') or {}
+        if behaviour.get('kind') == 'script':
+            fail('generated_script_disabled', 409)
         supplied = set(body.get('evidence', {}))
         if any(set(o['evidence_ids']) - supplied for o in payload['observations']):
             fail('invalid_evidence', 409)
@@ -166,11 +171,16 @@ def apply(body, response):
         obj['description'] = payload['purpose']
     for side in ('inputs', 'outputs'):
         if side in payload:
+            previous = obj[side]
             obj[side] = {p['name']: editor.port(p) for p in payload[side]}
+            if obj.get('format_version') == blocks.WORKFLOW_FORMAT_VERSION:
+                for name, declaration in obj[side].items():
+                    if 'local_only' in previous.get(name, {}):
+                        declaration['local_only'] = previous[name]['local_only']
     if 'behaviour' in payload:
         b = payload['behaviour']
         step = {'id': 'request', 'kind': b['kind']}
-        limits = {k: jsonio.decode_exact(v) for k, v in b['limits'].items()}
+        limits = {k: jsonio.decode_exact(v) for k, v in b.get('limits', {}).items()}
         obj['budget'] = {k: v for k, v in limits.items() if k != 'max_repairs'}
         if b['kind'] == 'model':
             step.update(role=b['role'], prompt={'text': b['instructions']}, system={'text': b['system'] or ''},
@@ -183,21 +193,28 @@ def apply(body, response):
             for binding in b['bindings']:
                 arguments[binding['argument']] = '{{inputs.' + '.'.join(binding['input_path']) + '}}' if binding['source'] == 'input' else jsonio.decode_exact(binding['value_text'])
             step.update(server=b['server'], tool=b['tool'], output=b['output'], arguments=arguments)
+        elif b['kind'] == 'transform':
+            if len(obj['outputs']) != 1:
+                fail('block_invalid', 409)
+            try:
+                transforms.validate(b['operation'], b['parameters'], obj['inputs'])
+            except ValueError:
+                fail('block_invalid', 409)
+            obj['format_version'] = blocks.WORKFLOW_FORMAT_VERSION
+            draft['files'] = {}
+            draft.pop('root_sources', None)
+            for field in ('starter', 'starter_version', 'parameters', 'runtime_digest', 'support'):
+                draft['metadata'].pop(field, None)
+            step.update(operation=b['operation'], operation_version=1, parameters=b['parameters'],
+                        output=next(iter(obj['outputs'])))
         else:
-            if b['mode'] == 'starter':
-                files, metadata = editor.generate_script(b['starter'], b['parameters'])
-                draft['files'] = wire_files(files)
-                draft['metadata'].update(metadata)
-            else:
-                ast.parse(b['source'])
-                draft['files']['scripts/main.py'] = b['source']
-            step.update(file='scripts/main.py', timeout_s=jsonio.decode_exact(b['timeout_s']))
+            fail('generated_script_disabled', 409)
         obj['steps'] = [step]
     if 'effects' in payload:
         draft['metadata']['effects'] = payload['effects']
-    draft['metadata']['origin'] = 'llm_generated'
-    if obj.get('steps') and obj['steps'][0].get('kind') == 'script' and editor.classification(draft) == 'starter':
-        draft['metadata']['origin'] = 'starter'
+    # A prose-only improvement to a script did not author its source.
+    if not obj.get('steps') or obj['steps'][0]['kind'] != 'script':
+        draft['metadata']['origin'] = 'llm_generated'
     draft['metadata'].pop('source_review', None)
     draft['definition_text'] = jsonio.encode_exact(obj)
     return {'draft': draft}

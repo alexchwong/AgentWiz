@@ -70,6 +70,7 @@ def document(root, name, limit=1 << 20):
 
 
 EXECUTABLE_VERSION = 3
+EXECUTABLE_VERSIONS = (3, 4)
 
 
 def head(root):
@@ -89,7 +90,7 @@ def head_document(obj):
     version = obj.get('format_version')
     if type(version) is not int:
         fail('unusable', 409)
-    if version in (1, EXECUTABLE_VERSION):
+    if version in (1, *EXECUTABLE_VERSIONS):
         return None
     if version != 2:
         fail('newer_format', 409)
@@ -257,7 +258,7 @@ def exact_digest(value):
 def description_basis(key, revision, metadata, definition):
     """The revision-description basis: None unless the generation is executable v3 with verified asset and
     captured-contract digests. Excludes role/profile settings, sidecar prose and the default pointer."""
-    if not isinstance(definition, dict) or definition.get('format_version') != EXECUTABLE_VERSION:
+    if not isinstance(definition, dict) or definition.get('format_version') not in EXECUTABLE_VERSIONS:
         return None
     assets, contracts = metadata.get('asset_digest'), metadata.get('contracts_digest')
     if not isinstance(assets, str) or not isinstance(contracts, str):
@@ -413,7 +414,7 @@ class Assets:
         return self._validate(draft)
 
     def _validate(self, draft, *, internal_contracts=False, validators=None):
-        if not isinstance(draft, dict) or set(draft) - {'key', 'definition_text', 'files', 'metadata', 'base_digest', 'root_sources'}:
+        if not isinstance(draft, dict) or set(draft) - {'key', 'definition_text', 'files', 'metadata', 'base_digest', 'root_sources', 'draft_ref'}:
             fail()
         key = key_name(draft.get('key'))
         text = draft.get('definition_text')
@@ -425,7 +426,7 @@ class Assets:
             fail()
         if isinstance(obj, dict) and type(obj.get('format_version')) is int and obj['format_version'] < EXECUTABLE_VERSION:
             fail('migration_required', 400)
-        if not isinstance(obj, dict) or obj.get('format_version') != EXECUTABLE_VERSION or obj.get('name') != key:
+        if not isinstance(obj, dict) or obj.get('format_version') not in EXECUTABLE_VERSIONS or obj.get('name') != key:
             fail()
         files = decode_files(draft.get('files', {}))
         sources = draft.get('root_sources', {})
@@ -454,7 +455,12 @@ class Assets:
             runtime_digest = metadata.get('runtime_digest')
             if type(version) is not int or version < 1 or not isinstance(metadata.get('parameters'), dict):
                 fail()
-            if not isinstance(runtime_digest, str) or re.fullmatch('[0-9a-f]{64}', runtime_digest) is None:
+            if version == 2:
+                step = next(iter(obj.get('steps', [])), {})
+                if (step.get('kind') != 'transform' or step.get('operation') != metadata['starter']
+                        or step.get('parameters') != metadata['parameters']):
+                    fail()
+            elif not isinstance(runtime_digest, str) or re.fullmatch('[0-9a-f]{64}', runtime_digest) is None:
                 fail()
         support = metadata.get('support', [])
         if not isinstance(support, list) or any(not isinstance(p, str) for p in support) or len(set(support)) != len(support):
@@ -494,7 +500,7 @@ class Assets:
                 found.extend((name, p) for p in templates.scan_text(text, name))
         elif step.kind == 'tool':
             found = templates.scan_arguments(step.arguments)
-        elif captured.metadata.get('starter') == 'format_report':
+        elif step.kind == 'script' and captured.metadata.get('starter') == 'format_report':
             found = [('report', p) for p in templates.scan_text(captured.metadata['parameters']['template'], 'report')]
         for location, placeholder in found:
             port = block.contracts['inputs'].get(placeholder.path[0])
@@ -587,7 +593,7 @@ class Assets:
             version = definition.get('format_version') if isinstance(definition, dict) else None
             if type(version) is int and version < EXECUTABLE_VERSION:
                 fail('migration_required', 400)
-            if version != EXECUTABLE_VERSION:
+            if version not in EXECUTABLE_VERSIONS:
                 fail('newer_format', 409)
             self.retained(key, ident)
         finally:
@@ -875,12 +881,12 @@ def validate_generation(root, metadata):
         definition = jsonio.decode_exact(files['block.json'].decode('utf-8'))
     except (KeyError, ValueError, UnicodeError):
         fail('unusable', 409)
-    if isinstance(definition, dict) and definition.get('format_version') == EXECUTABLE_VERSION:
+    if isinstance(definition, dict) and definition.get('format_version') in EXECUTABLE_VERSIONS:
         validate_contract_maps(definition, metadata)
 
 
 # --- references to saved contracts (spec 10.4) -------------------------------------------------------------
-_SCANNED_EXECUTABLE_VERSIONS = (1, EXECUTABLE_VERSION)
+_SCANNED_EXECUTABLE_VERSIONS = (1, *EXECUTABLE_VERSIONS)
 
 
 def _declared_references(definition, name):

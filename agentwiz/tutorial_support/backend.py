@@ -18,6 +18,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MODELS = {
+    "workflow-report": "Accepts the synthetic workflow report.",
     "complete": "Streams a short answer, stop, usage.",
     "complete-reasoning": "Streams reasoning (reasoning_content) then an answer.",
     "empty": "stop with no content.",
@@ -74,6 +75,7 @@ ENVELOPE_PASS = '{"fields": {"id": 9007199254740993, "ratio": 0.1000000000000000
 ENVELOPE_FAIL = '{"fields": {"id": "9007199254740993", "ratio": 0.10000000000000000001}, "note": "The report mentions id 9007199254740993."}'
 
 SCRIPTS = {
+    "workflow-report": lambda: words('{"out":"Report received."}') + [chunk(finish="stop", usage_json=USAGE), DONE],
     "json-pass": lambda: words(PASS_TEXT) + [chunk(finish="stop", usage_json=USAGE), DONE],
     "json-repair": lambda: words(FAIL_TEXT) + [chunk(finish="stop", usage_json=USAGE), DONE],
     "block-fields": lambda: words(ENVELOPE_PASS) + [chunk(finish="stop", usage_json=USAGE), DONE],

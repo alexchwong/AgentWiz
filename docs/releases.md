@@ -95,7 +95,7 @@ judgement.
 2. Confirm the offline CI matrix passes on Ubuntu and macOS, Python 3.10 and 3.13. A Linux-only
    local pass does not verify macOS. Optional subjective review/live checks are not gates.
 3. Run `python scripts/build_release.py --smoke` on the intended committed tree; require
-   RC1–RC3 and the installed-wheel smoke S1–S15 to pass.
+   RC1–RC3 and the installed-wheel smoke S1–S16 to pass.
 4. Merge `devel` into `main` when authorized. The release workflow reruns tests and checks
    before publishing; inspect its result.
 
@@ -112,3 +112,10 @@ the checkout and verify AgentWiz imports from that environment's site-packages. 
 runs the completion journey, narrow/desktop authoring, retained utilities and all
 fourteen tutorial paths against the installed package. These are objective automated
 checks; tutorial walking remains optional.
+
+Release 0.2.1 adds S16. It checks the installed Workflows browser asset, publishes a
+captured v4 transform workflow, preflights it, and verifies its final output through
+the installed server. When the candidate must remain uncommitted, build from an
+isolated source snapshot containing the delivered changes and run the same wheel
+checks and installed smoke functions. Confirm the committed candidate with the
+normal release command before publishing.

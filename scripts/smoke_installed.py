@@ -1,7 +1,7 @@
 # Adapted from modelSpell scripts/smoke_installed.py at commit 1759c6e3c28a637731434a73c46088048583e358
 # (MIT, Copyright (c) 2026 Alex Wong), per AgentWiz techspec 11.2 (0.1.0), 11.1 (0.1.1), 13.1 (0.1.2), 16.1 (0.1.3)
 # and 18.1 (0.1.4).
-"""Smoke check against the installed AgentWiz wheel (steps S1-S15). Run with the environment's
+"""Smoke check against the installed AgentWiz wheel (steps S1-S16). Run with the environment's
 `python -I` from a scratch directory. Every step checks behaviour; none reads a file's contents.
 The launch's default workspace (./workspaces/default) is validated by AgentWiz itself and checked
 through /api/state."""
@@ -354,6 +354,37 @@ try:
           'installed Workshop frozen script trial')
     duplicate = workshop('test', start)
     check(duplicate['operation_id'] == operation['operation_id'], 'installed Workshop duplicate Start')
+
+    # S16: save and execute a captured v4 transform workflow using the installed application.
+    check(b'createWorkflowPage' in api('/assets/workflows.js').read(), 'installed workflow browser asset')
+    draft = workshop('preview', {'starter': 'count_text', 'starter_version': 2, 'key': 'workflow_counter'})['draft']
+    save = {'draft': draft, 'expected_identity': None}
+    plan = workshop('plans', {'action': 'save', 'request': save})
+    saved = workshop('save', {**save, 'expected_plan': plan['expected_plan'],
+        'confirmations': plan['required_confirmations']})
+    workflow = 'installed_workflow'
+    definition = {'name': workflow, 'purpose': 'Count words', 'constants': {},
+                  'inputs': {'text': {'contract': {'format': 'text'}, 'local_only': False}},
+                  'outputs': {'words': {'contract': {'format': 'json'}, 'local_only': False,
+                                        'binding': {'kind': 'node', 'node': 'count', 'port': 'out'}}},
+                  'nodes': {'count': {'bindings': {'text': {'kind': 'input', 'port': 'text'}}}}}
+    save = {'name': workflow, 'file_token': None, 'definition_text': json.dumps(definition),
+            'selections': {'count': {'key': 'workflow_counter', 'revision': saved['durable_id']}}}
+    plan = workshop('plans', {'action': 'workflow_save', 'request': save})
+    workshop(f'workflows/{workflow}/save', {'request': save, 'expected_plan': plan['expected_plan'],
+                                           'confirmations': plan['required_confirmations']})
+    request = {'name': workflow, 'inputs': {'text': 'one two three'}}
+    plan = workshop('plans', {'action': 'workflow_run', 'request': request})
+    check(plan['descriptor']['order'] == ['count'] and not plan['descriptor']['issues'], 'installed workflow preflight')
+    job = workshop(f'workflows/{workflow}/run', {'request': request, 'expected_plan': plan['expected_plan'],
+                    'ticket': workshop('tickets', {})['ticket'], 'confirmations': plan['required_confirmations']})
+    deadline = time.monotonic() + 10
+    result = workshop('workflow-jobs/' + job['operation_id'])
+    while result['outcome'] == 'running' and time.monotonic() < deadline:
+        time.sleep(.02)
+        result = workshop('workflow-jobs/' + job['operation_id'])
+    check(result['outcome'] == 'complete' and result['outputs']['words']['text'] == '3',
+          f'installed workflow result: {result}')
 
     # S8: a second AgentWiz on the same workspace is refused with exit status 3
     second = subprocess.run([str(exe), "--no-browser"], capture_output=True, text=True, timeout=15)

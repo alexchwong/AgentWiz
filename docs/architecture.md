@@ -1200,3 +1200,56 @@ batch reads of a Describe request use `describe_public`/`describe_public_batch`:
 locality, persistence, progress, outcome, bounded issues and the validated proposal; never context,
 feedback, prior prose, raw answers, prepared requests or child run IDs. The full private descriptor still
 binds the plan.
+
+
+### Workflow-ready blocks and destination trust
+
+Executable definitions v3 and v4 use the same contract and runner paths. V4 requires
+explicit port locality labels and supports in-process transforms. Workshop draft references are
+opaque, workspace-scoped and process-local. Open fresh drafts explicitly, and use
+`POST /api/workshop/drafts/import` to open external bytes as a new draft. After restarting,
+reopen saved revisions to obtain a current draft reference.
+
+`GET /api/workshop/destination-trust` returns the current revision and non-secret grants.
+The corresponding POST takes `format_version: 1`, `expected_revision`, the exact `destination`
+and a boolean `trusted`. Model identities contain `kind`, `url`, `model` and `provider`.
+MCP identities contain `kind: "mcp"`, `url`, `server` and `tool`.
+Trust is persisted in `destination_trust.json`. The runner checks the current grant and
+configuration before protected model calls and repairs and before MCP arguments are sent.
+
+
+### Headless workflow engine
+
+Workflow bundles live at `workflows/<name>.json`. The file token hashes the complete file.
+The executable digest covers the definition and its immutable node snapshots. Layout and examples
+can be updated without refreshing snapshots. The planner validates exact captures, orders all
+nodes by dependency and lexical tie-break, and calculates locality before resolving destinations.
+Jobs use the Workshop slot and the shared block runner. They run selected examples in order.
+
+All paths below are relative to `/api/workshop`. POSTs require `format_version: 1`.
+
+| Route | Request or result |
+| --- | --- |
+| `GET workflows` and `GET workflows/<name>` | List names or read exact definition text, file token, sources, layout and examples. |
+| `GET workflow-sources/<key>` | Obtain the reviewed fingerprint of an unmanaged v4 block. |
+| `POST plans` | Send `action` and `request`. Actions are `workflow_save`, `workflow_rebind`, `workflow_delete` and `workflow_run`. |
+| `POST workflows/<name>/save` or `.../rebind` | Send the reviewed `request`, `expected_plan` and `confirmations`. The request contains `name`, `file_token`, `definition_text` and optional `selections`, `layout` and `examples`. Select new node sources by `{key, revision}` or `{key, fingerprint}`. |
+| `POST workflows/<name>/delete` | Apply a reviewed deletion with `name` and `file_token`. |
+| `POST workflows/<name>/run` | Apply a reviewed run using a Workshop ticket. Supply `name` and either exact input texts or example ID/version pairs. |
+| `GET workflow-jobs/<id>` and `POST workflow-jobs/<id>/stop` | Poll the job or request Stop. Query `node` for a node trace. Batch trace keys use the zero-based example index followed by a colon and node ID. |
+| `POST workflow-jobs/<id>/review` | Submit a judgement bound to the example ID/version and result and executable digests. |
+| `GET workflow-mcp-confirmation` and `POST workflow-mcp-confirmation` | Read or change the workspace preference. POST takes `mode` and `expected_revision`. |
+| `GET workflow-evidence`, `GET workflow-evidence/<id>`, `POST workflow-evidence/<id>/delete` | Browse or delete saved jobs. Query `record` to read a manifest-listed record. |
+
+Saving creates a private job folder under `runs/workflows/<id>/`. The initial capture is staged,
+then each node has a durable intent before dispatch. The manifest indexes node records, model
+attempts and the result. A running manifest left by an interrupted process is shown as interrupted.
+Saving off keeps the bounded job view in memory.
+
+
+The Workflows browser view loads the form projection from the server. Contracts and
+constants remain exact text in that projection. The editor submits an `editor`
+object or existing clients can submit `definition_text`. The server decodes each
+exact value separately. The form and canvas share node bindings and layout. The
+canvas previews compatible direct connections and uses the same reviewed save
+operation as the form. Layout has no effect on dispatch order.

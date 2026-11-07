@@ -178,6 +178,12 @@ class Tutorial:
             state = self.child.state
             if state.store.running_count() or state.store.active_block_runs() or state.mcp_ops.active_count():
                 return {"busy": True}
+            if topic.id == "script-block":
+                from .tutorial_support.workshop import ensure_stop_fixtures
+                ensure_stop_fixtures(state)
+            if topic.id == "workflow":
+                from .tutorial_support.workshop import ensure_workflow_fixture
+                ensure_workflow_fixture(state, self.backend_url)
             if topic.id.startswith("assist-"):
                 action = topic.id[len("assist-"):]
                 state.save_profile({"name":"tutorial-assistant","kind":"openai_compat",

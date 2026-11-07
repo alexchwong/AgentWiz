@@ -47,7 +47,7 @@ def profile_location(settings) -> str:
     """Classify without DNS or network access. Local means a loopback model server."""
     if settings.kind not in ("lmstudio", "openai_compat"):
         return "cloud"
-    host = urlsplit(settings.base_url or "http://localhost:1234/v1").hostname
+    host = urlsplit(settings.base_url or "http://127.0.0.1:1234/v1").hostname
     if host == "localhost":
         return "local"
     try:

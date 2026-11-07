@@ -1682,6 +1682,7 @@ def test_workshop_example_dialog_offers_an_input_the_example_lacks(ui, open_page
     tid(page, 'ws-design').click()
     tid(page, 'ws-add-input').click()
     tid(page, 'ws-field-field-name').nth(1).fill('extra')
+    tid(page, 'ws-choice-local-only').nth(1).select_option('false')
     tid(page, 'ws-test').click()
     expect(tid(page, 'ws-choice-example')).to_have_value(selected)
     tid(page, 'ws-edit-selected-example').click()
@@ -1791,3 +1792,277 @@ def test_workshop_revision_selection_describe_refine_save_and_test(ui, server, o
     expect(tid(page, "ws-describe-block")).to_be_disabled()
     expect(tid(page, "ws-save-revision")).to_be_enabled()
     expect(tid(page, "ws-choice-block-revision")).to_have_attribute("data-dirty", "true")
+
+
+def test_workflow_form_only_edit_save_preflight_run_and_trace(ui, open_page):
+    from test_workshop import plan_save, send
+    from conftest import request
+    draft = send(ui, "preview", key="counter", starter="count_text", starter_version=2)["draft"]
+    plan_save(ui, draft)
+    page = open_page(ui)
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-new").click()
+    tid(page, "wf-workflow-name").fill("browser_flow")
+    for side, name in (("input", "text"), ("output", "count")):
+        tid(page, "wf-add-" + side).click()
+        dialog = tid(page, "ws-dialog")
+        tid(dialog, "wf-identifier").fill(name)
+        tid(dialog, "ws-add").click()
+    tid(page, "wf-add-node").click()
+    dialog = tid(page, "ws-dialog")
+    tid(dialog, "wf-block-picker").select_option("counter")
+    expect(dialog).to_contain_text("Ready to capture")
+    tid(dialog, "wf-node-identifier").fill("count_words")
+    tid(dialog, "ws-add").click()
+    page.get_by_label("Bind text").select_option(label="Input · text")
+    page.get_by_label("Output source").select_option(label="count_words · out")
+    # The count node returns a JSON number. Use the readable contract selector.
+    page.get_by_text("Contract · count", exact=True).click()
+    page.locator('details[open] [data-test="wf-contract-format"]').select_option("any")
+    expect(page.locator('details[open] [data-test="wf-contract-editor"]')).to_have_attribute("data-format", "any")
+    tid(page, "wf-save").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+    tid(page, "wf-run-view").click()
+    tid(page, "wf-text").fill("one two")
+    tid(page, "wf-preflight").click()
+    expect(tid(page, "wf-review")).to_contain_text("Order: count_words")
+    tid(page, "wf-run").click()
+    expect(tid(page, "wf-trace")).to_contain_text("browser_flow · complete")
+    expect(tid(page, "wf-trace").locator("pre")).to_have_text("2")
+    tid(page, "wf-inspect-node").click()
+    expect(tid(page, "ws-dialog")).to_contain_text("Node trace")
+    tid(tid(page, "ws-dialog"), "ws-close").click()
+    assert request(ui, "/api/workshop/workflows")["workflows"] == ["browser_flow"]
+
+
+def test_workflow_settings_reviews_trust_and_confirmation(ui, open_page):
+    from conftest import request
+    page = open_page(ui)
+    tid(page, "ws-settings").click()
+    tid(page, "header-workflow-settings").click()
+    settings = page.get_by_role("dialog", name="Workflow settings")
+    tid(settings, "wf-mcp-confirmation").select_option("effectful_batches")
+    tid(settings, "wf-save-mcp-confirmation").click()
+    expect(settings).to_contain_text("Confirmation preference saved.")
+    tid(settings, "wf-endpoint-url").fill("http://localhost:1234/v1")
+    tid(settings, "wf-model").fill("local-model")
+    tid(settings, "wf-review-trust").click()
+    expect(settings).to_contain_text("Hostnames and remote endpoints are ineligible.")
+    tid(settings, "wf-endpoint-url").fill("http://127.0.0.1:1234/v1")
+    tid(settings, "wf-review-trust").click()
+    confirm = page.get_by_role("dialog", name="Grant destination trust")
+    expect(confirm).to_contain_text("http://127.0.0.1:1234/v1")
+    tid(confirm, "ws-confirm").click()
+    expect(settings).to_contain_text("Destination trusted.")
+    assert request(ui, "/api/workshop/destination-trust")["grants"][0]["model"] == "local-model"
+    tid(settings, "wf-revoke-trust").click()
+    tid(page.get_by_role("dialog", name="Revoke destination trust"), "ws-confirm").click()
+    expect(settings).to_contain_text("Destination trust revoked.")
+    assert request(ui, "/api/workshop/destination-trust")["grants"] == []
+
+
+def test_workflow_form_round_trips_exact_constant(ui, open_page):
+    from conftest import request
+    page = open_page(ui)
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-new").click()
+    tid(page, "wf-workflow-name").fill("exact_constant")
+    for side, name in (("output", "answer"), ("constant", "value")):
+        tid(page, "wf-add-" + side).click()
+        dialog = tid(page, "ws-dialog")
+        tid(dialog, "wf-identifier").fill(name)
+        tid(dialog, "ws-add").click()
+    page.get_by_label("Constant format").select_option("json")
+    text = '{"big":9007199254740993,"ratio":0.10000000000000000001}'
+    tid(page, "wf-constant-value").fill(text)
+    page.get_by_label("Output source").select_option(label="Constant · value")
+    page.get_by_text("Contract · answer", exact=True).click()
+    page.locator('details[open] [data-test="wf-contract-format"]').select_option("any")
+    expect(page.locator('details[open] [data-test="wf-contract-editor"]')).to_have_attribute("data-format", "any")
+    tid(page, "wf-save").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+    tid(page, "wf-purpose").fill("Keep exact values across edits")
+    tid(page, "wf-save").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+    saved = request(ui, "/api/workshop/workflows/exact_constant")
+    assert "9007199254740993" in saved["editor"]["constants"]["value"]["value"]
+    assert "0.10000000000000000001" in saved["editor"]["constants"]["value"]["value"]
+    tid(page, "wf-run-view").click()
+    tid(page, "wf-preflight").click()
+    tid(page, "wf-run").click()
+    expect(tid(page, "wf-trace").locator("pre")).to_have_text(text)
+
+
+def test_workflow_rebind_keeps_verified_expectation_and_snapshot_runs(ui, open_page):
+    import shutil
+    from conftest import request, switch_history
+    from test_workshop import plan_save, send
+    from test_workflows import publish_workflow, transform, port
+    first = transform("counter", "count_text", {"unit":"whitespace_words"}, {"text":port()}, port("json"))
+    example = {"id":"fixed", "version":1, "label":"Two words", "verified":True, "inputs":{"text":"one two"},
+               "expectation":{"kind":"whole_output", "values":{"out":"2"}}}
+    publish_workflow(ui, first, examples=[example])
+    replacement = transform("characters", "count_text", {"unit":"characters"}, {"text":port()}, port("json"))
+    plan_save(ui, replacement)
+    switch_history(ui, True)
+    page = open_page(ui)
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-picker").select_option("chain")
+    tid(page, "wf-rebind-node").click()
+    dialog = page.get_by_role("dialog", name="Choose replacement revision")
+    tid(dialog, "wf-block-picker").select_option("characters")
+    expect(dialog).to_contain_text("Ready to capture")
+    tid(dialog, "ws-use-revision").click()
+    tid(page, "wf-save").click()
+    review = page.get_by_role("dialog", name="Review node rebind")
+    expect(review).to_contain_text("counter → characters")
+    tid(review, "ws-confirm").click()
+    expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+    shutil.rmtree(ui.state.workspace.path / "blocks" / "characters")
+    tid(page, "wf-picker").select_option("")
+    tid(page, "wf-picker").select_option("chain")
+    expect(tid(page, "wf-source-only")).to_contain_text("Workflow snapshot")
+    tid(page, "wf-run-view").click()
+    page.get_by_label("Two words", exact=True).check()
+    tid(page, "wf-preflight").click()
+    tid(page, "wf-run").click()
+    expect(tid(page, "wf-trace")).to_contain_text("Checks passed 1/1")
+    expect(tid(page, "wf-trace")).to_contain_text("Incorrect 1")
+    tid(page, "wf-examples").click()
+    tid(page, "wf-edit-example").click()
+    tid(page.get_by_role("dialog", name="Workflow example"), "wf-expected-out-(exact-json)").fill("7")
+    tid(page.get_by_role("dialog", name="Workflow example"), "ws-keep-example").click()
+    tid(page, "wf-save").click()
+    tid(page.get_by_role("dialog", name="Review workflow save"), "ws-confirm").click()
+    expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+    row = request(ui, "/api/workshop/workflows/chain")["examples"][0]
+    assert row["version"] == 2 and row["verified"] is False
+    page.get_by_role("tab", name="History", exact=True).click()
+    tid(page, "history-workflows").click()
+    tid(page.get_by_role("dialog", name="Workflow history"), "wf-evidence-job").click()
+    expect(page.get_by_role("dialog", name="Saved workflow run")).to_contain_text("chain · complete")
+
+
+def test_workflow_canvas_drag_uses_form_bindings_and_persists_layout(ui, open_page):
+    from conftest import request
+    from test_workflows import edit, port, transform
+    from test_workshop import plan_save
+    from agentwiz.jsonio import encode_exact
+
+    first = plan_save(ui, transform("counter", "count_text", {"unit": "whitespace_words"},
+                                    {"text": port()}, port("json")))
+    second = plan_save(ui, transform("reporter", "format_report", {"template": "Words: {{inputs.n}}"},
+                                     {"n": port("json")}, port()))
+    definition = {
+        "name": "canvas_flow", "purpose": "", "inputs": {"text": port()}, "constants": {},
+        "nodes": {"count": {"bindings": {"text": {"kind": "input", "port": "text"}}},
+                  "report": {"bindings": {}}},
+        "outputs": {"answer": {**port(), "binding": {"kind": "node", "node": "report", "port": "out"}}},
+    }
+    edit(ui, "save", {"name": "canvas_flow", "file_token": None, "definition_text": encode_exact(definition),
+                      "selections": {"count": {"key": "counter", "revision": first["durable_id"]},
+                                     "report": {"key": "reporter", "revision": second["durable_id"]}}})
+    page = open_page(ui)
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-picker").select_option("canvas_flow")
+    page.get_by_text("Canvas", exact=True).click()
+    tid(page, "wf-canvas-output-count-out").drag_to(tid(page, "wf-canvas-input-report-n"))
+    expect(page.get_by_label("Bind n · json")).to_have_value('{"kind":"node","node":"count","port":"out"}')
+    handle = tid(page, "wf-canvas-move-count")
+    handle.scroll_into_view_if_needed()
+    bounds = handle.bounding_box()
+    x, y = bounds["x"] + 20, bounds["y"] + 10
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + 34, y + 22, steps=4)
+    page.mouse.up()
+    expect(tid(page, "wf-canvas-node-count")).to_have_css("left", "44px")
+    tid(page, "wf-save").click()
+    tid(page.get_by_role("dialog", name="Review workflow save"), "ws-confirm").click()
+    expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+    saved = request(ui, "/api/workshop/workflows/canvas_flow")
+    assert saved["layout"]["count"] == {"x": 34, "y": 22}
+    assert saved["editor"]["nodes"]["report"]["bindings"]["n"]["node"] == "count"
+    tid(page, "wf-run-view").click()
+    tid(page, "wf-text").fill("one two")
+    tid(page, "wf-preflight").click()
+    tid(page, "wf-run").click()
+    expect(tid(page, "wf-trace").locator("pre")).to_have_text("Words: 2")
+
+
+def test_workflow_preflight_confirmation_modes_and_stop(ui, open_page, make_fake_mcp):
+    from conftest import add_server, simple_tool, wait_until
+    from test_workflows import port, publish_workflow
+    from agentwiz.jsonio import encode_exact
+
+    fake = make_fake_mcp("modern", tools=[simple_tool("lookup", behave=lambda call: (call.start_sse(), call.hold()))])
+    add_server(ui, "docs", fake.url)
+    publish_workflow(ui, {"key": "lookup", "files": {}, "definition_text": encode_exact({
+        "format_version": 4, "name": "lookup", "inputs": {"text": port()}, "outputs": {"out": port("json")},
+        "steps": [{"id": "lookup", "kind": "tool", "server": "docs", "tool": "lookup",
+                   "arguments": {"q": "{{inputs.text}}"}, "output": "out"}]})})
+    page = open_page(ui)
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-picker").select_option("chain")
+    tid(page, "wf-run-view").click()
+    tid(page, "wf-text").fill("query")
+    tid(page, "wf-preflight").click()
+    expect(tid(page, "wf-review")).to_contain_text("Every MCP workflow run")
+    tid(page, "wf-run").click()
+    tid(page.get_by_role("dialog", name="Confirm MCP workflow execution"), "ws-cancel").click()
+    assert not fake.methods("tools/call")
+    tid(page, "wf-preflight-settings").click()
+    settings = page.get_by_role("dialog", name="Workflow settings")
+    tid(settings, "wf-mcp-confirmation").select_option("effectful_batches")
+    tid(settings, "wf-save-mcp-confirmation").click()
+    expect(settings).to_contain_text("Confirmation preference saved.")
+    tid(settings, "ws-close").click()
+    tid(page, "wf-preflight").click()
+    expect(tid(page, "wf-review")).to_contain_text("Only MCP batches")
+    try:
+        tid(page, "wf-run").click()
+        wait_until(lambda: fake.holding > 0)
+        tid(page, "wf-stop").click()
+        expect(tid(page, "wf-trace")).to_contain_text("chain · unknown")
+        assert len(fake.methods("tools/call")) == 1
+    finally:
+        fake.release.set()
+
+
+@pytest.mark.parametrize("lose_lookup", [False, True])
+def test_workflow_start_recovers_lost_response(ui, open_page, lose_lookup):
+    from test_workflows import port, publish_workflow, transform
+
+    publish_workflow(ui, transform("count", "count_text", {"unit":"characters"}, {"text":port()}, port("json")))
+    page = open_page(ui)
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-picker").select_option("chain")
+    tid(page, "wf-run-view").click()
+    tid(page, "wf-text").fill("test")
+    tid(page, "wf-preflight").click()
+    bodies, operations = [], []
+
+    def intercept(route):
+        bodies.append(route.request.post_data_json)
+        response = route.fetch()
+        operations.append(response.json()["operation_id"])
+        if len(bodies) == 1:
+            route.abort()
+        else:
+            route.fulfill(response=response)
+
+    page.route("**/api/workshop/workflows/chain/run", intercept)
+    if lose_lookup:
+        page.route("**/api/workshop/tickets/*", lambda route: route.abort(), times=1)
+    tid(page, "wf-run").click()
+    if lose_lookup:
+        expect(tid(page, "wf-run")).to_have_text("Retry start")
+        expect(tid(page, "wf-picker")).to_be_disabled()
+        tid(page, "wf-run").click()
+    expect(tid(page, "wf-trace")).to_contain_text("chain · complete")
+    assert len(bodies) == (2 if lose_lookup else 1)
+    assert all(body == bodies[0] for body in bodies)
+    assert len(set(operations)) == 1

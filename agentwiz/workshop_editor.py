@@ -262,7 +262,7 @@ def classification(draft):
     return 'starter' if files.get('scripts/main.py') == expected and fingerprint(runtime) == m.get('runtime_digest') and set(runtime) == set(m.get('support', [])) else 'custom'
 
 
-def starter(identifier, key, role=None, server=None, tool=None):
+def starter(identifier, key, role=None, server=None, tool=None, *, version=1):
     if identifier in ('blank_model','blank_tool','blank_script'):
         kind = identifier.split('_')[1]
         draft = starter({'model':'write_text','tool':'call_tool','script':'format_report'}[kind], key, role, server, tool)
@@ -275,7 +275,7 @@ def starter(identifier, key, role=None, server=None, tool=None):
         draft['metadata'] = {'format_version':1,'origin':'manual','effects':'unknown'}
         draft['definition_text'] = jsonio.encode_exact(definition)
         return draft
-    if identifier not in STARTERS:
+    if identifier not in STARTERS or type(version) is not int or version not in (1, 2):
         fail()
     text = {'format': 'text'}
     obj = {'format_version': blocks.FORMAT_VERSION, 'name': key, 'description': identifier.replace('_', ' '),
@@ -298,9 +298,18 @@ def starter(identifier, key, role=None, server=None, tool=None):
                          'response_mode': 'named_json'}]
     elif identifier in SCRIPT_IDS:
         params = {'count_text': {'unit': 'whitespace_words'}, 'select_fields': {'mappings': [{'source_path': ['text'], 'destination': 'text', 'required': True}]}, 'format_report': {'template': '{{inputs.text}}'}}[identifier]
-        files, generated = generate_script(identifier, params)
-        m.update(generated)
-        obj['steps'] = [{'id': 'script', 'kind': 'script', 'file': 'scripts/main.py', 'timeout_s': 60}]
+        if version == 2:
+            obj['format_version'] = blocks.WORKFLOW_FORMAT_VERSION
+            for side in ('inputs', 'outputs'):
+                for declaration in obj[side].values():
+                    declaration['local_only'] = False
+            m.update(starter_version=2, parameters=params)
+            obj['steps'] = [{'id': 'transform', 'kind': 'transform', 'operation': identifier,
+                             'operation_version': 1, 'parameters': params, 'output': 'out'}]
+        else:
+            files, generated = generate_script(identifier, params)
+            m.update(generated)
+            obj['steps'] = [{'id': 'script', 'kind': 'script', 'file': 'scripts/main.py', 'timeout_s': 60}]
         if identifier != 'format_report':
             obj['outputs']['out']['contract'] = {'format': 'json'}
     else:
@@ -319,11 +328,40 @@ def edit(draft, operation):
     """Apply a targeted field edit to the authoritative contract on the server."""
     result = copy.deepcopy(draft)
     obj = jsonio.decode_exact(result['definition_text'])
-    if operation.get('kind') == 'design_form':
+    if operation.get('kind') in ('upgrade_for_workflows', 'convert_transform'):
+        kind = operation['kind']
+        step = obj['steps'][0]
+        if obj.get('format_version') != blocks.FORMAT_VERSION:
+            fail('invalid', 400)
+        if kind == 'convert_transform':
+            if step['kind'] != 'script' or classification(result) != 'starter':
+                fail('custom_source', 409)
+            meta = result['metadata']
+            operation_id, parameters = meta['starter'], meta['parameters']
+            obj['steps'] = [{'id': step['id'], 'kind': 'transform', 'operation': operation_id,
+                             'operation_version': 1, 'parameters': parameters, 'output': next(iter(obj['outputs']))}]
+            result['files'] = {}
+            result.pop('root_sources', None)
+            for field in ('runtime_digest', 'support', 'source_review'):
+                meta.pop(field, None)
+            meta['starter_version'] = 2
+        elif step['kind'] not in ('model', 'tool'):
+            fail('invalid', 400)
+        obj['format_version'] = blocks.WORKFLOW_FORMAT_VERSION
+        if kind == 'convert_transform':
+            for side in ('inputs', 'outputs'):
+                for port in obj[side].values():
+                    port['local_only'] = False
+        result['definition_text'] = jsonio.encode_exact(obj)
+    elif operation.get('kind') == 'design_form':
         result.setdefault('metadata', {})['display_name'] = operation['name']
         if 'revision_name' in operation:
             result['metadata']['revision_name'] = operation['revision_name']
         obj['description'] = operation['purpose']
+        if 'context_local_only' in operation:
+            if obj.get('format_version') != blocks.WORKFLOW_FORMAT_VERSION or type(operation['context_local_only']) is not bool:
+                fail()
+            obj['context_local_only'] = operation['context_local_only']
         for side, entries in operation['ports'].items():
             if side not in ('inputs', 'outputs'):
                 fail()
@@ -343,10 +381,12 @@ def edit(draft, operation):
                 else:
                     fail()
                 ports[name] = {**original, 'description': e['description'], 'contract': contract}
+                if obj.get('format_version') == blocks.WORKFLOW_FORMAT_VERSION and 'local_only' in e:
+                    ports[name]['local_only'] = e['local_only']
             obj[side] = ports
         step = obj['steps'][0]
         output_renames = {e['original']: e['name'] for e in operation['ports'].get('outputs', [])}
-        if step.get('kind') == 'tool' and step.get('output') in output_renames:
+        if step.get('kind') in ('tool', 'transform') and step.get('output') in output_renames:
             step['output'] = output_renames[step['output']]
         if step['kind'] == 'model':
             for key, value in [('prompt', operation['behaviour']), ('system', operation['system'])]:
@@ -390,7 +430,7 @@ def edit(draft, operation):
             step['repair'] = {'max_repairs': jsonio.decode_exact(operation['repairs'])}
         elif step['kind'] == 'script':
             result['files'][step['file']] = operation['behaviour']
-        else:
+        elif step['kind'] == 'tool':
             step.update(server=operation['binding'], tool=operation['behaviour'], arguments=jsonio.decode_exact(operation.get('arguments','{}')))
         obj['budget'] = jsonio.decode_exact(operation['budget'])
         for key, text in operation.get('limits', {}).items():
@@ -402,6 +442,11 @@ def edit(draft, operation):
                 obj['budget'].pop(key, None)
         result['definition_text'] = jsonio.encode_exact(obj)
     elif operation.get('kind') == 'starter_parameters':
+        if obj['steps'][0].get('kind') == 'transform' and result['metadata'].get('starter_version') == 2:
+            obj['steps'][0]['parameters'] = operation['parameters']
+            result['metadata']['parameters'] = operation['parameters']
+            result['definition_text'] = jsonio.encode_exact(obj)
+            return result
         if classification(result) != 'starter':
             fail('custom_source', 409)
         files, meta = generate_script(result['metadata']['starter'], operation['parameters'])

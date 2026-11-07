@@ -25,10 +25,10 @@ def test_malformed_placeholders_are_located_load_errors(text):
     assert err.value.location == "prompt" and "malformed placeholder" in err.value.message
 
 
-def test_steps_placeholders_are_refused_until_later():
+def test_steps_placeholders_are_refused_inside_a_block():
     with pytest.raises(TemplateError) as err:
         templates.scan_text("{{steps.a.b}}", "system")
-    assert "0.2.1" in err.value.message and err.value.location == "system"
+    assert "unsupported inside a block" in err.value.message and err.value.location == "system"
 
 
 def test_other_braces_are_left_alone():

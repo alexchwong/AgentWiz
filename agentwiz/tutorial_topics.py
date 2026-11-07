@@ -88,12 +88,23 @@ TOPICS: tuple[Topic, ...] = (
           "provenance.", "workshop", "0.2.0", "complete", True,
           _page("workshop.tutorialPrepare",
                 ["echo_numbers", {"id": "9007199254740993", "ratio": "0.10000000000000000001"}]), "ws-run-test"),
-    Topic("script-block", "Run and stop a script block",
-          "This block runs a small script that counts words. Run it for the count; then Try a script that waits, "
-          "Run it and press Stop to see a script and its process group ended.", "workshop", "0.2.0", "complete", True,
-          _page("workshop.tutorialPrepare", ["word_count", {"text": "The quick brown fox jumps over the lazy dog"}],
-                [{"id": "wait-script", "label": "Try a script that waits"}]), "ws-run-test"),
-    Topic("workshop-design", "Create a Workshop block", "Save the word counter and confirm its captured runtime. In Test, use New input and Run test for a one-off run, or select a prepared example. Add example keeps the current inputs in memory; Save example collection persists pending examples separately. Review correctness. Return to Design, change Count unit to Characters, Apply parameters and Save as new revision. The revision dropdown above the save buttons also lets you choose a revision and Overwrite selected revision after reviewing its replacement; this keeps its number instead of adding one. In Compare, choose the earlier baseline and compare the same examples; inspect both answers and totals.", "workshop", "0.2.0", "complete", False, _page("workshop.tutorialCreate"), "ws-save-revision"),
+    Topic("script-block", "Run a transform and stop a local model",
+          "Run the built-in word counter. Then try the local model that waits. Run it and press Stop.",
+          "workshop", "0.2.1", "complete", True,
+          _page("workshop.tutorialPrepare", ["tutorial_words", {"text": "The quick brown fox jumps over the lazy dog"}],
+                [{"id": "wait-script", "label": "Try a local model that waits"}]), "ws-run-test"),
+    Topic("workshop-design", "Create a Workshop block",
+          "Save the word counter and review its port labels. Run the prepared examples in Test. In Design, "
+          "change the count unit and save a new revision. Compare both revisions using the same examples.",
+          "workshop", "0.2.1", "complete", False, _page("workshop.tutorialCreate"), "ws-save-revision"),
+    Topic("workflow", "Wire and run a workflow",
+          "In Design, follow the input into Count words and Count characters, then follow both outputs into "
+          "Format report. The last stage was upgraded from v3 to v4 and has a local-only input. "
+          "In Run, preflight the prepared example, review the trusted local model and execution order, then "
+          "run it and inspect the node trace. The report reads Words: 2; characters: 7.",
+          "workflows", "0.2.1", "complete", False,
+          _page("workflows.tutorial", ["tutorial_report", "one two", "two_words"],
+                [{"id": "show-workflow-upgrade", "label": "Show the v3 model revision"}]), "wf-preflight"),
     *(Topic("assist-" + action, "Assist · " + action.replace("_", " "),
             "Open Assist, choose describe and confirm the destination. Save, refine or discard the proposed "
             "description of this saved revision; the executable block does not change."

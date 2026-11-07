@@ -1,4 +1,15 @@
 # NEWS
+
+## 0.2.1
+
+- Create and run workflows from Workshop using forms or a drag-and-connect canvas.
+- Review saved examples, workflow traces, and destination trust in the browser.
+- Added v4 block ports, built-in transforms and explicit conversion of legacy starters.
+- Added headless workflow planning, serial execution, saved examples and private run evidence.
+- Protected model and MCP calls require a workspace grant for the exact literal-loopback destination.
+- Workshop records draft lineage and refuses attributable generated host Python.
+- Stop preserves an unknown MCP outcome when the call may already have been sent.
+
 ## 0.2.0
 - The contract editor preserves a new choice while an earlier edit finishes.
 - Workshop Design places revision selection above Save as new revision and Overwrite selected revision.

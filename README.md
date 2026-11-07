@@ -313,6 +313,41 @@ and is protected from writes. An invalid or mismatched v1 sidecar can be replace
 can read its freshness token. The sidecar is independent of execution. Pruning a revision also
 removes its description.
 
+## Workflows
+
+In **Workshop → Workflows**, create a named workflow, add inputs and outputs, then add
+nodes from exact v4 block revisions. Use the binding forms to connect inputs, constants
+and node outputs. A binding can select an object field or an array index. The optional
+**Canvas** lets you drag cards and connect compatible ports. The Nodes form provides
+the same wiring and positioning controls with a keyboard.
+
+Save before running. In **Run**, enter one-off inputs or select saved examples. Use
+**Preflight** to review execution order, destination trust, and MCP confirmation, then
+run and inspect the node traces. Rebind explicitly to update a node's captured revision.
+A saved capture remains usable if its original block revision is removed.
+
+Open **Settings → Workflow settings** to manage destination grants and choose whether
+MCP requires confirmation on every run or only on batches. In **History → Workflow
+history**, open saved workflow records. The tutorial walks through a two-branch report
+and a protected model stage on an isolated local stand-in.
+
+## Workflow-ready blocks
+
+In Block Workshop, **Upgrade for workflows** creates a v4 draft from a v3 model or MCP block.
+Choose a locality label for each port and save the draft as a new revision.
+New count, field-selection and report starters are built-in transforms.
+**Convert to built-in transform** creates a fresh v4 draft from an intact historical starter.
+
+**Protect design context** applies to the block's design and assets. Port labels apply to the
+values they receive or produce. AgentWiz requires an exact workspace trust grant for protected
+model and MCP sends to literal loopback addresses such as `127.0.0.1` or `[::1]`.
+If your environment proxies HTTP requests, add the exact loopback host to its proxy bypass
+list. On macOS, check the bypass entries in System Settings as well. A receiving local
+service may relay data elsewhere, so grant trust only to services you control.
+
+Manually authored standalone Python runs with your filesystem and network access.
+AgentWiz refuses attributable generated Python, including descendants edited in Workshop.
+
 ## Settings
 
 Model-server connections are configured in `./config/model-servers.ini`, relative to the launch directory.
