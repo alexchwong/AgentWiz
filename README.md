@@ -331,6 +331,42 @@ MCP requires confirmation on every run or only on batches. In **History → Work
 history**, open saved workflow records. The tutorial walks through a two-branch report
 and a protected model stage on an isolated local stand-in.
 
+### Release Gates
+
+Choose **Add Release Gate** in a workflow. Bind `value` to the redacted text or JSON you
+want to release. Optionally bind `scan` to a local-only list of identifier originals
+(strings, or objects with `original` and optional `placeholder`). The Gate has an explicit
+contract for the selected value. Connect its `released` output to the next stage.
+
+The raw document, mapping and upstream outputs remain local-only. Ordinary nodes still
+inherit restriction from any local-only input. Only the Gate's separately identified output
+can cross that boundary, after you review and release its actual value. Setting a downstream
+port Local only restricts that output again. Sending a restricted mapping to OpenRouter is
+still refused. A later local reinjection stage reading the mapping produces restricted outputs.
+
+Enable **Local AI assessment** to request advisory findings from a separately assigned role.
+Set its assignment in Roles and grant its exact local destination in Workflow settings.
+Assessment always uses protected local dispatch, including for otherwise unrestricted candidates;
+it never falls back to a cloud model. Its findings and mapping are never added to the released value.
+Assessment attempts, including one permitted repair, consume normal model/time budgets.
+
+During a run, inspect the entire candidate and downstream destinations. Acknowledge identifier
+matches and any AI concerns/unavailability, then choose **Review and release**, **Reject** or
+**Stop**. The server enforces acknowledgements. A failed assessment is visibly unavailable,
+not a clean result; budget exhaustion and changed destinations stop execution. Literal scanning
+and AI findings can miss identifiers and do not certify anonymity.
+
+Each Gate execution needs a separate decision, including identical batch examples. Reject,
+Stop or expiry ends the remaining batch. Human review defaults to 30 minutes and is excluded
+from the execution budget. The run holds the shared Workshop slot while waiting. Reopening
+the Workflows tab after a browser reload recovers the active review. Restarting AgentWiz
+invalidates it; start a new run. There is no automatic approval or execution resume.
+
+Review covers downstream processing of this value at the displayed destinations, including
+indirect consumers through transforms. It does not show each eventual HTTP request or a
+provider's internal forwarding. Save runs remains opt-in. Gate workflows use bundle format 2;
+workflows without Gates stay at format 1. Workshop single-block Test/Compare do not run Gates.
+
 ## Workflow-ready blocks
 
 In Block Workshop, **Upgrade for workflows** creates a v4 draft from a v3 model or MCP block.
@@ -1223,3 +1259,4 @@ Stopping the original AgentWiz process also closes its tutorial.
 ## License
 
 MIT. See `LICENSE`.
+

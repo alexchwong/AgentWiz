@@ -7,7 +7,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from . import __version__, blocks, history, jsonio, output_protocol
+from . import __version__, blocks, history, jsonio, output_protocol, release_gate
 from .workshop import TOKEN
 from .workshop_assets import sync_directory
 from .workflow_definition import problem
@@ -53,9 +53,13 @@ class Evidence:
         self.manifest = {'format_version': 1, 'id': ident, 'outcome': 'running', 'intent': None,
                          'records': ['capture.json'], 'name': bundle['definition']['name']}
         capture = {'format_version': 1, 'agentwiz_version': __version__, 'renderer': output_protocol.RENDERER_VERSION,
-                   'definition': bundle['definition'], 'snapshots': bundle['snapshots'],
+                   'definition': bundle['definition'], 'snapshots': bundle['snapshots'], 'bundle_format_version': bundle['format_version'],
                    'review': {key: plan[key] for key in ('executable_digest', 'order', 'destinations', 'limits', 'examples',
                                                         'mcp_confirmation', 'repetitions', 'restricted_sources', 'saving')}}
+        if any('gate' in row for row in bundle['definition']['nodes'].values()):
+            capture['gate_assessment'] = {'version': release_gate.ASSESSMENT_VERSION,
+                                          'prompt': release_gate.ASSESSMENT_PROMPT,
+                                          'contract': release_gate.ASSESSMENT_CONTRACT}
         if 'example_plans' in plan:
             capture['review']['example_destinations'] = [review['destinations'] for review in plan['example_plans']]
         try:
@@ -110,6 +114,15 @@ class Evidence:
         self.manifest['intent'] = None
         self.persist()
 
+    def release_record(self, node, kind, record):
+        file = f'{self.case}-{self.file_key(node)}-release-{kind}.json'
+        self.write(file, record)
+        if file not in self.manifest['records']:
+            self.manifest['records'].append(file)
+        self.manifest['intent'] = ({'example': self.case, 'node': node, 'state': 'awaiting_release'}
+                                   if kind == 'review' else None)
+        self.persist()
+
     def finish(self, summary):
         self.write('result.json', summary)
         self.manifest['records'].append('result.json')
@@ -141,3 +154,4 @@ def read_record(state, ident, name, manifest):
         return jsonio.decode_file_exact(loaded.data)
     except ValueError:
         problem('evidence_unusable', 'evidence', 'the requested record is invalid')
+

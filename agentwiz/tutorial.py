@@ -181,6 +181,9 @@ class Tutorial:
             if topic.id == "script-block":
                 from .tutorial_support.workshop import ensure_stop_fixtures
                 ensure_stop_fixtures(state)
+            if topic.id == "release-gate":
+                from .tutorial_support.workshop import ensure_release_fixture
+                ensure_release_fixture(state, self.backend_url)
             if topic.id == "workflow":
                 from .tutorial_support.workshop import ensure_workflow_fixture
                 ensure_workflow_fixture(state, self.backend_url)
@@ -269,3 +272,4 @@ class Tutorial:
     def shutdown_all(self):
         """`Tutorial.shutdown_all()` (14.5): both halves."""
         self.finish(self.begin_shutdown())
+

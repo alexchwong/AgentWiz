@@ -177,7 +177,7 @@ def open_snapshot(snapshot_id, snapshot, stack, location):
 
 def bundle_graph(bundle, name, stack):
     record(bundle, ('format_version', 'definition', 'snapshots', 'layout', 'examples'), (), name)
-    integer(bundle['format_version'], 1, 1, 'format_version')
+    integer(bundle['format_version'], 1, 2, 'format_version')
     definition = record(bundle['definition'], ('name', 'purpose', 'inputs', 'outputs', 'constants', 'nodes'),
                         ('budget',), 'definition')
     if definition['name'] != name or not isinstance(definition['purpose'], str) or len(definition['purpose']) > 4096:
@@ -235,8 +235,19 @@ def bundle_graph(bundle, name, stack):
             problem('invalid', location, 'example restrictions must be true', 400)
         if not isinstance(example['expectation'], dict):
             problem('invalid', location, 'expected a workflow expectation', 400)
+    has_gates = any(isinstance(row, dict) and 'gate' in row for row in nodes.values())
+    if has_gates and bundle['format_version'] != 2:
+        problem('invalid', 'format_version', 'release gates require bundle version 2', 400)
     opened, by_node = {}, {}
     for node, row in nodes.items():
+        if isinstance(row, dict) and 'gate' in row:
+            from . import release_gate
+            record(row, ('gate', 'bindings'), (), f'nodes.{node}')
+            release_gate.parse(row['gate'], f'nodes.{node}.gate')
+            names(row['bindings'], 0, 2, f'nodes.{node}.bindings')
+            if row['bindings'].keys() - {'value', 'scan'}:
+                problem('invalid', f'nodes.{node}', 'unknown gate input', 400)
+            continue
         record(row, ('snapshot_id', 'bindings'), (), f'nodes.{node}')
         snapshot_id = row['snapshot_id']
         if not isinstance(snapshot_id, str) or snapshot_id not in snapshots:
@@ -293,3 +304,4 @@ class Store:
                 return token
         finally:
             writer.release()
+

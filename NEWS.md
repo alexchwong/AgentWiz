@@ -2,6 +2,10 @@
 
 ## 0.2.1
 
+- Release Gates pause workflows for explicit human approval without removing local-only protection from source data.
+- Optional trusted local AI assessment and identifier checks assist release review; acknowledgements are enforced by the server.
+- Reopen Workflows after a browser reload to recover an active review; restart invalidates pending approvals.
+
 - Create and run workflows from Workshop using forms or a drag-and-connect canvas.
 - Review saved examples, workflow traces, and destination trust in the browser.
 - Added v4 block ports, built-in transforms and explicit conversion of legacy starters.
@@ -143,3 +147,4 @@
 - API keys stay in memory, are never shown again, and error messages never include them.
 - `agentwiz --version` reports AgentWiz and modelSpell versions; `--port` and `--no-browser` control launch.
 - Released as a wheel on GitHub releases; pin it by URL and sha256.
+

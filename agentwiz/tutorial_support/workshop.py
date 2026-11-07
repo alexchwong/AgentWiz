@@ -137,3 +137,39 @@ def ensure_workflow_fixture(state, backend_url):
                              'expectation': {'kind': 'whole_output', 'values': {'report': 'Words: 2; characters: 7'}}}]}
     plan = service.workflows.plan('workflow_save', request)
     service.workflows.edit('workflow_save', request, {'request': request, 'expected_plan': plan['expected_plan']})
+
+
+
+def ensure_release_fixture(state, backend_url):
+    from .. import outbound_policy
+    service = state.workshop
+    _assign_role(state, 'tutorial_risk', 'release-risk')
+    _assign_role(state, 'tutorial_release', 'workflow-report')
+    destination = {'kind': 'openai_compat', 'url': backend_url, 'model': 'release-risk', 'provider': ''}
+    grants = outbound_policy.view(state)
+    if destination not in grants['grants']:
+        outbound_policy.update(state, {'expected_revision': grants['revision'], 'destination': destination, 'trusted': True})
+    if service.workflows.store.read('tutorial_release')[0] is not None:
+        return
+    draft = {'key': 'release_consumer', 'files': {}, 'definition_text': jsonio.encode_exact({
+        'format_version': 4, 'name': 'release_consumer',
+        'inputs': {'text': {'contract': {'format': 'text'}, 'local_only': False}},
+        'outputs': {'out': {'contract': {'format': 'text'}, 'local_only': False}},
+        'steps': [{'id': 'run', 'kind': 'model', 'role': 'tutorial_release', 'response_mode': 'named_json',
+                   'prompt': {'text': '{{inputs.text}}'}}]})}
+    draft = service.import_draft({'draft': draft})['draft']
+    saved = publish_fixture(service, draft)
+    text = {'contract': {'format': 'text'}, 'local_only': False}
+    definition = {'name': 'tutorial_release', 'purpose': 'Review synthetic redacted text before releasing it.',
+        'inputs': {'text': {**text, 'local_only': True}},
+        'constants': {'mapping': {'value': [{'original': 'Alice', 'placeholder': '[P1]'}], 'local_only': True}},
+        'outputs': {'out': {**text, 'binding': {'kind': 'node', 'node': 'consumer', 'port': 'out'}}},
+        'nodes': {
+            'review': {'gate': {'kind': 'release', 'title': 'Review synthetic candidate', 'contract': {'format': 'text'},
+                                  'assessment': {'enabled': True, 'role': 'tutorial_risk'}},
+                       'bindings': {'value': {'kind': 'input', 'port': 'text'}, 'scan': {'kind': 'constant', 'name': 'mapping'}}},
+            'consumer': {'bindings': {'text': {'kind': 'node', 'node': 'review', 'port': 'released'}}}}}
+    request = {'name': 'tutorial_release', 'file_token': None, 'definition_text': jsonio.encode_exact(definition),
+               'selections': {'consumer': {'key': 'release_consumer', 'revision': saved['durable_id']}}}
+    plan = service.workflows.plan('workflow_save', request)
+    service.workflows.edit('workflow_save', request, {'request': request, 'expected_plan': plan['expected_plan']})

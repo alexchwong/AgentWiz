@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import dataclasses
 import heapq
+import hashlib
+import secrets
+import copy
 import threading
 import time
 
-from . import checks, jsonio, model_call, outbound_policy, runner, runs, task_settings
+from . import release_gate, checks, jsonio, model_call, outbound_policy, runner, runs, task_settings
 from .state import NoSuchServer, RoleUnresolved
 from .workflow_evidence import EvidenceError
 from .workflow_definition import bundle_graph, digest, names, problem, select, source, value_text
@@ -23,8 +26,16 @@ class Graph:
         self.bundle = bundle
         self.captures, self.contracts = bundle_graph(bundle, name, stack)
         self.definition = definition = bundle['definition']
-        self.digest = digest({'definition': definition, 'snapshots': bundle['snapshots']})
+        self.gates = {node: row['gate'] for node, row in definition['nodes'].items() if 'gate' in row}
+        identity = {'definition': definition, 'snapshots': bundle['snapshots']}
+        if self.gates:
+            identity.update(bundle_format=bundle['format_version'], assessment_version=release_gate.ASSESSMENT_VERSION,
+                            assessment_prompt=release_gate.ASSESSMENT_PROMPT, assessment_contract=release_gate.ASSESSMENT_CONTRACT)
+        self.digest = digest(identity)
         self.blocks = {node: opened.parsed.block for node, opened in self.captures.items()}
+        self.assessments = {node: release_gate.assessment_capture(config, stack) for node, config in self.gates.items()}
+        self.blocks.update({node: release_gate.block(config, definition['nodes'][node]['bindings'])
+                            for node, config in self.gates.items()})
         self.sources = {}
         self.source_contracts = {}
         self.restricted = set()
@@ -110,6 +121,10 @@ class Graph:
     def propagate(self):
         for node in self.order:
             block = self.blocks[node]
+            if node in self.gates:
+                if self.assessments[node] is not None:
+                    self.protected_nodes.add(node)
+                continue
             if block.context_local_only or any(identity in self.restricted for identity, _, _ in self.bindings[node].values()):
                 self.protected_nodes.add(node)
                 inherited = next((self.origins.get(identity, location)
@@ -179,12 +194,48 @@ class Graph:
                 bound_value(values, binding, self.contracts['outputs'][name])
         return values
 
+    def release_scope(self, node):
+        reached, pending = set(), [node]
+        while pending:
+            current = pending.pop()
+            for consumer, bindings in self.bindings.items():
+                if consumer in reached or not any(binding[0][0] == 'node' and binding[0][1] == current
+                                                   for binding in bindings.values()):
+                    continue
+                reached.add(consumer)
+                if consumer not in self.gates:
+                    pending.append(consumer)
+        return {key: self.destination_views[key] for key in sorted(reached) if key in self.destination_views}
+
+    def released_lineage(self, identity):
+        pending, seen, boundary = [identity], set(), False
+        while pending:
+            current = pending.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            if current[0] == 'constant':
+                continue
+            if current[0] != 'node':
+                continue
+            node = current[1]
+            if node in self.gates:
+                boundary = True
+                continue
+            bindings = self.bindings[node]
+            pending.extend(binding[0] for binding in bindings.values())
+        return boundary
+
     def ancestor_warnings(self):
         issues = []
-        origins = [(binding[0], binding[2]) for bindings in self.bindings.values()
-                   for binding in bindings.values() if binding[0] in self.restricted]
-        origins.extend((binding[0], binding[2]) for binding in self.final.values() if binding[0] in self.restricted)
-        for identity, location in origins:
+        origins = [(binding[0], binding[2], node in self.gates) for node, bindings in self.bindings.items()
+                   for name, binding in bindings.items() if (node in self.gates and name == 'value')
+                   or (name == 'scan' and binding[0] in self.restricted)
+                   or (node not in self.gates and binding[0] in self.restricted)]
+        origins.extend((binding[0], binding[2], False) for binding in self.final.values() if binding[0] in self.restricted)
+        # Safety errors must not be hidden behind the bounded ordinary warning list.
+        origins.sort(key=lambda row: not row[2])
+        for identity, location, releasing in origins:
             frontier, seen = [identity], set()
             while frontier:
                 source_id = frontier.pop()
@@ -192,9 +243,12 @@ class Graph:
                     continue
                 seen.add(source_id)
                 node = source_id[1]
-                if node not in self.protected_nodes and self.blocks[node].step.kind in ('model', 'tool'):
+                if node in self.gates:
+                    continue
+                if (node not in self.protected_nodes and self.blocks[node].step.kind in ('model', 'tool')
+                        and not (releasing and self.released_lineage(source_id))):
                     warning = issue('unrestricted_ancestor', location, f'upstream node {node} can dispatch before this restriction applies')
-                    issues.append({**warning, 'severity': 'warning'})
+                    issues.append({**warning, 'severity': 'error' if releasing else 'warning'})
                     if len(issues) >= 32:
                         return issues
                 frontier.extend(binding[0] for binding in self.bindings[node].values())
@@ -209,6 +263,11 @@ class Graph:
         required = 0
         for node in self.order:
             block = self.blocks[node]
+            if node in self.gates:
+                opened = self.assessments[node]
+                if opened is None:
+                    continue
+                block = opened.parsed.block
             step = block.step
             if step.kind == 'transform':
                 continue
@@ -259,13 +318,28 @@ class Graph:
                 self.runtime[node] = snapshot, role, guard
             except (outbound_policy.Refused, NoSuchServer, RoleUnresolved, task_settings.TaskSettingError) as exc:
                 code = str(exc) if isinstance(exc, outbound_policy.Refused) else 'destination_unavailable'
-                issues.append(issue(code, location, 'the reviewed destination is unavailable or cannot receive these values'))
+                restricted_gate = next((binding for binding in self.bindings[node].values()
+                                        if binding[0] in self.restricted and binding[0][0] == 'node'
+                                        and binding[0][1] in self.gates), None)
+                if isinstance(exc, outbound_policy.Refused) and restricted_gate:
+                    origin = self.origins.get(restricted_gate[0], restricted_gate[2])
+                    issues.append(issue(code, origin, 'this local-only port restricts the released value; the destination cannot receive it'))
+                else:
+                    issues.append(issue(code, location, 'the reviewed destination is unavailable or cannot receive these values'))
         if required > self.definition.get('budget', {}).get('max_model_attempts', 32):
             issues.append(issue('budget_exceeded', 'budget.max_model_attempts', 'budget is below the required initial model calls'))
+        self.destination_views = destinations
         return destinations, issues, private
 
     def preflight(self, inputs):
         issues = list(self.issues)
+        for node in self.gates:
+            binding = self.bindings[node].get('value')
+            if binding and binding[0] not in self.restricted:
+                issues.append({**issue('release_unneeded', f'nodes.{node}', 'the candidate is already unrestricted'), 'severity': 'warning'})
+            scan = self.bindings[node].get('scan')
+            if scan and scan[0] not in self.restricted:
+                issues.append(issue('scan_unrestricted', f'nodes.{node}.scan', 'identifier mapping must be local-only'))
         try:
             self.initial_values(inputs)
         except WorkshopError as exc:
@@ -317,11 +391,22 @@ class Job(runner.Observer):
         self.batch = False
         self.live_rows = {}
         self.reviews = {}
+        self.ident = secrets.token_hex(16)
+        self.phase = 'running'
+        self.release_condition = threading.Condition(self.lock)
+        self.pending_release = None
+        self.release_choice = None
+        self.release_deadline = 0
+        self.release_decisions = {}
+        self.budget_epoch = 0
+        self.budget_paused = False
+        self.deadline = float('inf')
 
     def view(self):
         with self.lock:
             if self.result is None:
-                return {'outcome': 'running', 'example_index': self.case, 'nodes': dict(self.live_rows)}
+                return {'outcome': 'running', 'phase': self.phase, 'example_index': self.case,
+                        'nodes': dict(self.live_rows), 'release': copy.deepcopy(self.pending_release)}
             return {**self.result, 'reviews': list(self.reviews.values())} if self.reviews else self.result
 
     def detail(self, node):
@@ -338,6 +423,7 @@ class Job(runner.Observer):
             if self.reason is None:
                 self.reason = reason
             child, reason = self.child, self.reason
+            self.release_condition.notify_all()
         if child is not None:
             try:
                 self.state.store.stop_run(child, reason)
@@ -365,7 +451,163 @@ class Job(runner.Observer):
             self.attempts += 1
             return True
 
+    def _budget_expired(self, epoch):
+        with self.lock:
+            if epoch != self.budget_epoch or self.budget_paused or self.result is not None:
+                return
+            if self.reason is None:
+                self.reason = runs.BUDGET_EXCEEDED
+            child = self.child
+            self.release_condition.notify_all()
+        if child is not None:
+            try:
+                self.state.store.stop_run(child, runs.BUDGET_EXCEEDED)
+            except runs.NoSuchRunInMemory:
+                pass
+
+    def _start_budget(self, seconds):
+        with self.lock:
+            self.budget_epoch += 1
+            epoch = self.budget_epoch
+            self.budget_paused = False
+            self.deadline = time.monotonic() + seconds
+        self.budget_timer = runner.make_timer(max(0, seconds), lambda: self._budget_expired(epoch))
+
+    def _pause_budget(self):
+        with self.lock:
+            remaining = max(0, self.deadline - time.monotonic())
+            self.budget_epoch += 1
+            self.budget_paused = True
+            if remaining <= 0 and self.reason is None:
+                self.reason = runs.BUDGET_EXCEEDED
+        self.budget_timer.cancel()
+        return remaining
+
+    def decide_release(self, body):
+        from .workflow_definition import record
+        record(body, ('token', 'payload_digest', 'executable_digest', 'scope_digest', 'checks_digest', 'decision'),
+               ('acknowledge_identifiers', 'acknowledge_assessment'), 'release')
+        for key in ('acknowledge_identifiers', 'acknowledge_assessment'):
+            if key in body and type(body[key]) is not bool:
+                problem('invalid', 'release', 'acknowledgements must be booleans', 400)
+        if body['decision'] not in ('release', 'reject') or not isinstance(body['token'], str):
+            problem('invalid', 'release', 'expected release or reject and a decision token', 400)
+        request_digest = digest(body)
+        with self.lock:
+            previous = self.release_decisions.get(body['token'])
+            if previous is not None:
+                if previous[0] == request_digest:
+                    return previous[1]
+                problem('release_stale', 'release', 'this gate already has a different decision')
+            current = self.pending_release
+            if (not current or self.phase != 'awaiting_release' or self.reason is not None
+                    or current['token'] != body['token'] or time.monotonic() >= self.release_deadline
+                    or any(body[key] != current[key] for key in
+                           ('payload_digest', 'executable_digest', 'scope_digest', 'checks_digest'))):
+                problem('release_stale', 'release', 'this release review is no longer current')
+            if body['decision'] == 'release':
+                if current['identifier_check']['hits'] and not body.get('acknowledge_identifiers', False):
+                    problem('release_acknowledgement_required', 'release', 'acknowledge the identifier matches')
+                assessment = current['assessment']
+                if (assessment['status'] == 'unavailable' or assessment.get('findings')) and not body.get('acknowledge_assessment', False):
+                    problem('release_acknowledgement_required', 'release', 'acknowledge the assessment concerns or unavailability')
+            self.release_choice = {key: value for key, value in body.items() if key != 'token'}
+            self.phase = 'deciding_release'
+            response = {'status': 'accepted', 'decision': body['decision']}
+            self.release_decisions[body['token']] = request_digest, response
+            self.release_condition.notify_all()
+            return response
+
+    def execute_gate(self, graph, node, values):
+        from datetime import datetime, timezone
+        block, config = graph.blocks[node], graph.gates[node]
+        value, _ = bound_value(values, graph.bindings[node]['value'], block.contracts['inputs']['value'].parsed)
+        text = release_gate.representation(value, block.contracts['outputs']['released'].parsed)
+        scan_binding = graph.bindings[node].get('scan')
+        mapping = select(values[scan_binding[0]], scan_binding[1], scan_binding[2]) if scan_binding else []
+        scan = release_gate.identifier_check(value, mapping, configured=scan_binding is not None)
+        assessment = {'status': 'not_configured', 'findings': []}
+        assessment_trace = None
+        opened = graph.assessments[node]
+        if opened is not None:
+            with self.lock:
+                self.phase = 'assessing_release'
+                self.live_rows[node] = {'outcome': 'assessing_release'}
+            if self.evidence:
+                self.evidence.pending(node)
+            snapshot, role, guard = graph.runtime[node]
+            frozen = runner.FrozenSource(snapshot, False, {'workflow_node': node, 'release_assessment': True},
+                                         owner=opened, capture=role, protected=True, dispatch=guard,
+                                         attempt_gate=self.allow_attempt)
+            assessment_trace = runner.run_block(self.state, load_capture(opened, opened.parsed.block.name),
+                {'candidate': text, 'mapping': jsonio.encode_exact(mapping)}, self, frozen=frozen).result
+            with self.lock:
+                self.child = None
+            if self.reason is not None:
+                return {'outcome': 'stopped' if self.reason == runs.USER_STOP else 'budget_exceeded', 'outputs': {}}
+            if self.evidence and self.evidence.error:
+                raise EvidenceError('assessment evidence could not be written')
+            if assessment_trace['outcome'] == 'complete':
+                findings = jsonio.decode_exact(assessment_trace['outputs']['assessment']['text'])['findings']
+                assessment = {'status': 'complete', 'findings': findings}
+            else:
+                failures = [step.get('failure') for step in assessment_trace.get('steps', [])]
+                failures.extend((step.get('operation') or {}).get('reason') for step in assessment_trace.get('steps', []))
+                failures.extend(item.get('message') for item in assessment_trace.get('issues', []))
+                if assessment_trace['outcome'] in ('budget_exceeded', 'stopped', 'unknown') or any(str(failure).startswith('destination_') for failure in failures):
+                    return assessment_trace
+                assessment = {'status': 'unavailable', 'reason': assessment_trace['outcome'], 'findings': []}
+        scope = graph.release_scope(node)
+        wait = release_gate.review_wait(config)
+        review = {'run_id': self.ident, 'example_index': self.case, 'gate': node, 'title': config['title'],
+                  'format': block.contracts['outputs']['released'].parsed.format, 'payload': text,
+                  'payload_digest': hashlib.sha256(text.encode('utf-8')).hexdigest(),
+                  'executable_digest': graph.digest, 'destinations': scope, 'scope_digest': digest(scope),
+                  'identifier_check': scan, 'assessment': assessment,
+                  'checks_digest': digest([scan, assessment])}
+        if self.evidence:
+            self.evidence.release_record(node, 'review', {**review, 'max_release_wait_seconds': wait,
+                                                         'assessment_trace': assessment_trace})
+        remaining = self._pause_budget()
+        if self.reason is not None:
+            return {'outcome': 'stopped' if self.reason == runs.USER_STOP else 'budget_exceeded', 'outputs': {}}
+        review['expires_at'] = time.time() + wait
+        with self.lock:
+            self.release_choice = None
+            self.release_deadline = time.monotonic() + wait
+            self.pending_release = {**review, 'token': secrets.token_hex(32)}
+            self.phase = 'awaiting_release'
+            self.live_rows[node] = {'outcome': 'awaiting_release'}
+            while self.release_choice is None and self.reason is None:
+                left = self.release_deadline - time.monotonic()
+                if left <= 0:
+                    break
+                self.release_condition.wait(left)
+            choice = self.release_choice
+            stopped = self.reason
+            self.pending_release = None
+            self.phase = 'running'
+        outcome = ('stopped' if stopped == runs.USER_STOP else 'budget_exceeded') if stopped else (
+            'release_expired' if choice is None else 'release_rejected' if choice['decision'] == 'reject' else 'complete')
+        self._start_budget(remaining)
+        decision = {key: review[key] for key in ('run_id', 'example_index', 'gate', 'payload_digest',
+                    'executable_digest', 'destinations', 'scope_digest', 'checks_digest')}
+        decision.update(decision=choice['decision'] if choice else outcome,
+                        timestamp=datetime.now(timezone.utc).isoformat(),
+                        identifier_hits=[{'start': hit['start'], 'end': hit['end'], 'identifier': hit['identifier']}
+                                         for hit in scan['hits']],
+                        assessment_status=assessment['status'],
+                        acknowledge_identifiers=bool(choice and choice.get('acknowledge_identifiers')),
+                        acknowledge_assessment=bool(choice and choice.get('acknowledge_assessment')))
+        if self.evidence:
+            self.evidence.release_record(node, 'decision', decision)
+        return {'outcome': outcome, 'release_decision': decision, 'release_review': review,
+                'assessment_trace': assessment_trace,
+                'outputs': {'released': {'format': review['format'], 'text': text}} if outcome == 'complete' else {}}
+
     def execute_node(self, graph, node, values):
+        if node in graph.gates:
+            return self.execute_gate(graph, node, values)
         opened, block = graph.captures[node], graph.blocks[node]
         texts = {name: bound_value(values, binding, block.contracts['inputs'][name].parsed)[1]
                  for name, binding in graph.bindings[node].items()}
@@ -385,8 +627,7 @@ class Job(runner.Observer):
         timeout = budget.get('max_seconds', 1800)
         self.attempt_limit = budget.get('max_model_attempts', 32)
         self.attempts = 0
-        deadline = time.monotonic() + timeout
-        timer = runner.make_timer(timeout, lambda: self.cancel(runs.BUDGET_EXCEEDED))
+        self._start_budget(timeout)
         rows = {node: {'outcome': 'not_run'} for node in graph.order}
         with self.lock:
             self.live_rows = dict(rows)
@@ -450,9 +691,12 @@ class Job(runner.Observer):
         except runner.Busy:
             issues, outcome = [issue('admission_busy', 'workflow', 'a child execution slot is busy')], 'rejected'
         finally:
-            timer.cancel()
+            self.budget_timer.cancel()
             with self.lock:
-                if self.reason is not None or time.monotonic() >= deadline:
+                self.budget_epoch += 1
+                self.pending_release = None
+                self.phase = 'running'
+                if self.reason is not None or (not self.budget_paused and time.monotonic() >= self.deadline):
                     if outcome != 'unknown':
                         outcome = 'stopped' if self.reason == runs.USER_STOP else 'budget_exceeded'
         reason = issues[0]['code'] if issues else ('call_unknown' if outcome == 'unknown' else outcome)
@@ -466,7 +710,7 @@ class Job(runner.Observer):
     def execute_batch(self, graph, examples):
         self.batch = len(examples) > 1 or examples[0].get('id') is not None
         rows = []
-        terminal = {'unknown', 'stopped'}
+        terminal = {'unknown', 'stopped', 'release_rejected', 'release_expired'}
         fatal = {'admission_busy', 'evidence_write_failed', 'destination_changed'}
         end_batch = None
         preview_bytes = 0
@@ -481,6 +725,7 @@ class Job(runner.Observer):
                 self.evidence.case = index
             graph.select_example(example)
             graph.runtime = graph.example_runtime[index]
+            graph.destination_views = graph.example_destinations[index]
             row = self.execute(graph, example['inputs'])
             with self.lock:
                 if self.reason == runs.USER_STOP and row['outcome'] != 'unknown':
@@ -489,7 +734,8 @@ class Job(runner.Observer):
                                     example.get('verified', False))
             end_batch = next((item['code'] for item in row['issues'] if item['code'] in fatal), None)
             if not end_batch and row['outcome'] in terminal:
-                end_batch = 'call_unknown' if row['outcome'] == 'unknown' else 'user_stop'
+                end_batch = ('call_unknown' if row['outcome'] == 'unknown' else
+                             'user_stop' if row['outcome'] == 'stopped' else row['outcome'])
             if not self.batch:
                 return row
             if not end_batch:
@@ -522,4 +768,5 @@ class Job(runner.Observer):
             'correct': sum(r['correctness'] == 'correct' for r in done),
             'incorrect': sum(r['correctness'] == 'incorrect' for r in done),
             'unknown': sum(r['correctness'] == 'unknown' for r in rows)}}
+
 

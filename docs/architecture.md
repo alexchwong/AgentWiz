@@ -1253,3 +1253,65 @@ object or existing clients can submit `definition_text`. The server decodes each
 exact value separately. The form and canvas share node bindings and layout. The
 canvas previews compatible direct connections and uses the same reviewed save
 operation as the form. Layout has no effect on dispatch order.
+
+
+
+### Release Gate boundary
+
+`release_gate.py` owns built-in Gate validation, local identifier matching and the fixed,
+versioned assessment definition. `workflow_definition.py` accepts bundle versions 1 and 2;
+a Gate row has `gate` and `bindings`, never `snapshot_id`. Saves containing Gates write version 2;
+ordinary workflows continue to write version 1. Gate contracts are exact-text fields in the
+editor projection, as are workflow input/output contracts. Assessment prompt, version and
+contract participate in Gate executable identity and saved capture evidence. The internal
+assessment is a captured v4 model block using the existing runner, validation and repair path.
+
+A Gate reads `value` and optional restricted `scan`; its sole output is `released`. Planning
+allows that output to be unrestricted while runtime creates it only after an explicit decision.
+No source/sibling identity is relabelled. Existing source-level reverse marking and ordinary
+all-output inheritance apply after the boundary. Scan sources must already be restricted.
+Unprotected candidate ancestors are errors, except dispatches whose variable lineage already
+passes through earlier Gates. Traversal continues on other branches. Downstream review scope
+includes indirect dispatch consumers and later Gates' local assessments, stopping at those
+Gates' outputs. Captured destination guards remain authoritative before actual sends.
+
+The Gate's own optional assessment is always protected and requires a literal-loopback grant.
+It uses a separate role, fixed instructions and a JSON findings contract, with one repair.
+Assessment data, findings and traces remain restricted; only the candidate becomes released.
+Invalid assessment responses allow an acknowledged manual decision, but Stop, budget exhaustion,
+unknown send outcomes, evidence failure and destination refusals do not become advisory passes.
+
+Jobs remain `outcome: running` and expose phases `assessing_release`, `awaiting_release` and
+`deciding_release`. A Condition shares the job lock; Stop notifies it and performs child Stop
+outside the lock. A generation-bound execution timer prevents a cancelled callback from firing
+against a human pause. Remaining execution time resumes after the decision; review waits have
+a separate monotonic timeout. Evidence writes and model calls occur outside the job lock.
+The Workshop slot and registered writer remain owned until normal job cleanup.
+
+Additional authenticated Workshop routes:
+
+| Route | Behaviour |
+| --- | --- |
+| `GET workflow-active` | Returns operation ID, name and batch flag for the active workflow, or an empty object. |
+| `POST workflow-jobs/<id>/release` | Sends token, payload/executable/scope/checks digests, decision (`release` or `reject`) and optional boolean acknowledgements. |
+
+The `release` object in a waiting job contains the immutable candidate, destination scope,
+checks, expiry and a fresh token. Tokens are run/example/node specific, never saved, and never
+accepted across pauses. Validation and one-shot decision selection are atomic under the job lock.
+Exact duplicate submissions are idempotent; conflicting/stale/expired submissions return
+`409 release_stale`. Missing required acknowledgement returns `409 release_acknowledgement_required`.
+The worker persists a selected decision before exposing output when saving is enabled; a
+write failure prevents downstream execution. A successful submission response acknowledges
+selection, not completion of subsequent execution. Stop still prevents later dispatch.
+
+Review/decision records use the existing private evidence store only when Save runs is enabled.
+Compact decision records contain hit offsets and placeholder/index labels, not copied originals,
+JSON paths potentially containing originals, assessment prose or approval tokens. Restricted
+review records retain paths and optional assessment traces subject to existing redaction/limits.
+A process restart shows incomplete evidence as interrupted and cannot resume approval.
+
+Identifier checking accepts up to 1000 bounded nonempty originals and 1000 hits, with a
+16 MiB character-comparison work limit. Exceeding a limit or malformed input fails visibly.
+Unicode case-fold expansions map back to original code-point offsets. JSON property names and
+string values are checked with paths; numeric/null/boolean values are preserved. JSON release
+review uses deterministic exact serialisation, not a claim about downstream HTTP byte layout.

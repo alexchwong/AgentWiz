@@ -2066,3 +2066,47 @@ def test_workflow_start_recovers_lost_response(ui, open_page, lose_lookup):
     assert len(bodies) == (2 if lose_lookup else 1)
     assert all(body == bodies[0] for body in bodies)
     assert len(set(operations)) == 1
+
+
+
+def test_release_gate_form_approval_and_browser_reconnect(ui, open_page):
+    page = open_page(ui)
+    errors = []
+    page.on('pageerror', lambda exc: errors.append(str(exc)))
+    page.get_by_role('tab', name='Workflows').click()
+    tid(page, 'wf-new').click()
+    tid(page, 'wf-workflow-name').fill('browser_gate')
+    for side, name in [('input', 'text'), ('output', 'out')]:
+        tid(page, 'wf-add-' + side).click()
+        dialog = tid(page, 'ws-dialog')
+        tid(dialog, 'wf-identifier').fill(name)
+        tid(dialog, 'ws-add').click()
+    page.get_by_role('checkbox', name='Local only', exact=True).first.check()
+    tid(page, 'wf-add-gate').click()
+    dialog = tid(page, 'ws-dialog')
+    tid(dialog, 'wf-identifier').fill('review')
+    tid(dialog, 'ws-add').click()
+    page.get_by_label('Bind value').select_option(label='Input · text')
+    page.get_by_label('Output source').select_option(label='review · released')
+    tid(page, 'wf-save').click()
+    tid(tid(page, 'ws-dialog'), 'ws-confirm').click()
+    expect(tid(page, 'wf-save')).to_be_disabled()
+    saved = request(ui, '/api/workshop/workflows/browser_gate')
+    assert saved['editor']['nodes']['review']['gate']['kind'] == 'release'
+    tid(page, 'wf-run-view').click()
+    text = 'Reviewed candidate\n' * 100
+    tid(page, 'wf-text').fill(text)
+    tid(page, 'wf-preflight').click()
+    tid(page, 'wf-run').click()
+    expect(tid(page, 'wf-release-payload')).to_have_text(text.strip())
+    # Reopening the page recovers the active pause through the authenticated endpoint.
+    page.reload()
+    page.get_by_role('tab', name='Workflows').click()
+    expect(tid(page, 'wf-release-panel')).to_be_visible()
+    expect(tid(page, 'wf-release-approve')).to_be_enabled()
+    tid(page, 'wf-release-approve').click()
+    expect(tid(page, 'wf-release-panel')).to_have_count(0)
+    assert request(ui, '/api/workshop/workflow-active') == {}
+    tid(page, 'wf-inspect-node').click()
+    expect(tid(page, 'wf-review-payload')).to_have_text(text.strip())
+    assert errors == []

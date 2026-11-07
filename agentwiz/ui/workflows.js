@@ -8,6 +8,7 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
   let draft, token, dirty = false, names = [], ports = {}, sources = {}, selections = {}, layout = {};
   let examples = [], selected = new Set(), inputs = {}, view = "design", plan, planRequest;
   let busy = false, job, pendingStart, timer, generation = 0, rebind = null, contractEditors = [], canvasOpen = false;
+  let releaseAcknowledgements={}, releaseSubmitting=false, releasePanelToken=null, releasePanelElement=null;
   const test = (name) => ({"data-test":"wf-"+name});
   const route = (name, action = "") => "workflows/" + encodeURIComponent(name) + action;
   const report = (message) => {status.textContent = message;};
@@ -60,6 +61,7 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
   }
   function clearRun() {
     invalidatePlan();
+    releasePanelToken=releasePanelElement=null;
     job = null;
     clearTimeout(timer);
     generation++;
@@ -222,6 +224,106 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     return from.value_types.some(type=>to.value_types.includes(type)||
       type==="integer"&&to.value_types.includes("number")||type==="number"&&to.value_types.includes("integer"));
   }
+  function gatePorts(config) {
+    let contract;
+    try {contract=JSON.parse(config.contract);}catch {contract={format:"json"};}
+    const format=contract.format||"text";
+    return {kind:"gate",context_local_only:false,inputs:{value:{format,local_only:false},scan:{format:"json",local_only:false}},
+      outputs:{released:{format,local_only:false}}};
+  }
+  async function addGate() {
+    const id=await newKey("Add Release Gate",draft.nodes);
+    if(!id)return;
+    const gate={kind:"release",title:"Review redacted text",contract:'{"format":"text"}',
+      max_release_wait_seconds:1800,assessment:{enabled:false}};
+    putKey(draft.nodes,id,{gate,bindings:{}});putKey(ports,id,gatePorts(gate));
+    changed();render();
+  }
+  function gateForm(id,node,group) {
+    const gate=node.gate;
+    group.append(field("Gate title",gate.title,v=>{gate.title=v;changed();}),
+      field("Review wait seconds",gate.max_release_wait_seconds??1800,v=>{
+        gate.max_release_wait_seconds=/^\d+$/.test(v)?Number(v):null;changed();}));
+    const editor=contracts.editor({test:"wf-gate-contract",text:gate.contract,onChange:text=>{
+      gate.contract=text;putKey(ports,id,gatePorts(gate));changed();}});
+    contractEditors.push(editor);
+    group.append(h("details",{},h("summary",{text:"Released value contract"}),editor.el));
+    gate.assessment??={enabled:false};
+    group.append(toggle("Local AI assessment",gate.assessment.enabled,v=>{gate.assessment.enabled=v;changed();render();}));
+    if(gate.assessment.enabled) {
+      const roleBox=h("div");
+      const choice=select("Assessment role",[[gate.assessment.role||"","Loading roles…"]],gate.assessment.role||"",v=>{
+        gate.assessment.role=v;changed();},"assessment-role");
+      roleBox.append(choice);group.append(roleBox,h("p",{text:"Assign this role to a trusted local model in Roles. Findings remain local."}));
+      const marker=generation;
+      api("/api/state").then(state=>{
+        if(marker!==generation||!roleBox.isConnected)return;
+        const names=new Set([...Object.keys(state.roles.definitions),...Object.keys(state.roles.map),...(gate.assessment.role?[gate.assessment.role]:[])]);
+        replace(roleBox,select("Assessment role",[["","Choose a role"],...[...names].sort().map(name=>[
+          name,name+" · "+(state.roles.map[name]||"Unassigned")])],gate.assessment.role||"",v=>{
+          gate.assessment.role=v;changed();},"assessment-role"));
+      }).catch(error);
+    }
+    group.append(h("p",{text:"Bind value to the candidate. Optional scan accepts a local-only identifier mapping. The original remains local-only after release."}));
+  }
+  function restrictedSources() {
+    const key=b=>b?JSON.stringify(b.kind==="node"?["node",b.node,b.port]:b.kind==="input"?["input",b.port]:["constant",b.name]):"";
+    const marked=new Set();
+    for(const [name,row] of entries(draft.inputs))if(row.local_only)marked.add(JSON.stringify(["input",name]));
+    for(const [name,row] of entries(draft.constants))if(row.local_only)marked.add(JSON.stringify(["constant",name]));
+    for(const row of Object.values(draft.outputs))if(row.local_only&&row.binding)marked.add(key(row.binding));
+    for(const [node,row] of entries(draft.nodes)) {
+      for(const [name,port] of entries(ports[node]?.outputs))if(port.local_only)marked.add(JSON.stringify(["node",node,name]));
+      if(!row.gate)for(const [name,port] of entries(ports[node]?.inputs))if(port.local_only&&row.bindings[name])marked.add(key(row.bindings[name]));
+    }
+    let previous=-1;
+    while(previous!==marked.size) {
+      previous=marked.size;
+      for(const [node,row] of entries(draft.nodes))if(!row.gate&&(ports[node]?.context_local_only||Object.values(row.bindings).some(b=>marked.has(key(b)))))
+        for(const name of Object.keys(ports[node]?.outputs||{}))marked.add(JSON.stringify(["node",node,name]));
+    }
+    return {marked,key};
+  }
+  function releasePanel(review) {
+    if(releasePanelToken===review.token&&releasePanelElement)return releasePanelElement;
+    const box=h("section",{...test("release-panel"),"data-gate":review.gate},h("h3",{text:"Release Gate · "+review.title}),
+      h("p",{text:"Review the complete value and its destinations. Release permits downstream processing; this is not an anonymity certificate or a complete HTTP request preview."}),
+      h("pre",{class:"wf-release-payload",text:review.payload,...test("release-payload")}),
+      copyControl("wf-copy-release",()=>review.payload,null),
+      h("p",{text:"Review expires "+new Date(review.expires_at*1000).toLocaleString()}));
+    box.append(h("h4",{text:"Downstream destinations"}),entries(review.destinations).map(([node,row])=>h("p",{text:
+      node+" · "+row.kind+" · "+row.url+" · "+(row.model||row.tool||"")})));
+    const check=review.identifier_check, assessment=review.assessment;
+    box.append(h("h4",{text:"Identifier check"}),h("p",{text:check.status==="not_configured"?"Identifier check not configured":
+      check.hits.length?check.hits.length+" flagged matches":"No mapped originals found. This is not proof of anonymity."}),
+      check.hits.map(hit=>h("p",{text:hit.identifier+" · "+JSON.stringify(hit.path)+" · "+hit.part+" · "+hit.start+"–"+hit.end})),
+      h("h4",{text:"Local AI assessment"}),h("p",{...test("release-assessment"),"data-status":assessment.status,text:
+        assessment.status==="not_configured"?"Local AI assessment not configured":assessment.status==="unavailable"?
+        "Assessment unavailable · "+assessment.reason:assessment.findings.length?"Review the concerns below":"No concerns identified by the local model. This is not proof of anonymity."}),
+      assessment.findings.map(item=>h("p",{text:item.concern+" · "+item.location+" · "+item.explanation})));
+    if(releaseAcknowledgements.token!==review.token)releaseAcknowledgements={token:review.token,identifiers:false,assessment:false};
+    const needIds=check.hits.length>0, needAI=assessment.status==="unavailable"||assessment.findings.length>0;
+    const enabled=()=>!releaseSubmitting&&(!needIds||releaseAcknowledgements.identifiers)&&(!needAI||releaseAcknowledgements.assessment);
+    const decide=async decision=>{
+      releaseSubmitting=true;
+      box.querySelectorAll("button").forEach(control=>control.disabled=true);
+      try {
+        await wsApi("workflow-jobs/"+encodeURIComponent(job.id)+"/release",{
+          token:review.token,payload_digest:review.payload_digest,executable_digest:review.executable_digest,
+          scope_digest:review.scope_digest,checks_digest:review.checks_digest,decision,
+          acknowledge_identifiers:releaseAcknowledgements.identifiers,acknowledge_assessment:releaseAcknowledgements.assessment});
+      } finally {releaseSubmitting=false;box.querySelectorAll("button").forEach(control=>control.disabled=false);release.disabled=!enabled();}
+    };
+    const release=button("Review and release",()=>decide("release"),"release-approve",!enabled());
+    if(needIds)box.append(toggle("I have reviewed the flagged identifier matches",releaseAcknowledgements.identifiers,v=>{
+      releaseAcknowledgements.identifiers=v;release.disabled=!enabled();}));
+    if(needAI)box.append(toggle("I have reviewed the AI concerns or assessment unavailability",releaseAcknowledgements.assessment,v=>{
+      releaseAcknowledgements.assessment=v;release.disabled=!enabled();}));
+    const reject=button("Reject",()=>decide("reject"),"release-reject",releaseSubmitting);
+    box.append(release,reject);
+    releasePanelToken=review.token;releasePanelElement=box;
+    return box;
+  }
   function canvas(points) {
     const region=h("details",{open:canvasOpen},h("summary",{text:"Canvas"}),
       h("p",{text:"Move cards by their headers. Drag an output onto an input to connect them. Use Nodes for keyboard wiring, removal and positioning."}));
@@ -242,17 +344,22 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     let connection=null;
     function edges() {
       svg.replaceChildren();
+      const restriction=restrictedSources();
       for (const [target,row] of entries(draft.nodes)) for (const binding of Object.values(row.bindings)) {
         if (binding.kind!=="node"||!cards.has(binding.node))continue;
         const a=points.get(binding.node), b=points.get(target);
         const line=document.createElementNS(svg.namespaceURI,"line");
         line.setAttribute("x1",String(a.x-originX+195));line.setAttribute("y1",String(a.y-originY+50));
         line.setAttribute("x2",String(b.x-originX));line.setAttribute("y2",String(b.y-originY+50));
+        const restricted=restriction.marked.has(restriction.key(binding));
+        line.dataset.localOnly=String(restricted);
+        line.style.stroke=restricted?"#b45309":"#15803d";
+        const title=document.createElementNS(svg.namespaceURI,"title");title.textContent=restricted?"Local only":draft.nodes[binding.node]?.gate?"Unrestricted after approval":"Unrestricted";line.append(title);
         svg.append(line);
       }
     }
     for(const [id,point] of points) {
-      const header=h("div",{class:"wf-canvas-handle",text:id,...test("canvas-move-"+id)});
+      const header=h("div",{class:"wf-canvas-handle",text:(draft.nodes[id].gate?"Release Gate · ":"")+id,...test("canvas-move-"+id)});
       const card=h("div",{class:"wf-canvas-node",...test("canvas-node-"+id)},header);
       cards.set(id,card);
       const place=({x,y})=>{
@@ -400,7 +507,7 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
       const group=h("fieldset",{},h("legend",{text:id+" · "+(src?.title || selections[id]?.key || "")}));
       const sourceLabel=h("p",{...test("source-"+id),text:(src?.revision_number ? "Captured revision "+src.revision_number : "Captured source")+
         (detail?.role ? " · Role "+detail.role : detail?.tool ? " · "+detail.server+"/"+detail.tool : "")});
-      group.append(sourceLabel);
+      if(node.gate)gateForm(id,node,group);else group.append(sourceLabel);
       if (src?.key) {
         const marker=generation;
         wsApi("workflow-source-options/"+encodeURIComponent(src.key)+(src.revision?"?revision="+encodeURIComponent(src.revision):""))
@@ -417,7 +524,8 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
       group.append(layoutForm(id,points.get(id)));
       nodes.append(group);
     }
-    nodes.append(button("Add node",()=>pickSource(),"add-node",!!rebind));
+    nodes.append(button("Add node",()=>pickSource(),"add-node",!!rebind),
+      button("Add Release Gate",addGate,"add-gate",!!rebind));
     area.append(nodes);
     const budget=h("details",{},h("summary",{text:"Limits and inspection"}));
     for(const [key,label,fallback] of [["max_seconds","Seconds",1800],["max_model_attempts","Model attempts",32]])
@@ -626,6 +734,16 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
   }
   function showTrace(trace) {
     const content=h("div",{},trace.outcome?h("p",{text:"Outcome: "+trace.outcome}):null,issues(trace.issues),outputRows(trace.outputs));
+    if(trace.release_review) {
+      const review=trace.release_review;
+      content.append(h("h3",{text:"Release review"}),h("pre",{text:review.payload,...test("review-payload")}),
+        copyControl("wf-copy-review",()=>review.payload,null),
+        h("p",{text:"Decision: "+trace.release_decision.decision+" · "+trace.release_decision.timestamp}),
+        h("p",{text:"Identifier check: "+review.identifier_check.status+" · "+review.identifier_check.hits.length+" matches"}),
+        h("p",{text:"Local AI assessment: "+review.assessment.status}),
+        review.assessment.findings.map(item=>h("p",{text:item.concern+" · "+item.location+" · "+item.explanation})));
+      if(trace.assessment_trace)content.append(h("details",{},h("summary",{text:"Local assessment trace"}),showTrace(trace.assessment_trace)));
+    }
     for(const [key,value] of entries(trace.inputs)) {
       const text=value?.text;
       if(typeof text==="string")content.append(h("details",{},h("summary",{text:"Input · "+key}),h("pre",{text})));
@@ -662,6 +780,7 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     replace(area,h("h3",{text:job.name+" · "+result.outcome}), h("p",{text:"Run "+job.id}),
       job.running?button("Stop",()=>wsApi("workflow-jobs/"+encodeURIComponent(job.id)+"/stop",{}),"stop"):null,
       job.running?h("p",{text:"This run occupies the shared Workshop slot. Test, Compare and assistance become available when it finishes."}):null,
+      result.release?releasePanel(result.release):result.phase==="assessing_release"?h("p",{text:"Assessing release locally…"}):null,
       issues(result.issues),result.save_error?h("p",{text:result.save_error}):null,nodeRows(result.nodes,job.batch?result.example_index:undefined),outputRows(result.outputs),
       result.metrics?h("p",{text:`Executed ${result.metrics.executed}/${result.metrics.selected} · Complete ${result.metrics.complete}/${result.metrics.selected} · Checks passed ${result.metrics.checks_passed}/${result.metrics.selected} · Correct ${result.metrics.correct} · Incorrect ${result.metrics.incorrect} · Unknown ${result.metrics.unknown}`}):null,
       result.examples?.map((row,index)=>h("details",{},h("summary",{text:(examples.find(e=>e.id===row.id)?.label||row.id)+" · "+row.outcome+" · "+row.correctness}),
@@ -785,11 +904,21 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     await dialog("Workflow history",box,["Close"]);
   }
   const putKey = (obj,key,value) => Object.defineProperty(obj,key,{value,enumerable:true,writable:true,configurable:true});
+  async function recoverActive() {
+    if(job||dirty)return;
+    const active=await wsApi("workflow-active");
+    if(!active.operation_id)return;
+    try {load(await wsApi(route(active.name)));}
+    catch {load(null);draft.name=active.name;dirty=false;}
+    view="run-view";job={id:active.operation_id,name:active.name,running:true,batch:active.batch};
+    poll(job,generation);
+  }
   render();
-  return {onShow:()=>exclusive(async()=>{await refresh();render();}).catch(error), leave, settings, evidence,
+  return {onShow:()=>exclusive(async()=>{await refresh();await recoverActive();render();}).catch(error), leave, settings, evidence,
     tutorial:async(name,text,example)=>{
       await refresh();load(await wsApi(route(name)));view="run-view";inputs.text=text;
       if(example)selected.add(example);render();
     }
   };
 };
+

@@ -1,7 +1,7 @@
 # Adapted from modelSpell scripts/smoke_installed.py at commit 1759c6e3c28a637731434a73c46088048583e358
 # (MIT, Copyright (c) 2026 Alex Wong), per AgentWiz techspec 11.2 (0.1.0), 11.1 (0.1.1), 13.1 (0.1.2), 16.1 (0.1.3)
 # and 18.1 (0.1.4).
-"""Smoke check against the installed AgentWiz wheel (steps S1-S16). Run with the environment's
+"""Smoke check against the installed AgentWiz wheel (steps S1-S17). Run with the environment's
 `python -I` from a scratch directory. Every step checks behaviour; none reads a file's contents.
 The launch's default workspace (./workspaces/default) is validated by AgentWiz itself and checked
 through /api/state."""
@@ -386,6 +386,43 @@ try:
     check(result['outcome'] == 'complete' and result['outputs']['words']['text'] == '3',
           f'installed workflow result: {result}')
 
+    # S17: a built-in Gate pauses, releases one exact value and preserves its source restriction.
+    workflow = 'installed_gate'
+    declaration = {'contract': {'format': 'text'}, 'local_only': True}
+    definition = {'name': workflow, 'purpose': 'Explicit release smoke', 'constants': {},
+        'inputs': {'text': declaration},
+        'outputs': {'out': {'contract': {'format': 'text'}, 'local_only': False,
+                            'binding': {'kind': 'node', 'node': 'review', 'port': 'released'}}},
+        'nodes': {'review': {'gate': {'kind': 'release', 'title': 'Review synthetic candidate',
+                                     'contract': {'format': 'text'}},
+                            'bindings': {'value': {'kind': 'input', 'port': 'text'}}}}}
+    save = {'name': workflow, 'file_token': None, 'definition_text': json.dumps(definition)}
+    plan = workshop('plans', {'action': 'workflow_save', 'request': save})
+    workshop(f'workflows/{workflow}/save', {'request': save, 'expected_plan': plan['expected_plan'],
+                                           'confirmations': plan['required_confirmations']})
+    request = {'name': workflow, 'inputs': {'text': '[P1] synthetic'}}
+    plan = workshop('plans', {'action': 'workflow_run', 'request': request})
+    check(not plan['descriptor']['issues'], 'installed gate preflight')
+    job = workshop(f'workflows/{workflow}/run', {'request': request, 'expected_plan': plan['expected_plan'],
+                    'ticket': workshop('tickets', {})['ticket'], 'confirmations': plan['required_confirmations']})
+    job_id = job['operation_id']
+    deadline = time.monotonic() + 10
+    result = workshop('workflow-jobs/' + job_id)
+    while result.get('phase') != 'awaiting_release' and time.monotonic() < deadline:
+        time.sleep(.02)
+        result = workshop('workflow-jobs/' + job_id)
+    check(result.get('phase') == 'awaiting_release', 'installed gate waits for explicit decision')
+    review = result['release']
+    decision = {key: review[key] for key in ('token', 'payload_digest', 'executable_digest', 'scope_digest', 'checks_digest')}
+    workshop('workflow-jobs/' + job_id + '/release', {**decision, 'decision': 'release'})
+    deadline = time.monotonic() + 10
+    result = workshop('workflow-jobs/' + job_id)
+    while result['outcome'] == 'running' and time.monotonic() < deadline:
+        time.sleep(.02)
+        result = workshop('workflow-jobs/' + job_id)
+    check(result['outcome'] == 'complete' and result['outputs']['out']['text'] == '[P1] synthetic'
+          and not result['outputs']['out']['local_only'], 'installed gate releases its reviewed value')
+
     # S8: a second AgentWiz on the same workspace is refused with exit status 3
     second = subprocess.run([str(exe), "--no-browser"], capture_output=True, text=True, timeout=15)
     check(second.returncode == 3, f"second launch on the same workspace exited {second.returncode}")
@@ -402,3 +439,4 @@ finally:
     stub.shutdown()
 
 print(f"smoke ok: {expected} from {agentwiz.__file__}")
+

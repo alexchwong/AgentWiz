@@ -331,3 +331,14 @@ metadata refactor specification v2 and block UI improvement proposal are owner-h
 The [pre-cleanup handover](https://github.com/alexchwong/AgentWiz/blob/e937d268069a0c7815fc525f16e7c37ae6c0bb16/HANDOVER.md) retains the build history,
 including the bounded experiments and the owner dispositions. A broader parser, schema-generation
 or routing change needs a separate decision.
+
+
+
+## 7 November 2026 — Release Gate proposal v2
+
+Owner approved implementation of the Release Gate proposal v2 after review against devel
+`a6f6458320d246caba59866357922db0ac3ef665`. This adds one explicit human-reviewed exception
+to monotonic restriction propagation; source data and sibling outputs retain their restriction.
+Optional local AI assessment is advisory, always protected, and cannot approve a release.
+Keep the current unreleased 0.2.1 version. No production tutorial auto-approval is introduced;
+the tutorial driver explicitly makes its synthetic decision through the ordinary UI.

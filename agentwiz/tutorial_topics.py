@@ -105,6 +105,11 @@ TOPICS: tuple[Topic, ...] = (
           "workflows", "0.2.1", "complete", False,
           _page("workflows.tutorial", ["tutorial_report", "one two", "two_words"],
                 [{"id": "show-workflow-upgrade", "label": "Show the v3 model revision"}]), "wf-preflight"),
+    Topic("release-gate", "Review a Release Gate",
+          "Run the synthetic candidate. The trusted local model supplies advisory findings; inspect the value and destinations, "
+          "acknowledge the concerns and choose Review and release. All tutorial services are local stand-ins; no real cloud is contacted.",
+          "workflows", "0.2.1", "complete", False,
+          _page("workflows.tutorial", ["tutorial_release", "[P1] attended on 7 November."]), "wf-preflight"),
     *(Topic("assist-" + action, "Assist · " + action.replace("_", " "),
             "Open Assist, choose describe and confirm the destination. Save, refine or discard the proposed "
             "description of this saved revision; the executable block does not change."
@@ -131,3 +136,4 @@ def by_id(topic_id: object) -> Topic:
     if not isinstance(topic_id, str) or topic_id not in _BY_ID:
         raise KeyError(topic_id)
     return _BY_ID[topic_id]
+

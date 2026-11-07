@@ -1,3 +1,86 @@
+# Release Gate implementation — 7 November 2026
+
+Implemented `AgentWiz_proposal_release_gate_v2.md.txt` against AgentWiz devel
+`a6f6458320d246caba59866357922db0ac3ef665`. Devel still pointed to that commit at
+final verification. Version remains the existing unreleased 0.2.1. No commit, push,
+merge, tag or publication was made.
+
+## Apply this delivery
+
+Extract this ZIP over the matching checkout, preserving paths. It contains complete
+changed/added files, not a patch. No obsolete files need deletion. No new runtime or
+development dependencies were added to the project.
+
+## Behaviour
+
+- Built-in Release Gate nodes use bundle format 2 without Workshop block snapshots.
+  Workflows without Gates continue to save as format 1.
+- Raw sources and sibling outputs retain restriction. A Gate exposes only its reviewed
+  `released` value after an explicit, single-use decision. Existing labels can restrict
+  that output again; restricted mappings still cannot enter cloud blocks.
+- Optional local assessment uses a separately assigned role, fixed versioned instructions,
+  structured findings, one bounded repair, existing model budgets and protected dispatch.
+  It cannot use cloud/ungranted destinations, approve a release, or modify the candidate.
+- Deterministic identifier checking handles text/JSON and Unicode offsets. Findings and
+  unavailable assessments require server-enforced acknowledgement. Invalid scans/limits
+  fail visibly; no failure is reported as a clean check.
+- Reviews show indirect downstream destinations, and another Gate requires another decision.
+  Earlier authorised cloud processing is permitted, including additional public inputs;
+  separate unreviewed model ancestors are still checked.
+- Approval is bound to run/example/node, immutable payload, executable, scope and check
+  identities. Conflicting/stale decisions are refused; exact retries are idempotent.
+- Stop wakes paused/assessing jobs. Reject/expiry stop later batch examples. Only human
+  wait is excluded from the execution budget; the shared Workshop slot remains held.
+- The browser recovers an active Gate after reload. Restart invalidates pending approvals.
+  There is no production auto-approval, including in the synthetic guided tutorial.
+- Save runs remains opt-in. Accepted decisions are persisted before downstream execution
+  when saving is on. Required evidence failure prevents release. Bounded session node
+  traces retain the candidate, decision and local assessment for later inspection.
+
+## Actual verification
+
+Environment: Linux x86_64, Python 3.12.14, modelSpell 0.3.0, Playwright 1.63.0,
+Chrome Headless Shell 153.0.8010.12. The Playwright CDN returned an unusable download;
+the exact matching browser was obtained from the official Chrome for Testing distribution.
+
+- Final source: `python -m pytest -q -m "not live"`: **1001 passed, 10 deselected**;
+  no failures, errors or skips.
+- Clean installed wheel: isolated interpreter, copied tests outside the source tree:
+  `python -I -m pytest -q tests/test_release_gate.py tests/test_page.py tests/test_tutorial.py`:
+  **96 passed**, no failures/errors/skips.
+- Built the final source wheel and ran the existing RC1, RC2 and RC3 release checks:
+  **all passed**. Used the release-check functions on the built wheel; did not create
+  a commit to run the HEAD-export build wrapper.
+- Installed-wheel smoke S1–S17: **passed** in a fresh scratch directory. S17 submits
+  an explicit Gate decision through the ordinary API. An earlier attempt reused a
+  prior smoke workspace and failed its existing MCP-library precondition; the clean
+  rerun used the same final wheel and unchanged smoke checks.
+- Python 3.10 syntax parsing for shipped Python modules: passed. JavaScript syntax
+  check and added-line whitespace review: passed.
+
+Functional coverage includes local → Gate → cloud → local dispatch, no cloud sends
+before approval, source/mapping restriction, stale/cross-run/cross-example tokens,
+concurrent/conflicting decisions, Reject/Stop/expiry, indirect destinations, sequential
+Gates and unsafe branches, acknowledgement enforcement, malformed/limited scans,
+JSON precision/Unicode offsets, assessment failure/Stop, changed destinations,
+evidence-write failure, browser authoring/reconnection and the explicit tutorial decision.
+
+## Remaining limits
+
+The existing Linux/macOS × Python 3.10/3.13 CI matrix remains unrun here. Python 3.10
+syntax parsing is not interpreter/platform execution. Real model quality and live provider
+calls were not tested; offline scripted backends establish dispatch/control behaviour.
+Identifier scanning and local AI findings do not certify anonymity. Gate approval covers
+processing of the reviewed value at the displayed destinations, not exact future HTTP
+bodies or provider-internal forwarding. API use cannot prove a person read the candidate.
+
+No extra manual regression checklist is required. Subjective UI review is optional;
+run the existing candidate CI when authorised to push.
+
+---
+
+Earlier handovers below are historical; the entry above describes this delivery.
+
 # AgentWiz 0.2.0 close-out
 
 Documentation cleanup against `devel` at `e937d268069a0c7815fc525f16e7c37ae6c0bb16`, following close-out specification v2. The worktree was clean at the start. Keep the release version at 0.2.0. At preflight, `main` and the latest published release, `v0.1.4`, pointed to `e0b91d26b72d2e96d85828356e4c88cf05eb2f18`. The exact `v0.2.0` tag was absent and the authenticated release list showed no matching draft, prerelease or published release.
@@ -90,3 +173,4 @@ pending.
 
 Apply the audit ZIP over the phases 1–4 ZIP. The audit requires no deletions.
 The implementation checkout remains at the original devel commit.
+

@@ -854,7 +854,9 @@ class Handler(BaseHTTPRequestHandler):
         service = self.server.state.workshop
         parts = path.split('/')
         query = parse_qs(urlparse(self.path).query)
-        if path == 'workflows':
+        if path == 'workflow-active':
+            result = service.workflows.active_view()
+        elif path == 'workflows':
             result = service.workflows.listing()
         elif len(parts) == 2 and parts[0] == 'workflows':
             result = service.workflows.read(parts[1])
@@ -959,6 +961,8 @@ class Handler(BaseHTTPRequestHandler):
                 result = service.workflows.start(body)
             else:
                 result = service.workflows.edit('workflow_' + parts[2], request, body)
+        elif len(parts) == 3 and parts[0] == 'workflow-jobs' and parts[2] == 'release':
+            result = service.workflows.job(parts[1]).decide_release(body)
         elif len(parts) == 3 and parts[0] == 'workflow-jobs' and parts[2] == 'review':
             result = service.workflows.review(parts[1], body)
         elif len(parts) == 3 and parts[0] == 'workflow-jobs' and parts[2] == 'stop':
@@ -1639,3 +1643,4 @@ class Handler(BaseHTTPRequestHandler):
         run_id = self._run_id(body.get("run_id"))
         self.server.state.delete_run(run_id, read_only=self.server.workspace.read_only)
         self._send(200, {"deleted": run_id})
+

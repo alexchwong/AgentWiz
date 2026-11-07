@@ -47,13 +47,16 @@ class Workflows:
             return {'format': contract.format, 'description': port.description, 'local_only': port.local_only,
                     'value_types': [value_type] if isinstance(value_type, str) else value_type}
 
-        return {side: {port.name: describe(side, port) for port in getattr(block, side)}
-                for side in ('inputs', 'outputs')}
+        ports = {side: {port.name: describe(side, port) for port in getattr(block, side)}
+                 for side in ('inputs', 'outputs')}
+        if block.step.kind == 'gate':
+            ports['inputs'].setdefault('scan', {'format': 'json', 'local_only': False, 'value_types': None})
+        return ports
 
     @classmethod
     def block_view(cls, block):
         return {'kind': block.step.kind, 'role': block.step.role, 'tool': block.step.tool,
-                'server': block.step.server, **cls.block_ports(block)}
+                'server': block.step.server, 'context_local_only': block.context_local_only, **cls.block_ports(block)}
 
     def source_options(self, key, revision=None):
         revisions = self.workshop.assets.revisions(key)
@@ -88,11 +91,16 @@ class Workflows:
                        for key, port in definition[side].items()} for side in ('inputs', 'outputs')},
                 'constants': {key: {**item, 'value': exact(item['value'])}
                               for key, item in definition['constants'].items()}}
+            editor = copy.deepcopy(editor)
+            for row in editor['nodes'].values():
+                if 'gate' in row:
+                    row['gate']['contract'] = exact(row['gate']['contract'])
             return {'format_version': 1, 'file_token': token, 'definition_text': exact(definition),
                     'editor': editor, 'node_ports': {node: self.block_view(block) for node, block in graph.blocks.items()},
                     'input_ports': {port: contract.format for port, contract in graph.contracts['inputs'].items()},
                     'layout': bundle['layout'], 'examples': bundle['examples'], 'issues': graph.issues,
-                    'sources': {node: bundle['snapshots'][row['snapshot_id']]['provenance']
+                    'sources': {node: (bundle['snapshots'][row['snapshot_id']]['provenance'] if 'snapshot_id' in row else
+                                      {'title': row['gate']['title'], 'kind': 'gate'})
                                 for node, row in graph.definition['nodes'].items()}}
 
     def editor_definition(self, editor):
@@ -110,6 +118,9 @@ class Workflows:
                     problem('invalid', location, 'Correct the exact value before saving.', 400)
                 if field == 'contract':
                     item.pop('format', None)
+        for row in definition['nodes'].values():
+            if 'gate' in row and isinstance(row['gate'].get('contract'), str):
+                row['gate']['contract'] = decode_exact(row['gate']['contract'])
         return definition
 
     def edit(self, action, request, review=None):
@@ -140,7 +151,11 @@ class Workflows:
             old_nodes = {} if current is None else current['definition']['nodes']
             copied = {}
             for node, row in nodes.items():
-                record(row, ('bindings',), ('snapshot_id',), f'nodes.{node}')
+                record(row, ('bindings',), ('snapshot_id', 'gate'), f'nodes.{node}')
+                if 'gate' in row:
+                    if 'snapshot_id' in row or node in selections:
+                        problem('invalid', f'nodes.{node}', 'a gate cannot capture a block', 400)
+                    continue
                 old_id = old_nodes.get(node, {}).get('snapshot_id')
                 if node in selections:
                     if old_id is not None and action != 'workflow_rebind':
@@ -177,7 +192,7 @@ class Workflows:
                     point = index % 4 * 220, index // 4 * 130
                     used.add(point)
                     layout[node] = {'x': point[0], 'y': point[1]}
-            candidate = {'format_version': 1, 'definition': definition, 'snapshots': copied, 'layout': layout,
+            candidate = {'format_version': 2 if any('gate' in row for row in nodes.values()) else 1, 'definition': definition, 'snapshots': copied, 'layout': layout,
                          'examples': copy.deepcopy(request.get('examples', [] if current is None else current['examples']))}
             with ExitStack() as stack:
                 graph = Graph(candidate, name, stack)
@@ -259,6 +274,9 @@ class Workflows:
             checks.require_validation(contract for ports in graph.contracts.values() for contract in ports.values())
             for block in graph.blocks.values():
                 self.workshop.check_schema_available(block)
+            for opened in graph.assessments.values():
+                if opened is not None:
+                    self.workshop.check_schema_available(opened.parsed.block)
         except checks.ValidationUnavailable:
             problem('validation_unavailable', 'contracts', 'the validator is unavailable', 503)
         if 'inputs' in request:
@@ -282,6 +300,7 @@ class Workflows:
 
         graph.examples = examples
         graph.example_runtime = []
+        graph.example_destinations = []
         reviews, private = [], []
         model_roles, mcp_servers = {}, {}
         for index, example in enumerate(examples):
@@ -289,6 +308,7 @@ class Workflows:
             review = graph.preflight(example['inputs'])
             destinations, issues, identities = graph.destinations(self.workshop.state, self.workshop, model_roles, mcp_servers)
             graph.example_runtime.append(dict(graph.runtime))
+            graph.example_destinations.append(destinations)
             private.append(identities)
             review['destinations'] = destinations
             review['issues'].extend(issues + graph.ancestor_warnings())
@@ -346,6 +366,9 @@ class Workflows:
             if blocking:
                 raise WorkshopError('preflight_refused', 409, blocking)
             job = Job(self.workshop.state)
+            job.ident = ident
+            job.name = name = body['request']['name']
+            job.is_batch = 'examples' in body['request']
             writer = self.workshop.state.register_writer(f'workflow job {ident}')
             with self.workshop.lock:
                 if self.workshop.active is None:
@@ -486,6 +509,13 @@ class Workflows:
         finally:
             writer.release()
 
+    def active_view(self):
+        with self.workshop.lock:
+            ident = self.workshop.active
+            job = self.jobs.get(ident)
+        return ({'operation_id': ident, 'name': job.name, 'batch': job.is_batch}
+                if job is not None and job.view()['outcome'] == 'running' else {})
+
     def job(self, ident):
         with self.workshop.lock:
             job = self.jobs.get(ident)
@@ -509,3 +539,4 @@ def old_node_keys(bundle):
 def exact(value):
     from .jsonio import encode_exact
     return encode_exact(value, indent=2)
+
