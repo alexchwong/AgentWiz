@@ -1160,7 +1160,7 @@ def test_workshop_new_block_validation_and_roles(ui, server, open_page, assisted
     expect(key).to_have_value("new_writer")
     create.click()
     if assisted:
-        expect(tid(dialog, "ws-choice-assistant-role")).to_have_value("writer")
+        expect(tid(dialog, "ws-choice-assistant-role-writes-this-proposal")).to_have_value("writer")
         tid(dialog, "ws-cancel").click()
     else:
         expect(dialog).to_have_count(0)
@@ -2070,6 +2070,7 @@ def test_workflow_canvas_wires_by_tap_keeps_geometry_undoes_and_persists_layout(
     page.get_by_role("tab", name="Workflows").click()
     tid(page, "wf-picker").select_option("canvas_flow")
     has(page, "wf-design-area", "data-view", "canvas")
+    has(page, "wf-validation", "data-state", "checked")
     handle = lambda name: page.locator(f'.wf-handle[data-handle="{name}"]')
     edge = page.locator('[data-test="wf-edge"][data-target="node:report:n"]')
     # A JSON number can't feed a Text input: the reason is shown and nothing changes (C-F5).
@@ -2195,13 +2196,19 @@ def test_workflow_design_validation_ignores_stale_responses_and_reports_failures
     page = open_page(ui)
     page.get_by_role("tab", name="Workflows").click()
     held, bodies = [], []
-    page.route("**/api/workshop/workflow-validate", lambda route: (bodies.append(json.loads(route.request.post_data)), held.append(route)))
+    def hold_validation(route):
+        bodies.append(json.loads(route.request.post_data))
+        held.append(route)
+        page.evaluate("n => document.documentElement.dataset.heldValidations = String(n)", len(held))
+    page.route("**/api/workshop/workflow-validate", hold_validation)
+    # Playwright must dispatch route callbacks while waiting for the debounced request.
+    # The backend's sleeping wait_until helper blocks that browser event dispatch.
     tid(page, "wf-picker").select_option("race")
-    wait_until(lambda: len(held) >= 1)
+    expect(page.locator("html")).to_have_attribute("data-held-validations", "1")
     assert bodies[0]["rebind"] == []
     page.locator('.wf-card[data-key="count"]').click()
     page.locator('.wf-card[data-key="count"]').press("ArrowRight")         # an edit: a newer generation
-    wait_until(lambda: len(held) >= 2)
+    expect(page.locator("html")).to_have_attribute("data-held-validations", "2")
     held[0].continue_()                                                    # response n arrives after the edit
     has(page, "wf-validation", "data-state", "checking")
     expect(page.locator('.wf-port-state[data-state="restricted"]')).to_have_count(0)
@@ -2213,6 +2220,9 @@ def test_workflow_design_validation_ignores_stale_responses_and_reports_failures
     tid(page, "wf-validation-retry").click()
     has(page, "wf-validation", "data-state", "checked")
     expect(page.locator('.wf-handle[data-handle="out:input:text"]').locator("xpath=..").locator(".wf-port-state")).to_have_attribute("data-state", "restricted")
+    # Accepted validation adds labels/chips to the cards; edges must follow the new handle positions.
+    assert handle_gap(page, "out:input:text", "node:count:text", 1) <= 4
+    assert handle_gap(page, "in:count:text", "node:count:text", 2) <= 4
 
 
 def test_workflow_design_bands_keep_pane_minimums(ui, open_page):

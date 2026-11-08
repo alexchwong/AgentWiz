@@ -1180,7 +1180,7 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
       addBlockNode(key,worldPoint(e.clientX,e.clientY)).catch(error);
     };
     applyViewport();
-    requestAnimationFrame(()=>{drawEdges();paintCanvasStates();});
+    requestAnimationFrame(()=>paintCanvasStates());
     return pane;
   }
   function worldPoint(clientX,clientY) {
@@ -1255,7 +1255,9 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
       slot.dataset.state=info.state;slot.textContent=STATE_TEXT[info.state];
       slot.title=info.state==="restricted"&&info.cause?causeWords(info.cause):"";
     }
-    paintEdgeStates();
+    // Validation chips and port labels can change the card layout. Measure the handles
+    // after painting them so connections stay attached to their rendered centres.
+    drawEdges();
   }
   function refreshSelection() {
     if(listView===true||effectiveList()){renderDesignSurface();return;}
