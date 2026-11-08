@@ -1296,6 +1296,75 @@ operation as the form. Layout has no effect on dispatch order.
 
 
 
+### Restoration, explanations, design-time validation and saved-use trust (core v3)
+
+**Identifier mappings.** `identifier_pairs.parse(value, profile=)` is the one mapping parser. The `scan` profile
+keeps the Gate's behaviour (string or `{original, placeholder?}` entries; missing placeholders become the entry
+index; duplicates kept). The `restore` profile accepts objects only, requires a placeholder fully matching the
+declared syntax (`bracket_upper`: `\[[A-Z][A-Z0-9_]*\]`), collapses identical pairs and refuses one placeholder
+mapped to different originals. Both bound 1,000 entries, originals of 1–4,096 and placeholders of at most 256
+characters, and raise only `PairsError(index, message)`; the Gate maps it to `scan_invalid` at `gate.scan`, the
+transform to `inputs.pairs` or `inputs.pairs[i]`.
+
+**`restore_placeholders` (operation version 1).** Inputs `text` (Text) and `pairs` (JSON); parameters exactly
+`unknown` (`fail`|`keep`) and `placeholder_syntax` (`bracket_upper`). One streaming `finditer` pass; inserted text
+is never rescanned; unknown/absent detection uses input tokens only. The JSON-escaped output length (jsonio's
+ASCII encoding, quotes included) is accumulated in 256-character chunks before each append, so an oversized value
+is never built; `transforms.execute`'s final check remains. Trace (`fills`) is one object with bounded
+`replacements`, `unknown` and `absent` lists (200 each, `truncated` flags). The starter exists only as a v4
+transform (`TRANSFORM_ONLY_IDS`), every port Local only.
+
+**`text` expectations.** `{kind: "text", assertions: [...]}` with 1–50 assertions: `includes`/`excludes` take
+`output`, `operation`, `values` (1–50 strings of 1–4,096) and `case` (`sensitive`|`insensitive`, `casefold`);
+`excludes_pattern` takes `output`, `operation` and a named `pattern`. Outputs must be declared Text outputs;
+a JSON output is `example_incompatible`. Judgement follows the existing rules (unverified → `unknown`, missing
+output → `incorrect`).
+
+**Explanation projection.** `Graph.explain(example=None)` describes, never decides: `values[id]` (dotted source
+identity) reports `restricted` from `Graph.restricted` with causes `workflow_io`, `declared_label` (a labelled
+output, or the labelled receiving port when every receiver is labelled), `consumer_label` (fan-out: a labelled
+receiver restricts unlabelled siblings), `example_restriction` (example basis only), `upstream` (a chain of at
+most 8 hops through bindings) and, for unrestricted Gate outputs, `released`. `nodes[n]` reports `protected` from
+`Graph.protected_nodes` with `restricted_input`, `context_manual`/`context_inherited` and `release_assessment`
+(a Gate's local assessment). At most 10 causes each, with `more`. Selecting a basis replaces the previous one.
+`GET workflows/<name>` adds `restriction` (base) and `effective` beside each declared `local_only` in
+`node_ports`; readiness adds `restriction` per example plan.
+
+**Design-time validation.** `POST workflow-validate` takes `name`, `file_token` (null for new), `generation`,
+`editor`, optional `selections`, advisory `rebind`, `layout` and `example_id`. It shares
+`Workflows.candidate(base, edits, stack, *, replacements)` with Save and Rebind (Save passes no replacements,
+Rebind its selected existing nodes) and builds the Graph in lenient mode: located binding issues are collected; a
+cycle or unknown source fills `unplannable`, sets `available: false` and omits `restriction` and `destinations`
+entirely. Planned graphs add Gate findings (as readiness) to `structural`, `gates`, and `destinations` from
+`State.destination_config()` and `outbound_policy.facts` only. It never writes, publishes or authorises a Rebind.
+No capture cache; captures close before responding; the response is capped at 256 KiB (`truncated`). Strict
+planning for Save, readiness and execution is unchanged.
+
+**Configuration-only projection.** `State.destination_config()` reads roles, profiles and server base URLs and
+the already-loaded MCP library under the state lock: no `Endpoint`, no credential, token or session-key read, no
+`view()` and no MCP refresh. It may lag an MCP library edit until the next ordinary refresh.
+
+**Saved-use inventory.** `outbound_policy.saved_uses(state)` lists configured roles, blocks' current default
+revisions and up to 50 saved workflows (opened with `Workflows.open_saved`, one graph per workflow, captures
+released before the next). `requires_trust` is set when a saved workflow dispatches from a protected node under its
+base restrictions or any one example's (Gate assessments always). `destination-trust-candidates` merges these rows
+with the authenticated enumeration and adds `requires_trust`, `remedy`, `observed` (MCP; `unknown` when only the
+inventory knows it), `used_by_truncated`, `trust_gaps` (eligible, untrusted, required) and `scan`
+(`complete`, `workflows`, `workflows_skipped`, `reasons`). It runs when Trusted destinations is opened.
+
+**Remedies and catalogue.** Protected refusals (Workshop Test/Compare and assistance), readiness issues and the
+run-time `destination_changed` issue carry `remedy: {action, target?} | null`; readiness destination issues also
+carry `facts`. Actions: `grant`, `fix_address`, `fix_proxy`, `choose_local_role`, `add_release_gate` (workflow
+readiness only, when the node is protected solely by upstream restriction), `configure_role`, `configure_server`,
+`refresh_readiness`, `repair_trust_settings`, `explain`. `protected_host_script` is now a located issue with
+`explain`. `messages.py` holds the scoped catalogue (`CODES`, `explain(item)` with a generic fallback); `GET
+messages` serves its templates and the page fills them with `textContent`, keeping the code in a details line.
+
+**Reference workflows.** `tutorial_support/private_summary.py` holds the synthetic documents, the deterministic
+redaction and summary used by the packaged stand-in models `private-deid` and `private-summary`, the block and
+workflow definitions and their ten `text`-checked examples. The tutorial topics `private-summary-local` and
+`private-summary-release` and the tests prepare the same fixture.
+
 ### Release Gate boundary
 
 `release_gate.py` owns built-in Gate validation, local identifier matching and the fixed,
@@ -1333,6 +1402,8 @@ Additional authenticated Workshop routes:
 | Route | Behaviour |
 | --- | --- |
 | `GET workflow-active` | Returns operation ID, name and batch flag for the active workflow, or an empty object. |
+| `POST workflow-validate` | Advisory design-time validation of an unsaved draft (see core v3 above). |
+| `GET messages` | The explanation catalogue's templates. |
 | `POST workflow-jobs/<id>/release` | Sends token, payload/executable/scope/checks digests, decision (`release` or `reject`) and optional boolean acknowledgements. |
 
 The `release` object in a waiting job contains the immutable candidate, destination scope,

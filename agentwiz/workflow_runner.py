@@ -22,8 +22,12 @@ def issue(code, location, message):
 
 
 class Graph:
-    def __init__(self, bundle, name, stack):
+    def __init__(self, bundle, name, stack, *, lenient=False):
+        """`lenient` (design-time validation only) collects located binding problems instead of raising, and
+        records a cycle or an unknown source in `unplannable`; such a graph has no effective projection."""
         self.bundle = bundle
+        self.lenient = lenient
+        self.unplannable = {'cycle': [], 'unknown_source': []}
         self.captures, self.contracts = bundle_graph(bundle, name, stack)
         self.definition = definition = bundle['definition']
         self.gates = {node: row['gate'] for node, row in definition['nodes'].items() if 'gate' in row}
@@ -61,10 +65,8 @@ class Graph:
         self.bindings, self.final = {}, {}
         dependencies = {node: set() for node in self.blocks}
         for node, block in self.blocks.items():
-            supplied = names(definition['nodes'][node]['bindings'], 0, 50, f'nodes.{node}.bindings')
+            supplied = self.node_bindings(node, block)
             ports = {port.name: port for port in block.inputs}
-            if supplied.keys() - ports.keys():
-                problem('invalid', f'nodes.{node}.bindings', 'binding names an undeclared input')
             self.bindings[node] = {}
             for name, port in ports.items():
                 location = f'nodes.{node}.inputs.{name}'
@@ -73,6 +75,8 @@ class Graph:
                     continue
                 binding = supplied[name]
                 identity = self.bind(binding, location, port.local_only)
+                if identity is None:
+                    continue
                 self.bindings[node][name] = identity, binding.get('path', []), location
                 self.check_compatibility(self.bindings[node][name], block.contracts['inputs'][name].parsed)
                 if identity[0] == 'node':
@@ -84,6 +88,8 @@ class Graph:
                 continue
             binding = declaration['binding']
             identity = self.bind(binding, location, declaration['local_only'])
+            if identity is None:
+                continue
             self.final[port] = identity, binding.get('path', []), location
             self.check_compatibility(self.final[port], self.contracts['outputs'][port])
         if sum(map(len, self.bindings.values())) + len(self.final) > 512:
@@ -100,10 +106,14 @@ class Graph:
                     if not pending:
                         heapq.heappush(ready, consumer)
         if len(self.order) != len(self.blocks):
-            problem('workflow_cycle', 'nodes', 'the workflow has a cycle')
+            if not lenient:
+                problem('workflow_cycle', 'nodes', 'the workflow has a cycle')
+            self.unplannable['cycle'] = sorted(set(self.blocks) - set(self.order))
+        self.available = not any(self.unplannable.values())
         self.protected_nodes = set()
         self.runtime = {}
-        self.propagate()
+        if self.available:
+            self.propagate()
         self.base_restricted = frozenset(self.restricted)
         self.base_origins = dict(self.origins)
 
@@ -135,10 +145,37 @@ class Graph:
                     self.restricted.add(identity)
                     self.origins.setdefault(identity, inherited)
 
+    def node_bindings(self, node, block):
+        location = f'nodes.{node}.bindings'
+        try:
+            supplied = names(self.definition['nodes'][node]['bindings'], 0, 50, location)
+        except WorkshopError as exc:
+            if not self.lenient:
+                raise
+            self.issues.extend({**row, 'severity': 'error'} for row in exc.issues)
+            return {}
+        undeclared = supplied.keys() - {port.name for port in block.inputs}
+        if undeclared:
+            if not self.lenient:
+                problem('invalid', location, 'binding names an undeclared input')
+            self.issues.append(issue('invalid', location, 'binding names an undeclared input'))
+            supplied = {key: value for key, value in supplied.items() if key not in undeclared}
+        return supplied
+
     def bind(self, binding, location, restricted):
-        identity = source(binding, location)
+        try:
+            identity = source(binding, location)
+        except WorkshopError as exc:
+            if not self.lenient:
+                raise
+            self.issues.extend({**row, 'severity': 'error'} for row in exc.issues)
+            return None
         if identity not in self.sources:
-            problem('invalid', location, 'the binding source does not exist')
+            if not self.lenient:
+                problem('invalid', location, 'the binding source does not exist')
+            self.unplannable['unknown_source'].append(location)
+            self.issues.append(issue('invalid', location, 'the binding source does not exist'))
+            return None
         if restricted:
             self.restricted.add(identity)
             self.origins.setdefault(identity, location)
@@ -247,7 +284,8 @@ class Graph:
                     continue
                 if (node not in self.protected_nodes and self.blocks[node].step.kind in ('model', 'tool')
                         and not (releasing and self.released_lineage(source_id))):
-                    warning = issue('unrestricted_ancestor', location, f'upstream node {node} can dispatch before this restriction applies')
+                    warning = {**issue('unrestricted_ancestor', location, f'upstream node {node} can dispatch before this restriction applies'),
+                               'node': node}
                     issues.append({**warning, 'severity': 'error' if releasing else 'warning'})
                     if len(issues) >= 32:
                         return issues
@@ -273,6 +311,7 @@ class Graph:
                 continue
             location = f'nodes.{node}'
             role = None
+            destination = None
             try:
                 if step.kind == 'model':
                     required += 1
@@ -290,6 +329,8 @@ class Graph:
                         continue
                     effective = task_settings.resolve_effective(step.task, step.task_resets, role.defaults)
                     model_call.task_arguments(effective.task, snapshot.kind, snapshot.provider)
+                    destination = {'kind': snapshot.kind, 'url': snapshot.endpoint.base_url, 'model': snapshot.model,
+                                   'provider': snapshot.provider or ''}
                     view = {'kind': snapshot.kind, 'url': snapshot.endpoint.base_url, 'model': snapshot.model,
                             'provider': snapshot.provider, 'role': step.role,
                             'task_text': jsonio.encode_exact(effective.task.request_shape())}
@@ -299,6 +340,7 @@ class Graph:
                         mcp_servers[step.server] = state.mcp_snapshot_for_block(step.server)
                     snapshot = mcp_servers[step.server]
                     observed = state.mcp_client.observation(snapshot.identity, step.tool)
+                    destination = {'kind': 'mcp', 'url': snapshot.url, 'server': step.server, 'tool': step.tool}
                     snapshot_id = self.definition['nodes'][node]['snapshot_id']
                     effects = self.bundle['snapshots'][snapshot_id]['provenance'].get('effects', 'unknown')
                     view = {'kind': 'mcp', 'url': snapshot.url, 'server': step.server, 'tool': step.tool,
@@ -323,16 +365,26 @@ class Graph:
                                         and binding[0][1] in self.gates), None)
                 if isinstance(exc, outbound_policy.Refused) and restricted_gate:
                     origin = self.origins.get(restricted_gate[0], restricted_gate[2])
-                    issues.append(issue(code, origin, 'this local-only port restricts the released value; the destination cannot receive it'))
+                    found = issue(code, origin, 'this local-only port restricts the released value; the destination cannot receive it')
                 else:
-                    issues.append(issue(code, location, 'the reviewed destination is unavailable or cannot receive these values'))
+                    found = issue(code, location, 'the reviewed destination is unavailable or cannot receive these values')
+                fact = outbound_policy.fact_view(state, destination)
+                if isinstance(exc, RoleUnresolved):
+                    fact, action = {'available': False, 'reason': exc.reason}, outbound_policy.remedy('role_unresolved', target=step.role)
+                elif isinstance(exc, NoSuchServer):
+                    fact, action = {'available': False, 'reason': 'server_missing'}, outbound_policy.remedy('server_missing', target=step.server)
+                elif isinstance(exc, outbound_policy.Refused):
+                    action = outbound_policy.remedy(code, fact, upstream_only=not restricted_gate and self.upstream_only(node))
+                else:
+                    action = None
+                issues.append({**found, 'facts': fact, 'remedy': action})
         if required > self.definition.get('budget', {}).get('max_model_attempts', 32):
             issues.append(issue('budget_exceeded', 'budget.max_model_attempts', 'budget is below the required initial model calls'))
         self.destination_views = destinations
         return destinations, issues, private
 
-    def preflight(self, inputs):
-        issues = list(self.issues)
+    def gate_findings(self):
+        issues = []
         for node in self.gates:
             binding = self.bindings[node].get('value')
             if binding and binding[0] not in self.restricted:
@@ -340,6 +392,10 @@ class Graph:
             scan = self.bindings[node].get('scan')
             if scan and scan[0] not in self.restricted:
                 issues.append(issue('scan_unrestricted', f'nodes.{node}.scan', 'identifier mapping must be local-only'))
+        return issues
+
+    def preflight(self, inputs):
+        issues = list(self.issues) + self.gate_findings()
         try:
             self.initial_values(inputs)
         except WorkshopError as exc:
@@ -348,6 +404,120 @@ class Graph:
                 'protected_nodes': sorted(self.protected_nodes),
                 'restricted_sources': [{'source': list(identity), 'origin': self.origins.get(identity, 'saved example')}
                                        for identity in sorted(self.restricted)]}
+
+
+    def labelled(self, identity):
+        """Whether any port receiving `identity` is Local only (a consumer label)."""
+        for node, bindings in self.bindings.items():
+            ports = {port.name: port for port in self.blocks[node].inputs}
+            if any(binding[0] == identity and ports[name].local_only for name, binding in bindings.items()):
+                return True
+        return any(binding[0] == identity and self.definition['outputs'][port]['local_only']
+                   for port, binding in self.final.items())
+
+    def upstream_only(self, node):
+        """Whether `node` is protected solely because an upstream protected node produced its inputs, so a
+        human-reviewed release could legitimately expose them (core v3 §3.4 `add_release_gate`)."""
+        if node not in self.protected_nodes or node in self.gates or self.blocks[node].context_local_only:
+            return False
+        restricted = [binding[0] for binding in self.bindings[node].values() if binding[0] in self.restricted]
+        return bool(restricted) and all(
+            identity[0] == 'node' and identity[1] not in self.gates and identity[1] in self.protected_nodes
+            and not self.sources[identity].local_only and not self.labelled(identity) for identity in restricted)
+
+    # --- explanation projection (core v3 §4.2): describes bind/propagate, never decides protection ----
+    def explain(self, example=None):
+        """Why each value is restricted and why each node is protected, for the base basis or one example.
+        Selecting a basis replaces the previous one; restrictions from different examples are never merged."""
+        basis = ('base' if example is None or 'id' not in example
+                 else {'example_id': example['id'], 'version': example['version']})
+        if not self.available:
+            return {'basis': basis, 'available': False}
+        self.select_example(example or {})
+        restrictions = set((example or {}).get('restrictions', {})) if basis != 'base' else set()
+        consumers = {}
+        for node, bindings in self.bindings.items():
+            ports = {port.name: port for port in self.blocks[node].inputs}
+            for name, (identity, _, location) in bindings.items():
+                consumers.setdefault(identity, []).append((location, ports[name].local_only, node))
+        for port, (identity, _, location) in self.final.items():
+            consumers.setdefault(identity, []).append(
+                (location, self.definition['outputs'][port]['local_only'], None))
+        values = {}
+        for identity in sorted(self.sources):
+            restricted = identity in self.restricted
+            causes = self.value_causes(identity, consumers.get(identity, []), restrictions, basis) if restricted else []
+            if not restricted and identity[0] == 'node' and identity[1] in self.gates:
+                causes = [{'code': 'released', 'gate': identity[1]}]
+            values[value_id(identity)] = bounded({'source': list(identity), 'restricted': restricted}, causes)
+        nodes = {}
+        for node in self.order:
+            protected = node in self.protected_nodes
+            causes = []
+            if protected:
+                if node in self.gates:
+                    causes.append({'code': 'release_assessment', 'node': node})
+                for name, (identity, _, _) in sorted(self.bindings[node].items()):
+                    if identity in self.restricted:
+                        causes.append({'code': 'restricted_input', 'input': name, 'value': value_id(identity)})
+                if self.blocks[node].context_local_only:
+                    capture = self.captures.get(node)
+                    inherited = capture is not None and capture.metadata.get('protection_origin') == 'inherited'
+                    causes.append({'code': 'context_inherited' if inherited else 'context_manual', 'node': node})
+            nodes[node] = bounded({'protected': protected}, causes)
+        return {'basis': basis, 'available': True, 'values': values, 'nodes': nodes}
+
+    def value_causes(self, identity, consumers, restrictions, basis):
+        causes = []
+        kind = identity[0]
+        if kind in ('input', 'constant') and self.sources[identity]['local_only']:
+            causes.append({'code': 'workflow_io', 'port': identity[1], 'side': 'inputs' if kind == 'input' else 'constants'})
+        if kind == 'input' and identity[1] in restrictions:
+            causes.append({'code': 'example_restriction', 'example_id': basis['example_id'], 'input': identity[1]})
+        if kind == 'node' and self.sources[identity].local_only:
+            causes.append({'code': 'declared_label', 'port': f'nodes.{identity[1]}.outputs.{identity[2]}'})
+        labelled = [row for row in consumers if row[1]]
+        # A label on a value that other, unlabelled ports also receive restricts them too (fan-out).
+        fan_out = len(labelled) < len(consumers)
+        for location, _, node in labelled:
+            if node is None:
+                causes.append({'code': 'workflow_io', 'port': location.split('.', 1)[1], 'side': 'outputs'})
+            elif fan_out:
+                causes.append({'code': 'consumer_label', 'consumer': location})
+            else:
+                causes.append({'code': 'declared_label', 'port': location})
+        if kind == 'node' and identity[1] in self.protected_nodes and identity[1] not in self.gates:
+            causes.append({'code': 'upstream', **self.upstream_chain(identity)})
+        return causes
+
+    def upstream_chain(self, identity):
+        """One restricted predecessor per hop, walked through the bindings, at most 8 hops."""
+        chain, current = [], identity
+        for _ in range(8):
+            node = current[1]
+            previous = next((binding[0] for _, binding in sorted(self.bindings[node].items())
+                             if binding[0] in self.restricted), None)
+            if previous is None:
+                chain.append(['context', node])
+                return {'chain': chain, 'truncated': False}
+            chain.append(list(previous))
+            own_label = (previous[0] != 'node' or previous[1] in self.gates
+                         or previous[1] not in self.protected_nodes or self.sources[previous].local_only)
+            if own_label:
+                return {'chain': chain, 'truncated': False}
+            current = previous
+        return {'chain': chain, 'truncated': True}
+
+
+def value_id(identity):
+    return '.'.join(identity)
+
+
+def bounded(item, causes, limit=10):
+    item['causes'] = causes[:limit]
+    if len(causes) > limit:
+        item['more'] = len(causes) - limit
+    return item
 
 
 def schema_types(schema):
@@ -667,7 +837,8 @@ class Job(runner.Observer):
                     policy_codes = {'destination_changed', 'destination_ineligible', 'destination_untrusted',
                                     'destination_trust_unavailable', 'destination_proxied'}
                     if policy_codes.intersection(failures + messages):
-                        issues.append(issue('destination_changed', f'nodes.{node}', 'the destination is no longer authorised'))
+                        issues.append({**issue('destination_changed', f'nodes.{node}', 'the destination is no longer authorised'),
+                                       'remedy': outbound_policy.remedy('destination_changed')})
                     break
                 for name, view in result['outputs'].items():
                     value = view['text'] if view['format'] == 'text' else jsonio.decode_exact(view['text'])

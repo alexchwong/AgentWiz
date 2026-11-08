@@ -20,7 +20,7 @@ What 0.2.0 adds:
   editor (advanced source optional), sample checks, Used by and reviewable model-drafted proposals.
 - **Workbench:** Chat, Documents, MCP tools and Checked request remain independent utilities.
 - **History:** saved runs, checks, attempts and source attribution, with saving off by default.
-- **Fourteen tutorial topics** using isolated local services, with no API keys or live model required.
+- **Eighteen tutorial topics** using isolated local services, with no API keys or live model required.
 
 Model profiles, roles and MCP servers are shared settings. Credentials stay in process memory.
 Scripts run with your filesystem and network access. AgentWiz uses the pinned modelSpell 0.3.0 public API.
@@ -291,7 +291,9 @@ and values. **Saved examples** shows whether changes are pending; **Save example
 them separately from blocks and run history. If the block is new or edited, saving the collection
 offers to save a block revision first, with the normal review. Cancelling or a failed save keeps
 pending examples; the selected example and entered inputs survive Design/Test navigation. Expectations
-can compare exact named outputs, assert explicit field paths or ask for human review. Verify an expectation
+can compare exact named outputs, assert explicit field paths, run **Text checks** on Text outputs (includes or
+excludes literal values, optionally ignoring case, or *No placeholder tokens left*) or ask for human review. Text
+check values are stored in plain text with the example and are never sent to a model. Verify an expectation
 before using it for automatic correctness. Editing an example invalidates prior verification. An accepted,
 well-typed result may still be incorrect. Human ratings bind the exact result and never transfer to a rerun.
 
@@ -369,7 +371,12 @@ A saved capture remains usable if its original block revision is removed.
 
 Open **Settings → Trusted destinations** to grant or revoke destination trust and choose whether
 MCP requires confirmation on every run or only on batches. The table lists destinations from configured
-roles and discovered MCP tools, with where each connects, local-only eligibility, trust and known uses.
+roles, discovered MCP tools, blocks' current default revisions and saved workflows, with where each connects,
+local-only eligibility, trust and known uses. A banner lists destinations that **saved workflows** need for
+local-only data but are not trusted, for example after a profile's model changed; it does not inspect the
+workflow you are editing. If some saved workflows could not be checked, the banner says the list may be incomplete.
+Findings explain themselves in plain language; the code stays in Details. A workflow without any labels is treated
+according to its labels: it is not checked for private content, and no warning does not mean the data is not private.
 **Grant** appears only where a grant can help; manual entry is folded and checks eligibility as you type.
 Saved workflow runs appear in **History** with block runs and comparisons. The tutorial walks through a two-branch report
 and a protected model stage on an isolated local stand-in.
@@ -399,6 +406,19 @@ matches and any AI concerns/unavailability, then choose **Review and release**, 
 not a clean result; budget exhaustion and changed destinations stop execution. Literal scanning
 and AI findings can miss identifiers and do not certify anonymity.
 
+**Restore placeholders** is a built-in transform that puts originals back after processing de-identified text.
+Bind `text` to the processed text and `pairs` to the local-only mapping (a list of
+`{placeholder, original}` records whose placeholders look like `[PERSON_1]`). Each placeholder token is replaced
+once; inserted text is never rescanned. A token with no mapping fails the step unless **If a placeholder has no
+mapping** is set to **Leave it in place**; mapped placeholders the text no longer contains are listed in the trace.
+A mapping with a string entry, an invalid placeholder or one placeholder mapped to two originals is refused, even
+though the Release Gate's scan accepts such a mapping. The restore step's ports are Local only.
+
+The tutorial's two private-summary topics show this route end to end with synthetic data: all-local
+(redact → summarise → restore) and with a Release Gate before a cloud stand-in. Passing their checks says nothing
+about real documents, and Gate approval covers the reviewed value at the destinations shown, not forwarding inside a
+provider.
+
 Each Gate execution needs a separate decision, including identical batch examples. Reject,
 Stop or expiry ends the remaining batch. Human review defaults to 30 minutes and is excluded
 from the execution budget. The run holds the shared Workshop slot while waiting. Reopening
@@ -415,7 +435,7 @@ workflows without Gates stay at format 1. Workshop single-block Test/Compare do 
 New model and tool blocks are workflow-ready when created with a Port labels choice. For an existing v3 model
 or MCP block, the banner's **Upgrade for workflows** creates a v4 draft.
 Choose a locality label for each port and save the draft as a new revision.
-New count, field-selection and report starters are built-in transforms.
+New count, field-selection, report and restore-placeholders starters are built-in transforms.
 **Convert to built-in transform** creates a fresh v4 draft from an intact historical starter.
 
 **Protect design context** applies to the block's design and assets. Port labels apply to the

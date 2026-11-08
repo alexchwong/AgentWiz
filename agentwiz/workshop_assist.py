@@ -5,6 +5,7 @@ import copy
 
 from . import blocks, jsonio, transforms
 from . import workshop_editor as editor
+from .identifier_pairs import SYNTAXES as PATTERNS
 from .task_settings import OVERRIDABLE, TaskSettingError, parse_task
 from .workshop_assets import fail
 
@@ -48,6 +49,7 @@ def schema(action, sections=None, stage=None, capabilities=None):
                             record({'mappings': {'type': 'array', 'maxItems': 50, 'items': record({
                                 'source_path': path, 'destination': TEXT, 'required': {'type': 'boolean'}})}}),
                             record({'template': LONG}),
+                            record({'unknown': {'enum': ['fail', 'keep']}, 'placeholder_syntax': {'const': 'bracket_upper'}}),
                         ]}})
     behaviour = {'oneOf': [model, tool, transform]}
     editable = {'purpose': TEXT, 'inputs': ports, 'outputs': ports, 'behaviour': behaviour}
@@ -55,9 +57,15 @@ def schema(action, sections=None, stage=None, capabilities=None):
     improve['minProperties'] = 1
     field_expect = record({'output': TEXT, 'path': {'type': 'array', 'items': {'type': ['string', 'integer']}},
                            'operation': {'enum': ['equals', 'absent', 'present', 'null']}, 'value_text': LONG}, ['output', 'path', 'operation'])
+    values = {'type': 'array', 'minItems': 1, 'maxItems': 50, 'items': {'type': 'string', 'minLength': 1, 'maxLength': 4096}}
+    text_expect = {'oneOf': [
+        record({'output': TEXT, 'operation': {'enum': ['includes', 'excludes']}, 'values': values,
+                'case': {'enum': ['sensitive', 'insensitive']}}),
+        record({'output': TEXT, 'operation': {'const': 'excludes_pattern'}, 'pattern': {'enum': list(PATTERNS)}})]}
     expect = {'oneOf': [record({'kind': {'const': 'whole_output'}, 'values': {'type': 'object', 'additionalProperties': LONG}}),
         record({'kind': {'const': 'fields'}, 'assertions': {'type': 'array', 'items': field_expect}}),
-        record({'kind': {'const': 'review'}, 'criterion': TEXT})]}
+        record({'kind': {'const': 'review'}, 'criterion': TEXT}),
+        record({'kind': {'const': 'text'}, 'assertions': {'type': 'array', 'minItems': 1, 'maxItems': 50, 'items': text_expect}})]}
     if action == 'create':
         payload = record({k: editable[k] for k in ('purpose', 'inputs', 'outputs', 'behaviour')})
         payload['properties']['effects'] = {'enum': ['read-only', 'changes state', 'unknown']}

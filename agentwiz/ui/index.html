@@ -3117,12 +3117,26 @@ async function wsGrantTrust(destination){
   await wsApi("destination-trust",{destination:d,expected_revision:preview.revision,trusted:true});
   return true;
 }
+// Explanation catalogue (core v3 §4.3): server templates filled with an item's own fields, inserted as text only.
+let MESSAGES=null;
+async function loadMessages(){if(MESSAGES)return MESSAGES;try{MESSAGES=await wsApi("messages");}catch(e){MESSAGES=null;}return MESSAGES;}
+function messageText(item,fallback){
+  const row=MESSAGES?.codes?.[item?.code||item?.action];
+  if(!row)return fallback??(item?.message||MESSAGES?.fallback?.body?.replace("{code}",item?.code||"")||item?.code||"");
+  const fields={...item,where:item.location||item.port||item.input||item.consumer||"",example:item.example||item.example_id||"",
+    chain_end:Array.isArray(item.chain)&&Array.isArray(item.chain.at(-1))?item.chain.at(-1).join("."):"",
+    target:item.target&&typeof item.target==="object"?(item.target.model||item.target.tool||item.target.url||""):(item.target||"")};
+  return row.body.replace(/\{([a-z_]+)\}/g,(_,k)=>typeof fields[k]==="string"||typeof fields[k]==="number"?String(fields[k]):"");
+}
+function remedyLabel(remedy){return MESSAGES?.codes?.[remedy?.action]?.remedy_label||"";}
+function codeDetails(code,test){return h("details",{class:"ws-code-details"},h("summary",{text:"Details"}),h("span",{...(test?{"data-test":test}:{}),text:code||"error"}));}
+loadMessages();
 const WS_SOURCE_TEXT={declared_label:r=>"Input "+r.input+" is labelled Local only",example_restriction:r=>"Example "+r.example+" restricts "+r.input,
   retained_label:r=>"Revision "+(r.revision_number??"?")+" labelled "+r.input+" Local only",context_manual:()=>"Design protection is on",
   context_inherited:()=>"Design protection is inherited from protected assistance",context_clear_pending:()=>"Design protection was cleared but not yet saved"};
 function wsRestrictionList(sources){
   const list=h("ul",{"data-test":"ws-restriction-sources"});
-  for(const r of sources||[])list.append(h("li",{"data-code":r.code,text:(WS_SOURCE_TEXT[r.code]||(()=>r.code))(r)}));
+  for(const r of sources||[])list.append(h("li",{"data-code":r.code,text:MESSAGES?.codes?.[r.code]?messageText(r):(WS_SOURCE_TEXT[r.code]||(()=>messageText(r)))(r)}));
   return list;
 }
 async function wsReviewRetainedLabels(){
@@ -3339,6 +3353,10 @@ function wsDesign(){
       const template=wsField(area,"Report template",params.template,true);
       for(const n of p.facts.inputs)area.append(wsButton("Insert report "+n,()=>template.setRangeText("{{inputs."+n+"}}",template.selectionStart,template.selectionEnd,"end")));
       read=()=>({template:template.value});
+    }else if(m.starter==="restore_placeholders"){
+      const unknown=wsChoice(area,"If a placeholder has no mapping",[["fail","Fail the step"],["keep","Leave it in place"]],params.unknown);
+      unknown.dataset.test="ws-restore-unknown";
+      read=()=>({unknown:unknown.value,placeholder_syntax:params.placeholder_syntax});
     }else{
       const mappings=[];
       function mapping(m={source_path:[],destination:"",required:true}){
@@ -3592,7 +3610,7 @@ async function wsEditExample(selected){
   const box=h("div"),label=wsField(box,"Label",e.label),fields={};
   const ports=ws.projection.input_ports||ws.projection.facts?.inputs||[];
   for(const n of [...Object.keys(e.inputs),...ports.filter(n=>!(n in e.inputs))])fields[n]=wsInput(box,n,ws.projection.contracts?.inputs?.[n],e.inputs[n]||"",false);
-  const kind=wsChoice(box,"Expectation",[["review","Human review"],["whole_output","Exact output"],["fields","Field assertions"]],e.expectation.kind);
+  const kind=wsChoice(box,"Expectation",[["review","Human review"],["whole_output","Exact output"],["fields","Field assertions"],["text","Text checks"]],e.expectation.kind);
   const criterion=wsField(box,"Review criterion",e.expectation.criterion||"");const values={};
   for(const n of ws.projection.facts.outputs)values[n]=wsInput(box,"Expected "+n,ws.projection.contracts?.outputs?.[n],e.expectation.values?.[n]||"",false);
   const stale=Object.fromEntries(Object.entries(e.expectation.values||{}).filter(([n])=>!ws.projection.facts.outputs.includes(n)));
@@ -3602,12 +3620,25 @@ async function wsEditExample(selected){
   }
   const assertions=h("div"),edits=[];box.append(assertions);
   function assertion(row={}){const line=h("div");assertions.append(line);const output=wsChoice(line,"Output",ws.projection.facts.outputs.map(n=>[n,n]),row.output),path=wsField(line,"Field path",(row.path||[]).join(".")),op=wsChoice(line,"Condition",["equals","absent","present","null"].map(x=>[x,x]),row.operation),v=wsField(line,"Exact value",row.value_text||"");edits.push(()=>({output:output.value,path:path.value.split(".").filter(Boolean),operation:op.value,...(op.value==="equals"?{value_text:v.value}:{})}));}
-  (e.expectation.assertions||[]).forEach(assertion);box.append(wsButton("Add assertion",()=>assertion()));
+  (e.expectation.kind==="fields"?e.expectation.assertions:[]).forEach(assertion);box.append(wsButton("Add assertion",()=>assertion()));
+  // Text checks (core v3 §7.2): substring checks or the named placeholder pattern on Text outputs. An untouched
+  // row returns its stored assertion unchanged, so editing other parts never converts or drops it.
+  const textChecks=h("div",{"data-test":"ws-text-checks"}),textEdits=[];box.append(textChecks);
+  function textCheck(row={operation:"excludes",values:[],case:"insensitive"}){
+    const line=h("div",{"data-test":"ws-text-check"});textChecks.append(line);
+    const output=wsChoice(line,"Checked output",ws.projection.facts.outputs.map(n=>[n,n]),row.output);
+    const op=wsChoice(line,"Text condition",[["includes","Includes every value"],["excludes","Excludes every value"],["excludes_pattern","No placeholder tokens left"]],row.operation);
+    const shown=(row.values||[]).join("\n"),values=wsField(line,"Values, one per line",shown,true);
+    const letterCase=wsChoice(line,"Letter case",[["insensitive","Ignore case"],["sensitive","Match case"]],row.case||"insensitive");
+    textEdits.push(()=>op.value==="excludes_pattern"?{output:output.value,operation:op.value,pattern:row.pattern||"bracket_upper"}
+      :{output:output.value,operation:op.value,values:values.value===shown&&row.values?row.values:values.value.split("\n").filter(Boolean),case:letterCase.value});
+  }
+  (e.expectation.kind==="text"?e.expectation.assertions:[]).forEach(textCheck);box.append(wsButton("Add text check",()=>textCheck(),"ws-add-text-check"));
   const verified=h("input",{type:"checkbox",checked:e.verified});box.append(h("label",{},verified," I verified this expectation"));
   let ex;const error=h("p",{role:"alert"});box.append(error);
   if(await wsDialog("Edit example",box,["Save","Cancel"],async action=>{
     if(action==="Cancel")return true;
-    try{ex={...e,label:label.value,version:e.version+1,inputs:Object.fromEntries(await Promise.all(Object.entries(fields).map(async([n,f])=>[n,await f.read()]))),verified:verified.checked,expectation:kind.value==="review"?{kind:"review",criterion:criterion.value}:kind.value==="fields"?{kind:"fields",assertions:edits.map(fn=>fn())}:{kind:"whole_output",values:{...Object.fromEntries(await Promise.all(Object.entries(values).map(async([n,f])=>[n,await f.read()]))),...stale}} };return true;}
+    try{ex={...e,label:label.value,version:e.version+1,inputs:Object.fromEntries(await Promise.all(Object.entries(fields).map(async([n,f])=>[n,await f.read()]))),verified:verified.checked,expectation:kind.value==="review"?{kind:"review",criterion:criterion.value}:kind.value==="text"?{kind:"text",assertions:textEdits.map(fn=>fn())}:kind.value==="fields"?{kind:"fields",assertions:edits.map(fn=>fn())}:{kind:"whole_output",values:{...Object.fromEntries(await Promise.all(Object.entries(values).map(async([n,f])=>[n,await f.read()]))),...stale}} };return true;}
     catch(e){error.textContent=wsErrorText(e);return false;}
   })!=="Save")return;
   ws.examples=ws.examples.map(x=>x.id===e.id?ex:x);ws.examplesDirty=true;wsRender();
@@ -3674,7 +3705,7 @@ function wsShowReadiness(box,plan,error,recheck){
   if(error){
     const issue=(error.body?.issues||[]).find(i=>i.restriction_sources)||{};
     box.dataset.state="refused";box.dataset.code=error.code||"error";
-    box.append(h("p",{class:"err-text","data-test":"ws-readiness-message",text:WS_REFUSAL_TEXT[error.code]||wsErrorText(error)}));
+    box.append(h("p",{class:"err-text","data-test":"ws-readiness-message",text:MESSAGES?.codes?.[error.code]?messageText({...issue,code:error.code}):WS_REFUSAL_TEXT[error.code]||wsErrorText(error)}));
     if(issue.destination)box.append(wsDestinationLine({...issue.destination,base_url:issue.destination.url},{locality:issue.locality,eligible:issue.eligible,reason:issue.reason,trusted:issue.trusted}));
     if(issue.restriction_sources?.length)box.append(h("p",{text:"Restricted because:"}),wsRestrictionList(issue.restriction_sources));
     const remedies=h("div",{class:"row","data-test":"ws-readiness-remedies"});box.append(remedies);
@@ -3683,6 +3714,7 @@ function wsShowReadiness(box,plan,error,recheck){
     if(codes.has("declared_label"))remedies.append(wsButton("Edit port",()=>wsView("design"),"ws-readiness-edit-port"));
     if(codes.has("retained_label"))remedies.append(wsButton("Review retained privacy labels",async()=>{await wsReviewRetainedLabels();await recheck();},"ws-readiness-retained"));
     if(codes.has("example_restriction"))box.append(h("p",{class:"ws-hint",text:"A saved example's restriction stays with its captured values; changing the port label does not clear it. Use a new input instead."}));
+    if(issue.remedy&&issue.remedy.action!=="grant")remedies.append(h("span",{class:"ws-hint","data-test":"ws-readiness-remedy","data-action":issue.remedy.action,text:messageText({action:issue.remedy.action,target:issue.remedy.target})}));
     box.append(h("details",{},h("summary",{text:"Details"}),h("p",{"data-test":"ws-readiness-code",text:error.code||"error"})));
     return;
   }

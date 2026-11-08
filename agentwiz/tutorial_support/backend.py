@@ -19,6 +19,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MODELS = {
     "release-risk": "Advisory assessment of the fixed synthetic release candidate.",
+    "private-deid": "Scripted redaction of the synthetic reference documents (private_summary workflows).",
+    "private-summary": "Scripted one-sentence summary that keeps placeholders (private_summary workflows).",
     "workflow-report": "Accepts the synthetic workflow report.",
     "complete": "Streams a short answer, stop, usage.",
     "complete-reasoning": "Streams reasoning (reasoning_content) then an answer.",
@@ -148,6 +150,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
         try:
+            if model in ("private-deid", "private-summary"):
+                from .private_summary import answer as private_answer
+                for c in words(private_answer(model, messages)) + [chunk(finish="stop", usage_json=USAGE), DONE]:
+                    self._send(c)
+                return
             self._stream(model)
         except OSError:
             log(f"client disconnected (model={model!r})")

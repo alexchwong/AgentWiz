@@ -196,9 +196,28 @@ def drive_release_gate(page):
     expect(tid(page, "wf-run")).to_be_enabled()
 
 
+def drive_private_local(page):
+    tid(page, "wf-preflight").click()
+    has(page, "wf-readiness-state", "data-state", "ready")
+    tid(page, "wf-run").click()
+    expect(tid(page, "wf-trace")).to_contain_text("correct")
+
+
+def drive_private_release(page):
+    tid(page, "wf-preflight").click()
+    has(page, "wf-readiness-state", "data-state", "ready")
+    tid(page, "wf-run").click()
+    expect(tid(page, "wf-release-panel")).to_be_visible()
+    page.get_by_role("checkbox", name="I have reviewed the AI concerns or assessment unavailability").check()
+    tid(page, "wf-release-approve").click()
+    expect(tid(page, "wf-release-panel")).to_have_count(0)
+    expect(tid(page, "wf-trace")).to_contain_text("correct")
+
+
 DRIVERS = {"chat": drive_chat, "document": drive_document, "tool": drive_tool, "contract": drive_contract,
            "repair": drive_repair, "model-block": drive_model_block, "tool-block": drive_tool_block,
-           "script-block": drive_script_block, "workshop-design": drive_design, "workflow": drive_workflow, "release-gate": drive_release_gate}
+           "script-block": drive_script_block, "workshop-design": drive_design, "workflow": drive_workflow, "release-gate": drive_release_gate,
+           "private-summary-local": drive_private_local, "private-summary-release": drive_private_release}
 
 
 def drive_assist(page):
@@ -252,8 +271,9 @@ def test_tutorial_topics(ui, open_page):
 def test_tutorial_topic_registry():
     topics = tutorial_topics.TOPICS
     assert [t.id for t in topics] == ["chat", "document", "tool", "contract", "repair", "model-block", "tool-block",
-                                       "script-block", "workshop-design", "workflow", "release-gate"] + ASSIST_IDS
-    assert [t.updated_in for t in topics] == ["0.1.3"] * 3 + ["0.2.0"] * 2 + ["0.2.1"] + ["0.2.0"] + ["0.2.1"] * 4 + ["0.2.0"] * 5
+                                       "script-block", "workshop-design", "workflow", "release-gate",
+                                       "private-summary-local", "private-summary-release"] + ASSIST_IDS
+    assert [t.updated_in for t in topics] == ["0.1.3"] * 3 + ["0.2.0"] * 2 + ["0.2.1"] + ["0.2.0"] + ["0.2.1"] * 6 + ["0.2.0"] * 5
     assert all(tutorial_topics.by_id(t.id) is t for t in topics)
     for bad in ("nope", None, 3, ["chat"]):
         with pytest.raises(KeyError):

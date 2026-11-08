@@ -2,6 +2,12 @@
 
 ## 0.2.1
 
+- Restore placeholders: a built-in transform that puts de-identified originals back, locally and deterministically.
+- Text checks: example expectations that a Text output includes or excludes values, or keeps no placeholder tokens.
+- Trusted destinations now include uses by blocks and saved workflows, and flag destinations saved workflows need.
+- Refusals and readiness findings explain themselves in plain language and name the action that would fix them.
+- Two tutorial topics walk through a private summary, all-local and with a Release Gate before a cloud stand-in.
+
 - New model and tool blocks ask for port labels and are workflow-ready without an upgrade step.
 - Design reads in order: a top bar with revision and Save, then ports, prompts and settings.
 - Insert buttons follow port renames; stale prompt references are flagged with a confirmed replacement.

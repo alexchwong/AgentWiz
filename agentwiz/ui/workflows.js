@@ -616,9 +616,24 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
           button("Remove check",()=>{e.assertions.splice(index,1);drawExpectation();},"remove-check"))));
         expectation.append(button("Add check",()=>{e.assertions.push({output:"",path:[],operation:"present"});drawExpectation();},"add-check"));
       }
+      if(e.kind==="text"){
+        // Text checks (core v3 §7.2); a row is only rewritten when the author changes it.
+        e.assertions.forEach((row,index)=>expectation.append(h("fieldset",{...test("text-check")},h("legend",{text:"Text check "+(index+1)}),
+          select("Output",[["","Choose Text output"],...entries(draft.outputs).filter(([,port])=>port.format!=="json").map(([name])=>[name,name])],row.output,v=>row.output=v),
+          select("Condition",[["includes","Includes every value"],["excludes","Excludes every value"],["excludes_pattern","No placeholder tokens left"]],row.operation,v=>{
+            row.operation=v;
+            if(v==="excludes_pattern"){delete row.values;delete row.case;row.pattern="bracket_upper";}
+            else{delete row.pattern;row.values=row.values||[];row.case=row.case||"insensitive";}
+            drawExpectation();
+          }),
+          row.operation==="excludes_pattern"?null:field("Values, one per line",(row.values||[]).join("\n"),v=>row.values=v.split("\n").filter(Boolean),true),
+          row.operation==="excludes_pattern"?null:select("Letter case",[["insensitive","Ignore case"],["sensitive","Match case"]],row.case,v=>row.case=v),
+          button("Remove check",()=>{e.assertions.splice(index,1);drawExpectation();},"remove-text-check"))));
+        expectation.append(button("Add text check",()=>{e.assertions.push({output:"",operation:"excludes",values:[],case:"insensitive"});drawExpectation();},"add-text-check"));
+      }
     }
-    box.append(select("Expectation",[["review","Human review"],["whole_output","Whole outputs"],["fields","Field checks"]],example.expectation.kind,v=>{
-      example.expectation=v==="review"?{kind:v,criterion:""}:v==="fields"?{kind:v,assertions:[]}:{kind:v,values:{}};
+    box.append(select("Expectation",[["review","Human review"],["whole_output","Whole outputs"],["fields","Field checks"],["text","Text checks"]],example.expectation.kind,v=>{
+      example.expectation=v==="review"?{kind:v,criterion:""}:v==="fields"||v==="text"?{kind:v,assertions:[]}:{kind:v,values:{}};
       drawExpectation();
     }),expectation,toggle("Verified expectation",example.verified,v=>example.verified=v),toggle("Held out",example.held_out,v=>example.held_out=v));
     drawExpectation();
@@ -668,7 +683,7 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     if(["destination_ineligible","destination_proxied"].includes(row.code)&&dest){
       out.push(h("span",{class:"ws-hint",...test("finding-remedy"),text:wsRemedyText(row.code==="destination_proxied"?"proxied":dest.url&&/localhost/.test(dest.url)?"hostname":"remote")}));
     }
-    if(row.code==="unrestricted_ancestor"||(node&&["destination_ineligible","destination_untrusted"].includes(row.code)&&row.message?.includes("released value"))){
+    if(row.remedy?.action==="add_release_gate"||row.code==="unrestricted_ancestor"||(node&&["destination_ineligible","destination_untrusted"].includes(row.code)&&row.message?.includes("released value"))){
       out.push(button("Add Release Gate",()=>{view="design";render();report("Add a Release Gate between the restricted value and "+(node||"the node")+", then save and check readiness again.");},"finding-add-gate"));
     }
     if(node&&sources[node]&&!draft.nodes[node]?.gate&&!/^destination_untrusted$/.test(row.code)){
@@ -681,9 +696,9 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     return out;
   }
   function findingRow(row,d) {
-    return h("li",{class:"wf-finding",...test("finding"),"data-code":row.code||"","data-severity":row.severity||"error"},
-      h("strong",{text:(row.severity==="warning"?"Warning":"Blocking")+" · "}),h("span",{text:(row.location||"workflow")+" · "+(row.message||row.code)}),
-      h("span",{class:"wf-finding-code",text:" ["+(row.code||"issue")+"]"}),h("span",{class:"row"},...findingRemedies(row,d)));
+    return h("li",{class:"wf-finding",...test("finding"),"data-code":row.code||"","data-severity":row.severity||"error","data-remedy":row.remedy?.action||""},
+      h("strong",{text:(row.severity==="warning"?"Warning":"Blocking")+" · "}),h("span",{text:(row.location||"workflow")+" · "+messageText(row,row.message||row.code)}),
+      h("span",{class:"row"},...findingRemedies(row,d)),codeDetails(row.code||"issue","wf-finding-code"));
   }
   function reviewView() {
     const d=plan.descriptor;
@@ -926,12 +941,17 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
       msg.dataset.state=trusted?"granted":"revoked";delete msg.dataset.reason;
       msg.textContent=trusted?"Destination trusted.":"Destination trust revoked.";
     }
-    const table=h("section",{...test("trust-table")});
-    body.append(h("h3",{text:"Trusted destinations"}),h("p",{class:"ws-hint",text:"Trust applies only to this workspace and exact destination."}),table);
+    const table=h("section",{...test("trust-table")}),banner=h("div",{...test("saved-trust-gaps"),"data-count":"0"});
+    body.append(h("h3",{text:"Trusted destinations"}),h("p",{class:"ws-hint",text:"Trust applies only to this workspace and exact destination."}),banner,table);
     async function loadTable() {
       const [data,known]=await Promise.all([wsApi("destination-trust"),wsApi("destination-trust-candidates").catch(()=>({candidates:[]}))]);
       const rows=new Map(), key=item=>JSON.stringify(exactDestination(item));
-      for(const row of known.candidates){const d=row.destination;rows.set(row.exact?key(d):JSON.stringify(d),{destination:d,exact:row.exact,locality:row.locality,eligible:row.eligible,reason:row.reason,trusted:row.trusted,uses:row.used_by.map(u=>(u.kind==="role"?"role ":"server ")+u.name)});}
+      for(const row of known.candidates){const d=row.destination;rows.set(row.exact?key(d):JSON.stringify(d),{destination:d,exact:row.exact,locality:row.locality,eligible:row.eligible,reason:row.reason,trusted:row.trusted,requires:!!row.requires_trust,remedy:row.remedy,uses:row.used_by.map(u=>u.kind+" "+u.name)});}
+      // Saved-use trust gaps (core v3 §3.3): saved workflows only; the open draft is not inspected here.
+      const gaps=known.trust_gaps||[],scan=known.scan||{complete:true};
+      banner.replaceChildren();banner.dataset.count=String(gaps.length);banner.dataset.complete=String(scan.complete!==false);
+      if(gaps.length)banner.append(h("p",{class:"warn-text",text:gaps.length+" destination"+(gaps.length===1?"":"s")+" used by saved workflows with local-only data "+(gaps.length===1?"is":"are")+" not trusted: "+gaps.map(g=>label(g.destination)).join("; ")}));
+      if(scan.complete===false)banner.append(h("p",{class:"ws-hint",text:"Saved workflows could not all be checked, so this list may be incomplete."}));
       for(const c of candidates){
         const d=exactDestination(c),k=key(d),use=context?(context+" · node "+(c.node||"")):"this run";
         const row=rows.get(k);if(row){if(!row.uses.includes(use))row.uses.push(use);continue;}
@@ -946,8 +966,8 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
         const d=row.destination,action=h("td");
         if(row.trusted)action.append(button("Revoke",()=>reviewTrust(exactDestination(d),false),"revoke-trust"));
         else if(row.eligible&&row.exact)action.append(button("Grant",()=>reviewTrust(exactDestination(d),true),"candidate-trust"));
-        else if(!row.eligible)action.append(h("span",{class:"ws-hint",...test("trust-remedy"),text:wsRemedyText(row.reason)||"Not eligible."}));
-        tbody.append(h("tr",{...test("trust-row"),"data-eligible":String(row.eligible),"data-trusted":String(row.trusted),"data-used":String(row.uses.length>0)},
+        else if(!row.eligible)action.append(h("span",{class:"ws-hint",...test("trust-remedy"),"data-action":row.remedy?.action||"",text:wsRemedyText(row.reason)||"Not eligible."}));
+        tbody.append(h("tr",{...test("trust-row"),"data-eligible":String(row.eligible),"data-trusted":String(row.trusted),"data-used":String(row.uses.length>0),"data-requires-trust":String(!!row.requires)},
           h("td",{text:label(d)}),h("td",{text:row.locality==="local"?"Local endpoint":row.locality?"Remote endpoint":"—"}),
           h("td",{text:row.eligible?"Eligible":"Not eligible"}),h("td",{text:row.trusted?"Trusted":"Not trusted"}),
           h("td",{text:row.uses.length?row.uses.join(", "):"No known uses"}),action));
@@ -1026,8 +1046,8 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     if(Object.hasOwn(draft.nodes,target.node)&&!draft.nodes[target.node].gate)await pickSource(target.node);
   }
   return {onShow:()=>exclusive(async()=>{await refresh();await recoverActive();render();}).catch(error), leave, settings, evidence, returnTo, traceView:showTrace,
-    tutorial:async(name,text,example)=>{
-      await refresh();load(await wsApi(route(name)));view="run-view";inputs.text=text;
+    tutorial:async(name,text,example,port="text")=>{
+      await refresh();load(await wsApi(route(name)));view="run-view";inputs[port]=text;
       if(example)selected.add(example);render();
     }
   };

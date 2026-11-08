@@ -157,28 +157,160 @@ def ineligibility(destination):
     return None
 
 
-def facts(state, destination):
-    """Locality, eligibility (with reason) and trust of one destination, reported separately."""
+def facts(state, destination, grants=None):
+    """Locality, eligibility (with reason) and trust of one destination, reported separately. `grants`, when
+    given, saves rereading the trust file for each destination."""
     reason = ineligibility(destination)
     try:
         exact = identity(destination)
-        trusted = exact in read(state.workspace.path)[1]
+        trusted = exact in (read(state.workspace.path)[1] if grants is None else grants)
     except Refused:
         trusted = False
     return {'locality': locality(destination.get('url') or ''), 'eligible': reason is None,
             'reason': reason, 'trusted': trusted}
 
 
+def fact_view(state, destination, grants=None):
+    """The §3.4 `facts` shape: available with the destination, or unavailable with a reason."""
+    if destination is None:
+        return {'available': False, 'reason': 'unresolved'}
+    return {'available': True, 'destination': destination, **facts(state, destination, grants)}
+
+
+REASON_ACTIONS = {'hostname': 'fix_address', 'address': 'fix_address', 'proxied': 'fix_proxy',
+                  'remote': 'choose_local_role', 'provider': 'choose_local_role'}
+CODE_ACTIONS = {'destination_changed': 'refresh_readiness', 'destination_trust_unavailable': 'repair_trust_settings',
+                'protected_host_script': 'explain', 'role_unresolved': 'configure_role',
+                'server_missing': 'configure_server'}
+
+
+def remedy(code, fact=None, *, target=None, upstream_only=False):
+    """The action that would resolve a protected refusal or readiness issue (core v3 §3.4), or None.
+    `upstream_only` (workflow readiness only) means the node is protected solely by upstream restriction, so a
+    human release could legitimately expose its value: a remote destination is then offered a Release Gate."""
+    if code in CODE_ACTIONS:
+        action = CODE_ACTIONS[code]
+        return {'action': action, **({'target': target} if target is not None else {})}
+    if fact is None or not fact.get('available'):
+        return None
+    if fact['eligible'] and not fact['trusted']:
+        return {'action': 'grant', 'target': fact['destination']}
+    action = REASON_ACTIONS.get(fact['reason'])
+    if action == 'choose_local_role' and upstream_only:
+        action = 'add_release_gate'
+    if action is None:
+        return None
+    return {'action': action, **({'target': target} if target is not None else {})}
+
+
+def config_destination(config, step):
+    """The destination a block step would use under configuration only (no credentials), or None with the
+    reason it cannot be resolved: `role_unresolved` or `server_missing`."""
+    if step.kind == 'model':
+        role = config['roles'].get(step.role)
+        if role is None or 'unresolved' in role:
+            return None, 'role_unresolved'
+        return dict(role), None
+    server = config['servers'].get(step.server)
+    if server is None:
+        return None, 'server_missing'
+    return {'kind': 'mcp', 'url': server['url'], 'server': step.server, 'tool': step.tool}, None
+
+
+USED_BY_LIMIT = 200
+WORKFLOW_LIMIT = 50
+BLOCK_LIMIT = 256
+
+
+def saved_uses(state):
+    """Configured and saved uses of every destination (core v3 §3.3), from configuration only: roles, blocks'
+    current default revisions and saved workflows, with `requires_trust` when a saved workflow would dispatch
+    to it from a protected node under its base restrictions or any one saved example's. No traffic, no
+    credentials; each workflow's captures are released before the next is opened."""
+    from contextlib import ExitStack
+    config = state.destination_config()
+    rows, scan = {}, {'complete': True, 'workflows': 0, 'workflows_skipped': 0, 'reasons': []}
+
+    def add(destination, use, requires):
+        key = row_key(destination)
+        row = rows.setdefault(key, {'destination': destination, 'used_by': [], 'requires_trust': False})
+        row['requires_trust'] = row['requires_trust'] or requires
+        if use not in row['used_by']:
+            row['used_by'].append(use)
+
+    for role, destination in config['roles'].items():
+        if 'unresolved' not in destination:
+            add(dict(destination), {'kind': 'role', 'name': role}, False)
+    listing = state.block_listing()
+    if listing['total'] > len(listing['blocks']):
+        scan['complete'] = False
+        scan['reasons'].append({'kind': 'blocks', 'reason': 'limit'})
+    for row in listing['blocks'][:BLOCK_LIMIT]:
+        loaded = state.block_loaded(row.get('name'))
+        block = loaded.block if loaded is not None else None
+        if block is None or block.step.kind not in ('model', 'tool'):
+            continue
+        destination, _ = config_destination(config, block.step)
+        if destination is not None:
+            add(destination, {'kind': 'block', 'name': loaded.name}, False)
+    workflows = state.workshop.workflows
+    try:
+        names = workflows.listing()['workflows']
+    except WorkshopError as exc:
+        names = []
+        scan['complete'] = False
+        scan['reasons'].append({'kind': 'workflows', 'reason': exc.code})
+    if len(names) > WORKFLOW_LIMIT:
+        scan['complete'] = False
+        scan['reasons'].extend({'kind': 'workflow', 'name': name, 'reason': 'limit'} for name in names[WORKFLOW_LIMIT:])
+    for name in names[:WORKFLOW_LIMIT]:
+        try:
+            with ExitStack() as stack:
+                graph = workflows.open_saved(name, stack).graph
+                protected = set()
+                for example in [None, *graph.bundle['examples'][:20]]:
+                    graph.select_example(example or {})
+                    protected |= graph.protected_nodes
+                for node in graph.order:
+                    block, is_protected = graph.blocks[node], node in protected
+                    if node in graph.gates:
+                        opened = graph.assessments[node]
+                        if opened is None:
+                            continue
+                        block, is_protected = opened.parsed.block, True
+                    if block.step.kind not in ('model', 'tool'):
+                        continue
+                    destination, _ = config_destination(config, block.step)
+                    if destination is not None:
+                        add(destination, {'kind': 'workflow', 'name': name}, is_protected)
+            scan['workflows'] += 1
+        except WorkshopError as exc:
+            scan['complete'] = False
+            scan['workflows_skipped'] += 1
+            scan['reasons'].append({'kind': 'workflow', 'name': name, 'reason': exc.code})
+    return {'rows': list(rows.values()), 'scan': scan}
+
+
+def row_key(destination):
+    reason = ineligibility(destination)
+    try:
+        exact = identity(destination) if reason in (None, 'proxied') else None
+    except Refused:
+        exact = None
+    return jsonio.encode_exact(exact if exact is not None else destination)
+
+
 def candidates(state):
-    """Every destination reachable from current configuration (core_02 §3.2, reduced): one row per
-    resolved model role and per observed MCP tool, with locality, eligibility and trust. Uses are the
-    roles and servers that reach it; the page adds the open block or workflow."""
+    """Every destination reachable from current configuration and saved uses (core_02 §3.2; core v3 §3.3): one
+    row per resolved model role, per observed MCP tool and per destination a block or saved workflow binds, with
+    locality, eligibility, trust, uses and `requires_trust`. `trust_gaps` are eligible, untrusted destinations a
+    saved protected workflow requires; `scan` says whether the saved-use inventory is complete."""
     from .state import NoSuchServer, RoleUnresolved
     current = view(state)
     revision, grants = current['revision'], current['grants']
     rows = {}
 
-    def add(destination, use):
+    def add(destination, use, *, observed=None, requires=False):
         reason = ineligibility(destination)
         try:
             exact = identity(destination) if reason in (None, 'proxied') else None
@@ -188,9 +320,16 @@ def candidates(state):
         row = rows.setdefault(key, {'destination': exact or destination, 'exact': exact is not None,
                                     'locality': locality(destination.get('url') or ''),
                                     'eligible': reason is None, 'reason': reason,
-                                    'trusted': exact is not None and exact in grants, 'used_by': []})
+                                    'trusted': exact is not None and exact in grants, 'used_by': [],
+                                    'requires_trust': False})
+        if destination.get('kind') == 'mcp':
+            # An authenticated observation wins over the credential-free inventory's `unknown`.
+            if observed is True or 'observed' not in row:
+                row['observed'] = observed if observed is not None else 'unknown'
+        row['requires_trust'] = row['requires_trust'] or requires
         if use not in row['used_by']:
             row['used_by'].append(use)
+        return row
 
     snapshot_view = state.view()
     for role in snapshot_view['roles']['map']:
@@ -207,9 +346,29 @@ def candidates(state):
             continue
         for tool in state.mcp_client.observed_tools(snapshot.identity):
             add({'kind': 'mcp', 'url': snapshot.url, 'server': server, 'tool': tool},
-                {'kind': 'server', 'name': server})
+                {'kind': 'server', 'name': server}, observed=True)
+    inventory = saved_uses(state)
+    for saved in inventory['rows']:
+        row = None
+        for use in saved['used_by']:
+            row = add(saved['destination'], use, requires=saved['requires_trust'])
+        if row is not None:
+            row['requires_trust'] = row['requires_trust'] or saved['requires_trust']
+    for row in rows.values():
+        if len(row['used_by']) > USED_BY_LIMIT:
+            row['used_by'] = row['used_by'][:USED_BY_LIMIT]
+            row['used_by_truncated'] = True
+        fact = {'available': True, 'destination': row['destination'], 'locality': row['locality'],
+                'eligible': row['eligible'], 'reason': row['reason'], 'trusted': row['trusted']}
+        action = remedy(None, fact) if not row['trusted'] else None
+        # Choosing a local role is only advice for a destination a protected use needs.
+        if action is not None and action['action'] == 'choose_local_role' and not row['requires_trust']:
+            action = None
+        row['remedy'] = action
+    gaps = [row for row in rows.values() if row['eligible'] and not row['trusted'] and row['requires_trust']]
     unused = [grant for grant in grants if jsonio.encode_exact(grant) not in rows]
-    return {'format_version': 1, 'revision': revision, 'candidates': list(rows.values()), 'unused_grants': unused}
+    return {'format_version': 1, 'revision': revision, 'candidates': list(rows.values()), 'unused_grants': unused,
+            'trust_gaps': gaps, 'scan': inventory['scan']}
 
 
 def preview(state, body):

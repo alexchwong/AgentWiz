@@ -877,12 +877,15 @@ class Handler(BaseHTTPRequestHandler):
         elif path == 'destination-trust':
             from ..outbound_policy import view
             result = view(self.server.state)
+        elif path == 'messages':
+            from ..messages import catalogue
+            result = catalogue()
         elif path == 'destination-trust-candidates':
             from ..outbound_policy import candidates
             result = candidates(self.server.state)
         elif path == 'starters':
-            from ..workshop_editor import STARTERS, examples
-            result = {'format_version': 1, 'starters': [{'id': k, 'version': 2 if k in ('count_text', 'select_fields', 'format_report') else 1, 'examples': examples(k)} for k in STARTERS]}
+            from ..workshop_editor import SCRIPT_IDS, STARTERS, examples
+            result = {'format_version': 1, 'starters': [{'id': k, 'version': 2 if k in SCRIPT_IDS else 1, 'examples': examples(k)} for k in STARTERS]}
         elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'revisions':
             result = service.assets.revisions(parts[1])
         elif len(parts) == 4 and parts[0] == 'blocks' and parts[2] == 'revisions':
@@ -919,6 +922,8 @@ class Handler(BaseHTTPRequestHandler):
             if set(body) != {'editor'}:
                 raise workshop.WorkshopError('invalid', 400)
             result = {'definition_text': jsonio.encode_exact(service.workflows.editor_definition(body['editor']), indent=2)}
+        elif path == 'workflow-validate':
+            result = service.workflows.validate(body)
         elif path == 'destination-trust-preview':
             from ..outbound_policy import preview
             result = preview(self.server.state, body)

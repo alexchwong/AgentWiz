@@ -159,9 +159,59 @@ def judgement(outputs, expectation, verified):
             ok = ok and ((not present) if op == 'absent' else present if op == 'present' else
                          present and current is None if op == 'null' else
                          present and exact_equal(current, jsonio.decode_exact(item['value_text'])))
+    elif expectation.get('kind') == 'text':
+        for item in expectation['assertions']:
+            output = outputs.get(item['output'])
+            if output is None:
+                return 'incorrect'
+            ok = ok and text_assertion(output['text'], item)
     else:
         return 'unknown'
     return 'correct' if ok else 'incorrect'
+
+
+TEXT_OPERATIONS = {'includes': {'output', 'operation', 'values', 'case'},
+                   'excludes': {'output', 'operation', 'values', 'case'},
+                   'excludes_pattern': {'output', 'operation', 'pattern'}}
+
+
+def text_assertion(text, item):
+    """One `text` expectation assertion over a Text output: substring checks, or a named pattern."""
+    from .identifier_pairs import SYNTAXES
+    if item['operation'] == 'excludes_pattern':
+        return SYNTAXES[item['pattern']].search(text) is None
+    if item['case'] == 'insensitive':
+        text = text.casefold()
+        values = [value.casefold() for value in item['values']]
+    else:
+        values = item['values']
+    found = [value in text for value in values]
+    return all(found) if item['operation'] == 'includes' else not any(found)
+
+
+def validate_text_expectation(expectation, outputs):
+    """`outputs` maps each declared output name to its contract (or a contract copy)."""
+    from .identifier_pairs import SYNTAXES
+    rows = expectation.get('assertions')
+    if set(expectation) != {'kind', 'assertions'} or not isinstance(rows, list) or not 1 <= len(rows) <= 50:
+        fail()
+    for index, row in enumerate(rows):
+        fields = TEXT_OPERATIONS.get(row.get('operation')) if isinstance(row, dict) else None
+        if fields is None or set(row) != fields or row['output'] not in outputs:
+            fail()
+        if 'values' in fields:
+            values = row['values']
+            if (not isinstance(values, list) or not 1 <= len(values) <= 50
+                    or any(not isinstance(value, str) or not 1 <= len(value) <= 4096 for value in values)
+                    or row['case'] not in ('sensitive', 'insensitive')):
+                fail()
+        elif row['pattern'] not in SYNTAXES:
+            fail()
+        contract = outputs[row['output']]
+        if getattr(contract, 'parsed', contract).format != 'text':
+            raise WorkshopError('example_incompatible', 409, [{
+                'code': 'example_incompatible', 'location': f'expectation.assertions[{index}].output',
+                'message': 'text assertions require Text outputs'}])
 
 
 class Service:
@@ -510,7 +560,7 @@ class Service:
                 fail()
             self.input_shape(block, ex.get('inputs'))
             e = ex.get('expectation')
-            if not isinstance(e, dict) or e.get('kind') not in ('whole_output', 'fields', 'review') or type(ex.get('verified', False)) is not bool:
+            if not isinstance(e, dict) or e.get('kind') not in ('whole_output', 'fields', 'review', 'text') or type(ex.get('verified', False)) is not bool:
                 fail()
             if e['kind'] == 'whole_output':
                 if set(e) != {'kind', 'values'} or set(e['values']) != {d.name for d in block.outputs} or not all(isinstance(t, str) for t in e['values'].values()):
@@ -525,6 +575,8 @@ class Service:
                         fail()
                     if row['operation'] == 'equals':
                         jsonio.decode_exact(row['value_text'])
+            elif e['kind'] == 'text':
+                validate_text_expectation(e, block.contracts['outputs'])
             elif set(e) != {'kind', 'criterion'} or not isinstance(e['criterion'], str):
                 fail()
 
@@ -985,7 +1037,10 @@ class Service:
                                        or c.metadata.get('protection_clear_pending'))
                     c.dispatch = None
                     if c.protected and block.step.kind == 'script':
-                        fail('protected_host_script', 409)
+                        raise WorkshopError('protected_host_script', 409, [{
+                            'code': 'protected_host_script', 'location': 'step',
+                            'message': 'a protected script would run with ordinary host access',
+                            'restriction_sources': sources, 'remedy': outbound_policy.remedy('protected_host_script')}])
                     if c.protected and block.step.kind in ('model', 'tool'):
                         c.dispatch = outbound_policy.block_dispatch(self.state, block, c.snapshot)
                         view['trust_revision'] = c.dispatch.revision
@@ -1007,6 +1062,8 @@ class Service:
                               'restriction_sources': sources}
                     if destination is not None:
                         detail.update(destination=destination, **outbound_policy.facts(self.state, destination))
+                    fact = outbound_policy.fact_view(self.state, destination)
+                    detail.update(facts=fact, remedy=outbound_policy.remedy(str(exc), fact))
                     raise WorkshopError(str(exc), 409, [detail]) from None
                 raise
             descriptor['protected_context'] = authoring_protected

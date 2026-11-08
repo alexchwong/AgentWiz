@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from . import blocks, checks, jsonio, workshop_assets
+from . import blocks, checks, identifier_pairs, jsonio, workshop_assets
 from .model_step import ContractCopy
 from .workflow_definition import boolean, integer, problem, record
 from .workspace import valid_name
@@ -22,7 +22,7 @@ ASSESSMENT_CONTRACT = {'format': 'json', 'schema': {
                                        for key in ('concern', 'location', 'explanation')},
         'required': ['concern', 'location', 'explanation'], 'additionalProperties': False}}},
     'required': ['findings'], 'additionalProperties': False}}
-SCAN_ENTRIES = 1000
+SCAN_ENTRIES = identifier_pairs.ENTRY_LIMIT
 SCAN_HITS = 1000
 SCAN_WORK = 16 << 20
 
@@ -89,19 +89,11 @@ def representation(value, contract):
 def identifier_check(value, mapping, *, configured):
     if not configured:
         return {'status': 'not_configured', 'hits': []}
-    if not isinstance(mapping, list) or len(mapping) > SCAN_ENTRIES:
-        problem('scan_invalid', 'gate.scan', 'expected a bounded list of identifiers')
-    originals = []
-    for index, item in enumerate(mapping):
-        if isinstance(item, str):
-            original, label = item, str(index)
-        elif isinstance(item, dict) and isinstance(item.get('original'), str) and isinstance(item.get('placeholder', ''), str):
-            original, label = item['original'], item.get('placeholder') or str(index)
-        else:
-            problem('scan_invalid', 'gate.scan', 'each entry needs nonempty original text')
-        if not original or len(original) > 4096 or len(label) > 256:
-            problem('scan_invalid', 'gate.scan', 'identifier entries must be nonempty and bounded')
-        originals.append((original.casefold(), label))
+    try:
+        entries = identifier_pairs.parse(mapping, profile='scan')
+    except identifier_pairs.PairsError as exc:
+        problem('scan_invalid', 'gate.scan', exc.message)
+    originals = [(entry.original.casefold(), entry.placeholder) for entry in entries]
     hits, work = [], 0
 
     def check_string(text, path, part):

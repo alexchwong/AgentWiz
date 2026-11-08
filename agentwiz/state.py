@@ -707,6 +707,24 @@ class ProcessState:
             defaults = copy.deepcopy(dict((self._role_definitions.get(role) or {}).get("task_defaults") or {}))
             return RoleCapture(role, profile, snapshot, defaults, self._roles_revision)
 
+    def destination_config(self) -> dict:
+        """Configured destinations from settings and URL interpretation only (core v3 §3.2): no Endpoint,
+        no credential or token read, no MCP refresh and no `view()`. Advisory; readiness stays authoritative.
+        An MCP configuration edit shows here after the next ordinary refresh."""
+        with self._lock:
+            out_roles = {}
+            for role in sorted(self._roles.keys() | self._role_definitions.keys()):
+                failure = self._role_failure_locked(role)
+                if failure is not None:
+                    out_roles[role] = {"unresolved": failure.reason}
+                    continue
+                settings = self._profiles[self._roles[role]]
+                out_roles[role] = {"kind": settings.kind, "url": self._configured_settings(settings).base_url,
+                                   "model": settings.model,
+                                   "provider": (settings.provider or "") if settings.kind == "openrouter" else ""}
+            servers = {name: {"url": config.url} for name, config in sorted(self._mcp.servers.items())}
+            return {"roles": out_roles, "servers": servers}
+
     def resolve_role(self, role: str) -> RequestSnapshot:
         """The snapshot a block step uses for `role` (7.4), built from the profile's saved settings. Raises
         RoleUnresolved."""

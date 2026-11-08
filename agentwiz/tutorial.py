@@ -184,6 +184,9 @@ class Tutorial:
             if topic.id == "release-gate":
                 from .tutorial_support.workshop import ensure_release_fixture
                 ensure_release_fixture(state, self.backend_url)
+            if topic.id.startswith("private-summary-"):
+                from .tutorial_support.private_summary import prepare_tutorial
+                prepare_tutorial(state, self.backend_url, topic.id[len("private-summary-"):])
             if topic.id == "workflow":
                 from .tutorial_support.workshop import ensure_workflow_fixture
                 ensure_workflow_fixture(state, self.backend_url)

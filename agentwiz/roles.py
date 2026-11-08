@@ -17,11 +17,9 @@ Messages name locations and rules, never values. Standard library only.
 from __future__ import annotations
 
 import copy
-import ipaddress
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from .workspace import (NAME_RULE, InvalidDocument, Problem, check_format_version, read_document, valid_name,
                         write_atomic)
@@ -44,18 +42,13 @@ DEFAULTS = {
 
 
 def profile_location(settings) -> str:
-    """Classify without DNS or network access. Local means a loopback model server."""
+    """Classify without DNS or network access. Local means a loopback model server; the host test is
+    `outbound_policy.locality`, the one locality rule. Kinds other than the two local server kinds stay cloud."""
+    from . import outbound_policy
     if settings.kind not in ("lmstudio", "openai_compat"):
         return "cloud"
-    host = urlsplit(settings.base_url or "http://127.0.0.1:1234/v1").hostname
-    if host == "localhost":
-        return "local"
-    try:
-        if ipaddress.ip_address(host or "").is_loopback:
-            return "local"
-    except ValueError:
-        pass
-    return "cloud"
+    url = settings.base_url or "http://127.0.0.1:1234/v1"
+    return "local" if outbound_policy.locality(url) == "local" else "cloud"
 
 
 def parse_definitions(value: object) -> dict:

@@ -15,7 +15,10 @@ TYPES = {'Text': 'string', 'Choice': 'string', 'Whole number': 'integer', 'Numbe
 BOUNDS = {'minimum': 'minimum', 'maximum': 'maximum', 'min_length': 'minLength',
           'max_length': 'maxLength', 'min_items': 'minItems', 'max_items': 'maxItems'}
 SECTIONS = ('use', 'exclusions', 'effects', 'limitations', 'missing_data', 'failures')
-SCRIPT_IDS = ('count_text', 'select_fields', 'format_report')
+SCRIPT_IDS = ('count_text', 'select_fields', 'format_report', 'restore_placeholders')
+# Transform-only starters: no generated-script (version 1) form exists.
+TRANSFORM_ONLY_IDS = ('restore_placeholders',)
+RESTORE_DEFAULTS = {'unknown': 'fail', 'placeholder_syntax': 'bracket_upper'}
 MODEL_IDS = ('write_text', 'summarise', 'extract_fields', 'choose_label', 'check_source')
 STARTERS = MODEL_IDS + SCRIPT_IDS + ('call_tool',)
 
@@ -222,7 +225,7 @@ sys.stdout.write(jsonio.encode_exact({{'out': out}}))
 
 
 def generate_script(starter, parameters):
-    if starter not in SCRIPT_IDS or not isinstance(parameters, dict):
+    if starter not in SCRIPT_IDS or starter in TRANSFORM_ONLY_IDS or not isinstance(parameters, dict):
         fail()
     if starter == 'count_text' and (set(parameters) != {'unit'} or parameters['unit'] not in ('whitespace_words', 'characters')):
         fail()
@@ -290,6 +293,8 @@ def starter(identifier, key, role=None, server=None, tool=None, *, version=1, da
         fail()
     if data_handling is not None and (identifier in SCRIPT_IDS or version != 1):
         fail()
+    if identifier in TRANSFORM_ONLY_IDS and version != 2:
+        fail()
     text = {'format': 'text'}
     obj = {'format_version': blocks.FORMAT_VERSION, 'name': key, 'description': identifier.replace('_', ' '),
            'inputs': {'text': {'contract': text}}, 'outputs': {'out': {'contract': text}}, 'steps': []}
@@ -310,12 +315,17 @@ def starter(identifier, key, role=None, server=None, tool=None, *, version=1, da
                          'prompt': {'text': instructions + '\n{{inputs.text}}'},
                          'response_mode': 'named_json'}]
     elif identifier in SCRIPT_IDS:
-        params = {'count_text': {'unit': 'whitespace_words'}, 'select_fields': {'mappings': [{'source_path': ['text'], 'destination': 'text', 'required': True}]}, 'format_report': {'template': '{{inputs.text}}'}}[identifier]
+        params = {'count_text': {'unit': 'whitespace_words'}, 'select_fields': {'mappings': [{'source_path': ['text'], 'destination': 'text', 'required': True}]}, 'format_report': {'template': '{{inputs.text}}'},
+                  'restore_placeholders': dict(RESTORE_DEFAULTS)}[identifier]
+        if identifier == 'restore_placeholders':
+            obj['inputs']['pairs'] = {'contract': {'format': 'json'}}
+            obj['description'] = 'restore placeholders'
         if version == 2:
             obj['format_version'] = blocks.WORKFLOW_FORMAT_VERSION
             for side in ('inputs', 'outputs'):
                 for declaration in obj[side].values():
-                    declaration['local_only'] = False
+                    # The mapping holds originals, so every restore port is Local only.
+                    declaration['local_only'] = identifier == 'restore_placeholders'
             m.update(starter_version=2, parameters=params)
             obj['steps'] = [{'id': 'transform', 'kind': 'transform', 'operation': identifier,
                              'operation_version': 1, 'parameters': params, 'output': 'out'}]
@@ -323,7 +333,7 @@ def starter(identifier, key, role=None, server=None, tool=None, *, version=1, da
             files, generated = generate_script(identifier, params)
             m.update(generated)
             obj['steps'] = [{'id': 'script', 'kind': 'script', 'file': 'scripts/main.py', 'timeout_s': 60}]
-        if identifier != 'format_report':
+        if identifier not in ('format_report', 'restore_placeholders'):
             obj['outputs']['out']['contract'] = {'format': 'json'}
     else:
         m['effects'] = 'unknown'
@@ -338,8 +348,10 @@ def starter(identifier, key, role=None, server=None, tool=None, *, version=1, da
                     declaration['local_only'] = label
     m['description_sections'] = {'use': obj['description'], 'exclusions': 'Use for one independent block operation.',
         'effects': 'Review the selected external tool before running.' if identifier == 'call_tool' else 'Produces a returned value for review.',
-        'limitations': 'Model answers require correctness review.' if identifier in MODEL_IDS else 'Scripts have ordinary user-level filesystem and network access.' if identifier in SCRIPT_IDS else 'Remote behavior may change.',
-        'missing_data': 'Omit unspecified quantity.' if identifier == 'extract_fields' else 'Review required inputs before running.',
+        'limitations': 'Model answers require correctness review.' if identifier in MODEL_IDS else
+                       'Replaces exact placeholder tokens only; a placeholder the text reworded is not restored.' if identifier == 'restore_placeholders' else 'Scripts have ordinary user-level filesystem and network access.' if identifier in SCRIPT_IDS else 'Remote behavior may change.',
+        'missing_data': 'Omit unspecified quantity.' if identifier == 'extract_fields' else
+                        'An unknown placeholder fails the step unless set to leave it in place; unused pairs are listed.' if identifier == 'restore_placeholders' else 'Review required inputs before running.',
         'failures': 'Inspect located input, execution and output-check issues.'}
     return {'key': key, 'definition_text': jsonio.encode_exact(obj), 'files': wire_files(files), 'metadata': m}
 
@@ -502,6 +514,8 @@ def edit(draft, operation):
 
 def examples(identifier):
     """Small fixed examples, with packaged human review distinct from user verification."""
+    if identifier == 'restore_placeholders':
+        return restore_examples()
     text_cases = [('short', 'three blue notebooks'), ('empty', '')]
     result = []
     for i, (label, text) in enumerate(text_cases):
@@ -521,3 +535,18 @@ def examples(identifier):
         result.append({'id': identifier + '-' + str(i + 1), 'version': 1, 'label': label, 'inputs': inputs,
                        'expectation': expectation, 'origin': 'packaged_human_reviewed', 'verified': True, 'held_out': i == 1})
     return result
+
+
+RESTORE_PAIRS = [{'placeholder': '[PERSON_1]', 'original': 'Jane Example'},
+                 {'placeholder': '[DATE_1]', 'original': '3 March'}]
+
+
+def restore_examples():
+    """Both pass under the default parameters; the second leaves one mapped placeholder unused."""
+    cases = [('restored', '[PERSON_1] reported fatigue on [DATE_1].', 'Jane Example reported fatigue on 3 March.'),
+             ('one pair unused', '[PERSON_1] reported fatigue.', 'Jane Example reported fatigue.')]
+    return [{'id': 'restore_placeholders-' + str(i + 1), 'version': 1, 'label': label,
+             'inputs': {'text': text, 'pairs': jsonio.encode_exact(RESTORE_PAIRS)},
+             'expectation': {'kind': 'whole_output', 'values': {'out': out}},
+             'origin': 'packaged_human_reviewed', 'verified': True, 'held_out': i == 1}
+            for i, (label, text, out) in enumerate(cases)]

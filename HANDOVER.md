@@ -1,3 +1,90 @@
+# Core v3 implementation — 8 November 2026
+
+Implemented `AgentWiz_proposal_core_combined_v3.md` (Checkpoints B and U, with the owner decisions of
+8 November 2026) against AgentWiz devel `f197a52`, still devel HEAD when the work started. Version remains the
+unreleased 0.2.1. No commit, push, merge, tag or publication was made.
+
+## Apply this delivery
+
+Extract the ZIP over the matching checkout, preserving paths. It contains complete changed and added files, not a
+patch. No files need deletion (`DELETIONS.txt` is empty). No dependencies were added.
+
+## Behaviour
+
+- **§2 Restore.** `identifier_pairs.py` (scan and restore profiles; the Gate's scan now calls it with unchanged
+  codes and messages). `restore_placeholders` transform with streaming tokenisation, no rescanning, chunked
+  escaped-length enforcement and a bounded trace. v4-only starter (all ports Local only, two passing examples),
+  assistance schema, `GET starters` version 2, page control *If a placeholder has no mapping*.
+- **§3.1** `roles.profile_location` keeps its kind guard and empty-URL fallback and delegates the host test to
+  `outbound_policy.locality`.
+- **§3.2–3.4** `State.destination_config()`; `outbound_policy.saved_uses`, merged into
+  `destination-trust-candidates` (`requires_trust`, `trust_gaps`, `scan`, `observed`, `remedy`); remedies on
+  Workshop/assistance protected refusals, workflow readiness issues (with `facts`) and run-time
+  `destination_changed`.
+- **§4** `Graph.explain` (values and nodes, per basis), `effective` labels in the editor's `node_ports`, per-example
+  `restriction` in readiness; `messages.py` catalogue and `GET messages`; the page renders catalogue text with the
+  code in a details line, a remedy attribute on findings and the saved-use banner in Trusted destinations.
+- **§6** `Workflows.candidate` (extracted from `edit`, Save/Rebind schemas unchanged), `Workflows.open_saved`,
+  lenient planning for validation only, `POST workflow-validate`.
+- **§7** `text` expectations (validation, judgement, assistance schema, block and workflow editors that preserve
+  untouched assertions); `tutorial_support/private_summary.py` reference fixtures with stand-in models
+  `private-deid`/`private-summary`; tutorial topics `private-summary-local` and `private-summary-release`
+  (`updated_in` 0.2.1).
+
+## Departures and interpretations (for owner review)
+
+1. `declared_label` versus `consumer_label`: a label on a receiving port is reported as `declared_label` when every
+   receiver of the value is labelled, and as `consumer_label` when unlabelled siblings also receive it (fan-out).
+   A labelled producing output is `declared_label`; workflow inputs, constants and outputs are `workflow_io`.
+2. Extra node cause `release_assessment` for a Gate whose local assessment makes it protected.
+3. Validation reports Gate findings inside `structural` (the response shape has no separate list).
+4. The restore trace is one object in the transform's existing `fills` list (the page expects a list).
+5. A Text assertion on a JSON output is refused with `example_incompatible` (409), also for blocks, where other
+   example-shape errors are `invalid` (400).
+6. `GET messages` added so the page can render catalogue text without duplicating it.
+7. `protected_host_script` now carries one located issue with `remedy: explain`; the code is unchanged.
+8. The tutorial's release topic uses an OpenRouter-kind profile whose configured server is the local stand-in,
+   with a placeholder key held only in the tutorial session's memory; no live provider is contacted.
+9. Remedies on Trusted-destination rows suppress `choose_local_role` for destinations no protected use requires.
+10. S2/S2a page journeys author the reference workflows through the shared fixture (HTTP/service), then check
+    readiness, review, approval and completion in the page. Assembling the blocks and wiring through the page
+    (no Upgrade or Refresh design fields click, mapping built with List of records) is not covered: that is
+    canvas assembly, which UI-C owns (S10/S11 are deferred there too).
+
+## Tests changed
+
+- Added `tests/test_core_v3.py` (27 functions, 35 cases): restore semantics, locations, encoded limit with `tracemalloc`, profile
+  regression, assistance schema, starter standalone and in a workflow, text validation/judgement, explanation
+  (fan-out, upstream, released, example basis, agreement), validation (collected issues, cycle and unknown
+  source, fan-out under breakage, advisory Rebind and snapshot reuse, stale token, no file writes,
+  configuration-only with credential paths patched to raise, 64-node cost, seeded agreement with readiness),
+  candidates/remedies (S1, S6), refusal actions, catalogue, reference workflows (10 examples correct locally; release
+  sends one approved request), S3, S7, S8, S9.
+- `tests/test_page.py`: §5 Create-dialog guard (8 starters), S2, S2a, S3 rendering, S6 banner, restore parameter
+  control, Text-check preservation in block and workflow editors.
+- `tests/test_tutorial.py`: drivers and the registry's pinned ID/`updated_in` lists for the two new topics.
+
+## Actual verification
+
+Environment: Linux x86_64, Python 3.13 (the checkout's `.venv` from `scripts/dev_setup.sh`), modelSpell 0.3.0,
+Playwright 1.63.0 with its Chromium.
+
+- Baseline at `f197a52` before changes: `python -m pytest -q -m "not live"`: **1010 passed, 10 deselected**.
+- Final source: `python -m pytest -q -m "not live"`: **1060 passed, 10 deselected**; no failures, errors or skips. An intermediate run failed only `test_tutorial_topics` while the tutorial drivers were being edited.
+- Shipped Python parsed with the Python 3.10 grammar: passed. `node --check` on `workflows.js` and the page
+  script: passed. `git diff --check`: clean.
+- Not run: `scripts/build_release.py --smoke`, page/tutorial checks against an installed wheel, the CI matrix.
+
+## Remaining limits
+
+Only Linux and Python 3.13 were executed; macOS, WSL2 and Python 3.10 remain unverified except by grammar parsing.
+Open-draft trust gaps, the validation client and canvas display of validation remain with UI-C. The 150 ms
+validation target is recorded here and was not used as a CI bound (the test bound is 2 s).
+
+---
+
+Earlier handovers below are historical; the entry above describes this delivery.
+
 # UI-AB v2 implementation — 8 November 2026
 
 Implemented `AgentWiz_proposal_ui_AB_walkthrough_space_v2.md` with the owner decisions of 8 November 2026

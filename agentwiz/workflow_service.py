@@ -9,12 +9,15 @@ import copy
 from types import SimpleNamespace
 from contextlib import ExitStack
 
-from . import checks, runs, workflow_evidence, workflow_settings
+from . import checks, outbound_policy, runs, workflow_evidence, workflow_settings
 from .errors import report_internal
 from .workflow_definition import Store, capture, digest, names, problem, record, unmanaged
 from .workflow_runner import Graph, Job
 from .workshop import WorkshopError
 from .workspace import valid_name
+
+
+VALIDATION_LIMIT = 256 << 10
 
 
 class Workflows:
@@ -58,6 +61,18 @@ class Workflows:
         return {'kind': block.step.kind, 'role': block.step.role, 'tool': block.step.tool,
                 'server': block.step.server, 'context_local_only': block.context_local_only, **cls.block_ports(block)}
 
+    @classmethod
+    def effective_view(cls, graph, node):
+        """`block_view` with `effective` beside each declared `local_only`: whether the value the port receives
+        or produces is restricted under the graph's current basis (core v3 §4.2)."""
+        view = cls.block_view(graph.blocks[node])
+        for name, port in view['inputs'].items():
+            binding = graph.bindings.get(node, {}).get(name)
+            port['effective'] = binding is not None and binding[0] in graph.restricted
+        for name, port in view['outputs'].items():
+            port['effective'] = ('node', node, name) in graph.restricted
+        return view
+
     def source_options(self, key, revision=None):
         revisions = self.workshop.assets.revisions(key)
         if revision is None and revisions['revisions']:
@@ -96,7 +111,8 @@ class Workflows:
                 if 'gate' in row:
                     row['gate']['contract'] = exact(row['gate']['contract'])
             return {'format_version': 1, 'file_token': token, 'definition_text': exact(definition),
-                    'editor': editor, 'node_ports': {node: self.block_view(block) for node, block in graph.blocks.items()},
+                    'editor': editor, 'node_ports': {node: self.effective_view(graph, node) for node in graph.blocks},
+                    'restriction': graph.explain(),
                     'input_ports': {port: contract.format for port, contract in graph.contracts['inputs'].items()},
                     'layout': bundle['layout'], 'examples': bundle['examples'], 'issues': graph.issues,
                     'sources': {node: (bundle['snapshots'][row['snapshot_id']]['provenance'] if 'snapshot_id' in row else
@@ -145,57 +161,15 @@ class Workflows:
             selections = names(request.get('selections', {}), 0, 64, 'selections')
             if action == 'workflow_rebind' and not selections.keys() & old_node_keys(current):
                 problem('invalid', 'selections', 'choose an existing node to rebind', 400)
-            if selections.keys() - nodes.keys():
-                problem('invalid', 'selections', 'selection names an absent node', 400)
-            snapshots = {} if current is None else current['snapshots']
-            old_nodes = {} if current is None else current['definition']['nodes']
-            copied = {}
-            for node, row in nodes.items():
-                record(row, ('bindings',), ('snapshot_id', 'gate'), f'nodes.{node}')
-                if 'gate' in row:
-                    if 'snapshot_id' in row or node in selections:
-                        problem('invalid', f'nodes.{node}', 'a gate cannot capture a block', 400)
-                    continue
-                old_id = old_nodes.get(node, {}).get('snapshot_id')
-                if node in selections:
-                    if old_id is not None and action != 'workflow_rebind':
-                        problem('invalid', f'nodes.{node}', 'use Rebind to replace a captured node')
-                    snapshot = capture(self.workshop.assets, selections[node])
-                    snapshot_id = digest(snapshot)
-                    if old_id is not None:
-                        before = snapshots[old_id]
-                        changes.append({'node': node, 'before': before['provenance'], 'after': snapshot['provenance'],
-                                        'ports': {side: {'removed': sorted(before['contracts'][side].keys() - snapshot['contracts'][side].keys()),
-                                                         'added': sorted(snapshot['contracts'][side].keys() - before['contracts'][side].keys()),
-                                                         'changed': sorted(port for port in before['contracts'][side].keys() & snapshot['contracts'][side].keys()
-                                                                           if before['contracts'][side][port] != snapshot['contracts'][side][port])}
-                                                  for side in ('inputs', 'outputs')}})
-                else:
-                    snapshot_id = old_id
-                    if old_id is None or row.get('snapshot_id', old_id) != old_id:
-                        problem('snapshot_unusable', f'nodes.{node}', 'choose an exact block revision')
-                    snapshot = snapshots[old_id]
-                copied[snapshot_id] = snapshot
-                row['snapshot_id'] = snapshot_id
-            layout = request.get('layout', {} if current is None else
-                                 {node: position for node, position in current['layout'].items() if node in nodes})
-            names(layout, 0, 64, 'layout')
-            for node, position in layout.items():
-                record(position, ('x', 'y'), (), f'layout.{node}')
-                if any(type(value) is not int for value in position.values()):
-                    problem('invalid', f'layout.{node}', 'coordinates must be integers', 400)
-            used = {(point['x'], point['y']) for point in layout.values()}
-            for index, node in enumerate(sorted(nodes)):
-                if node not in layout:
-                    while (index % 4 * 220, index // 4 * 130) in used:
-                        index += 1
-                    point = index % 4 * 220, index // 4 * 130
-                    used.add(point)
-                    layout[node] = {'x': point[0], 'y': point[1]}
-            candidate = {'format_version': 2 if any('gate' in row for row in nodes.values()) else 1, 'definition': definition, 'snapshots': copied, 'layout': layout,
-                         'examples': copy.deepcopy(request.get('examples', [] if current is None else current['examples']))}
+            # Rebind may recapture its selected existing nodes; Save may recapture none.
+            replacements = set(selections) & set(old_node_keys(current)) if action == 'workflow_rebind' else set()
+            edits = {'name': name, 'definition': definition, 'selections': selections}
+            for field in ('layout', 'examples'):
+                if field in request:
+                    edits[field] = request[field]
             with ExitStack() as stack:
-                graph = Graph(candidate, name, stack)
+                built = self.candidate(current, edits, stack, replacements=replacements)
+                candidate, graph, changes = built.bundle, built.graph, built.changes
                 self.update_examples(graph, candidate['examples'], [] if current is None else current['examples'])
                 self.check_capture_credentials(graph)
                 issues = graph.issues
@@ -214,6 +188,158 @@ class Workflows:
         self.workshop.check_plan(plan, review)
         new_token = self.store.publish(name, token, candidate)
         return {'deleted': candidate is None, 'file_token': None if candidate is None else new_token}
+
+    def candidate(self, base, edits, stack, *, replacements, lenient=False):
+        """The candidate bundle and its Graph (core v3 §6.2): existing nodes reuse `base`'s immutable snapshots;
+        new nodes and nodes in `replacements` are captured. Shared by Save, Rebind and design-time validation;
+        it publishes nothing and authorises nothing."""
+        definition, selections = edits['definition'], edits['selections']
+        nodes = definition['nodes']
+        if selections.keys() - nodes.keys():
+            problem('invalid', 'selections', 'selection names an absent node', 400)
+        snapshots = {} if base is None else base['snapshots']
+        old_nodes = {} if base is None else base['definition']['nodes']
+        copied, changes = {}, []
+        for node, row in nodes.items():
+            record(row, ('bindings',), ('snapshot_id', 'gate'), f'nodes.{node}')
+            if 'gate' in row:
+                if 'snapshot_id' in row or node in selections:
+                    problem('invalid', f'nodes.{node}', 'a gate cannot capture a block', 400)
+                continue
+            old_id = old_nodes.get(node, {}).get('snapshot_id')
+            if node in selections:
+                if old_id is not None and node not in replacements:
+                    problem('invalid', f'nodes.{node}', 'use Rebind to replace a captured node')
+                snapshot = capture(self.workshop.assets, selections[node])
+                snapshot_id = digest(snapshot)
+                if old_id is not None:
+                    before = snapshots[old_id]
+                    changes.append({'node': node, 'before': before['provenance'], 'after': snapshot['provenance'],
+                                    'ports': {side: {'removed': sorted(before['contracts'][side].keys() - snapshot['contracts'][side].keys()),
+                                                     'added': sorted(snapshot['contracts'][side].keys() - before['contracts'][side].keys()),
+                                                     'changed': sorted(port for port in before['contracts'][side].keys() & snapshot['contracts'][side].keys()
+                                                                       if before['contracts'][side][port] != snapshot['contracts'][side][port])}
+                                              for side in ('inputs', 'outputs')}})
+            else:
+                snapshot_id = old_id
+                if old_id is None or row.get('snapshot_id', old_id) != old_id:
+                    problem('snapshot_unusable', f'nodes.{node}', 'choose an exact block revision')
+                snapshot = snapshots[old_id]
+            copied[snapshot_id] = snapshot
+            row['snapshot_id'] = snapshot_id
+        layout = edits.get('layout', {} if base is None else
+                           {node: position for node, position in base['layout'].items() if node in nodes})
+        names(layout, 0, 64, 'layout')
+        for node, position in layout.items():
+            record(position, ('x', 'y'), (), f'layout.{node}')
+            if any(type(value) is not int for value in position.values()):
+                problem('invalid', f'layout.{node}', 'coordinates must be integers', 400)
+        used = {(point['x'], point['y']) for point in layout.values()}
+        for index, node in enumerate(sorted(nodes)):
+            if node not in layout:
+                while (index % 4 * 220, index // 4 * 130) in used:
+                    index += 1
+                point = index % 4 * 220, index // 4 * 130
+                used.add(point)
+                layout[node] = {'x': point[0], 'y': point[1]}
+        bundle = {'format_version': 2 if any('gate' in row for row in nodes.values()) else 1, 'definition': definition,
+                  'snapshots': copied, 'layout': layout,
+                  'examples': copy.deepcopy(edits.get('examples', [] if base is None else base['examples']))}
+        graph = Graph(bundle, edits['name'], stack, lenient=lenient)
+        return SimpleNamespace(bundle=bundle, graph=graph, changes=changes)
+
+    def open_saved(self, name, stack):
+        """A stored workflow opened directly, with no editing request, selections or caller token."""
+        bundle, _ = self.store.read(name)
+        if bundle is None:
+            problem('missing', name, 'workflow does not exist', 404)
+        return SimpleNamespace(bundle=bundle, graph=Graph(bundle, name, stack), changes=[])
+
+    def validate(self, body):
+        """Advisory design-time validation of an unsaved draft (core v3 §6.3). Reads the saved bundle by
+        `file_token` like Save does, never writes or publishes, and reads configuration only: no credentials,
+        no traffic. A cycle or unknown source makes the whole effective projection unavailable."""
+        from . import outbound_policy
+        from .jsonio import encode_exact
+        record(body, ('name', 'file_token', 'generation', 'editor'), ('selections', 'rebind', 'layout', 'example_id'),
+               'request')
+        name, generation = body['name'], body['generation']
+        if type(generation) is not int or generation < 0:
+            problem('invalid', 'generation', 'expected a nonnegative integer', 400)
+        rebind = body.get('rebind', [])
+        if not isinstance(rebind, list) or len(rebind) > 64 or any(not isinstance(node, str) for node in rebind):
+            problem('invalid', 'rebind', 'expected a list of node names', 400)
+        current, token = self.store.read(name)
+        if token != body['file_token']:
+            problem('stale', name, 'the workflow changed since review')
+        definition = self.editor_definition(body['editor'])
+        names(definition['nodes'], 0, 64, 'nodes')
+        selections = names(body.get('selections', {}), 0, 64, 'selections')
+        edits = {'name': name, 'definition': definition, 'selections': selections}
+        if 'layout' in body:
+            edits['layout'] = body['layout']
+        with ExitStack() as stack:
+            built = self.candidate(current, edits, stack, replacements=set(rebind) & set(old_node_keys(current)),
+                                   lenient=True)
+            graph = built.graph
+            example = None
+            if body.get('example_id') is not None:
+                example = next((row for row in built.bundle['examples'] if row['id'] == body['example_id']), None)
+                if example is None:
+                    problem('missing', 'example_id', 'the example does not exist', 404)
+            result = {'generation': generation, 'available': graph.available, 'structural': list(graph.issues),
+                      'unplannable': graph.unplannable,
+                      'ports': {node: self.block_view(block) for node, block in graph.blocks.items()}}
+            if graph.available:
+                result['restriction'] = graph.explain(example)
+                result['structural'] += graph.gate_findings() + graph.ancestor_warnings()
+                result['destinations'] = self.expected_destinations(graph)
+                result['gates'] = {node: {'value_restricted': (graph.bindings[node].get('value') or [None])[0] in graph.restricted,
+                                          'scan_bound': 'scan' in graph.bindings[node],
+                                          'assessment_role': config.get('assessment', {}).get('role') or None}
+                                   for node, config in graph.gates.items()}
+                for item in result['structural']:
+                    item.setdefault('remedy', outbound_policy.remedy(item['code']))
+        if len(encode_exact(result)) > VALIDATION_LIMIT:
+            result['truncated'] = True
+            if 'restriction' in result:
+                result['restriction'] = {key: result['restriction'][key] for key in ('basis', 'available')}
+                result['restriction']['truncated'] = True
+            result['structural'] = result['structural'][:100]
+            if len(encode_exact(result)) > VALIDATION_LIMIT:
+                result['ports'] = {}
+        return result
+
+    def expected_destinations(self, graph):
+        """Each dispatching node's expected destination and facts, from configuration only."""
+        from . import outbound_policy
+        state = self.workshop.state
+        config = state.destination_config()
+        try:
+            grants = outbound_policy.read(state.workspace.path)[1]
+        except outbound_policy.Refused:
+            grants = []
+        result = {}
+        for node in graph.order:
+            block, protected = graph.blocks[node], node in graph.protected_nodes
+            if node in graph.gates:
+                opened = graph.assessments[node]
+                if opened is None:
+                    continue
+                block, protected = opened.parsed.block, True
+            if block.step.kind not in ('model', 'tool'):
+                continue
+            destination, missing = outbound_policy.config_destination(config, block.step)
+            fact = outbound_policy.fact_view(state, destination, grants)
+            if missing:
+                fact['reason'] = missing
+            row = {'protected': protected, **fact}
+            if protected or missing:
+                target = block.step.role if block.step.kind == 'model' else block.step.server
+                row['remedy'] = outbound_policy.remedy(missing, fact, target=target if missing else None,
+                                                       upstream_only=graph.upstream_only(node))
+            result[node] = row
+        return result
 
     def check_capture_credentials(self, graph):
         bundle = graph.bundle
@@ -304,8 +430,9 @@ class Workflows:
         reviews, private = [], []
         model_roles, mcp_servers = {}, {}
         for index, example in enumerate(examples):
-            graph.select_example(example)
+            restriction = graph.explain(example)    # selects the example's basis
             review = graph.preflight(example['inputs'])
+            review['restriction'] = restriction
             destinations, issues, identities = graph.destinations(self.workshop.state, self.workshop, model_roles, mcp_servers)
             graph.example_runtime.append(dict(graph.runtime))
             graph.example_destinations.append(destinations)
@@ -321,6 +448,8 @@ class Workflows:
                                              'message': 'review this example against the current workflow ports',
                                              'severity': 'error'})
                 review['issues'] = [{**row, 'location': f"examples[{index}].{row['location']}"} for row in review['issues']]
+            review['issues'] = [{**row, 'remedy': row.get('remedy', outbound_policy.remedy(row['code']))}
+                                for row in review['issues']]
             reviews.append(review)
         descriptor = dict(reviews[0])
         all_issues = [row for review in reviews for row in review['issues']]

@@ -48,6 +48,11 @@ class Topic:
     target: str | None = None                     # the data-test name of the control the topic highlights
 
 
+def _private_document(index):
+    from .tutorial_support.private_summary import DOCUMENTS
+    return DOCUMENTS[index][0]
+
+
 def _page(hook=None, args=(), actions=()):
     return {"hook": hook, "args": list(args), "actions": [dict(a) for a in actions]}
 
@@ -111,6 +116,20 @@ TOPICS: tuple[Topic, ...] = (
           "acknowledge the concerns and choose Review and release. All tutorial services are local stand-ins; no real cloud is contacted.",
           "workflows", "0.2.1", "complete", False,
           _page("workflows.tutorial", ["tutorial_release", "[P1] attended on 7 November."]), "wf-preflight"),
+    Topic("private-summary-local", "Summarise private text locally",
+          "A local model replaces the synthetic names, emails and record numbers with placeholders, a second local "
+          "model summarises the redacted text, and the built-in restore step puts the originals back. Check readiness: "
+          "every destination is local and trusted. Run the prepared example and read its text checks. Passing these "
+          "checks says nothing about real documents, and unlabelled workflows are not checked for private content.",
+          "workflows", "0.2.1", "complete", False,
+          _page("workflows.tutorial", ["private_summary_local", _private_document(0), "case_1", "document"]), "wf-preflight"),
+    Topic("private-summary-release", "Release redacted text for a cloud summary",
+          "The same redaction runs locally, then a Release Gate pauses the run: review the redacted value and the "
+          "destinations it will reach, acknowledge the local assessment and approve. Only the approved value reaches "
+          "the cloud stand-in; the restore step runs locally. Approval covers the reviewed value at the destinations "
+          "shown, not forwarding inside a provider. All services here are local stand-ins.",
+          "workflows", "0.2.1", "complete", False,
+          _page("workflows.tutorial", ["private_summary_release", _private_document(0), "case_1", "document"]), "wf-preflight"),
     *(Topic("assist-" + action, "Assist · " + action.replace("_", " "),
             "Open Assist, choose describe and confirm the destination. Save, refine or discard the proposed "
             "description of this saved revision; the executable block does not change."

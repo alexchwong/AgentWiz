@@ -2294,3 +2294,188 @@ def test_workflow_readiness_finding_grants_in_place(ui, server, open_page):
     has(page, "wf-readiness-state", "data-state", "ready")
     expect(tid(page, "wf-run")).to_be_enabled()
     assert not server.requests
+
+
+# core v3 §5 -------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("starter", ["write_text", "summarise", "extract_fields", "choose_label", "check_source",
+                                     "blank_model", "call_tool", "blank_tool"])
+def test_page_create_dialog_makes_v4_blocks_with_the_chosen_labels(ui, open_page, make_fake_mcp, starter):
+    """The ordinary Create a block dialog never yields a v3 model or tool block: each starter becomes v4 and
+    every starter port carries the chosen label."""
+    tool_kind = starter in ("call_tool", "blank_tool")
+    if tool_kind:
+        fake = make_fake_mcp("modern", tools=[simple_tool("echo")])
+        add_server(ui, "tools", fake.url, **FAST)
+    page = open_page(ui)
+    tid(page, "ws-new-block").click()
+    dialog = tid(page, "ws-dialog")
+    tid(dialog, "ws-field-block-key").fill("guarded")
+    tid(dialog, "ws-choice-start-with").select_option(starter)
+    if tool_kind:
+        tid(dialog, "ws-choice-mcp-server").select_option("tools")
+        has(dialog, "ws-tool-discovery", "data-state", "ready")
+        tid(dialog, "ws-choice-tool-name").select_option("echo")
+    tid(dialog, "ws-port-label-private").check()
+    with page.expect_response(lambda r: r.url.endswith("/api/workshop/preview")) as caught:
+        tid(dialog, "ws-create-draft").click()
+    sent = caught.value.request.post_data_json
+    assert sent["data_handling"] == "private"
+    definition = jsonio.decode_exact(caught.value.json()["draft"]["definition_text"])
+    assert definition["format_version"] == 4
+    ports = [p for side in ("inputs", "outputs") for p in definition[side].values()]
+    assert ports and all(p["local_only"] is True for p in ports)
+
+
+# core v3 §7.4 journeys ---------------------------------------------------------------------------------
+def open_workflow_run(page, name):
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-picker").select_option(name)
+    tid(page, "wf-run-view").click()
+
+
+def test_page_s2a_local_private_summary_runs_with_only_local_trusted_destinations(ui, open_page, make_server):
+    from test_core_v3 import Backend, prepare
+    local = Backend()
+    try:
+        prepare(ui, "local", local)
+        page = open_page(ui)
+        open_workflow_run(page, "private_summary_local")
+        tid(page, "wf-document").fill("Jane Example reported fatigue. Record TEST-123.")
+        tid(page, "wf-preflight").click()
+        has(page, "wf-readiness-state", "data-state", "ready")
+        plan = request(ui, "/api/workshop/plans", {"format_version": 1, "action": "workflow_run",
+                       "request": {"name": "private_summary_local", "inputs": {"document": "x"}}})
+        assert all(row["protected"] and row["trust_revision"] for row in plan["descriptor"]["destinations"].values())
+        expect(tid(page, "wf-release-panel")).to_have_count(0)
+        tid(page, "wf-run").click()
+        expect(tid(page, "wf-trace")).to_contain_text("complete")
+    finally:
+        local.close()
+
+
+def test_page_s2_release_private_summary_pauses_for_review_then_completes(ui, open_page):
+    from test_core_v3 import Backend, prepare
+    local, cloud = Backend(), Backend()
+    try:
+        prepare(ui, "release", local, cloud)
+        plan = request(ui, "/api/workshop/plans", {"format_version": 1, "action": "workflow_run",
+                       "request": {"name": "private_summary_release", "inputs": {"document": "x"}}})
+        destinations = plan["descriptor"]["destinations"]
+        assert destinations["cloud_summary"]["protected"] is False and destinations["cloud_summary"]["kind"] == "openrouter"
+        assert all(row["protected"] for node, row in destinations.items() if node != "cloud_summary")
+        page = open_page(ui)
+        open_workflow_run(page, "private_summary_release")
+        tid(page, "wf-document").fill("Jane Example reported fatigue. Record TEST-123.")
+        tid(page, "wf-preflight").click()
+        has(page, "wf-readiness-state", "data-state", "ready")
+        tid(page, "wf-run").click()
+        expect(tid(page, "wf-release-panel")).to_be_visible()
+        assert cloud.requests == []
+        page.get_by_role("checkbox", name="I have reviewed the AI concerns or assessment unavailability").check()
+        tid(page, "wf-release-approve").click()
+        expect(tid(page, "wf-release-panel")).to_have_count(0)
+        expect(tid(page, "wf-trace")).to_contain_text("complete")
+        assert len(cloud.requests) == 1
+    finally:
+        local.close()
+        cloud.close()
+
+
+def test_page_s3_refusal_offers_a_release_gate_without_contacting_the_cloud(ui, open_page, make_server):
+    from test_core_v3 import cloud_chain
+    local, cloud = make_server(), make_server()
+    cloud_chain(ui, local, cloud, gate_node=False)
+    page = open_page(ui)
+    open_workflow_run(page, "chain")
+    tid(page, "wf-document").fill("Jane Example")
+    tid(page, "wf-preflight").click()
+    has(page, "wf-readiness-state", "data-state", "blocked")
+    finding = page.locator('[data-test="wf-finding"][data-remedy="add_release_gate"]')
+    expect(finding).to_have_count(1)
+    expect(tid(finding, "wf-finding-add-gate")).to_be_visible()
+    expect(finding.locator('details [data-test="wf-finding-code"]')).to_have_count(1)
+    assert local.requests == cloud.requests == []
+
+
+def test_page_s6_saved_use_banner_reports_a_model_change(ui, open_page, server):
+    from conftest import save_profile, save_roles
+    from test_core_v3 import save_definition
+    from test_release_gate import model_draft, node
+    from test_workflows import port
+    from test_workshop import plan_save, send
+    save_profile(ui, "local", model="old", kind="openai_compat", base_url=server.url + "/v1", provider="")
+    save_roles(ui, {"local": "local"})
+    saved = plan_save(ui, model_draft("deid", "local", {"text": port()}, {"out": port()}))
+    save_definition(ui, {"name": "model", "purpose": "", "inputs": {"text": port(restricted=True)}, "constants": {},
+                         "nodes": {"m": {"bindings": {"text": {"kind": "input", "port": "text"}}}},
+                         "outputs": {"out": {**port(), "binding": node("m")}}},
+                    {"m": {"key": "deid", "revision": saved["durable_id"]}})
+    grants = request(ui, "/api/workshop/destination-trust")
+    send(ui, "destination-trust", expected_revision=grants["revision"], trusted=True,
+         destination={"kind": "openai_compat", "url": server.url + "/v1", "model": "old", "provider": ""})
+    save_profile(ui, "local", model="new", kind="openai_compat", provider="")
+    page = open_page(ui)
+    tid(page, "ws-settings").click()
+    tid(page, "header-workflow-settings").click()
+    settings = page.get_by_role("dialog", name="Trusted destinations")
+    has(settings, "wf-saved-trust-gaps", "data-count", "1")
+    has(settings, "wf-saved-trust-gaps", "data-complete", "true")
+    expect(settings.locator('[data-test="wf-trust-row"][data-requires-trust="true"][data-trusted="false"]')).to_have_count(1)
+    assert not server.requests
+
+
+def test_page_restore_parameter_control_saves_its_choice(ui, open_page):
+    page = open_page(ui)
+    new_block(page, "restorer", "restore_placeholders")
+    tid(page, "ws-restore-unknown").select_option("keep")
+    tid(page, "ws-apply-parameters").click()
+    expect(tid(page, "ws-restore-unknown")).to_have_value("keep")
+    definition = save_new_revision(page, ui, "restorer")
+    assert definition["steps"][0]["parameters"] == {"unknown": "keep", "placeholder_syntax": "bracket_upper"}
+
+
+TEXT_CHECKS = {"kind": "text", "assertions": [
+    {"output": "out", "operation": "excludes", "values": ["Jane\nExample", "TEST-1"], "case": "insensitive"},
+    {"output": "out", "operation": "excludes_pattern", "pattern": "bracket_upper"}]}
+
+
+def test_page_block_example_editor_preserves_text_checks(ui, open_page):
+    from test_workshop import http_method, plan_save, send
+    plan_save(ui, send(ui, "preview", starter="format_report", starter_version=2, key="checked")["draft"])
+    http_method(ui, "blocks/checked/examples", "PUT", {"expected_revision": None, "examples": [
+        {"id": "t", "version": 1, "label": "Before", "inputs": {"text": "x"}, "expectation": TEXT_CHECKS,
+         "origin": "manual", "verified": True}]})
+    page = open_page(ui, "workshop/checked/test")
+    tid(page, "ws-choice-example").select_option("t")
+    tid(page, "ws-edit-selected-example").click()
+    dialog = tid(page, "ws-dialog")
+    expect(tid(dialog, "ws-text-check")).to_have_count(2)
+    tid(dialog, "ws-field-label").fill("After")
+    tid(dialog, "ws-save").click()
+    tid(page, "ws-save-example-collection").click()
+    assert wait_until(lambda: request(ui, "/api/workshop/blocks/checked/examples")["examples"][0]["label"] == "After")
+    assert request(ui, "/api/workshop/blocks/checked/examples")["examples"][0]["expectation"] == TEXT_CHECKS
+
+
+def test_page_workflow_example_editor_preserves_text_checks(ui, open_page):
+    from test_core_v3 import Backend, prepare
+    local = Backend()
+    try:
+        prepare(ui, "local", local)
+        before = request(ui, "/api/workshop/workflows/private_summary_local")["examples"][0]
+        page = open_page(ui)
+        page.get_by_role("tab", name="Workflows").click()
+        tid(page, "wf-picker").select_option("private_summary_local")
+        tid(page, "wf-examples").click()
+        tid(page, "wf-edit-example").first.click()
+        dialog = page.get_by_role("dialog", name="Workflow example")
+        expect(tid(dialog, "wf-text-check")).to_have_count(3)
+        tid(dialog, "wf-example-label").fill("Relabelled")
+        tid(dialog, "ws-keep-example").click()
+        tid(page, "wf-save").click()
+        tid(page.get_by_role("dialog", name="Review workflow save"), "ws-confirm").click()
+        expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+        after = request(ui, "/api/workshop/workflows/private_summary_local")["examples"][0]
+        assert after["label"] == "Relabelled" and after["expectation"] == before["expectation"]
+    finally:
+        local.close()
