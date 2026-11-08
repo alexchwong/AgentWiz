@@ -79,6 +79,26 @@ def clip(page):
     return page.evaluate("navigator.clipboard.readText()")
 
 
+def test_settings_overview_updates_while_detached(ui, server, open_page, monkeypatch):
+    """Startup and state refresh must work before Overview and while another category is open."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    configure(ui, server, model="initial-model")
+    page = open_page(ui, "chat")
+    has(page, "header-openrouter-key", "data-state", "missing")
+    tid(page, "ws-settings").click()
+    overview = tid(page, "settings-overview")
+    expect(overview).to_contain_text("initial-model")
+    page.locator('[data-test="settings-category"][data-category="saving"]').click()
+    tid(page, "settings-close").click()
+
+    configure(ui, server, model="updated-model")
+    say(page, "chat", "refresh after settings changed")
+    has(page, "chat-status", "data-state", "stale")
+    assert server.requests == []
+    tid(page, "ws-settings").click()
+    expect(overview).to_contain_text("updated-model")
+
+
 def test_openrouter_key_dialog(ui, open_page, monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     page = open_page(ui)
@@ -801,7 +821,9 @@ def test_page_stale_revision(ui, server, open_page):
     say(page, "chat", "hi")
     has(page, "chat-status", "data-state", "stale")
     assert server.requests == []                                      # nothing was sent, nothing resent
-    expect(page.locator("#summary")).to_contain_text("other", timeout=WAIT)     # the page reloaded the state
+    tid(page, "ws-settings").click()
+    expect(tid(page, "settings-overview")).to_contain_text("other", timeout=WAIT)
+    tid(page, "settings-close").click()
     expect(tid(page, "chat-prompt")).to_have_value("hi")             # its inputs are kept
     tid(page, "chat-send").click()
     has(page, "chat-status", "data-state", "done")

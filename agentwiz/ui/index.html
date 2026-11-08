@@ -378,6 +378,8 @@ const workflowScript = loadPageScript("workflows");
 let CW = null;                  // the contract components, once contracts.js has loaded
 const startProblems = [];       // shown in the banner on every render
 const $ = (id) => document.getElementById(id);
+// Settings categories can detach the overview; keep its state target available.
+const summaryEl = $("summary");
 const STALE_SEND = "Settings, a contract or the saving switch were changed elsewhere. The page has reloaded them; check them and send again.";
 const STALE_SAVE = "Settings were changed in another tab. The header now shows the current settings; check them and save again.";
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -763,7 +765,7 @@ function renderState() {
   if (problems.length)
     banner.append(h("p", { text: "Repair or restore the file. Workspace and profile files need a restart; the MCP server library, shared defaults and contracts are reloaded when repaired." }));
   const pr = profilesInfo();
-  $("summary").title = `${pr.path || ""}\nDefaults: ${pr.defaults_path || ""}`;
+  summaryEl.title = `${pr.path || ""}\nDefaults: ${pr.defaults_path || ""}`;
   if (pr.unresolved_active) banner.append(h("p", { text: `Profile ${pr.unresolved_active} is missing; default settings are in use.` }));
   if (state.legacy_server_profiles?.length) banner.append(h("p", {text: `Legacy server URLs in profiles ${state.legacy_server_profiles.join(", ")} are ignored. Transfer any needed URLs to ${state.server_config_path}.`}));
   for (const c of (state.contracts && state.contracts.items) || [])
@@ -777,7 +779,7 @@ function renderState() {
   const parts = [profile, state.kind, state.base_url || "(default URL)", state.model || "(no model)"];
   if (state.kind === "openrouter") parts.push("provider=" + (state.provider || "any"));
   parts.push(keySource(state).summary);
-  $("summary").textContent = parts.join(" · ");
+  summaryEl.textContent = parts.join(" · ");
   const keyMissing = state.openrouter_key_source === "none";
   $("open-openrouter-key").textContent = keyMissing ? "OpenRouter key not set" : "OpenRouter key set";
   $("open-openrouter-key").classList.toggle("primary", keyMissing);
@@ -4098,7 +4100,7 @@ settingsHub.append(h("h2",{id:"settings-hub-title",text:"Settings"}),h("div",{cl
 document.body.append(settingsHub);
 const settingsGroup=h("button",{type:"button",id:"ws-settings","data-test":"ws-settings",text:"Settings",onclick:()=>openSettings("overview")});
 $("open-settings").before(settingsGroup);
-const settingsOverview=h("div",{"data-test":"settings-overview"},h("p",{class:"note"},$("summary")));
+const settingsOverview=h("div",{"data-test":"settings-overview"},h("p",{class:"note"},summaryEl));
 const SETTINGS_INLINE={
   overview:()=>[h("h3",{text:"Overview"}),h("p",{text:$("workspace").textContent||""}),settingsOverview,
     h("p",{"data-test":"settings-saving-state",text:"Save runs: "+(historyInfo().save_runs?"On":"Off")})],
