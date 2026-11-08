@@ -877,6 +877,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == 'destination-trust':
             from ..outbound_policy import view
             result = view(self.server.state)
+        elif path == 'destination-trust-candidates':
+            from ..outbound_policy import candidates
+            result = candidates(self.server.state)
         elif path == 'starters':
             from ..workshop_editor import STARTERS, examples
             result = {'format_version': 1, 'starters': [{'id': k, 'version': 2 if k in ('count_text', 'select_fields', 'format_report') else 1, 'examples': examples(k)} for k in STARTERS]}
@@ -886,6 +889,8 @@ class Handler(BaseHTTPRequestHandler):
             result = service.preview({'key': parts[1], 'revision': parts[3]})
         elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'examples':
             result = service.collection(parts[1])
+        elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'retained-labels':
+            result = service.retained_label_review(parts[1])
         elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'support':
             result = service.support(parts[1])
         elif len(parts) == 2 and parts[0] in ('batches', 'comparisons'):
@@ -994,6 +999,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise workshop.WorkshopError('invalid', 400)
             if len(parts) == 6 and parts[1:3] == ['api', 'workshop'] and parts[3] == 'blocks' and parts[5] == 'examples':
                 return self._send(200, self.server.state.workshop.save_examples(parts[4], body))
+            if len(parts) == 6 and parts[1:3] == ['api', 'workshop'] and parts[3] == 'blocks' and parts[5] == 'retained-labels':
+                return self._send(200, self.server.state.workshop.save_retained_label_review(parts[4], body))
             if len(parts) == 8 and parts[1:4] == ['api', 'workshop', 'blocks'] and parts[5] == 'revisions' \
                     and parts[7] == 'description':
                 return self._send(200, self.server.state.workshop.save_description(parts[4], parts[6], body))

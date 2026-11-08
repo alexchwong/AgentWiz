@@ -84,6 +84,35 @@
       return JSON.stringify(d, null, 2);
     }
     const kindOf = (view) => !view ? null : view.format === "text" ? "text" : (view.fields && view.fields.length ? "structured" : "any");
+    // A short chip label and a readable sentence for a projected contract (UI-AB v2 AB5.1). Required, nullable and
+    // unknown-field rules are stated, not only field names.
+    function summarize(view) {
+      if (!view) return { chip: "Contract unavailable", readable: "The contract has not been checked yet.", kind: "pending" };
+      const kind = kindOf(view);
+      if (kind === "text") {
+        const n = Object.keys(view.rules || {}).length;
+        return { chip: "Text" + (n ? " · " + n + " rule" + (n === 1 ? "" : "s") : ""), readable: n ? "Text with " + n + " rule" + (n === 1 ? "" : "s") + "." : "Any text.", kind };
+      }
+      if (kind === "any") return { chip: "Any JSON ⚠", readable: "Any well-formed JSON value; no field validation.", kind };
+      const rows = view.fields || [], root = rows.find((r) => r.path.length === 0);
+      let record = root, prefix = "", list = false;
+      if (root && root.type === "List") { list = true; record = rows.find((r) => r.path.length === 1 && r.path[0] === "[]"); prefix = "list of "; }
+      if (!record || record.type !== "Group") {
+        const t = record ? record.type : "value";
+        const choices = record && record.choices ? " (" + record.choices.filter((c) => c !== null).join(", ") + ")" : "";
+        return { chip: "JSON · " + prefix + t + choices, readable: (list ? "List of " + t : t) + choices + (record && record.nullable ? "; null allowed" : "") + ".", kind };
+      }
+      const depth = record.path.length, children = rows.filter((r) => r.path.length === depth + 1 && record.path.every((x, i) => r.path[i] === x));
+      const names = children.map((r) => r.path[depth]);
+      const required = children.filter((r) => r.required).map((r) => r.path[depth]);
+      const optional = names.filter((n) => !required.includes(n)), nullable = children.filter((r) => r.nullable).map((r) => r.path[depth]);
+      const parts = [list ? "List of records" : "Record"];
+      if (required.length) parts.push(required.join(" and ") + " required");
+      if (optional.length) parts.push(optional.join(" and ") + " optional");
+      if (nullable.length) parts.push(nullable.join(" and ") + " may be null");
+      parts.push(record.additional_properties ? "extra fields allowed" : "extra fields rejected");
+      return { chip: "JSON · " + prefix + "{" + names.join(", ") + "}", readable: parts.join("; ") + ".", kind };
+    }
     const pathKey = (path) => path.join("/");
     const short = (digest) => digest ? digest.slice(7, 19) : "";
 
@@ -124,6 +153,7 @@
         if (!sourceInvalid) sourceArea.value = text;
         issues.replaceChildren();
         render(); stateNow();
+        if (opts.onView) opts.onView(view);
         if (notify && opts.onChange) opts.onChange(text, view);
       }
       // Run `op` after earlier operations; a later set() discards edits queued against the replaced text.
@@ -231,9 +261,60 @@
         const unnamed = (view.fields || []).filter((r) => !r.description).length;
         if (unnamed) warnings.append(h("li", { "data-code": "missing_field_description", text: `${unnamed} field${unnamed === 1 ? " has" : "s have"} no description (optional).` }));
         if (warnings.childElementCount) guided.append(warnings);
+        if (opts.shortcuts && !locked) shortcuts(kind);
         if (kind === "text") textRules();
         else if (kind === "any") guided.append(h("p", { class: "warn-text", "data-test": p + "-any-json", "data-state": "weak", text: "Any JSON — no field validation. Any well-formed JSON value passes." }));
         else schemaTable();
+      }
+
+      // Shape shortcuts (AB5.2): each pre-fills the existing vocabulary with one reviewed replacement.
+      function shortcuts(kind) {
+        const TYPES = { Text: { type: "string" }, "Whole number": { type: "integer" }, Number: { type: "number" }, "Yes/No": { type: "boolean" } };
+        async function record(list) {
+          const box = h("div", { "data-test": p + "-shortcut-form" }), rowsBox = h("div"), inputs = [];
+          const add = () => {
+            const name = h("input", { "data-test": p + "-shortcut-name", "aria-label": "Field name", placeholder: "field_name" });
+            const type = h("select", { "data-test": p + "-shortcut-type", "aria-label": "Field type" }, ...Object.keys(TYPES).map((t) => new Option(t, t)));
+            inputs.push([name, type]); rowsBox.append(h("div", { class: "row" }, name, type));
+          };
+          add(); add();
+          box.append(h("p", { text: (list ? "A list of records" : "One record") + ". Every field is required; fields not listed are rejected. You can change either afterwards." }), rowsBox,
+            h("button", { type: "button", "data-test": p + "-shortcut-add", text: "Add field", onclick: add }));
+          const error = h("p", { role: "alert" }); box.append(error);
+          let built = null;
+          const choice = await dialog(list ? "List of records" : "Single record", box, ["Use shape", "Cancel"], async (c) => {
+            if (c !== "Use shape") return true;
+            const fields = inputs.map(([n, t]) => [n.value.trim(), t.value]).filter(([n]) => n);
+            if (!fields.length || new Set(fields.map(([n]) => n)).size !== fields.length) { error.textContent = "Enter distinct field names."; return false; }
+            const group = { type: "object", properties: Object.fromEntries(fields.map(([n, t]) => [n, { ...TYPES[t] }])), required: fields.map(([n]) => n), additionalProperties: false };
+            built = { format: "json", schema: list ? { type: "array", items: group } : group };
+            return true;
+          });
+          if (choice === "Use shape" && built) await useShape(built);
+        }
+        async function choice() {
+          const box = h("div"), values = h("textarea", { rows: 4, "data-test": p + "-shortcut-choices", "aria-label": "Choices, one per line" }), error = h("p", { role: "alert" });
+          box.append(h("p", { text: "A text value that must be one of these choices, one per line." }), values, error);
+          let built = null;
+          const c = await dialog("Choice", box, ["Use shape", "Cancel"], async (x) => {
+            if (x !== "Use shape") return true;
+            const list = values.value.split("\n").map((v) => v.trim()).filter(Boolean);
+            if (!list.length || new Set(list).size !== list.length) { error.textContent = "Enter distinct choices."; return false; }
+            built = { format: "json", schema: { type: "string", enum: list } }; return true;
+          });
+          if (c === "Use shape" && built) await useShape(built);
+        }
+        async function useShape(definition) {
+          if (view.description) definition.description = view.description;
+          const after = JSON.stringify(definition, null, 2);
+          const lossy = kind === "structured" || (kind === "text" && Object.keys(view.rules || {}).length > 0);
+          if (lossy && !await confirmLoss("Replace with a new shape", text, after)) return;
+          await replace(after);
+        }
+        guided.append(h("div", { class: "row", "data-test": p + "-shortcuts" }, h("span", { class: "note", text: "Shape shortcuts:" }),
+          h("button", { type: "button", "data-test": p + "-shortcut-list", text: "List of records…", onclick: () => record(true) }),
+          h("button", { type: "button", "data-test": p + "-shortcut-record", text: "Single record…", onclick: () => record(false) }),
+          h("button", { type: "button", "data-test": p + "-shortcut-choice", text: "Choice…", onclick: choice })));
       }
 
       function textRules() {
@@ -367,6 +448,7 @@
       return {
         el: root, text: () => (sourceInvalid ? null : text), view: () => view,
         valid: () => !sourceInvalid && !!view, invalid: () => sourceInvalid,
+        pending: () => sourceInvalid || root.dataset.source === "edited",
         ready: () => chain, set, replaceIf,
         setReadOnly(value) { locked = !!value; render(); },
       };
@@ -493,35 +575,85 @@
     }
 
     // --- block port: Inline | Saved contract (spec 15.3) -------------------------------------------------------
-    // port({side, name, format, source, captured, onChange(format, source), onOpen(name)}) -> {el, valid(), ready()}
+    // port({side, name, label(), format, source, captured, onChange(format, source), onOpen(name)}) -> {el, valid(), ready()}
+    // The port shows a summary chip; Edit opens its editor in one right-side drawer (UI-AB v2 AB5.1). Guided edits
+    // reach the block draft as before; Done only closes the drawer. Saving stays with the enclosing block.
+    let openDrawer = null, remembered = null;     // the open drawer survives re-rendering the same block port
     function port(opts) {
       const p = "port";
       const el = h("div", { class: "cw-port", "data-test": "port-card", "data-side": opts.side, "data-port": opts.name });
+      const chip = h("span", { class: "cw-chip", "data-test": p + "-chip", "data-kind": "pending", text: "Contract …" });
+      const readable = h("p", { class: "note", "data-test": p + "-summary" });
+      const editBtn = h("button", { type: "button", "data-test": p + "-edit", text: "Edit contract", "aria-expanded": "false" });
       const mode = h("select", { "data-test": p + "-mode", "aria-label": "Contract source" },
         h("option", { value: "inline", text: "Inline" }), h("option", { value: "saved", text: "Saved contract" }));
       const body = h("div"), msg = h("p", { class: "note", role: "status", "data-test": p + "-msg" });
-      el.append(field("Contract", mode), body, msg);
-      let inline = null, saved = null, pending = Promise.resolve();
+      const heading = h("h3", { tabindex: "-1", text: "Contract" });
+      const done = h("button", { type: "button", class: "primary", "data-test": p + "-done", text: "Done" });
+      const drawer = h("aside", { class: "cw-drawer", "data-test": p + "-drawer", "data-state": "closed", hidden: true, role: "dialog", "aria-label": "Port contract" },
+        h("div", { class: "cw-drawer-head" }, heading, readable.cloneNode()), field("Contract", mode), body, msg,
+        h("div", { class: "cw-drawer-foot" }, h("p", { class: "note", text: "Changes are in the draft. Save the block to keep them." }), done));
+      const drawerSummary = drawer.querySelector(".cw-drawer-head p");
+      el.append(h("div", { class: "row cw-port-line" }, chip, editBtn), readable, drawer);
+      let inline = null, saved = null, pending = Promise.resolve(), lastView = null;
       const isSaved = opts.format === "shared";
       mode.value = isSaved ? "saved" : "inline";
       el.dataset.mode = mode.value;
 
+      function setChip(text, readableText, kind) {
+        chip.textContent = text; chip.dataset.kind = kind; readable.textContent = readableText; drawerSummary.textContent = readableText;
+        chip.title = readableText;
+      }
+      function refreshChip() {
+        if (mode.value === "saved") {
+          const pin = saved && saved.pin(), info = saved && saved.info();
+          if (!pin) { setChip("Saved · none chosen", "Choose a saved contract; until then the port keeps its inline definition.", "saved"); return; }
+          const newer = info && info.latest && info.latest > pin.revision ? " · newer r" + info.latest : "";
+          setChip("Saved · " + pin.name + " r" + pin.revision + newer, "Saved contract " + pin.name + ", revision " + pin.revision + (newer ? "; a newer revision exists and is not adopted." : "."), "saved");
+          return;
+        }
+        const sum = summarize(lastView); setChip(sum.chip, sum.readable, sum.kind);
+      }
+      // The drawer starts below the page's drawer anchor (Design's identity bar), so Save stays reachable.
+      function place() {
+        const anchor = document.querySelector("[data-drawer-anchor]");
+        drawer.style.top = anchor ? Math.max(0, Math.round(anchor.getBoundingClientRect().bottom)) + "px" : "0";
+      }
+      function openIt() {
+        if (openDrawer && openDrawer !== close) openDrawer();
+        place(); window.addEventListener("scroll", place, { passive: true }); window.addEventListener("resize", place);
+        heading.textContent = "Contract · " + (opts.side === "inputs" ? "input " : "output ") + ((opts.label && opts.label()) || opts.name);
+        drawer.hidden = false; drawer.dataset.state = "open"; editBtn.setAttribute("aria-expanded", "true");
+        openDrawer = close; remembered = identity(); heading.focus();
+      }
+      function close() {
+        drawer.hidden = true; drawer.dataset.state = "closed"; editBtn.setAttribute("aria-expanded", "false");
+        window.removeEventListener("scroll", place); window.removeEventListener("resize", place);
+        if (openDrawer === close) { openDrawer = null; remembered = null; }
+      }
+      function identity() { return (opts.scope || "") + "\u0000" + opts.side + "\u0000" + ((opts.label && opts.label()) || opts.name); }
+      editBtn.onclick = () => (drawer.hidden ? openIt() : close());
+      done.onclick = () => { close(); editBtn.focus(); };
+      drawer.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); editBtn.focus(); } });
+
       function showInline(text) {
         body.replaceChildren();
-        inline = editor({ test: p, text, onChange: (t, view) => opts.onChange(view.format, t) });
+        inline = editor({ test: p, text, shortcuts: true, onView: (view) => { lastView = view; refreshChip(); },
+          onChange: (t, view) => opts.onChange(view.format, t) });
         body.append(inline.el, h("div", { class: "row" },
           h("button", { type: "button", "data-test": p + "-save-reusable", text: "Save inline as reusable", disabled: readOnly() || opts.protected, onclick: () => saveReusable() })));
         pending = inline.ready();
+        refreshChip();
       }
       function showSaved(pin) {
         body.replaceChildren(); inline = null;
-        saved = picker({ test: p, pin, onChange: (next) => { if (next && next.digest) { opts.onChange("shared", JSON.stringify(next)); refreshButtons(); } } });
+        saved = picker({ test: p, pin, onChange: (next) => { refreshChip(); if (next && next.digest) { opts.onChange("shared", JSON.stringify(next)); refreshButtons(); } } });
         const openBtn = h("button", { type: "button", "data-test": p + "-open", text: "Open contract", onclick: () => { const c = saved.pin(); if (c) opts.onOpen(c.name, c.revision); } });
         const newer = h("button", { type: "button", "data-test": p + "-select-newer", text: "Select newer", onclick: () => saved.selectNewer() });
         const local = h("button", { type: "button", "data-test": p + "-local-copy", text: "Make local copy", onclick: () => localCopy() });
         body.append(saved.el, h("div", { class: "row" }, openBtn, newer, local));
         function refreshButtons() { const c = saved.pin(); openBtn.disabled = local.disabled = !c; }
-        refreshButtons();
+        refreshButtons(); refreshChip();
       }
       async function localCopy() {
         const pin = saved && saved.pin();
@@ -543,14 +675,17 @@
         if (inline.valid()) opts.onChange(inline.view().format, inline.text());
         msg.dataset.state = "local_copy"; msg.textContent = `Replaced the reference with a local copy of ${pin.name} revision ${pin.revision}. Save the block to keep it.`;
       }
+      // One dialog publishes the contract and, when chosen, pins this port to it (AB5.3).
       async function saveReusable() {
         if (!inline || !inline.valid()) { msg.dataset.state = "error"; msg.textContent = "Correct the contract before saving it as reusable."; return; }
         const box = h("div"), name = h("input", { "data-test": "port-reusable-name", "aria-label": "Contract name" });
         const family = h("select", { "data-test": "port-reusable-family", "aria-label": "Family" }, ...families().map((f) => new Option(f, f)));
         const label_ = h("input", { "data-test": "port-reusable-label", "aria-label": "Revision label" });
+        const use = h("input", { type: "checkbox", checked: true, "data-test": "port-reusable-use" });
         const error = h("p", { role: "alert", "data-test": "port-reusable-error" });
-        box.append(h("p", { text: "Creates a new saved contract with this exact definition. The port stays inline unless you choose to use the saved revision." }),
-          field("Contract name", name), field("Family", family), field("Revision label (optional)", label_), error);
+        box.append(h("p", { text: "Creates a new saved contract with this exact definition." }),
+          field("Contract name", name), field("Family", family), field("Revision label (optional)", label_),
+          h("label", { class: "checkbox-label" }, use, " Use this saved contract for port " + ((opts.label && opts.label()) || opts.name)), error);
         let result = null;
         const choice = await dialog("Save inline as reusable", box, ["Save contract", "Cancel"], async (c) => {
           if (c !== "Save contract") return true;
@@ -561,9 +696,7 @@
         });
         if (choice !== "Save contract" || !result) return;
         if (deps.changed) await deps.changed();
-        const use = await dialog("Use saved revision?", h("p", { text: `Saved ${result.name} revision ${result.revision}. Use that saved revision for this port? Choosing Keep inline leaves the port unchanged.` }),
-          ["Use saved revision", "Keep inline"]);
-        if (use !== "Use saved revision") { msg.dataset.state = "saved_reusable"; msg.textContent = `Saved ${result.name}; the port stays inline.`; return; }
+        if (!use.checked) { msg.dataset.state = "saved_reusable"; msg.textContent = `Saved ${result.name}; the port stays inline.`; return; }
         mode.value = "saved"; el.dataset.mode = "saved";
         const pin = { name: result.name, revision: result.revision, digest: result.digest };
         showSaved(pin);
@@ -584,12 +717,15 @@
         try { pin = JSON.parse(opts.source); } catch (e) { pin = null; }      // name/revision/digest: no domain numbers
         showSaved(pin && typeof pin === "object" ? { name: pin.name, revision: pin.revision, digest: pin.digest } : null);
       } else showInline(opts.source || JSON.stringify({ format: opts.format === "json" ? "json" : "text" }));
+      if (remembered !== null && remembered === identity()) openIt();
       return {
         el,
         valid: () => mode.value === "saved" ? !!(saved && saved.pin() && saved.pin().digest) : !!(inline && inline.valid()),
         invalid: () => mode.value === "inline" && !!inline && inline.invalid(),
+        pending: () => mode.value === "inline" && !!inline && inline.pending(),
         ready: () => (inline ? inline.ready() : pending),
-        refresh: () => (saved && mode.value === "saved" ? saved.refresh() : Promise.resolve()),
+        refresh: () => (saved && mode.value === "saved" ? saved.refresh().then(refreshChip) : Promise.resolve()),
+        open: openIt, close,
       };
     }
 
@@ -1011,10 +1147,16 @@
         ".cw-fields{border-collapse:collapse;width:100%}.cw-fields td,.cw-fields th{padding:.2rem;vertical-align:top}" +
         ".cw-fields input[type=checkbox]{width:auto}.cw-detail{display:grid;gap:.3rem;padding:.3rem 0 .6rem 1rem}" +
         ".cw-port{border-left:3px solid var(--line);padding-left:.6rem;margin:.3rem 0}.cw-savebar{align-items:end}" +
+        ".cw-chip{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:0 .5rem;font-size:13px}" +
+        ".cw-chip[data-kind=any]{border-color:var(--warn)}.cw-port-line{align-items:center;gap:.4rem}" +
+        ".cw-drawer{position:fixed;top:0;right:0;bottom:0;width:min(720px,96vw);overflow:auto;z-index:30;background:var(--bg);" +
+        "border-left:1px solid var(--line);box-shadow:-4px 0 16px rgba(0,0,0,.25);padding:.8rem 1rem;display:flex;flex-direction:column;gap:.4rem}" +
+        ".cw-drawer[hidden]{display:none}.cw-drawer-head h3{margin:0}.cw-drawer-foot{position:sticky;bottom:0;background:var(--bg);display:flex;" +
+        "justify-content:space-between;align-items:center;gap:.6rem;border-top:1px solid var(--line);padding-top:.4rem;margin-top:auto}" +
         "@media(max-width:800px){.cw-library{grid-template-columns:minmax(0,1fr)}}" }));
     }
 
-    return { editor, library, port, picker, changes, errorText };
+    return { editor, library, port, picker, changes, errorText, summarize };
   }
 
   window.AgentWizContracts = { create };

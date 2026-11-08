@@ -194,7 +194,8 @@ class Service:
             metadata = draft.setdefault('metadata', {})
             lineage = self.drafts.get(draft.get('draft_ref'))
         elif 'starter' in body:
-            draft = editor.starter(body['starter'], body.get('key', 'new_block'), body.get('role'), body.get('server'), body.get('tool'), version=body.get('starter_version', 1))
+            draft = editor.starter(body['starter'], body.get('key', 'new_block'), body.get('role'), body.get('server'), body.get('tool'), version=body.get('starter_version', 1),
+                                  data_handling=body.get('data_handling'))
             lineage = draft_lineage.Lineage.of(draft)
         elif body.get('fresh') is True:
             key = key_name(body.get('key'))
@@ -378,11 +379,17 @@ class Service:
                 if p.kind == 'model':
                     snapshot = self.state.resolve_role(p.block.step.role)
                     result['destination'] = {'role': p.block.step.role, 'kind': snapshot.kind, 'base_url': snapshot.endpoint.base_url, 'model': snapshot.model, 'provider': snapshot.provider}
+                    result['destination_facts'] = outbound_policy.facts(self.state, {
+                        'kind': snapshot.kind, 'url': snapshot.endpoint.base_url, 'model': snapshot.model,
+                        'provider': snapshot.provider or ''})
                     from .model_call import task_arguments
                     task_arguments(p.block.step.task, snapshot.kind, snapshot.provider)
                 elif p.kind == 'tool':
                     snapshot = self.state.mcp_snapshot_for_block(p.block.step.server)
                     result['destination'] = {'server': p.block.step.server, 'tool': p.block.step.tool, 'url': snapshot.url}
+                    if p.block.step.tool:
+                        result['destination_facts'] = outbound_policy.facts(self.state, {
+                            'kind': 'mcp', 'url': snapshot.url, 'server': p.block.step.server, 'tool': p.block.step.tool})
                 elif p.kind == 'script':
                     result['script_source'] = captured.files[p.block.step.script_file].decode('utf-8')
                     result['script_warning'] = 'Python runs with user-level filesystem and network access.'
@@ -521,20 +528,91 @@ class Service:
             elif set(e) != {'kind', 'criterion'} or not isinstance(e['criterion'], str):
                 fail()
 
-    def retained_labels(self, key):
+    def labelled_pairs(self, key):
+        """(retained revision ID, input name) for every input labelled Local only in a retained v4 revision."""
         root = self.assets.path / key_name(key)
         if not root.exists():
-            return set()
+            return []
         managed = head(self.assets.root(key))
         if managed is None:
-            return set()
-        labels = set()
+            return []
+        pairs = []
         for revision in managed['retained']:
             definition = document(root / '.workshop' / 'revisions' / revision, 'block.json')
             if definition.get('format_version') == 4:
-                labels.update(name for name, port in definition.get('inputs', {}).items()
-                              if port.get('local_only') is True)
-        return labels
+                pairs.extend((revision, name) for name, port in definition.get('inputs', {}).items()
+                             if port.get('local_only') is True)
+        return pairs
+
+    def label_reviews(self, key):
+        """The block's retained-label acknowledgement record (core_03 §3.4). Missing means none."""
+        key_name(key)
+        root = self.state.workspace.path / 'workshop' / 'label_reviews'
+        if not (root / (key + '.json')).exists():
+            return {'format_version': 1, 'revision': None, 'acknowledged': []}
+        obj = document(root, key + '.json', MANIFEST_LIMIT)
+        rows = obj.get('acknowledged')
+        if obj.get('format_version') != 1:
+            fail('newer_format', 409)
+        if (set(obj) != {'format_version', 'revision', 'acknowledged'} or not isinstance(rows, list)
+                or not isinstance(obj['revision'], str) or len(rows) > 1000
+                or any(not isinstance(r, dict) or set(r) != {'revision', 'input'}
+                       or not isinstance(r['revision'], str) or not isinstance(r['input'], str) for r in rows)):
+            fail('unusable', 409)
+        return obj
+
+    def retained_labels(self, key):
+        """Input names a retained revision labelled Local only, less the exact (revision, input) pairs the
+        owner acknowledged. An unreadable record acknowledges nothing, so restriction is kept."""
+        try:
+            acknowledged = {(r['revision'], r['input']) for r in self.label_reviews(key)['acknowledged']}
+        except WorkshopError:
+            acknowledged = set()
+        return {name for revision, name in self.labelled_pairs(key) if (revision, name) not in acknowledged}
+
+    def retained_label_review(self, key):
+        record = self.label_reviews(key)
+        acknowledged = {(r['revision'], r['input']) for r in record['acknowledged']}
+        numbers = {r['id']: r for r in self.assets.revisions(key)['revisions']}
+        pairs = [{'revision': revision, 'input': name, 'acknowledged': (revision, name) in acknowledged,
+                  'revision_number': numbers.get(revision, {}).get('revision_number'),
+                  'revision_name': numbers.get(revision, {}).get('revision_name')}
+                 for revision, name in self.labelled_pairs(key)]
+        examples = [{'id': ex['id'], 'label': ex.get('label') or ex['id'], 'inputs': sorted(ex['restrictions'])}
+                    for ex in self.collection(key)['examples'] if ex.get('restrictions')]
+        return {'format_version': 1, 'key': key, 'revision': record['revision'], 'pairs': pairs,
+                'restricted_examples': examples}
+
+    def save_retained_label_review(self, key, body):
+        """Replace the acknowledged pairs. Each must name a currently retained Local-only input label.
+        Saved-example restrictions and captured values are not changed."""
+        key_name(key)
+        if (not isinstance(body, dict) or set(body) != {'expected_revision', 'acknowledged'}
+                or not isinstance(body['acknowledged'], list) or len(body['acknowledged']) > 1000):
+            fail()
+        if self.state.workspace.read_only:
+            fail('read_only', 409)
+        writer = self.state.register_writer('Workshop label review')
+        try:
+            with self.assets.reserve(key, 'label_reviews'):
+                if self.label_reviews(key)['revision'] != body['expected_revision']:
+                    fail('stale', 409)
+                current = set(self.labelled_pairs(key))
+                chosen = set()
+                for row in body['acknowledged']:
+                    if not isinstance(row, dict) or set(row) != {'revision', 'input'}:
+                        fail()
+                    pair = (row['revision'], row['input'])
+                    if pair not in current:
+                        fail('stale', 409)
+                    chosen.add(pair)
+                record = {'format_version': 1, 'revision': secrets.token_hex(16),
+                          'acknowledged': [{'revision': r, 'input': n} for r, n in sorted(chosen)]}
+                root = self.safe_directory('label_reviews')
+                write_atomic_bytes(root, key + '.json', jsonio.encode_file_exact(record))
+            return self.retained_label_review(key)
+        finally:
+            writer.release()
 
     def mark_examples(self, examples, labels, previous):
         for example in examples:
@@ -746,7 +824,9 @@ class Service:
                 if not isinstance(body['overwrite_revision'], str):
                     fail('invalid', 400)
                 target = self.assets.saved(draft['key'], body['overwrite_revision'])
-                if target.definition.get('context_local_only') is True:
+                # Overwrite replaces a retained slot. A v4 target may carry Local-only input labels or
+                # protected design history; replacing it would erase them, so only a new revision is allowed.
+                if target.definition.get('context_local_only') is True or target.definition.get('format_version') == 4:
                     c.close()
                     fail('new_revision_required', 409)
                 descriptor['overwrite'] = {'id': target.revision, 'revision_number': target.number,
@@ -872,17 +952,35 @@ class Service:
                         confirmations.append('generated_source')
                 descriptor['candidates'].append(record)
             protected_inputs = {port.name for c in captures for port in c.parsed.block.inputs if port.local_only}
+            # Why this run is restricted, for display only (core_03 §3.1 subset); enforcement is unchanged.
+            sources = [{'code': 'declared_label', 'input': name} for name in sorted(protected_inputs)]
             if not internal:
                 collection = self.collection(draft['key'])
                 descriptor['example_collection_revision'] = collection['revision']
                 chosen = {ex.get('id') for ex in examples}
-                protected_inputs.update(name for ex in collection['examples'] if ex['id'] in chosen
-                                        for name in ex.get('restrictions', {}))
-                protected_inputs.update(self.retained_labels(draft['key']))
-                protected_inputs.update(name for ex in examples for name in ex.get('restrictions', {}))
+                example_names = {(ex['id'], name) for ex in collection['examples'] if ex['id'] in chosen
+                                 for name in ex.get('restrictions', {})}
+                example_names |= {(ex.get('id'), name) for ex in examples for name in ex.get('restrictions', {})}
+                protected_inputs.update(name for _, name in example_names)
+                sources += [{'code': 'example_restriction', 'example': ident, 'input': name}
+                            for ident, name in sorted(example_names, key=str)]
+                retained = self.retained_labels(draft['key'])
+                protected_inputs.update(retained)
+                if retained:
+                    numbers = {r['id']: r['revision_number'] for r in self.assets.revisions(draft['key'])['revisions']}
+                    sources += [{'code': 'retained_label', 'input': name, 'revision_number': numbers.get(rev)}
+                                for rev, name in self.labelled_pairs(draft['key']) if name in retained]
+            if authoring_protected:
+                sources.append({'code': 'context_inherited'})
+            descriptor['restriction_sources'] = sources
             try:
                 for c, view in zip(captures, descriptor['candidates']):
                     block = c.parsed.block
+                    if block.context_local_only:
+                        sources.append({'code': 'context_inherited' if c.metadata.get('protection_origin') == 'inherited'
+                                        else 'context_manual'})
+                    if c.metadata.get('protection_clear_pending'):
+                        sources.append({'code': 'context_clear_pending'})
                     c.protected = bool(authoring_protected or protected_inputs or block.context_local_only
                                        or c.metadata.get('protection_clear_pending'))
                     c.dispatch = None
@@ -896,7 +994,20 @@ class Service:
                 for c in captures:
                     c.close()
                 if isinstance(exc, outbound_policy.Refused):
-                    fail(str(exc), 409)
+                    failed = next((c for c in captures if getattr(c, 'dispatch', 0) is None and c.protected), None)
+                    destination = None
+                    if failed is not None and failed.parsed.block.step.kind == 'model':
+                        snap = failed.snapshot
+                        destination = {'kind': snap.kind, 'url': snap.endpoint.base_url, 'model': snap.model,
+                                       'provider': snap.provider or ''}
+                    elif failed is not None and failed.parsed.block.step.kind == 'tool':
+                        destination = {'kind': 'mcp', 'url': failed.snapshot.url,
+                                       'server': failed.parsed.block.step.server, 'tool': failed.parsed.block.step.tool}
+                    detail = {'location': 'destination', 'message': 'protected values cannot be sent to this destination',
+                              'restriction_sources': sources}
+                    if destination is not None:
+                        detail.update(destination=destination, **outbound_policy.facts(self.state, destination))
+                    raise WorkshopError(str(exc), 409, [detail]) from None
                 raise
             descriptor['protected_context'] = authoring_protected
             descriptor['examples'] = examples

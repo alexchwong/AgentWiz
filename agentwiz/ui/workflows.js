@@ -244,10 +244,12 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     group.append(field("Gate title",gate.title,v=>{gate.title=v;changed();}),
       field("Review wait seconds",gate.max_release_wait_seconds??1800,v=>{
         gate.max_release_wait_seconds=/^\d+$/.test(v)?Number(v):null;changed();}));
-    const editor=contracts.editor({test:"wf-gate-contract",text:gate.contract,onChange:text=>{
+    const gateSummary=h("summary",{text:"Released value contract","data-test":"wf-gate-contract-chip"});
+    const editor=contracts.editor({test:"wf-gate-contract",text:gate.contract,shortcuts:true,onView:view=>{
+      const sum=contracts.summarize(view);gateSummary.textContent="Released value contract · "+sum.chip;gateSummary.title=sum.readable;},onChange:text=>{
       gate.contract=text;putKey(ports,id,gatePorts(gate));changed();}});
     contractEditors.push(editor);
-    group.append(h("details",{},h("summary",{text:"Released value contract"}),editor.el));
+    group.append(h("details",{},gateSummary,editor.el));
     gate.assessment??={enabled:false};
     group.append(toggle("Local AI assessment",gate.assessment.enabled,v=>{gate.assessment.enabled=v;changed();render();}));
     if(gate.assessment.enabled) {
@@ -457,11 +459,16 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     redraw();return wrap;
   }
   function contractForm(row, name, side) {
-    const editor = contracts.editor({test:"wf-contract", text:row.contract, onChange:(text, projected) => {
+    // Workflow I/O contracts are inline definitions; Copy saved contract copies one (no pin). The summary line shows
+    // the same readable chip as block ports (UI-AB v2 AB5.1, R4).
+    const summary = h("summary", {text:"Contract · "+name, "data-test":"wf-contract-chip", "data-port":name});
+    const editor = contracts.editor({test:"wf-contract", text:row.contract, shortcuts:true, onView:(view) => {
+      const sum = contracts.summarize(view); summary.textContent = "Contract · "+name+" · "+sum.chip; summary.title = sum.readable;
+    }, onChange:(text, projected) => {
       row.contract = text; row.format = projected.format; changed();
     }});
     contractEditors.push(editor);
-    return h("details", {}, h("summary", {text:"Contract · "+name}), editor.el, button("Copy saved contract", async () => {
+    return h("details", {}, summary, editor.el, button("Copy saved contract", async () => {
       const picker = contracts.picker({test:"wf-contract-picker"});
       await dialog("Copy a saved contract", picker.el, ["Copy","Cancel"], async choice => {
         if (choice !== "Copy") return true;
@@ -648,15 +655,51 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     return [...new Map([plan,...(plan.example_plans||[])].flatMap(p=>entries(p.destinations))
       .map(([node,d])=>[JSON.stringify([node,d.kind,d.url,d.model,d.tool,d.protected]),[node,d]])).values()];
   }
+  // Readiness findings (UI-AB v2 AB8.1): one row per issue with a remedy routed by the object that owns it.
+  // Privacy-relevant warnings stay visible; only routine notices fold.
+  const PRIVACY_CODES=new Set(["unrestricted_ancestor","destination_untrusted","destination_ineligible","destination_proxied","destination_changed","destination_trust_unavailable"]);
+  function nodeOf(location){const m=/^nodes\.([^.]+)/.exec(location||"");return m?m[1]:null;}
+  function findingRemedies(row,d) {
+    const out=[], node=nodeOf(row.location), dest=node?(d.destinations||{})[node]:null;
+    if(["destination_untrusted"].includes(row.code)&&dest){
+      out.push(button("Grant",async()=>{const exact=dest.kind==="mcp"?{kind:"mcp",url:dest.url,server:dest.server,tool:dest.tool}:{kind:dest.kind,url:dest.url,model:dest.model,provider:dest.provider||""};
+        if(await wsGrantTrust(exact))await exclusive(preflight);},"finding-grant"));
+    }
+    if(["destination_ineligible","destination_proxied"].includes(row.code)&&dest){
+      out.push(h("span",{class:"ws-hint",...test("finding-remedy"),text:wsRemedyText(row.code==="destination_proxied"?"proxied":dest.url&&/localhost/.test(dest.url)?"hostname":"remote")}));
+    }
+    if(row.code==="unrestricted_ancestor"||(node&&["destination_ineligible","destination_untrusted"].includes(row.code)&&row.message?.includes("released value"))){
+      out.push(button("Add Release Gate",()=>{view="design";render();report("Add a Release Gate between the restricted value and "+(node||"the node")+", then save and check readiness again.");},"finding-add-gate"));
+    }
+    if(node&&sources[node]&&!draft.nodes[node]?.gate&&!/^destination_untrusted$/.test(row.code)){
+      out.push(button("Open source revision",async()=>{
+        window.agentwizWorkflowReturn={workflow:draft.name,node,inputs:{...inputs},selected:[...selected]};
+        await openBlock(sources[node].key,sources[node].revision);
+      },"finding-open-source"));
+    }
+    if(!node&&/^(inputs|outputs|constants)\./.test(row.location||""))out.push(button("Edit in workflow",()=>{view="design";render();},"finding-edit-workflow"));
+    return out;
+  }
+  function findingRow(row,d) {
+    return h("li",{class:"wf-finding",...test("finding"),"data-code":row.code||"","data-severity":row.severity||"error"},
+      h("strong",{text:(row.severity==="warning"?"Warning":"Blocking")+" · "}),h("span",{text:(row.location||"workflow")+" · "+(row.message||row.code)}),
+      h("span",{class:"wf-finding-code",text:" ["+(row.code||"issue")+"]"}),h("span",{class:"row"},...findingRemedies(row,d)));
+  }
   function reviewView() {
     const d=plan.descriptor;
-    return h("div",{},h("h3",{text:"Preflight"}),
-      h("p",{text:"Order: "+d.order.join(" → ")}),
+    const visible=d.issues.filter(row=>row.severity!=="warning"||PRIVACY_CODES.has(row.code)), routine=d.issues.filter(row=>!visible.includes(row));
+    const order=h("p",{text:"Order: "+d.order.join(" → ")});
+    return h("div",{},h("h3",{text:"Readiness"}),
+      h("div",{...test("readiness-state"),"data-state":d.issues.some(row=>row.severity!=="warning")?"blocked":"ready",
+        text:d.issues.some(row=>row.severity!=="warning")?"Resolve the blocking findings before running.":"Ready to run."}),
+      visible.length?h("ul",{class:"wf-findings",...test("findings")},visible.map(row=>findingRow(row,d))):null,
+      routine.length?h("details",{...test("routine-findings")},h("summary",{text:routine.length+" routine notice"+(routine.length===1?"":"s")}),h("ul",{},routine.map(row=>findingRow(row,d)))):null,
+      order,
       h("p",{text:d.repetitions+" planned · "+examples.length+" saved examples · MCP confirmation: "+
         (d.mcp_confirmation.mode==="every_run"?"Every MCP workflow run":"Only MCP batches")}),
       d.mcp_confirmation.invalid?h("p",{text:"The saved preference is invalid. Every MCP workflow run requires confirmation."}):null,
-      h("p",{text:d.saving?"Run evidence can store protected values in unencrypted local files.":"Run evidence stays in this session."}),
-      issues(d.issues), d.issues.some(row=>row.code==="tool_unverified")?
+      h("p",{...test("saving-state"),"data-state":d.saving?"on":"off",text:d.saving?"Save runs is on: run evidence can store protected values in unencrypted local files.":"Save runs is off: run evidence stays in this session."}),
+      d.issues.some(row=>row.code==="tool_unverified")?
         [...new Set(destinations(d).filter(([,item])=>item.kind==="mcp"&&!item.observation).map(([,item])=>item.server))].map(server=>
           button("Refresh tools · "+server,()=>exclusive(async()=>{
             const config=await api("/api/state");
@@ -664,9 +707,9 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
             await preflight();
           }),"refresh-tools")):null,
       d.restricted_sources?.map(row=>h("p",{text:row.source.join(" · ")+" is local only · "+row.origin})),
-      destinations(d).map(([node,x])=>h("p",{text:node+" · "+x.kind+" · "+x.url+" · "+(x.model||x.tool||"")+
-        (x.kind==="mcp"?" · Effects "+x.effects+" · Claim "+x.effect_claim:"")+(x.protected?" · Protected":"")})),
-      button("Workflow settings",()=>settings(destinations(d).map(([,item])=>item)),"preflight-settings"),
+      h("ul",{class:"wf-destinations"},destinations(d).map(([node,x])=>h("li",{...test("destination"),"data-node":node,"data-protected":String(!!x.protected),
+        text:node+" · "+x.kind+" · "+x.url+" · "+(x.model||x.tool||"")+(x.kind==="mcp"?" · Effects "+x.effects+" · Claim "+x.effect_claim:"")+(x.protected?" · Local-only values":"")}))),
+      button("Trusted destinations",()=>settings(destinations(d).map(([node,item])=>({...item,node})),draft.name),"preflight-settings"),
       destinations(d).some(([,item])=>item.kind==="mcp")?button("MCP servers",openServers,"open-mcp"):null);
   }
   async function preflight() {
@@ -762,23 +805,43 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
       content.append(h("details",{},h("summary",{text:key.replaceAll("_"," ")}),h("pre",{text:JSON.stringify(value,null,2)})));
     return content;
   }
+  // Node detail opens in the detail pane, not a nested dialog; the previous node's scroll position is remembered.
+  let detailKey=null; const detailScroll=new Map();
   async function inspectNode(key) {
     const current=job, epoch=generation;
     const trace=await wsApi("workflow-jobs/"+encodeURIComponent(current.id)+"?node="+encodeURIComponent(key));
-    if(epoch===generation&&current===job)await dialog("Node trace",showTrace(trace),["Close"]);
+    if(epoch!==generation||current!==job)return;
+    const pane=main.querySelector('[data-test="wf-node-detail"]');
+    if(!pane)return;
+    if(detailKey!==null)detailScroll.set(detailKey,pane.scrollTop);
+    detailKey=key;pane.dataset.node=key;
+    replace(pane,h("h3",{text:"Node · "+key}),showTrace(trace),button("Close detail",()=>{detailKey=null;delete pane.dataset.node;replace(pane);},"close-detail"));
+    pane.scrollTop=detailScroll.get(key)||0;
   }
+  const PHASES={running:"Running",assessing_release:"Assessing release (local)",awaiting_release:"Awaiting your review",deciding_release:"Submitting decision"};
+  const OUTCOMES={complete:"Complete",release_rejected:"Release rejected",release_expired:"Review expired",stopped:"Stopped",failed:"Failed",rejected:"Not started",unknown:"Outcome unknown",running:"Running",awaiting_release:"Awaiting your review",not_run:"Not run",dispatch_pending:"Dispatch pending"};
+  // Progress in planned execution order; nodes missing from the live rows are pending.
   function nodeRows(nodes,index) {
-    return entries(nodes).map(([id,row])=>h("p",{text:id+" · "+row.outcome+(row.reason?" · "+row.reason:"")+
+    const order=plan?.descriptor?.order||Object.keys(nodes||{});
+    const ids=[...order.filter(id=>Object.hasOwn(nodes||{},id)||job?.running),...Object.keys(nodes||{}).filter(id=>!order.includes(id))];
+    return h("ol",{class:"wf-progress",...test("progress")},ids.map(id=>[id,(nodes||{})[id]||{outcome:"pending"}]).map(([id,row])=>h("li",{...test("progress-node"),"data-node":id,"data-outcome":row.outcome,text:id+" · "+row.outcome+(row.reason?" · "+row.reason:"")+
       (row.elapsed_ms!==undefined?" · "+row.elapsed_ms+" ms":"")+" "},
       row.detail_available?button("Inspect "+id,()=>inspectNode(index===undefined?id:index+":"+id),"inspect-node"):
-        row.outcome!=="not_run"&&row.outcome!=="dispatch_pending"?h("span",{text:"Trace omitted from session preview."}):null));
+        row.outcome!=="not_run"&&row.outcome!=="dispatch_pending"&&row.outcome!=="pending"?h("span",{text:"Trace omitted from session preview."}):null)));
   }
   function renderTrace() {
     const area=main.querySelector('[data-test="wf-trace"]');
     if(!area||!job)return;
     const result=job.result||{outcome:"running"};
-    replace(area,h("h3",{text:job.name+" · "+result.outcome}), h("p",{text:"Run "+job.id}),
-      job.running?button("Stop",()=>wsApi("workflow-jobs/"+encodeURIComponent(job.id)+"/stop",{}),"stop"):null,
+    // Pinned run status: Stop, the current phase and saving state stay at the top of the setup column (AB8.2).
+    const pinned=main.querySelector('[data-test="wf-run-status"]');
+    if(pinned){
+      const phase=job.running?(PHASES[result.phase]||"Running"):(OUTCOMES[result.outcome]||result.outcome);
+      pinned.dataset.phase=job.running?(result.phase||"running"):result.outcome;
+      replace(pinned,job.running?button("Stop",()=>wsApi("workflow-jobs/"+encodeURIComponent(job.id)+"/stop",{}),"stop"):null,
+        h("strong",{text:phase}),h("span",{class:"ws-hint",text:result.save_error?" · Save failed":plan?.descriptor?.saving?" · Saving run evidence":" · Session only"}));
+    }
+    replace(area,h("h3",{text:job.name+" · "+result.outcome}), h("p",{text:"Run "+job.id+" · "+(job.running?(PHASES[result.phase]||"Running"):(OUTCOMES[result.outcome]||result.outcome))}),
       job.running?h("p",{text:"This run occupies the shared Workshop slot. Test, Compare and assistance become available when it finishes."}):null,
       result.release?releasePanel(result.release):result.phase==="assessing_release"?h("p",{text:"Assessing release locally…"}):null,
       issues(result.issues),result.save_error?h("p",{text:result.save_error}):null,nodeRows(result.nodes,job.batch?result.example_index:undefined),outputRows(result.outputs),
@@ -809,10 +872,15 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
         if(checked)selected.add(row.id);else selected.delete(row.id);invalidatePlan();
       }))));
     options.disabled=!!(job?.running||pendingStart);
-    area.append(options,button("Preflight",()=>exclusive(preflight),"preflight",dirty||!token||options.disabled),
+    // Setup reads in action order: inputs → Check readiness → findings → Run; progress and detail sit beside it.
+    const setup=h("section",{class:"wf-run-setup","aria-label":"Run setup"},h("div",{class:"wf-run-status",...test("run-status")}),
+      options,button("Check readiness",()=>exclusive(preflight),"preflight",dirty||!token||options.disabled),
+      h("section",{...test("review"),tabindex:"-1"},plan?reviewView():null),
       button(pendingStart?"Retry start":"Run",()=>exclusive(start),"run",!pendingStart&&
-        (!plan||plan.descriptor.issues.some(row=>row.severity!=="warning")||!!job?.running)),
-      h("section",{...test("review"),tabindex:"-1"},plan?reviewView():null),h("section",{...test("trace")}));
+        (!plan||plan.descriptor.issues.some(row=>row.severity!=="warning")||!!job?.running)));
+    const results=h("section",{class:"wf-run-results","aria-label":"Progress and detail"},h("section",{...test("trace")}),
+      h("section",{class:"wf-node-detail",...test("node-detail")}));
+    area.append(h("div",{class:"wf-run-layout",...test("run-layout")},setup,results));
     return area;
   }
   function render() {
@@ -831,19 +899,13 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
       })),view==="design"?design():view==="examples"?exampleView():runView());
     renderTrace();
   }
-  async function settings(candidates=[]) {
-    const content=h("div"), msg=h("p",{role:"status"}), body=h("div");
+  // Trusted destinations and execution preferences (UI-AB v2 AB7.1). Candidates come from configuration (roles and
+  // observed MCP tools) plus any the caller supplies, such as a workflow's reviewed nodes; uses are merged per exact
+  // identity. Grant is offered only where it can help; ineligible rows show the configuration remedy instead.
+  async function settings(candidates=[], context="") {
+    const content=h("div",{class:"wf-settings"}), msg=h("p",{role:"status",...test("settings-status")}), body=h("div");
     content.append(body,msg);
-    const pref=await wsApi("workflow-mcp-confirmation");
-    let mode=pref.mode;
-    body.append(select("Workflow MCP confirmation",[["every_run","Every MCP workflow run"],["effectful_batches","Only MCP batches"]],mode,v=>mode=v,"mcp-confirmation"),
-      pref.invalid?h("p",{text:"Invalid saved setting. Using Every MCP workflow run."}):null,
-      button("Save confirmation preference",async()=>{
-        const result=await wsApi("workflow-mcp-confirmation",{mode,expected_revision:pref.revision});
-        Object.assign(pref,result);invalidatePlan();msg.textContent="Confirmation preference saved.";
-      },"save-mcp-confirmation"));
-    const grants=h("section");
-    body.append(grants);
+    const label = (item) => [item.kind,item.url,item.server,item.tool,item.model,item.provider].filter(Boolean).join(" · ");
     function exactDestination(item) {
       const {kind,url}=item;
       return kind==="mcp"?{kind,url,server:item.server,tool:item.tool}:{kind,url,model:item.model,provider:item.provider||""};
@@ -851,35 +913,74 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     async function reviewTrust(destination, trusted) {
       const preview=await wsApi("destination-trust-preview",{destination});
       if(trusted&&preview.reason!=="destination_untrusted"&&preview.reason!==null){
-        msg.textContent=preview.reason==="destination_proxied"?"This endpoint is proxied. Configure a loopback proxy bypass first.":
-          "Use a literal loopback IPv4 or IPv6 address. Hostnames and remote endpoints are ineligible.";
+        msg.dataset.state="refused";msg.dataset.reason=preview.detail||preview.reason;
+        msg.textContent=wsRemedyText(preview.detail)||"This destination cannot receive local-only data.";
         return;
       }
-      if(await dialog(trusted?"Grant destination trust":"Revoke destination trust",h("p",{text:label(preview.destination||destination)}),["Confirm","Cancel"])!=="Confirm")return;
+      const box=h("div",{},h("p",{text:label(preview.destination||destination)}),
+        trusted?h("p",{class:"ws-hint",text:"A trusted service could forward data elsewhere. Trust only services you control."}):null);
+      if(await dialog(trusted?"Grant destination trust":"Revoke destination trust",box,["Confirm","Cancel"])!=="Confirm")return;
       await wsApi("destination-trust",{destination:preview.destination,expected_revision:preview.revision,trusted});
       invalidatePlan();
-      await loadGrants();
+      await loadTable();
+      msg.dataset.state=trusted?"granted":"revoked";delete msg.dataset.reason;
       msg.textContent=trusted?"Destination trusted.":"Destination trust revoked.";
     }
-    const label = (item) => [item.kind,item.url,item.server,item.tool,item.model,item.provider].filter(Boolean).join(" · ");
-    async function loadGrants() {
-      const data=await wsApi("destination-trust");
-      replace(grants,h("h3",{text:"Destination trust"}),h("p",{text:"Trust applies only to this workspace and exact destination."}),
-        data.grants.map(item=>h("p",{},label(item)," ",button("Revoke",()=>reviewTrust(item,false),"revoke-trust"))),
-        candidates.map(exactDestination).map(item=>h("p",{},label(item)," ",button("Review trust",()=>reviewTrust(item,true),"candidate-trust"))));
+    const table=h("section",{...test("trust-table")});
+    body.append(h("h3",{text:"Trusted destinations"}),h("p",{class:"ws-hint",text:"Trust applies only to this workspace and exact destination."}),table);
+    async function loadTable() {
+      const [data,known]=await Promise.all([wsApi("destination-trust"),wsApi("destination-trust-candidates").catch(()=>({candidates:[]}))]);
+      const rows=new Map(), key=item=>JSON.stringify(exactDestination(item));
+      for(const row of known.candidates){const d=row.destination;rows.set(row.exact?key(d):JSON.stringify(d),{destination:d,exact:row.exact,locality:row.locality,eligible:row.eligible,reason:row.reason,trusted:row.trusted,uses:row.used_by.map(u=>(u.kind==="role"?"role ":"server ")+u.name)});}
+      for(const c of candidates){
+        const d=exactDestination(c),k=key(d),use=context?(context+" · node "+(c.node||"")):"this run";
+        const row=rows.get(k);if(row){if(!row.uses.includes(use))row.uses.push(use);continue;}
+        const preview=await wsApi("destination-trust-preview",{destination:d}).catch(()=>null);
+        rows.set(k,{destination:preview?.destination||d,exact:!!preview?.destination,locality:preview?.locality,eligible:!!preview&&(preview.reason===null||preview.reason==="destination_untrusted"),reason:preview?.detail,trusted:!!preview?.trusted,uses:[use]});
+      }
+      for(const g of data.grants){const k=key(g);if(!rows.has(k))rows.set(k,{destination:g,exact:true,eligible:true,trusted:true,uses:[]});}
+      const list=[...rows.values()].sort((a,b)=>(b.uses.length?1:0)-(a.uses.length?1:0));
+      const grid=h("table",{class:"wf-trust-table"},h("thead",{},h("tr",{},...["Destination","Connects to","Local-only data","Trust","Used by",""].map(t=>h("th",{scope:"col",text:t})))));
+      const tbody=h("tbody");grid.append(tbody);
+      for(const row of list){
+        const d=row.destination,action=h("td");
+        if(row.trusted)action.append(button("Revoke",()=>reviewTrust(exactDestination(d),false),"revoke-trust"));
+        else if(row.eligible&&row.exact)action.append(button("Grant",()=>reviewTrust(exactDestination(d),true),"candidate-trust"));
+        else if(!row.eligible)action.append(h("span",{class:"ws-hint",...test("trust-remedy"),text:wsRemedyText(row.reason)||"Not eligible."}));
+        tbody.append(h("tr",{...test("trust-row"),"data-eligible":String(row.eligible),"data-trusted":String(row.trusted),"data-used":String(row.uses.length>0)},
+          h("td",{text:label(d)}),h("td",{text:row.locality==="local"?"Local endpoint":row.locality?"Remote endpoint":"—"}),
+          h("td",{text:row.eligible?"Eligible":"Not eligible"}),h("td",{text:row.trusted?"Trusted":"Not trusted"}),
+          h("td",{text:row.uses.length?row.uses.join(", "):"No known uses"}),action));
+      }
+      table.replaceChildren(list.length?grid:h("p",{text:"No destinations are configured yet."}));
     }
-    await loadGrants();
-    const fields=h("fieldset",{},h("legend",{text:"Review a destination"}));
+    await loadTable();
+    // Manual entry, folded: exact retyping is a fallback for destinations not configured here.
+    const fields=h("details",{...test("trust-manual")},h("summary",{text:"Add a destination by hand"}));
     const destination={kind:"lmstudio",url:"",model:"",provider:"",server:"",tool:""};
-    const names=h("div");
+    const names=h("div"), live=h("p",{class:"ws-hint",...test("trust-manual-status")});
+    let liveGeneration=0;
+    async function check(){const mine=++liveGeneration;if(!destination.url){live.textContent="";return;}
+      const p=await wsApi("destination-trust-preview",{destination:exactDestination(destination)}).catch(()=>null);if(mine!==liveGeneration||!p)return;
+      live.dataset.reason=p.detail||p.reason||"";live.textContent=p.reason===null||p.reason==="destination_untrusted"?(p.trusted?"Already trusted.":"Eligible for local-only data."):(wsRemedyText(p.detail)||"Not eligible.");}
     function drawFields(){
-      replace(names,(destination.kind==="mcp"?["server","tool"]:["model","provider"]).map(key=>field(key,destination[key],v=>destination[key]=v)));
+      const keys=destination.kind==="mcp"?[["server","Server"],["tool","Tool"]]:[["model","Model"],["provider","Provider (optional)"]];
+      replace(names,keys.map(([key,text])=>field(text,destination[key],v=>{destination[key]=v;check();})));
     }
     fields.append(select("Kind",[["lmstudio","LM Studio"],["openai_compat","OpenAI compatible"],["mcp","MCP tool"]],destination.kind,v=>{
-      destination.kind=v;drawFields();
-    }),field("Endpoint URL","",v=>destination.url=v),names,button("Review destination",()=>reviewTrust(exactDestination(destination),true),"review-trust"));
+      destination.kind=v;drawFields();check();
+    }),field("Endpoint URL","",v=>{destination.url=v;check();}),names,live,button("Review destination",()=>reviewTrust(exactDestination(destination),true),"review-trust"));
     drawFields();body.append(fields);
-    await dialog("Workflow settings",content,["Close"]);
+    // Execution preferences are a separate concern from trust.
+    const pref=await wsApi("workflow-mcp-confirmation");
+    let mode=pref.mode;
+    body.append(h("h3",{text:"Execution preferences"}),select("Workflow MCP confirmation",[["every_run","Every MCP workflow run"],["effectful_batches","Only MCP batches"]],mode,v=>mode=v,"mcp-confirmation"),
+      pref.invalid?h("p",{text:"Invalid saved setting. Using Every MCP workflow run."}):null,
+      button("Save confirmation preference",async()=>{
+        const result=await wsApi("workflow-mcp-confirmation",{mode,expected_revision:pref.revision});
+        Object.assign(pref,result);invalidatePlan();msg.dataset.state="preference";msg.textContent="Confirmation preference saved.";
+      },"save-mcp-confirmation"));
+    await dialog("Trusted destinations",content,["Close"]);
   }
   async function evidence() {
     const area=h("div"), box=h("div",{},area);
@@ -914,7 +1015,17 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     poll(job,generation);
   }
   render();
-  return {onShow:()=>exclusive(async()=>{await refresh();await recoverActive();render();}).catch(error), leave, settings, evidence,
+  // Return from an opened source revision to the affected node and an explicit Rebind review (UI-AB v2 §0.4).
+  async function returnTo() {
+    const target=window.agentwizWorkflowReturn;window.agentwizWorkflowReturn=null;
+    if(!target)return;
+    await refresh();load(await wsApi(route(target.workflow)));
+    Object.assign(inputs,target.inputs||{});for(const id of target.selected||[])selected.add(id);
+    view="design";render();
+    report("Review the replacement revision for node "+target.node+". Nothing is rebound until you confirm and save.");
+    if(Object.hasOwn(draft.nodes,target.node)&&!draft.nodes[target.node].gate)await pickSource(target.node);
+  }
+  return {onShow:()=>exclusive(async()=>{await refresh();await recoverActive();render();}).catch(error), leave, settings, evidence, returnTo, traceView:showTrace,
     tutorial:async(name,text,example)=>{
       await refresh();load(await wsApi(route(name)));view="run-view";inputs.text=text;
       if(example)selected.add(example);render();

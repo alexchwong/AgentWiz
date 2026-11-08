@@ -242,6 +242,23 @@ that tab's own inputs from a tutorial topic and moves no data between tabs. The 
 starts a second load of a block while one is in flight (a keep-less load would discard the texts a
 tutorial hook was asked to fill).
 
+**0.2.1 layout (UI-AB v2).** Screens choose pane counts from content-width bands (Wide ≥ 1100 px, Medium
+720–1099, Narrow < 720); viewport media queries approximate them, with `body.help-open` variants subtracting the
+360 px help panel, because CSS containment would trap the fixed contract drawer. DOM, keyboard and visual order
+follow each screen's action order. State attributes added for page checks: Design `ws-identity-bar`,
+`ws-unsaved-state` `data-state`, `ws-upgrade-banner`, `ws-missing-reference` `data-ref`, `ws-protection-card`
+`data-design` and `ws-protection-labels` `data-unset`, `ws-destination-line` `data-locality|eligible|trusted`;
+the Create dialog's `ws-port-labels` `data-state`; port `port-chip` `data-kind` and `port-drawer` `data-state`
+`open|closed` (one drawer at a time, anchored below `[data-drawer-anchor]`, reopened after a re-render of the same
+block port); Test `ws-readiness` `data-state` `idle|checking|ready|refused` with `data-code`; Compare
+`ws-example-pair` `data-current`; Workflow Run `wf-readiness-state` `data-state` `ready|blocked`, `wf-finding`
+`data-code|severity`, `wf-run-status` `data-phase`, `wf-progress-node` `data-outcome`, `wf-node-detail`
+`data-node`; trust `wf-trust-row` `data-eligible|trusted|used` and `wf-settings-status` `data-state|reason`;
+History `history-filter` `aria-pressed`, `history-workflow-row`, `history-comparison-row`; header
+`header-save-state` `data-state` `on|off|saving|failed`. A workflow finding's **Open source revision** stores
+`window.agentwizWorkflowReturn` (workflow, node, run inputs, selected examples); Design's **Return to workflow**
+calls `TABS.workflows.returnTo()`, which reloads the workflow and opens that node's replacement review.
+
 ## Page checks
 
 `tests/test_page.py` drives the page in headless Chromium through Playwright for Python, which is
@@ -996,7 +1013,8 @@ constraints. Reference/shape-changing schemas refuse visual editing.
 | --- | --- |
 | GET `starters` | Nine starter IDs, versions and two packaged examples each. |
 | POST `render-value`, `input-value`, `answer-view` | Exact literal text to typed presentation, or typed input back to exact text; checked answers use the existing checker/parser for display. |
-| POST `preview` | Accept draft, starter/key/binding, key/support, or a clean saved `{key, revision}` selection. No dispatch/publication. |
+| POST `preview` | Accept draft, starter/key/binding, key/support, or a clean saved `{key, revision}` selection. No dispatch/publication. A model or tool starter may add `data_handling` (`private`, `not_private`, `per_port`): the draft is then v4 with every starter port `local_only` `true`, `false` or unset. Without it the draft stays v3; script and transform starters refuse it. A resolved model or tool design projection adds `destination_facts` `{locality, eligible, reason, trusted}`. |
+| GET/PUT `blocks/<key>/retained-labels` | Retained-label review: `pairs` `[{revision, revision_number, revision_name, input, acknowledged}]` for every input a retained v4 revision labels Local only, `restricted_examples` and the record `revision`. PUT takes `expected_revision` and the complete `acknowledged` list of `{revision, input}`; each pair must be currently retained and labelled (`stale` otherwise). |
 | POST `plans` | `{action,request}` returns `expected_plan`, effective descriptor and required confirmations. |
 | POST `save` | Draft/source, `expected_identity`, expected plan and confirmations publish one revision. |
 | GET `blocks/<key>/revisions[/<id>]` | Revision summaries or the saved preview of one retained revision. |
@@ -1004,6 +1022,7 @@ constraints. Reference/shape-changing schemas refuse visual editing.
 | GET `blocks/<key>/support` | Bounded root candidates and captured support set. |
 | POST `blocks/<key>/support/preview` | Explicit `replace`/`remove` paths update a draft, retaining old revisions. |
 | GET/PUT `blocks/<key>/examples` | Collection with revision or save using `expected_revision`. |
+| GET `destination-trust-candidates` | One row per exact destination reachable from configuration: each resolved model role and each observed MCP tool, with `destination`, `exact`, `locality`, `eligible`, `reason`, `trusted` and `used_by` (`{kind: role|server, name}`), plus `unused_grants`. No discovery or network access. |
 | POST `test` | One source (draft, key, or saved `{key, revision}`) and input-text map start a frozen normal run. |
 | POST `batches` | One/two candidates and ordered exact examples start serial independent trials. |
 | GET `batches` | Current and latest completed session batch IDs. |
@@ -1013,6 +1032,12 @@ constraints. Reference/shape-changing schemas refuse visual editing.
 | POST `proposals/apply` | Proposal ID, matching draft and expected plan produce draft/examples only. |
 | PUT `reviews/<run>` | Result-bound rating and optional durable review, with expected revision. |
 | GET `comparisons[/<id>]`, DELETE `comparisons/<id>` | Saved comparison listing/read or independent deletion. |
+
+`test` and `batches` plans add `restriction_sources` for display: `{code}` rows with `declared_label`,
+`example_restriction` (`example`, `input`), `retained_label` (`input`, `revision_number`), `context_manual`,
+`context_inherited` or `context_clear_pending`. They do not change enforcement. A protected refusal (for example
+`destination_untrusted`) carries one issue with `restriction_sources` and, when known, `destination` with
+`locality`, `eligible`, `reason` and `trusted`.
 
 Start requests require a server-issued ticket. Plan a request before sending it.
 Echo each required `{kind,digest}` acknowledgement, omitting `detail`. Repeat the
@@ -1073,7 +1098,10 @@ first new generation anchors the baseline so pruning does not renumber survivors
 history cannot be recovered. The first confirmed Workshop save of a valid unmanaged v3 block captures the original as
 revision 1 and the edited block as revision 2. New blocks and duplicates start at 1. Restore appends, never rewrites an old generation. The UI starts a new revision label blank;
 Overwrite replaces the selected retained entry with a fresh immutable generation, preserving its number
-and list position. The default changes only when its entry is replaced. The expected head identity and
+and list position. It is refused with `new_revision_required` when the draft or the target revision is v4, or
+the target has `context_local_only`: replacing such an entry would remove Local-only input labels from
+`retained_labels` or a protected-design record without trace. Retired labels use the recorded acknowledgement
+instead. The default changes only when its entry is replaced. The expected head identity and
 review plan bind the target; old IDs leave retention while pinned readers finish against unchanged files.
 Existing evidence retains its original ID and captured contents; replacement descriptions start empty.
 Revision names may be changed on overwrite. Restore-as-new still appends. Retention remains 20.
@@ -1216,6 +1244,18 @@ and a boolean `trusted`. Model identities contain `kind`, `url`, `model` and `pr
 MCP identities contain `kind: "mcp"`, `url`, `server` and `tool`.
 Trust is persisted in `destination_trust.json`. The runner checks the current grant and
 configuration before protected model calls and repairs and before MCP arguments are sent.
+`POST destination-trust-preview` also returns `detail` (the ineligibility reason: `hostname`, `remote`,
+`address`, `provider` or `proxied`) and `locality` (`local` for a loopback address or `localhost`, else `remote`).
+`outbound_policy.ineligibility` reports the reason for display only; dispatch still uses `canonical_url` and
+`decide`, so enforcement is unchanged.
+
+Workshop Test restricts an input when any retained v4 revision labelled it Local only
+(`retained_labels`). The owner may retire exact `(revision, input)` pairs: the acknowledgement record
+`workshop/label_reviews/<key>.json` (`format_version` 1, `revision`, sorted `acknowledged`) is written under the
+`label_reviews` reservation with the workspace writer registered. `retained_labels` ignores those pairs only; an
+unreadable record acknowledges nothing. Saved-example restrictions are unchanged, so values captured under a label
+stay restricted. A later revision labelling the input again creates a new pair. Clearing the list restores the
+previous behaviour.
 
 
 ### Headless workflow engine

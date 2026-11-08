@@ -262,10 +262,21 @@ def classification(draft):
     return 'starter' if files.get('scripts/main.py') == expected and fingerprint(runtime) == m.get('runtime_digest') and set(runtime) == set(m.get('support', [])) else 'custom'
 
 
-def starter(identifier, key, role=None, server=None, tool=None, *, version=1):
+DATA_HANDLING = {'private': True, 'not_private': False, 'per_port': None}
+
+
+def starter(identifier, key, role=None, server=None, tool=None, *, version=1, data_handling=None):
+    """A new draft. For model and tool kinds, `data_handling` creates a workflow-ready (v4) block whose
+    starter ports carry the chosen label: `private` → Local only, `not_private` → no label, `per_port` →
+    unset, so Save stays refused until each port is chosen. Without it the block is v3, as before."""
+    if data_handling is not None and data_handling not in DATA_HANDLING:
+        fail()
     if identifier in ('blank_model','blank_tool','blank_script'):
         kind = identifier.split('_')[1]
-        draft = starter({'model':'write_text','tool':'call_tool','script':'format_report'}[kind], key, role, server, tool)
+        if kind == 'script' and data_handling is not None:
+            fail()
+        draft = starter({'model':'write_text','tool':'call_tool','script':'format_report'}[kind], key, role, server, tool,
+                        data_handling=data_handling)
         definition = jsonio.decode_exact(draft['definition_text'])
         definition['description'] = ''
         if kind == 'model':
@@ -276,6 +287,8 @@ def starter(identifier, key, role=None, server=None, tool=None, *, version=1):
         draft['definition_text'] = jsonio.encode_exact(definition)
         return draft
     if identifier not in STARTERS or type(version) is not int or version not in (1, 2):
+        fail()
+    if data_handling is not None and (identifier in SCRIPT_IDS or version != 1):
         fail()
     text = {'format': 'text'}
     obj = {'format_version': blocks.FORMAT_VERSION, 'name': key, 'description': identifier.replace('_', ' '),
@@ -316,6 +329,13 @@ def starter(identifier, key, role=None, server=None, tool=None, *, version=1):
         m['effects'] = 'unknown'
         obj['steps'] = [{'id': 'call', 'kind': 'tool', 'server': server, 'tool': tool, 'arguments': {}, 'output': 'out'}]
         obj['outputs']['out']['contract'] = {'format': 'json'}
+    if data_handling is not None:
+        obj['format_version'] = blocks.WORKFLOW_FORMAT_VERSION
+        label = DATA_HANDLING[data_handling]
+        for side in ('inputs', 'outputs'):
+            for declaration in obj[side].values():
+                if label is not None:
+                    declaration['local_only'] = label
     m['description_sections'] = {'use': obj['description'], 'exclusions': 'Use for one independent block operation.',
         'effects': 'Review the selected external tool before running.' if identifier == 'call_tool' else 'Produces a returned value for review.',
         'limitations': 'Model answers require correctness review.' if identifier in MODEL_IDS else 'Scripts have ordinary user-level filesystem and network access.' if identifier in SCRIPT_IDS else 'Remote behavior may change.',

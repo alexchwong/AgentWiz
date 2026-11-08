@@ -76,9 +76,10 @@ TOPICS: tuple[Topic, ...] = (
           "with a repair if either fails. Its system instructions are in Design, Request preview shows the exact "
           "messages including the generated output section, and its temperature is inherited from the role's "
           "default. Show the role opens the editor: "
-          "filter by location and family, select one role, then review its purpose and assigned model profile. "
-          "Add family offers your own domains; Save all changes retains every role. Local uses a server on this machine; "
-          "unconfigured roles cannot run. Then Run, and compare the two attempts in the trace.", "workshop", "0.2.0", "complete", True,
+          "filter by location and family, pick a role from the list, then review its purpose, assigned model profile and "
+          "where it connects. Add family offers your own domains; Save role assignments keeps every role. Local uses a "
+          "server on this machine; unconfigured roles cannot run. Then Run, and compare the two attempts in the trace.",
+          "workshop", "0.2.1", "complete", True,
           _page("workshop.tutorialPrepare",
                 ["extract_fields", {"report": "Record 9007199254740993 has a ratio of 0.10000000000000000001."}],
                 [{"id": "show-role", "label": "Show the role"}]), "ws-run-test"),
@@ -100,7 +101,7 @@ TOPICS: tuple[Topic, ...] = (
     Topic("workflow", "Wire and run a workflow",
           "In Design, follow the input into Count words and Count characters, then follow both outputs into "
           "Format report. The last stage was upgraded from v3 to v4 and has a local-only input. "
-          "In Run, preflight the prepared example, review the trusted local model and execution order, then "
+          "In Run, check readiness for the prepared example, review the trusted local model and execution order, then "
           "run it and inspect the node trace. The report reads Words: 2; characters: 7.",
           "workflows", "0.2.1", "complete", False,
           _page("workflows.tutorial", ["tutorial_report", "one two", "two_words"],

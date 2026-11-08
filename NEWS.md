@@ -2,6 +2,23 @@
 
 ## 0.2.1
 
+- New model and tool blocks ask for port labels and are workflow-ready without an upgrade step.
+- Design reads in order: a top bar with revision and Save, then ports, prompts and settings.
+- Insert buttons follow port renames; stale prompt references are flagged with a confirmed replacement.
+- A Protection card shows port labels, design protection and where run restrictions come from.
+- Review retained privacy labels retires an earlier revision's Local-only labels with a recorded acknowledgement.
+- Overwrite stays unavailable for workflow-ready revisions, which may hold privacy labels; the button explains why.
+- Contracts show a readable summary; Edit opens a side drawer with list, record and choice shortcuts.
+- Saving an inline contract as reusable and using it for the port takes one dialog.
+- Test shows inputs beside results and checks readiness, with Grant and other remedies in place.
+- Compare keeps Stop and both arms visible and shows each example's answers side by side.
+- Models & roles lists roles with status and opens the profile editor without losing role edits.
+- Trusted destinations lists configured endpoints with eligibility, trust and uses; Grant needs no retyping.
+- Workflow Run orders inputs, readiness, findings and Run; findings offer remedies such as Grant or Add Release Gate.
+- Workflow progress follows execution order, shows release phases, and opens node traces beside it.
+- History lists block runs, workflow runs and comparisons together with filters.
+- Save runs shows On or Off beside the workspace name; the tutorial opens as a side panel.
+
 - Release Gates pause workflows for explicit human approval without removing local-only protection from source data.
 - Optional trusted local AI assessment and identifier checks assist release review; acknowledgements are enforced by the server.
 - Reopen Workflows after a browser reload to recover an active review; restart invalidates pending approvals.

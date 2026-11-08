@@ -108,8 +108,10 @@ starting with a letter or digit.
 
 **Workshop** is the default, with two sections: **Blocks** (its compact saved-block selector is above
 Design, Test and Compare) and **Contracts**. **Workbench** groups the four independent utilities below. **History**
-opens saved runs. Settings in the header groups model profiles, roles, MCP servers and Save runs; the
-Workspaces control beside the workspace name opens workspace management.
+opens saved block runs, workflow runs and comparisons. **Save runs: On/Off** sits beside the workspace name and
+shows its state either way. Settings in the header holds the configuration summary, model profiles, **Models &
+roles**, MCP servers and **Trusted destinations**; the Workspaces control beside the workspace name opens
+workspace management. The tutorial opens as a help panel at the side, over the page on narrow screens.
 
 | Location | Address | Purpose |
 | --- | --- | --- |
@@ -171,17 +173,29 @@ Only fields relevant to the selected block type are shown. Tool blocks list conf
 automatically discover the selected server's advertised tool names in a dropdown. **Refresh tools**
 retries discovery after configuration or connection changes. AgentWiz does not scan for unconfigured
 servers: add their URLs in Settings → MCP servers first. Discovery lists tools without executing them.
+Model and tool starters ask for **Port labels**: **Local only**, **No local-only label** or **Decide per
+port**. The choice creates a workflow-ready (v4) block; with Decide per port, saving waits until each port has
+a label. A label declares only that port; restrictions can still come from connected inputs, examples or
+protected design. Built-in transform starters are workflow-ready; Python script blocks run standalone only.
 Creation errors keep the dialog and entered values available for correction. **Create draft** opens
 Design without calling a model; **Create with assistance** first creates the same draft, then opens the
 separate assistance request/review workflow. Neither button saves a revision automatically.
-A model block's Design form has three unlabelled columns on wide screens: block description, **System prompt**
-and **User prompt** on the left; variable tables in the middle; identity, saving and settings on the right.
-The form stacks on narrow screens. Insert buttons add
-`{{inputs.name}}` and `{{output.name}}` placeholders (see [Named outputs](#named-outputs)). Each input and
+Design reads in editing order. A bar above the editor holds the display name, **Block revision**, the unsaved
+state, the optional revision name and **Save as new revision**; it stays in view while you scroll. Below it, a
+model block's ports are on the left, **System prompt**, **User prompt** and block description in the centre, and
+role, destination, sampling, protection and documentation on the right. Medium widths put ports above prompts
+beside the settings; narrow widths stack all three in the same order. Insert buttons add
+`{{inputs.name}}` and `{{output.name}}` placeholders (see [Named outputs](#named-outputs)) and follow port
+renames, additions and removals at once. A prompt reference to a port the block no longer declares is flagged
+under the prompt; when exactly one port could replace it, **Replace with …?** offers that change for
+confirmation. Each input and
 output is an editable row with field name and **Declared meaning** (part of the executable block; an output's
-declared meaning can contribute to the model request), and its contract below it: **Inline** uses the same
-readable contract editor as Workshop → Contracts; **Saved contract** pins one numbered revision (see
-[Contracts](#contracts)). A type change that would drop fields, choices or bounds previews the before and
+declared meaning can contribute to the model request), and its contract summary below it, such as `JSON · list of {placeholder, original}`, with a sentence stating
+required, nullable and extra-field rules. **Edit contract** opens the contract in one drawer at the side:
+**Inline** uses the same readable contract editor as Workshop → Contracts; **Saved contract** pins one numbered
+revision (see [Contracts](#contracts)). **List of records…**, **Single record…** and **Choice…** fill in a common
+shape for review. Guided edits reach the block draft at once; **Done** closes the drawer, and the block still
+needs saving. The drawer stays open while the block re-renders. A type change that would drop fields, choices or bounds previews the before and
 after definitions first; contract edits are unsaved block edits until **Save as new revision**.
 **Request preview** shows the exact system and user messages a run would send for the current inputs,
 with the generated output section and where each setting came from, each with Copy. On the right,
@@ -206,12 +220,13 @@ an empty group, and a group that was already empty in the saved block is left al
 the supported vocabulary is never projected or overwritten: it stays in the advanced source with its
 located problems, and neither the port nor the block can be saved until it is corrected or discarded.
 **Make local copy** replaces a pin with the pinned definition for a block-specific edit; **Save inline as
-reusable** creates a new saved contract and changes the port only if you choose **Use saved revision**.
+reusable** creates a new saved contract in one dialog and, unless you clear **Use this saved contract for port**,
+pins the port to it. The block still needs saving.
 Shared edits happen in Workshop → Contracts, which shows the blocks that use each contract. Schema-backed
 validation and assistance use the validator included in the standard installation; repair the
 installation if it becomes unavailable.
 
-**Save as new revision**, in Design's right-hand controls, previews the effective action and its required
+**Save as new revision**, in Design's top bar, previews the effective action and its required
 acknowledgements. A new revision becomes the default. **Block revision** opens any retained revision as a
 clean saved selection: its design, contracts and standard description are shown, Test and Compare run that
 revision, and the default (marked **(current)**) does not change. Unsaved changes offer Save, Discard or
@@ -225,11 +240,14 @@ revisions are listed and show **Migration required** on selection. Revisions dis
 optional name of up to 120 characters. Enter a name before saving; names need not be unique and do not
 rename the block. A new revision's name defaults to blank.
 
-The revision dropdown sits immediately above **Save as new revision** and **Overwrite selected revision**.
-Overwrite confirms replacement of the selected revision's contents (and clears its standard description),
+**Overwrite selected revision** is in **Model advanced settings** (or **More settings**). It confirms replacement of the selected revision's contents (and clears its standard description),
 keeping its number and position rather than adding another revision. Overwriting an older revision does
 not change the current default. The replacement remains selected; existing run evidence is unchanged.
-Overwrite is unavailable until the block has a saved revision. Concurrent changes require a fresh review.
+Overwrite is unavailable until the block has a saved revision, for workflow-ready (v4) drafts and targets,
+and for revisions with protected design. Those revisions can carry Local-only input labels or protected design
+history that Test still honours; replacing one would erase that record, so save a new revision instead. To
+retire an earlier revision's label deliberately, use **Review retained privacy labels**.
+Concurrent changes require a fresh review.
 Numbers survive restart and pruning; restoring an older version and saving creates the next number.
 Duplicates start their own sequence. Existing unnumbered histories are numbered oldest first from the
 retained history available at upgrade, not from already-pruned lifetime history. Internal IDs remain unchanged.
@@ -247,6 +265,20 @@ or previews root replacements/additions/removals. Root files selected for replac
 publication. Old revisions keep their captured helpers and data. Scripts are not sandboxed; source
 review does not establish safety, and undeclared dependencies or absolute-path assumptions cannot be inferred.
 
+For a workflow-ready block, the **Protection** card counts port labels, shows **Design protection** (off, set
+here, or inherited from protected assistance and not clearable) and notes that run restrictions also depend on
+connections, examples and earlier revisions. **Change design protection…** explains the setting before
+changing it. Test treats an input as restricted if any retained revision labelled it Local only.
+**Review retained privacy labels** lists those revisions and inputs; **Retire these labels** records an
+acknowledgement of those exact revision/input pairs, after which Test ignores them. Saved examples keep their
+restrictions and captured values stay restricted. **Restore all labels** removes the acknowledgement. A later
+revision that labels the input again restricts it again.
+
+Test places inputs on the left and results on the right. **Check readiness** shows where the run connects and
+why it is restricted (declared labels, example restrictions, retained labels, design protection). A refusal is
+explained in place with its remedy: **Grant** for an eligible destination not yet trusted, the address or proxy
+fix for an ineligible one, **Edit port**, or **Review retained privacy labels**. A refused **Run test** shows the
+same. The **Examples** section can be collapsed and remembers its state.
 Test's **Inputs** section accepts new input or a selected example. Leave **Example** at **New input**,
 enter values and choose **Run test** for a one-off run; neither a saved block nor a saved example is
 required. Run-history persistence still follows **Save runs**. Advanced JSON values start expanded.
@@ -264,7 +296,9 @@ before using it for automatic correctness. Editing an example invalidates prior 
 well-typed result may still be incorrect. Human ratings bind the exact result and never transfer to a rerun.
 
 Compare selects a saved baseline and either a saved candidate, the selected revision or the current unsaved
-draft, using the same ordered examples. A shared example that does not fit one revision's inputs is named,
+draft, using the same ordered examples. The setup collapses after Start; **Stop**, the run state, both arms'
+identities and the example being read stay visible above the results. Each example shows baseline and candidate
+side by side (stacked on narrow screens), with **Previous example** and **Next example**. A shared example that does not fit one revision's inputs is named,
 with its missing or extra input names; run such revisions individually. Review source differences, destinations, trial/repair bounds, effects and saving before Start.
 Trials alternate arm order between examples. Results show execution, checks and correctness separately,
 with paired answers, trace, denominators, reported usage and timing coverage. Unknown usage is not zero;
@@ -321,14 +355,23 @@ and node outputs. A binding can select an object field or an array index. The op
 **Canvas** lets you drag cards and connect compatible ports. The Nodes form provides
 the same wiring and positioning controls with a keyboard.
 
-Save before running. In **Run**, enter one-off inputs or select saved examples. Use
-**Preflight** to review execution order, destination trust, and MCP confirmation, then
-run and inspect the node traces. Rebind explicitly to update a node's captured revision.
+Save before running. In **Run**, the left column reads inputs or saved examples → **Check readiness** → findings
+→ **Run**. Each finding names its location and offers a remedy for the object that owns it: **Grant** for an
+eligible untrusted destination, the address or proxy fix for an ineligible one, **Add Release Gate** when a
+restricted value would reach a destination that cannot take it, **Edit in workflow** for workflow inputs and
+outputs, or **Open source revision** for a captured block. From that revision, **Return to workflow** opens the
+node's explicit Rebind review; nothing is rebound or cleared automatically. Privacy warnings such as an
+unprotected upstream call stay visible; routine notices fold. While running, **Stop**, the current phase
+(including Assessing release, Awaiting your review and Submitting decision) and saving state stay at the top of
+the left column. Progress lists nodes in execution order; **Inspect** opens a node's trace beside it.
+Rebind explicitly to update a node's captured revision.
 A saved capture remains usable if its original block revision is removed.
 
-Open **Settings → Workflow settings** to manage destination grants and choose whether
-MCP requires confirmation on every run or only on batches. In **History → Workflow
-history**, open saved workflow records. The tutorial walks through a two-branch report
+Open **Settings → Trusted destinations** to grant or revoke destination trust and choose whether
+MCP requires confirmation on every run or only on batches. The table lists destinations from configured
+roles and discovered MCP tools, with where each connects, local-only eligibility, trust and known uses.
+**Grant** appears only where a grant can help; manual entry is folded and checks eligibility as you type.
+Saved workflow runs appear in **History** with block runs and comparisons. The tutorial walks through a two-branch report
 and a protected model stage on an isolated local stand-in.
 
 ### Release Gates
@@ -345,7 +388,7 @@ port Local only restricts that output again. Sending a restricted mapping to Ope
 still refused. A later local reinjection stage reading the mapping produces restricted outputs.
 
 Enable **Local AI assessment** to request advisory findings from a separately assigned role.
-Set its assignment in Roles and grant its exact local destination in Workflow settings.
+Set its assignment in Models & roles and grant its exact local destination in Trusted destinations.
 Assessment always uses protected local dispatch, including for otherwise unrestricted candidates;
 it never falls back to a cloud model. Its findings and mapping are never added to the released value.
 Assessment attempts, including one permitted repair, consume normal model/time budgets.
@@ -369,7 +412,8 @@ workflows without Gates stay at format 1. Workshop single-block Test/Compare do 
 
 ## Workflow-ready blocks
 
-In Block Workshop, **Upgrade for workflows** creates a v4 draft from a v3 model or MCP block.
+New model and tool blocks are workflow-ready when created with a Port labels choice. For an existing v3 model
+or MCP block, the banner's **Upgrade for workflows** creates a v4 draft.
 Choose a locality label for each port and save the draft as a new revision.
 New count, field-selection and report starters are built-in transforms.
 **Convert to built-in transform** creates a fresh v4 draft from an intact historical starter.
@@ -856,17 +900,22 @@ three unconfigured starter roles: **fast** (routine generation/extraction), **as
 assistance), and **reasoning** (more demanding tasks). These are suggestions, not model capabilities;
 several roles may share a profile. No model, paid service or credentials are selected automatically.
 
-Open **Settings → Roles** to browse by **location** (All, Local, Cloud / remote), then by
-**family / domain**, and select a role from the matching-role dropdown. Only one role editor is
-displayed at a time. Suggested families are General, Writing & communication, Coding & engineering,
+Open **Settings → Models & roles** to browse by **location** (All, Local, Cloud / remote), then by
+**family / domain**. The left side lists the matching roles with location, resolved model and status (Ready,
+not configured, or ready but not eligible for local-only data); select one there or from the **Role** dropdown.
+The editor on the right shows one role at a time. Suggested families are General, Writing & communication, Coding & engineering,
 Research & analysis, Data & extraction, and Workflow assistance. Use **Add family** in the editor
 to create and assign your own family; custom families persist with their saved roles. Older roles
 without a family appear under General. Adding a role uses the active location/family filters.
 
-Edit the selected role's purpose, location, family and saved profile. Switching roles or filters
-retains unsaved edits; **Save all changes** saves every role, including roles hidden by filters.
-Profile choices show backend, endpoint and model. **Create / edit model profiles**
-opens model settings and returns without losing role edits. **Set up defaults** adds missing starter
+Edit the selected role's purpose, location rule, family and saved profile. The editor also states where the
+saved role connects, whether that endpoint can receive local-only data and whether it is trusted; a `localhost`
+endpoint names the `127.0.0.1` address to use in `config/model-servers.ini` (profiles do not own server
+addresses). Switching roles or filters retains unsaved edits; **Save role assignments** saves every role,
+including roles hidden by filters. Profile choices show backend, endpoint and model. **New or edit profile…**
+opens the same profile editor as Model settings over this panel; its **Save profile** is a separate save.
+Closing it returns to the role with edits intact. If saving role assignments fails, saved profiles stay saved
+and the role edits remain in the editor. **Set up defaults** adds missing starter
 roles without replacing existing definitions. A notice lists default roles missing from the saved workspace;
 it remains until those roles are added and saved. Workspaces created before `write_block_description` existed
 list it there until it is added. Save persists assignments and definitions in
@@ -1048,8 +1097,9 @@ the page keeps showing the text that had arrived.
 
 ## Run history
 
-Off by default. The **Save runs** switch in the header turns it on; while it is on, the header says
-"Saving runs". The switch is saved in `workspace.json`, survives a restart, and cannot be turned on in
+Off by default. The **Save runs: On/Off** switch beside the workspace name turns it on and shows its state
+either way; while it is on, the header also says "Saving runs". A failed switch is shown as such until the
+next change. The switch is saved in `workspace.json`, survives a restart, and cannot be turned on in
 a read-only workspace.
 
 - **What is saved.** Prompts, answers, reasoning, check results and settings, as the record of each
@@ -1069,7 +1119,9 @@ a read-only workspace.
   attempt ends and never rewritten. Folders are private to you (mode 0700, files 0600). The
   attempt's save status is shown: saved (with the file), or failed with the reason. A failed write
   is reported, not retried.
-- **The History tab** lists the newest 200 saved runs (and says "200 of N shown"). Open one to read
+- **The History tab** lists saved records on the left and opens one on the right. Filters choose all
+  records, block runs, workflow runs, comparisons or failed runs. Each kind keeps its own storage and delete
+  confirmation. Block runs are the newest 200 (it says "200 of N shown"). Open one to read
   it, read-only, with a **Copy** button on every message, answer, reasoning, check result and
   record. A run is never loaded back into another tab.
 - **Delete this run** removes its folder after an inline confirmation. A run with an attempt in

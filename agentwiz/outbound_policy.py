@@ -116,6 +116,102 @@ def view(state):
     return {'format_version': 1, 'revision': revision, 'grants': grants}
 
 
+def locality(url):
+    """`local` for a loopback IP or `localhost`, else `remote`. No DNS or network access."""
+    try:
+        host = urlsplit(url).hostname or ''
+    except ValueError:
+        return 'remote'
+    if host == 'localhost':
+        return 'local'
+    try:
+        return 'local' if ipaddress.ip_address(host).is_loopback else 'remote'
+    except ValueError:
+        return 'remote'
+
+
+def ineligibility(destination):
+    """Why `destination` cannot receive restricted values, or None when it can (trust aside):
+    `provider` (a kind restricted dispatch never uses), `hostname` (a name such as localhost instead of a
+    literal loopback IP), `remote`, `address` (another malformed or unsupported URL) or `proxied`."""
+    if not isinstance(destination, dict) or destination.get('kind') not in (*MODEL_KINDS, 'mcp'):
+        return 'provider'
+    try:
+        parts = urlsplit(destination.get('url') or '')
+        host = parts.hostname or ''
+    except (ValueError, TypeError):
+        return 'address'
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is None:
+        return 'hostname' if host == 'localhost' or host.endswith('.localhost') else 'remote'
+    if not literal.is_loopback:
+        return 'remote'
+    try:
+        exact = identity(destination)
+        decide(exact, [exact])
+    except Refused as exc:
+        return 'proxied' if str(exc) == 'destination_proxied' else 'address'
+    return None
+
+
+def facts(state, destination):
+    """Locality, eligibility (with reason) and trust of one destination, reported separately."""
+    reason = ineligibility(destination)
+    try:
+        exact = identity(destination)
+        trusted = exact in read(state.workspace.path)[1]
+    except Refused:
+        trusted = False
+    return {'locality': locality(destination.get('url') or ''), 'eligible': reason is None,
+            'reason': reason, 'trusted': trusted}
+
+
+def candidates(state):
+    """Every destination reachable from current configuration (core_02 §3.2, reduced): one row per
+    resolved model role and per observed MCP tool, with locality, eligibility and trust. Uses are the
+    roles and servers that reach it; the page adds the open block or workflow."""
+    from .state import NoSuchServer, RoleUnresolved
+    current = view(state)
+    revision, grants = current['revision'], current['grants']
+    rows = {}
+
+    def add(destination, use):
+        reason = ineligibility(destination)
+        try:
+            exact = identity(destination) if reason in (None, 'proxied') else None
+        except Refused:
+            exact = None
+        key = jsonio.encode_exact(exact if exact is not None else destination)
+        row = rows.setdefault(key, {'destination': exact or destination, 'exact': exact is not None,
+                                    'locality': locality(destination.get('url') or ''),
+                                    'eligible': reason is None, 'reason': reason,
+                                    'trusted': exact is not None and exact in grants, 'used_by': []})
+        if use not in row['used_by']:
+            row['used_by'].append(use)
+
+    snapshot_view = state.view()
+    for role in snapshot_view['roles']['map']:
+        try:
+            snapshot = state.role_capture(role).snapshot
+        except RoleUnresolved:
+            continue
+        add({'kind': snapshot.kind, 'url': snapshot.endpoint.base_url, 'model': snapshot.model,
+             'provider': snapshot.provider or ''}, {'kind': 'role', 'name': role})
+    for server in snapshot_view['mcp']['servers']:
+        try:
+            snapshot = state.mcp_snapshot_for_block(server)
+        except NoSuchServer:
+            continue
+        for tool in state.mcp_client.observed_tools(snapshot.identity):
+            add({'kind': 'mcp', 'url': snapshot.url, 'server': server, 'tool': tool},
+                {'kind': 'server', 'name': server})
+    unused = [grant for grant in grants if jsonio.encode_exact(grant) not in rows]
+    return {'format_version': 1, 'revision': revision, 'candidates': list(rows.values()), 'unused_grants': unused}
+
+
 def preview(state, body):
     if set(body) != {'destination'}:
         raise WorkshopError('invalid', 400)
@@ -130,7 +226,9 @@ def preview(state, body):
             reason = 'destination_untrusted'
     except Refused as exc:
         reason = str(exc)
-    return {'revision': revision, 'destination': destination, 'reason': reason,
+    detail = ineligibility(body['destination']) if reason not in (None, 'destination_untrusted') else None
+    return {'revision': revision, 'destination': destination, 'reason': reason, 'detail': detail,
+            'locality': locality(body['destination'].get('url') or '') if isinstance(body['destination'], dict) else 'remote',
             'trusted': destination is not None and destination in grants}
 
 

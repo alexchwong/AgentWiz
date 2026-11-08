@@ -1,3 +1,95 @@
+# UI-AB v2 implementation — 8 November 2026
+
+Implemented `AgentWiz_proposal_ui_AB_walkthrough_space_v2.md` with the owner decisions of 8 November 2026
+against AgentWiz devel `31cdec822635b491f98acda4c09729f46c8adb60`, which was still devel HEAD at the end of the
+work. Version remains the unreleased 0.2.1. No commit, push, merge, tag or publication was made.
+
+## Apply this delivery
+
+Extract the ZIP over the matching checkout, preserving paths. It contains complete changed and added files, not a
+patch. No files need deletion (`DELETIONS.txt` is empty). No dependencies were added.
+
+## Owner decisions applied
+
+- `core_03` §3.4 adopted: **Review retained privacy labels** records an acknowledgement of exact
+  `(revision, input)` pairs. Saved-example and captured-value restrictions stay intact.
+- Overwrite stays disabled for workflow-ready revisions; the button title is the owner's text and
+  `docs/architecture.md` records the privacy-history rationale.
+- `core_06` S2 rewritten through the complete Gate route (project document `core_06` v2; not a repository file).
+
+## Behaviour
+
+- **Backend.** Model/tool starters accept `data_handling` and become v4 with the chosen labels. Retained-label
+  acknowledgement record and `GET/PUT blocks/<key>/retained-labels`. `GET destination-trust-candidates`.
+  Trust preview adds `detail` and `locality`; the design projection adds `destination_facts`; Test/Compare plans and
+  protected refusals add `restriction_sources` and destination facts. Overwrite is now also refused when the
+  *target* is v4 (previously only a v4 draft was refused, so an API v3 draft could replace a labelled v4 entry).
+  Enforcement is otherwise unchanged.
+- **Page.** Create dialog port labels; Design identity bar and ports → prompts → settings order, upgrade banner,
+  live Insert buttons and confirmed reference replacement, destination line, Protection card, retained-label
+  review; contract chip and side drawer with Done, shape shortcuts and one-dialog publish; Test readiness with
+  in-place remedies; Compare pinned status and aligned pairs; Models & roles two-pane panel; Trusted destinations
+  table; Workflow Run readiness findings with owner-routed remedies, pinned Stop/phase, ordered progress and inline
+  node detail, Open source revision → Return to workflow → explicit Rebind review; combined History with filters;
+  Save runs On/Off in the header; tutorial as a side panel; Workspaces Switch per row and More actions.
+
+## Departures from the proposal (recorded for owner review)
+
+1. `data_handling` is optional on the API. Absent, model/tool starters stay v3 as before (existing API callers and
+   tutorial fixtures); the page always sends it. `core_04` §4.6 proposed refusing a missing value with 400.
+2. Content-width bands use viewport media queries with `body.help-open` offsets. Container queries would establish
+   a containing block that traps the fixed contract drawer.
+3. Compare renders every example as an aligned baseline/candidate pair with Previous/Next navigation, instead of
+   one example at a time; both arms remain visible together.
+4. Test's Examples "drawer" is a collapsible section that remembers its state; Recent remains a dialog.
+5. Workflow I/O and Gate contracts keep their disclosure with the readable chip summary and shortcuts, not a side
+   drawer. Inline storage plus Copy saved contract is unchanged (R4).
+6. Models & roles opens the existing Model settings dialog over the panel (the same editor and validation)
+   rather than expanding it inline.
+7. **Add Release Gate** opens Workflow Design with guidance; it does not preselect the edge.
+8. Not implemented (dependencies absent): `core_02` `trust_gaps` banner and full `used_by` scan of saved blocks
+   and workflows (uses are roles, servers and the current workflow's nodes); `core_03` message catalogue (the page
+   supplies plain text with the code in a details line); `core_01` unmatched-pair display; UI-D D1–D8, including
+   the release panel move and shared `ResultView` (the release panel stays in the progress pane).
+9. History lists workflow runs and comparisons by ID; their outcomes appear when opened.
+10. Header: Settings remains a disclosure holding the configuration summary; no separate activity indicator.
+
+## Tests changed
+
+- Added `tests/test_label_review.py` (4 functional HTTP tests: creation labels, acknowledgement with
+  example restriction kept, overwrite of a labelled target, trust candidates).
+- `tests/test_page.py`: helpers `pick_labels`, `open_port`, `close_port`, `open_more`; existing tests adapted to the
+  new structure (label choice before Create draft, drawer open/close, one-dialog publish, overwrite seeded as a v3
+  block via the API, inline node detail, History workflow row, Trusted destinations dialog and its state attributes
+  instead of wording); five new page tests for creation labels and reference replacement, the upgrade banner, Test
+  readiness with Grant and label retirement, the contract chip/shortcut/Done, and a workflow finding's Grant.
+
+## Actual verification
+
+Environment: Linux x86_64, Python 3.13.18, modelSpell 0.3.0, Playwright 1.63.0 with its Chromium, installed by
+`scripts/dev_setup.sh`.
+
+- Baseline at `31cdec8` before changes: `python -m pytest -q -m "not live"`: **1001 passed, 10 deselected**.
+- Final source: `python -m pytest -q -m "not live"`: **1010 passed, 10 deselected**; no failures, errors or skips.
+  The one intermediate failure was the tutorial registry's pinned `updated_in` list, updated for `model-block`
+  moving to 0.2.1 (DEVEL tutorial rule 3).
+- `python scripts/build_release.py --smoke` from a disposable commit in a throwaway clone (this checkout has no
+  commit): **RC1, RC2, RC3 and installed-wheel smoke passed**. That commit's tree equals the delivery except this
+  verification section of `HANDOVER.md` (not shipped).
+- Shipped Python parsed with the Python 3.10 grammar (`ast.parse(..., feature_version=(3, 10))`): passed.
+  `node --check` on `contracts.js`, `workflows.js` and the page script: passed. `git diff --check`: clean.
+- Not run: page and tutorial tests against the installed wheel in an isolated interpreter.
+
+## Remaining limits
+
+The Linux/macOS × Python 3.10/3.13 CI matrix was not run. Only Python 3.13 was executed locally; Python 3.10
+compatibility of shipped modules was checked by grammar parsing only. Layout and fit at 1280×800 were not checked
+visually; DEVEL rule 8 page checks assert states, not layout. macOS and WSL2 remain unverified locally.
+
+---
+
+Earlier handovers below are historical; the entry above describes this delivery.
+
 # Release Gate implementation — 7 November 2026
 
 Implemented `AgentWiz_proposal_release_gate_v2.md.txt` against AgentWiz devel
@@ -76,10 +168,6 @@ bodies or provider-internal forwarding. API use cannot prove a person read the c
 
 No extra manual regression checklist is required. Subjective UI review is optional;
 run the existing candidate CI when authorised to push.
-
----
-
-Earlier handovers below are historical; the entry above describes this delivery.
 
 # AgentWiz 0.2.0 close-out
 
