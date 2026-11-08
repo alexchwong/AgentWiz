@@ -91,7 +91,42 @@
   #tutorial-box input[type="checkbox"] { width:auto; }
   .tutorial-target { outline:3px solid var(--accent); outline-offset:3px; }
 .ws-layout input[type=checkbox],dialog input[type=checkbox]{width:auto}#main-nav .mark,.ws-layout aside .mark{display:none}#main-nav [data-state=running] .mark,.ws-layout aside [data-state=running] .mark{display:inline}.ws-facts dd{min-width:0;overflow-wrap:anywhere}
-.wf-canvas-scroll{max-height:420px;overflow:auto;border:1px solid var(--line);margin:.5rem 0}.wf-canvas{position:relative;min-width:100%;background:var(--bg)}.wf-canvas svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.wf-canvas line{stroke:var(--muted);stroke-width:2}.wf-canvas-node{position:absolute;width:195px;box-sizing:border-box;border:1px solid var(--line);background:var(--bg);border-radius:5px}.wf-canvas-handle{cursor:grab;touch-action:none;user-select:none;padding:.35rem;background:var(--line);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wf-canvas-ports{max-height:72px;overflow:auto;font-size:.85rem;padding:.2rem}.wf-canvas-input,.wf-canvas-output{padding:.15rem .25rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wf-canvas-output{cursor:grab;text-align:right}.wf-canvas-input:hover,.wf-canvas-output:hover{background:var(--line)}
+/* Workflow Design (UI-CD v3 CD1): palette · canvas · inspector. Bands follow content width (§0.1). */
+.wf-design{display:grid;gap:.5rem}.wf-design[data-stale="true"] .wf-world,.wf-design[data-stale="true"] .wf-inspector [data-vslot]{opacity:.65}
+.wf-design-toolbar{gap:.5rem;align-items:center}.wf-validation[data-state="checked"]{color:var(--ok,inherit)}.wf-validation[data-state="unavailable"],.wf-validation[data-state="stale"],.wf-validation[data-state="graph_unavailable"]{color:var(--warn)}
+.wf-panes{display:grid;grid-template-columns:minmax(220px,20%) minmax(560px,1fr) minmax(300px,28%);gap:16px;align-items:start}
+.wf-design[data-band="rail"] .wf-panes{grid-template-columns:3rem minmax(0,1fr) minmax(300px,28%)}
+.wf-design[data-band="stacked"] .wf-panes{grid-template-columns:3rem minmax(0,1fr)}.wf-design[data-band="stacked"] .wf-inspector{grid-column:1/-1;border-left:0;border-top:2px solid var(--line);max-height:none}
+.wf-design[data-band="narrow"] .wf-panes{grid-template-columns:minmax(0,1fr)}
+.wf-center{min-width:0}.wf-palette,.wf-inspector{min-width:0;max-height:calc(100vh - 12rem);overflow:auto}.wf-inspector{border-left:1px solid var(--line);padding-left:.75rem}
+.wf-design[data-band="narrow"] .wf-inspector{border-left:0;border-top:2px solid var(--line);padding:.5rem 0;max-height:none}
+.wf-palette{display:grid;gap:.4rem;align-content:start}.wf-palette h4{margin:.6rem 0 .1rem}.wf-palette-group{display:grid;gap:.3rem}
+.wf-rail{position:relative}.wf-rail .wf-palette-group{display:flex;flex-direction:column;gap:.3rem}.wf-design[data-band="narrow"] .wf-rail .wf-palette-group{flex-direction:row;flex-wrap:wrap}
+.wf-palette-overlay{position:absolute;left:3.2rem;top:0;z-index:20;width:min(22rem,80vw);max-height:70vh;overflow:auto;background:var(--bg);border:1px solid var(--line);padding:.5rem;box-shadow:0 4px 16px rgba(0,0,0,.2)}
+.wf-palette-overlay[hidden]{display:none}.wf-palette-list{list-style:none;padding:0;margin:0;display:grid;gap:.35rem}
+.wf-palette-block{border:1px solid var(--line);border-radius:5px;padding:.35rem;cursor:pointer}.wf-palette-block[aria-disabled="true"]{cursor:default;opacity:.6}.wf-palette-block[data-highlight="true"]{outline:2px solid currentColor}
+.wf-palette-desc{margin:.2rem 0;font-size:.85rem}.wf-palette-ports ul{margin:.2rem 0;padding-left:1rem;font-size:.85rem}
+.wf-canvas-pane{position:relative;overflow:hidden;height:max(420px,calc(100vh - 13rem));border:1px solid var(--line);background:var(--bg);touch-action:none;outline-offset:-3px}
+.wf-world{position:absolute;left:0;top:0;transform-origin:0 0}.wf-edges{position:absolute;overflow:visible;pointer-events:none}
+.wf-edge-line{fill:none;stroke:var(--muted);stroke-width:2;color:var(--muted)}.wf-edge-hit{fill:none;stroke:transparent;stroke-width:14;pointer-events:stroke;cursor:pointer}
+.wf-edge[data-state="unchecked"] .wf-edge-line{stroke-dasharray:6 4}.wf-edge[data-state="restricted"] .wf-edge-line{stroke:#b45309;color:#b45309}.wf-edge[data-state="released"] .wf-edge-line{stroke:#15803d;color:#15803d}
+.wf-edge[data-selected="true"] .wf-edge-line{stroke-width:4}.wf-edge-marker,.wf-edge-path{font-size:11px;text-anchor:middle;fill:currentColor}
+.wf-card{position:absolute;width:210px;box-sizing:border-box;border:1px solid var(--line);background:var(--bg);border-radius:6px;font-size:.85rem}
+.wf-card[data-selected="true"]{outline:3px solid currentColor}.wf-card:focus-visible,.wf-handle:focus-visible{outline:3px solid #2563eb;outline-offset:1px}
+.wf-card-head{cursor:grab;touch-action:none;user-select:none;padding:.35rem .5rem;background:var(--line);border-radius:5px 5px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wf-card-input .wf-card-head,.wf-card-output .wf-card-head,.wf-card-constants .wf-card-head{cursor:default}.wf-card-gate{border-width:2px}
+.wf-card-meta,.wf-card-note{margin:.25rem .5rem;color:var(--muted)}.wf-chip{display:inline-block;margin:.15rem .5rem;padding:0 .3rem;border:1px solid var(--line);border-radius:3px;font-size:.78rem}
+.wf-chip[data-state="protected"]{border-color:#b45309}.wf-badge{display:inline-block;margin:.15rem .5rem;color:var(--warn);font-weight:700}
+.wf-card:has(.wf-badge){border-color:var(--warn)}
+.wf-port{display:grid;grid-template-columns:auto 1fr auto;gap:.3rem;align-items:center;padding:.12rem .25rem;min-height:1.6rem}
+.wf-port-out{grid-template-columns:1fr auto auto auto}.wf-port-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wf-port-state{grid-column:1/-1;font-size:.72rem;color:var(--muted)}.wf-port-in .wf-port-state{padding-left:1.2rem}
+.wf-port-state[data-state="restricted"]{color:#b45309}.wf-port-state[data-state="released"]{color:#15803d}
+.wf-format{font-size:.72rem;color:var(--muted)}.wf-consumers{font-size:.72rem;font-weight:700}
+.wf-handle{width:14px;height:14px;min-width:14px;padding:0;border-radius:50%;border:2px solid var(--muted);background:var(--bg);cursor:crosshair}
+.wf-handle[data-compatible="true"]{border-color:#2563eb;background:#bfdbfe}.wf-handle[data-compatible="false"]{opacity:.35}.wf-handle[data-connecting="true"]{background:#2563eb}.wf-handle[data-refused="true"]{border-color:var(--warn)}
+.wf-state{font-size:.85rem}.wf-state[data-state="restricted"]{color:#b45309}.wf-state[data-state="released"]{color:#15803d}
+.wf-inspector-port{border-top:1px solid var(--line);padding:.35rem 0}.wf-why{padding-left:1.2rem;margin:.2rem 0}.wf-link{background:none;border:0;padding:0;text-align:left;text-decoration:underline;cursor:pointer;color:inherit}
 .wf-item{border-bottom:1px solid var(--line);padding:.55rem 0}.wf-binding{margin:.4rem 0}.wf-item pre,#panel-workflows pre{white-space:pre-wrap;overflow-wrap:anywhere}#panel-workflows fieldset{margin:.55rem 0}#panel-workflows .row{flex-wrap:wrap}.ws-table{overflow-x:auto}.ws-table table{border-collapse:collapse;width:100%}.ws-table th,.ws-table td{border:1px solid var(--line);padding:6px;text-align:left}
 #main-nav{display:flex;gap:.5rem;margin:1rem 0}#main-nav [aria-selected=true],#main-nav [aria-pressed=true],.ws-layout [aria-pressed=true]{font-weight:700;border-bottom:3px solid currentColor}.ws-layout{display:grid;grid-template-columns:minmax(10rem,17rem) minmax(0,1fr);gap:1.25rem}.ws-layout aside,.ws-field{display:grid;gap:.35rem;align-content:start}.ws-field{margin:.65rem 0}.ws-layout textarea,dialog textarea{width:100%;min-height:4rem}.ws-port,article{padding:.6rem;border:1px solid var(--line);margin:.5rem 0}.ws-facts{display:grid;grid-template-columns:auto 1fr;gap:.25rem .75rem}.ws-facts dd{margin:0}dialog{max-height:85vh;max-width:min(48rem,92vw);overflow:auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}#tablist[hidden]{display:none}@media(max-width:720px){.ws-layout{grid-template-columns:minmax(0,1fr)}} .wf-release-payload{max-height:28rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 dialog.wide-dialog{max-width:96vw}
@@ -141,6 +176,20 @@ dialog.wide-dialog{max-width:96vw}
 .ws-misc{display:flex;flex-direction:column;gap:.4rem}.ws-misc>button{align-self:start}
 .ws-revision-save,.ws-model-settings{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.6rem;align-items:end}.ws-model-settings{grid-template-columns:repeat(2,minmax(0,1fr))}.ws-misc .ws-field{margin:.3rem 0}.ws-revision-save>button{margin-bottom:.3rem}.ws-model-settings input::placeholder{color:var(--muted);opacity:1}.ws-role-field{grid-template-columns:minmax(0,1fr) auto;align-items:center}.ws-role-field select{grid-column:1/-1;grid-row:2}.ws-role-config{font-size:12px;padding:0 4px;grid-column:2;grid-row:1}.ws-revision-picker{max-width:20rem}.ws-hint{color:var(--muted);font-size:13px}.ws-standard-description{border:1px solid var(--line);padding:.6rem;margin:.4rem 0}.ws-standard-description h3{margin:0 0 .3rem}.ws-revision-picker .ws-field{margin:0}.ws-workshop-nav{flex-wrap:wrap}
 @media(max-width:720px){.ws-layout aside{grid-template-columns:minmax(0,1fr)}.ws-revision-save,.ws-model-settings{grid-template-columns:minmax(0,1fr)}.ws-revision-save>button{justify-self:start}.ws-port-table td input,.ws-port-table td select{padding:.25rem}}
+/* UI-CD v3: release review, result view, Assist, Settings and header (CD3, CD4, CD6, CD8, CD9) */
+.wf-release-grid{display:grid;grid-template-columns:minmax(0,3fr) minmax(16rem,2fr);gap:1rem;align-items:start}.wf-release-main,.wf-release-side{min-width:0}
+.wf-release-side{position:sticky;top:0;max-height:80vh;overflow:auto}.wf-release-tools{gap:.4rem;align-items:end}.wf-release-tools .ws-field{margin:0}
+.wf-mark{background:#fde68a;color:inherit}.wf-mark[data-kind="finding"]{background:#fecaca}.wf-mark[data-kind="find"]{background:#bfdbfe}.wf-mark[data-active="true"]{outline:2px solid currentColor}
+.wf-decision-row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:.35rem 0}.wf-outputs{margin:.5rem 0}.wf-revise{border-left:3px solid var(--warn);padding-left:.5rem}
+@media (max-width:879px){.wf-release-grid{grid-template-columns:minmax(0,1fr)}.wf-release-side{position:static;max-height:none}}
+.result-view .result-output{max-height:24rem;overflow:auto}.result-view .result-output.full{max-height:none}.result-headline{font-weight:600}.result-troubleshooting [role=tab][aria-selected=true]{font-weight:700;border-bottom:3px solid currentColor}
+.ws-assist-actions{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.5rem}.ws-assist-card{display:grid;text-align:left;max-width:14rem}.ws-assist-card[aria-pressed=true]{outline:3px solid currentColor}
+.settings-layout{display:grid;grid-template-columns:minmax(10rem,14rem) minmax(0,1fr);gap:1rem;min-width:min(44rem,85vw)}.settings-nav{display:flex;flex-direction:column;gap:.3rem;align-items:stretch}
+.settings-nav [aria-current=true]{font-weight:700;border-left:3px solid currentColor}
+@media (max-width:719px){.settings-layout{grid-template-columns:minmax(0,1fr)}}
+.header-spacer{flex:1}.activity{display:inline-flex;align-items:center;gap:.25rem}.activity .spinner{width:.8rem;height:.8rem;border:2px solid var(--line);border-top-color:currentColor;border-radius:50%;animation:aw-spin 1s linear infinite}
+@keyframes aw-spin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){.activity .spinner{animation:none}}
+.ws-troubleshooting{margin-top:.5rem}
 </style>
 </head>
 <body>
@@ -158,6 +207,7 @@ dialog.wide-dialog{max-width:96vw}
   <button id="open-roles" data-test="header-roles">Roles</button>
   <button id="open-tutorial" data-test="header-tutorial">Tutorial</button>
 </header>
+<div id="settings-parking" hidden></div>
 <aside id="tutorial-box" class="hidden" data-test="tutorial-box" aria-label="Tutorial guidance">
   <strong id="tutorial-title"></strong>
   <p id="tutorial-tip"></p>
@@ -432,6 +482,70 @@ function outPanel(prefix, name, label, cls = "") {
   const pre = h("pre", { class: cls, "data-test": `${prefix}-${name}` });
   const copy = copyControl(`${prefix}-copy-${name}`, () => pre.textContent, () => pre);
   return { el: h("div", {}, h("div", { class: "panelhead" }, h("label", { text: label }), copy), pre), pre };
+}
+
+// --- the shared result view (UI-CD v3 CD4) -------------------------------------------------------------------------
+// Re-indents JSON text without parsing numbers, so exact values such as 9007199254740993 are shown as received.
+function prettyExact(text) {
+  let out = "", indent = 0, i = 0;
+  const pad = () => "\n" + "  ".repeat(Math.max(0, indent));
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '"') { let j = i + 1; while (j < text.length && text[j] !== '"') { if (text[j] === "\\") j++; j++; } out += text.slice(i, j + 1); i = j + 1; continue; }
+    if (" \t\n\r".includes(c)) { i++; continue; }
+    if (c === "{" || c === "[") {
+      const close = c === "{" ? "}" : "]"; let k = i + 1;
+      while (k < text.length && " \t\n\r".includes(text[k])) k++;
+      if (text[k] === close) { out += c + close; i = k + 1; continue; }
+      indent++; out += c + pad(); i++; continue;
+    }
+    if (c === "}" || c === "]") { indent--; out += pad() + c; i++; continue; }
+    if (c === ",") { out += "," + pad(); i++; continue; }
+    if (c === ":") { out += ": "; i++; continue; }
+    out += c; i++;
+  }
+  return out;
+}
+function looksJson(text) { try { JSON.parse(text); return /^\s*[[{]/.test(text); } catch (e) { return false; } }
+// ResultView renders one result in a fixed order: headline, readable outputs, checks, failures and repairs, then a
+// collapsed Troubleshooting section (Request · Reasoning · Raw · Attempts). Attempts open inline, never in dialogs.
+function ResultView(result, { compact = false, test = "result" } = {}) {
+  const box = h("section", { class: "result-view" + (compact ? " compact" : ""), "data-test": test + "-view", "data-outcome": result.outcome || "" });
+  const facts = [result.outcome ? (LABELS[result.outcome] || result.outcome) : null, ...(result.facts || []),
+    result.revision ? "Revision " + result.revision : null, result.elapsed_ms !== undefined ? result.elapsed_ms + " ms" : null,
+    result.usage === undefined ? null : "Usage: " + (result.usage ? Object.entries(result.usage).map(([k, v]) => k + " " + v).join(", ") : "unknown")].filter(Boolean);
+  box.append(h("p", { class: "result-headline", "data-test": test + "-headline", text: facts.join(" · ") }));
+  if (result.redacted) box.append(h("p", { class: "note", "data-test": test + "-redacted", text: "Known credentials were redacted from this record." }));
+  for (const row of result.outputs || []) {
+    const json = row.format === "json" || (row.format !== "text" && looksJson(row.text));
+    const pre = h("pre", { class: "result-output", "data-test": test + "-output", "data-output": row.name, text: json ? prettyExact(row.text) : row.text });
+    const expand = h("button", { type: "button", "data-test": test + "-expand", text: "Expand", onclick: () => { pre.classList.toggle("full"); expand.textContent = pre.classList.contains("full") ? "Collapse" : "Expand"; } });
+    box.append(h("div", { class: "result-output-row" }, h("h4", { text: row.name + (row.local_only ? " · Local only" : "") }), pre,
+      h("div", { class: "row" }, copyControl(test + "-copy-output", () => row.text, () => pre), compact ? null : expand)));
+  }
+  if (result.checks?.length) box.append(h("div", { "data-test": test + "-checks" }, h("h4", { text: "Checks" }),
+    h("ul", {}, result.checks.map((c) => h("li", { "data-overall": c.overall || "", text: c.label + " · " + (c.overall || "recorded") + (c.detail ? " · " + c.detail : "") })))));
+  if (result.correctness) box.append(h("p", { "data-test": test + "-correctness", "data-correctness": result.correctness, text: "Correctness · " + result.correctness }));
+  if (result.failures?.length) box.append(h("div", { "data-test": test + "-failures" }, h("h4", { text: "Failures and repairs" }), h("ul", {}, result.failures.map((f) => h("li", { text: f })))));
+  for (const extra of result.extra || []) if (extra) box.append(extra);
+  const t = result.troubleshooting || {};
+  const tabs = [["request", "Request", t.request], ["reasoning", "Reasoning", t.reasoning], ["raw", "Raw", t.raw], ["attempts", "Attempts", t.attempts?.length ? t.attempts : null]].filter(([, , v]) => v);
+  if (tabs.length) {
+    const pane = h("div", { class: "result-pane" }), bar = h("div", { class: "row", role: "tablist" });
+    const showTab = (id) => {
+      for (const b of bar.children) b.setAttribute("aria-selected", String(b.dataset.tab === id));
+      const [, , value] = tabs.find(([k]) => k === id);
+      if (id === "attempts") {
+        const view = h("div", { "data-test": test + "-attempt" });
+        pane.replaceChildren(h("ul", {}, value.map((a) => h("li", {}, h("button", { type: "button", class: "wf-link", "data-test": test + "-attempt-open", "data-attempt": a.id, text: "Attempt " + a.id,
+          onclick: async () => { try { const record = await a.load(); view.replaceChildren(h("pre", { text: JSON.stringify(record, null, 2) }), copyControl(test + "-copy-attempt", () => JSON.stringify(record, null, 2), null)); } catch (e) { view.textContent = e.message; } } })))), view);
+      } else pane.replaceChildren(h("pre", { "data-test": test + "-" + id, text: value }), copyControl(test + "-copy-" + id, () => value, null));
+    };
+    for (const [id, label] of tabs) bar.append(h("button", { type: "button", role: "tab", "data-tab": id, "data-test": test + "-tab", text: label, onclick: () => showTab(id) }));
+    box.append(h("details", { class: "result-troubleshooting", "data-test": test + "-troubleshooting" }, h("summary", { text: "Troubleshooting" }), bar, pane));
+    showTab(tabs[0][0]);
+  }
+  return box;
 }
 
 // Reads NDJSON lines from a response. onEvent(ev, line) may return "stop". Returns "end" (clean end),
@@ -1027,6 +1141,25 @@ function makeRequestTab(frag, source) {
   const reasoning = outPanel(prefix, "reasoning", "Reasoning stream", "reasoning");
   const output = outPanel(prefix, "output", "Output");
   const final = outPanel(prefix, "final", "Final event (exact JSON as received)", "exact");
+  // Destination facts (UI-AB v2 §0.2) for the configured model, computed by the server's trust preview.
+  const destination = h("p", { class: "ws-destination", "data-test": prefix + "-destination" });
+  let destinationKey = "";
+  function refreshDestination() {
+    const d = { kind: state.kind, url: state.base_url || "", model: state.model || "", provider: state.provider || "" };
+    const key = JSON.stringify(d);
+    if (key === destinationKey) return;
+    destinationKey = key;
+    const what = (d.kind === "openrouter" ? "OpenRouter" : d.kind === "lmstudio" ? "LM Studio" : "OpenAI compatible") + (d.model ? " · " + d.model : "");
+    destination.textContent = "Connects to: " + what; delete destination.dataset.locality;
+    if (!d.url || !d.kind) return;
+    wsApi("destination-trust-preview", { destination: d }).then((p) => {
+      if (destinationKey !== key) return;
+      const eligible = p.reason === null || p.reason === "destination_untrusted";
+      destination.dataset.locality = p.locality || "unknown"; destination.dataset.eligible = String(eligible); destination.dataset.trusted = String(!!p.trusted);
+      destination.textContent = "Connects to: " + (p.locality === "local" ? "local endpoint" : "remote endpoint") + " · " + what +
+        " · Local-only data: " + (eligible ? "Eligible" : "Not eligible") + " · " + (p.trusted ? "Trusted" : "Not trusted");
+    }).catch(() => {});
+  }
   const checkResult = checkBox(prefix);
   const structured=h("div",{"data-test":prefix+"-structured-preview"});
   let active = null, shown = null, rows = [], override = null;
@@ -1054,10 +1187,12 @@ function makeRequestTab(frag, source) {
     checked ? [contractHost, h("div", { class: "row" }, instructionsBtn), instructionsOut.el] : null,
     h("label", { for: prefix + "-system", text: "System prompt (optional)" }), system,
     h("label", { for: prefix + "-prompt", text: "Input" }), prompt, task.el,
-    h("div", { class: "row" }, send, stop, statusEl, attemptEl, sendReason),
-    h("div", { class: "grid" }, reasoning.el, output.el),
+    h("div", { class: "row" }, send, stop, statusEl, attemptEl, sendReason), destination,
+    output.el,
     checked ? [structured,checkResult.el, h("label", { text: "Attempts of this run" }), attemptsEl, repairBox, previewOut.el] : null,
-    final.el);
+    // Troubleshooting (UI-CD v3 CD10): the reasoning stream and the exact final event, folded below the answer.
+    h("details", { class: "ws-troubleshooting", "data-test": prefix + "-troubleshooting" }, h("summary", { text: "Troubleshooting · reasoning and raw final event" }),
+      reasoning.el, final.el));
 
   const mark = (name, value) => { if (value === null || value === undefined) delete statusEl.dataset[name]; else statusEl.dataset[name] = value; };
   const display = (state_, text, style = "") => { statusEl.dataset.state = state_; statusEl.textContent = text; statusEl.className = "status " + style; };
@@ -1409,6 +1544,7 @@ function makeRequestTab(frag, source) {
     submit,
     onState() {
       task.render();
+      refreshDestination();
       if (checked && contractPicker) {
         // Re-read the selected contract only when the library changed; "Latest" then shows the new number.
         const signature = JSON.stringify((state.contracts && state.contracts.items) || []);
@@ -1871,22 +2007,76 @@ function initContracts(components) {
   panel.append(h("p", { class: "panel-intro", text: "History: saved runs, read-only. Open one, copy any part, or delete it. A run is never loaded back into another tab." }),
     savingNote, warning, h("div", { class: "history-layout", "data-test": "history-layout" },
       h("div", { class: "history-left" }, filters, h("div", { class: "row" }, refresh, count), listEl, msg), detail));
-  let workflowJobs = [], comparisonIds = [];
+  let workflowJobs = [], comparisonIds = [], summaries = new Map();
+  // Node-structured workflow detail (UI-CD v3 CD5.2): outputs first, ordered node rows, release decisions inline,
+  // the selected node through the shared result view; record files move under Troubleshooting.
   async function openWorkflow(id) {
     openId = null; detail.replaceChildren(); detail.dataset.job = id; delete detail.dataset.runId;
     const root = "workflow-evidence/" + encodeURIComponent(id), manifest = await wsApi(root);
-    const records = h("div", { "data-test": "history-workflow-records" }), view = h("div", { "data-test": "history-workflow-trace" });
-    for (const name of manifest.records) records.append(wsButton(name, async () => {
+    const view = h("div", { "data-test": "history-workflow-trace" });
+    const show = async (name, title) => {
       const trace = await wsApi(root + "?record=" + encodeURIComponent(name));
-      view.replaceChildren(h("h4", { text: name }), TABS.workflows?.traceView ? TABS.workflows.traceView(trace) : wsShowValue(trace));
-    }, "history-workflow-record"));
+      view.replaceChildren(h("h4", { text: title || name }), TABS.workflows?.traceView ? TABS.workflows.traceView(trace) : wsShowValue(trace));
+    };
+    const records = h("div", { "data-test": "history-workflow-records" });
+    for (const name of manifest.records) records.append(wsButton(name, () => show(name), "history-workflow-record"));
     const del = wsButton("Delete evidence", async () => {
       if (await wsDialog("Delete saved evidence", h("p", { text: "Permanently delete this saved workflow run?" }), ["Delete", "Cancel"]) !== "Delete") return;
       await wsApi(root + "/delete", {}); detail.replaceChildren(); delete detail.dataset.job; msg.textContent = "Deleted."; await load();
     }, "history-workflow-delete");
+    // Record names are <example>-<node>.json, <example>-<node>-attempt-<n>.json and <example>-<node>-release-<kind>.json.
+    const cases = new Map();
+    for (const name of manifest.records) {
+      const m = /^(\d+)-(.+?)(?:-(attempt)-\d+|-release-([a-z_]+))?\.json$/.exec(name);
+      if (!m) continue;
+      const [, index, node, attempt, release] = m;
+      if (!cases.has(index)) cases.set(index, new Map());
+      const nodes = cases.get(index);
+      if (!nodes.has(node)) nodes.set(node, { result: null, releases: [] });
+      if (release) nodes.get(node).releases.push([release, name]);
+      else if (!attempt) nodes.get(node).result = name;
+    }
+    const outputs = h("div", { "data-test": "history-workflow-outputs" });
+    if (manifest.records.includes("result.json")) {
+      wsApi(root + "?record=result.json").then((summary) => {
+        const blocks = summary.examples ? summary.examples.map((row, index) => [row.id || "Example " + (index + 1), row.outputs]) : [[null, summary.outputs]];
+        for (const [label, values] of blocks) for (const [name, row] of Object.entries(values || {}))
+          outputs.append(h("div", { class: "wf-item", "data-test": "history-workflow-output", "data-output": name },
+            h("strong", { text: (label ? label + " · " : "") + name + (row.local_only ? " · Local only" : "") }), h("pre", { text: row.text }),
+            copyControl("history-copy-output", () => row.text, null)));
+      }).catch(() => { outputs.append(h("p", { class: "note", text: "The saved result could not be read." })); });
+    }
+    const nodeList = h("div", { "data-test": "history-workflow-nodes" });
+    for (const [index, nodes] of cases) {
+      const ol = h("ol", { class: "wf-progress" });
+      for (const [node, row] of nodes) {
+        const li = h("li", { "data-test": "history-workflow-node", "data-node": node, "data-example": index },
+          row.result ? h("button", { type: "button", class: "wf-link", "data-test": "history-workflow-node-open", text: node, onclick: () => show(row.result, "Node · " + node).catch((e) => { msg.textContent = e.message; }) }) : h("span", { text: node }));
+        for (const [kind, name] of row.releases) {
+          const decision = h("span", { class: "note", "data-test": "history-release-" + kind, text: " · Release " + kind });
+          if (kind === "decision") wsApi(root + "?record=" + encodeURIComponent(name)).then((record) => {
+            decision.dataset.decision = record.decision || ""; decision.textContent = " · Decision: " + (record.decision || "?") + (record.timestamp ? " · " + record.timestamp : "");
+          }).catch(() => {});
+          li.append(decision, " ", h("button", { type: "button", class: "wf-link", "data-test": "history-release-open", text: "open", onclick: () => show(name, "Release " + kind + " · " + node).catch((e) => { msg.textContent = e.message; }) }));
+        }
+        ol.append(li);
+      }
+      nodeList.append(cases.size > 1 ? h("h4", { text: "Example " + (Number(index) + 1) }) : null, ol);
+    }
     detail.append(h("div", { class: "row" }, h("strong", { "data-test": "history-workflow-title", text: manifest.name + " · " + manifest.outcome }), del),
-      manifest.intent ? h("p", { text: "Unsettled dispatch · " + manifest.intent.node }) : null, records, view);
+      manifest.intent ? h("p", { text: "Unsettled dispatch · " + manifest.intent.node }) : null, outputs, nodeList, view,
+      h("details", { "data-test": "history-workflow-troubleshooting" }, h("summary", { text: "Troubleshooting · record files" }), records));
   }
+  // Outcomes in the list (CD5.1): each record's manifest is read once per refresh, not on open.
+  async function summarise() {
+    const next = new Map(), jobs = workflowJobs.map((id) => ["job:" + id, () => wsApi("workflow-evidence/" + encodeURIComponent(id)).then((m) => ({ outcome: m.outcome, at: m.created_at || m.started_at || "" }))]);
+    const comps = comparisonIds.map((id) => ["cmp:" + id, () => wsApi("comparisons/" + id).then((b) => ({ outcome: b.state, at: b.created_at || "" }))]);
+    const all = [...jobs, ...comps];
+    for (let i = 0; i < all.length; i += 8)
+      await Promise.all(all.slice(i, i + 8).map(([key, fn]) => fn().then((v) => next.set(key, v)).catch(() => next.set(key, { outcome: "unreadable", at: "" }))));
+    summaries = next;
+  }
+  const failedOutcome = (o) => !!o && !["complete", "running", "succeeded", "finished"].includes(o);
   async function openComparison(id) {
     openId = null; detail.replaceChildren(); detail.dataset.comparison = id; delete detail.dataset.runId; delete detail.dataset.job;
     const batch = await wsApi("comparisons/" + id);
@@ -1956,13 +2146,19 @@ function initContracts(components) {
     count.textContent = `${r.shown} of ${r.total} shown`;
     count.dataset.shown = String(r.shown); count.dataset.total = String(r.total);
     const runs = filter === "workflows" || filter === "comparisons" ? [] : r.runs.filter((row) => filter !== "failed" || (row.outcome && row.outcome !== "complete"));
-    if (filter === "all" || filter === "workflows") for (const id of workflowJobs) {
-      const li = h("li", { class: "pick" + (detail.dataset.job === id ? " current" : ""), "data-test": "history-workflow-row", "data-job": id }, "Workflow run · " + id);
+    if (filter === "all" || filter === "workflows" || filter === "failed") for (const id of workflowJobs) {
+      const info = summaries.get("job:" + id) || {};
+      if (filter === "failed" && !failedOutcome(info.outcome)) continue;
+      const li = h("li", { class: "pick" + (detail.dataset.job === id ? " current" : ""), "data-test": "history-workflow-row", "data-job": id, "data-outcome": info.outcome || "" },
+        "Workflow run · " + id + (info.outcome ? " · " + (LABELS[info.outcome] || info.outcome) : "") + (info.at ? " · " + info.at : ""));
       li.onclick = () => openWorkflow(id).catch((e) => { msg.textContent = e.message; });
       listEl.append(li);
     }
-    if (filter === "all" || filter === "comparisons") for (const id of comparisonIds) {
-      const li = h("li", { class: "pick" + (detail.dataset.comparison === id ? " current" : ""), "data-test": "history-comparison-row", "data-comparison": id }, "Comparison · " + id.slice(0, 8));
+    if (filter === "all" || filter === "comparisons" || filter === "failed") for (const id of comparisonIds) {
+      const info = summaries.get("cmp:" + id) || {};
+      if (filter === "failed" && !failedOutcome(info.outcome)) continue;
+      const li = h("li", { class: "pick" + (detail.dataset.comparison === id ? " current" : ""), "data-test": "history-comparison-row", "data-comparison": id, "data-outcome": info.outcome || "" },
+        "Comparison · " + id.slice(0, 8) + (info.outcome ? " · " + info.outcome : "") + (info.at ? " · " + info.at : ""));
       li.onclick = () => openComparison(id).catch((e) => { msg.textContent = e.message; });
       listEl.append(li);
     }
@@ -1981,6 +2177,7 @@ function initContracts(components) {
       const runs = await api("/api/runs");
       [workflowJobs, comparisonIds] = await Promise.all([wsApi("workflow-evidence").then((x) => x.jobs).catch(() => []),
         wsApi("comparisons").then((x) => x.comparisons).catch(() => [])]);
+      await summarise();
       renderList(runs);
     }
     catch (e) { sayList(e.message); }
@@ -2898,7 +3095,18 @@ async function wsPlan(action,request){
   if(d.restriction_sources?.length)disclosure.append(h("h4",{text:"Run restrictions"}),wsRestrictionList(d.restriction_sources));
   if(d.overwrite)disclosure.append(h("p",{text:"Overwrite selected revision "+wsRevisionLabel(d.overwrite)+"? Its previous contents and standard description will be replaced. Other revisions and existing run evidence are unchanged."}));
   disclosure.append(h("p",{text:"Start makes real model, tool or script calls. Comparison order alternates by example; backend internals and cold starts may differ."}));
-  if(d.assistance)disclosure.append(wsShowValue({action:d.assistance.action,task:d.assistance.task,stage:d.assistance.stage,sections:d.assistance.sections,evidence:d.assistance.evidence}));
+  if(d.assistance&&action==="assist"&&d.assistance.action!=="describe"){
+    // Built from the prepared plan (CD6): what is actually included, and the permanent protection consequence.
+    const a=d.assistance,includes=h("ul",{"data-test":"ws-assist-includes"});
+    if(a.draft)includes.append(h("li",{"data-item":"definition",text:"Block definition"}));
+    if(a.task)includes.append(h("li",{"data-item":"instructions",text:"Your instructions"}));
+    if(a.sections?.length)includes.append(h("li",{"data-item":"sections",text:"Selected sections: "+a.sections.join(", ")}));
+    for(const ref of a.references||[])includes.append(h("li",{"data-item":"evidence","data-run":ref.id,text:"Evidence · run "+ref.id+" · recorded inputs and outputs"}));
+    disclosure.append(h("h4",{text:"Includes"}),includes);
+    ws.assistProtected=!!d.authoring_protected;
+    if(d.authoring_protected)disclosure.append(h("p",{class:"warn-text","data-test":"ws-assist-protection",
+      text:"Applying this proposal permanently protects this block's design. The block must also run on a trusted local destination."}));
+  } else if(d.assistance)disclosure.append(wsShowValue({action:d.assistance.action,task:d.assistance.task,stage:d.assistance.stage,sections:d.assistance.sections,evidence:d.assistance.evidence}));
   const reviewed=plan.required_confirmations.some(c=>c.kind==="generated_source"||c.kind==="support_set");
   for(const draft of [d.draft,...(d.candidates||[]).map(c=>c.draft)].filter(Boolean)){
     const source=h("details",{open:reviewed},h("summary",{text:"Complete selected source · "+draft.key}));
@@ -2971,7 +3179,8 @@ async function wsSupport(){
     await wsLoad({draft:selection.draft},true);
   }
 }
-async function wsNew(){
+// `starter` preselects a starter, for Workflow Design's Create block… and Restore placeholders (UI-CD v3 CD1.12).
+async function wsNew(starter){
   if(!await wsLeave())return;
   state=await api("/api/state");
   const box=h("div",{class:"ws-create"}),name=wsField(box,"Block key"),starters=(await wsApi("starters")).starters;
@@ -3016,6 +3225,7 @@ async function wsNew(){
       :version===2?"Workflow-ready built-in transform. Runs locally.":"Python script blocks run standalone and can't join workflows.";
     if(!toolBox.hidden)discover();else ++generation;
   }
+  if(typeof starter==="string"&&[...kind.options].some(o=>o.value===starter))kind.value=starter;
   kind.onchange=updateKind;updateKind();
   const error=h("p",{role:"alert","data-test":"ws-create-error"});box.append(error);
   const choice=await wsDialog("Create a block",box,["Create draft","Create with assistance","Cancel"],async action=>{
@@ -3164,7 +3374,7 @@ function wsDesign(){
   bar.append(wsRevisionPicker);
   const unsaved=h("span",{class:"ws-unsaved","data-test":"ws-unsaved-state","data-state":ws.dirty?"unsaved":"saved",text:ws.dirty?"Unsaved edits":wsSelectionLabel()});bar.append(unsaved);
   // Opened from a workflow finding: return to that node and review an explicit Rebind (UI-AB v2 §0.4).
-  if(window.agentwizWorkflowReturn)bar.append(wsButton("Return to workflow",async()=>{if(!await wsLeave())return;selectTab("workflows");await TABS.workflows.returnTo();},"ws-return-to-workflow"));
+  if(window.agentwizWorkflowReturn)bar.append(wsButton("Return to workflow",async()=>{if(!await wsLeave())return;const key=ws.draft?.key;selectTab("workflows");await TABS.workflows.returnTo({key});},"ws-return-to-workflow"));
   const revisionSave=h("div",{class:"ws-revision-save"});bar.append(revisionSave);
   const revisionName=wsField(revisionSave,"Revision name (optional)",ws.draft.metadata.revision_name||"");revisionName.maxLength=120;
   const save=wsButton("Save as new revision",()=>wsSave(),"ws-save-revision");save.title="Saving creates a new revision; older revisions remain unchanged.";revisionSave.append(save);
@@ -3512,6 +3722,18 @@ async function wsRevisions(){
   await wsFlush();const box=h("div"),historyRows=ws.draft.base_digest?(await wsApi("blocks/"+ws.draft.key+"/revisions")).revisions:[];
   const rev=wsChoice(box,"Revision",historyRows.map(r=>[r.id,wsRevisionLabel(r)])),name=wsField(box,"New key for duplicate");
   const examples=h("input",{type:"checkbox"});box.append(h("label",{},examples," Copy examples to the duplicate"));
+  // Consequence lines (UI-CD v3 CD7), computed from the selected revision and the next revision number.
+  const restoreLine=h("p",{class:"ws-hint","data-test":"ws-restore-consequence"}),duplicateLine=h("p",{class:"ws-hint","data-test":"ws-duplicate-consequence"});
+  box.append(restoreLine,duplicateLine);
+  const consequences=()=>{
+    const row=historyRows.find(r=>r.id===rev.value),next=Math.max(0,...historyRows.map(r=>r.revision_number||0))+1;
+    // Duplicate copies what is open now (the existing behaviour), so its line names that, not the picker's choice.
+    const open=ws.dirty?null:historyRows.find(r=>r.id===ws.selectedRevision);
+    restoreLine.dataset.from=String(row?.revision_number??"");restoreLine.dataset.next=String(next);duplicateLine.dataset.from=String(open?.revision_number??"");
+    restoreLine.textContent=row?"Restore to draft: creates a draft from rev "+row.revision_number+". Saving creates rev "+next+" and makes it current.":"";
+    duplicateLine.textContent="Duplicate: creates a new block key from "+(open?"rev "+open.revision_number:"the open draft")+". The original is unchanged.";
+  };
+  rev.addEventListener("change",consequences);consequences();
   const choice=await wsDialog("Revision actions",box,["Restore to draft","Duplicate","Cancel"]);
   if(choice==="Restore to draft"&&await wsLeave())await wsLoad({key:ws.draft.key,revision:rev.value},true);
   if(choice==="Duplicate"){
@@ -3520,30 +3742,65 @@ async function wsRevisions(){
     wsNote.textContent=examples.checked?"Duplicate draft. Save the block, then explicitly save its copied example collection.":"Duplicate draft";
   }
 }
-async function wsAssist(initialAction){
-  await wsFlush();const box=h("div"),action=wsChoice(box,"Action",["create","improve","describe","suggest_examples","explain_failure"].map(x=>[x,x.replaceAll("_"," ")]),initialAction||ws.tutorialAction||"improve"),role=wsRoleChoice(box,"Assistant role","assistant"),task=wsField(box,"Task","",true);
-  const keepLocal=h("input",{type:"checkbox",checked:!!ws.projection?.design?.context_local_only});
-  box.append(h("label",{},keepLocal," Keep authoring context local"));
-  const stage=wsChoice(box,"Create stage",[["","Complete block"],["fields","Fields only"],["behaviour","Behaviour only"]]);
+// Assist (UI-CD v3 CD6): choose the action first, then only that action's fields. Evidence is attached only
+// when chosen, and whether applying protects the block's design comes from the bound plan (authoring_protected).
+const WS_ASSIST_ACTIONS=[["create","Create","Draft a new block from your instructions."],["improve","Improve","Propose changes to selected sections."],
+  ["suggest_examples","Suggest examples","Propose examples for Test."],["explain_failure","Explain failure","Explain why a result failed."],
+  ["describe","Describe","Documentation only: write the standard description of the saved revision."]];
+const WS_ASSIST_FIELDS={create:["role","task","stage","keep"],improve:["role","sections","task","evidence","keep"],suggest_examples:["role","task"],explain_failure:["role","evidence"],describe:[]};
+async function wsAssist(initialAction,options={}){
+  await wsFlush();
+  let current=initialAction||ws.tutorialAction||"improve";
+  const box=h("div",{"data-test":"ws-assist-dialog"}),cards=h("div",{class:"ws-assist-actions",role:"group","aria-label":"Assistance action"}),fields=h("div");
+  box.append(cards,fields);
+  const blockRole=(ws.projection?.design?.steps||[]).find(step=>step.role)?.role||ws.projection?.design?.role;
+  const roleBox=h("div"),role=wsRoleChoice(roleBox,"Assistant role — writes this proposal","assistant");
+  if(blockRole)roleBox.append(h("p",{class:"ws-hint","data-test":"ws-assist-block-role",text:"Block role — runs this block: "+blockRole}));
+  const taskBox=h("div"),task=wsField(taskBox,"Instructions","",true);
+  const stageBox=h("details",{},h("summary",{text:"Stage"})),stage=wsChoice(stageBox,"Create stage",[["","Complete block"],["fields","Fields only"],["behaviour","Behaviour only"]]);
+  const keepLocal=h("input",{type:"checkbox","data-test":"ws-assist-keep-local",checked:!!ws.projection?.design?.context_local_only});
+  const keepBox=h("div",{},h("label",{},keepLocal," Keep authoring context local"),h("p",{class:"ws-hint","data-test":"ws-assist-keep-consequence",
+    text:"The proposal is generated on a trusted local destination. Applying it permanently protects this block's design, and the block must then run on a trusted local destination."}));
+  const sectionsBox=h("fieldset",{},h("legend",{text:"Sections"})),sections=[];
+  for(const name of ["purpose","inputs","outputs","behaviour"]){const check=h("input",{type:"checkbox",checked:true,"data-test":"ws-assist-section","data-section":name});sections.push([name,check]);sectionsBox.append(h("label",{},check," "+name));}
+  // Evidence: the current batch's results with a run, at most 20; nothing is attached unless chosen.
+  const evidenceBox=h("fieldset",{"data-test":"ws-assist-evidence"},h("legend",{text:"Evidence (recorded inputs and outputs)"})),evidence=[];
+  const rows=(ws.batch?.rows||[]).filter(row=>row.run_id).slice(0,20);
+  for(const row of rows){const check=h("input",{type:"checkbox","data-test":"ws-assist-evidence-item","data-run":row.run_id,checked:options.runId===row.run_id});
+    evidence.push([row.run_id,check]);evidenceBox.append(h("label",{class:"ws-radio"},check," "+(row.example?.label||row.example?.id||row.run_id)+" · "+(row.outcome||row.state)));}
+  if(!rows.length)evidenceBox.append(h("p",{class:"ws-hint",text:"No results with a recorded run in the current batch."}));
+  const settingsBox=h("details",{"data-test":"ws-assist-settings"},h("summary",{text:"Assistant settings"}));
   const assistantSettings={},assistantModes={};
-  for(const key of ["temperature","reasoning"]){assistantModes[key]=wsChoice(box,"Assistant "+key+" source",[["inherit","Inherit role default"],["custom","Custom"],["reset","Backend default"]]);assistantSettings[key]=key==="reasoning"?wsChoice(box,"Assistant reasoning",["off","low","medium","high"].map(x=>[x,x])):wsField(box,"Assistant temperature","");assistantSettings[key].parentElement.hidden=true;assistantModes[key].onchange=()=>assistantSettings[key].parentElement.hidden=assistantModes[key].value!=="custom";}
-  const sections=[];for(const name of ["purpose","inputs","outputs","behaviour"]){const check=h("input",{type:"checkbox",checked:true});sections.push([name,check]);box.append(h("label",{},check," Improve "+name.replaceAll("_"," ")));}
-  const describeNote=h("p",{class:"ws-hint","data-test":"ws-assist-describe-note",text:"Describe writes the standard description of the selected saved revision with the write_block_description role. The role, task and settings above are not used."});box.append(describeNote);
-  const showDescribe=()=>{describeNote.hidden=action.value!=="describe";};action.addEventListener("change",showDescribe);showDescribe();
+  for(const key of ["temperature","reasoning"]){assistantModes[key]=wsChoice(settingsBox,"Assistant "+key+" source",[["inherit","Inherit role default"],["custom","Custom"],["reset","Backend default"]]);assistantSettings[key]=key==="reasoning"?wsChoice(settingsBox,"Assistant reasoning",["off","low","medium","high"].map(x=>[x,x])):wsField(settingsBox,"Assistant temperature","");assistantSettings[key].parentElement.hidden=true;assistantModes[key].onchange=()=>assistantSettings[key].parentElement.hidden=assistantModes[key].value!=="custom";}
+  const describeNote=h("p",{class:"ws-hint","data-test":"ws-assist-describe-note",text:"Describe writes the standard description of the selected saved revision. It has no other settings."});
+  const parts={role:roleBox,task:taskBox,stage:stageBox,keep:keepBox,sections:sectionsBox,evidence:evidenceBox};
+  function draw(){
+    cards.replaceChildren(...WS_ASSIST_ACTIONS.map(([id,label,hint])=>h("button",{type:"button",class:"ws-assist-card","data-test":"ws-assist-action","data-action":id,
+      "aria-pressed":String(id===current),title:hint,onclick:()=>{current=id;draw();}},h("strong",{text:label}),h("span",{class:"ws-hint",text:" "+hint}))));
+    const wanted=WS_ASSIST_FIELDS[current];
+    fields.dataset.action=current;
+    fields.replaceChildren(...wanted.map(k=>parts[k]),current==="describe"?describeNote:settingsBox);
+    taskBox.querySelector("label").firstChild.textContent=current==="improve"?"Note":current==="suggest_examples"?"Notes":"Task";
+  }
+  draw();
   if(await wsDialog("Block assistance",box,["Prepare request","Cancel"])!=="Prepare request")return;
-  if(action.value==="describe")return wsDescribe();     // the same server-owned action as Standard description
-  const snap=ws.draft,body={action:action.value,role:role.value,task:task.value,draft:snap,context_local_only:keepLocal.checked};
+  if(current==="describe")return wsDescribe();     // the same server-owned action as Standard description
+  const wanted=WS_ASSIST_FIELDS[current];
+  const snap=ws.draft,body={action:current,role:role.value,task:wanted.includes("task")?task.value:"",draft:snap,
+    context_local_only:wanted.includes("keep")?keepLocal.checked:!!ws.projection?.design?.context_local_only};
   body.settings_text=Object.fromEntries(Object.entries(assistantModes).filter(([,m])=>m.value==="custom").map(([key])=>[key,assistantSettings[key].value]));
   body.task_resets=Object.entries(assistantModes).filter(([,m])=>m.value==="reset").map(([key])=>key);
-  if(action.value==="create"&&stage.value)body.stage=stage.value;
-  if(action.value==="improve")body.sections=sections.filter(([,c])=>c.checked).map(([name])=>name);
-  if(["improve","explain_failure"].includes(action.value)&&ws.batch)
-    body.references=ws.batch.rows.filter(row=>row.run_id).slice(0,20).map(row=>({kind:"trace",id:row.run_id}));
+  if(current==="create"&&stage.value)body.stage=stage.value;
+  if(current==="improve")body.sections=sections.filter(([,c])=>c.checked).map(([name])=>name);
+  const chosen=wanted.includes("evidence")?evidence.filter(([,c])=>c.checked).map(([id])=>({kind:"trace",id})):[];
+  if(chosen.length)body.references=chosen;
   await wsStart("assist",body,async batch=>{
     const id=batch.rows[0]?.proposal_id;if(!id)return;
     const request={proposal_id:id,draft:ws.draft},plan=await wsApi("plans",{action:"proposals/apply",request});
     const review=h("div",{},wsShowValue(plan.descriptor.proposal.response));for(const change of plan.descriptor.changes||[])review.append(h("details",{open:change.name==="Python source"},h("summary",{text:change.name}),h("h4",{text:"Before"}),h("pre",{text:change.before}),h("h4",{text:"After"}),h("pre",{text:change.after})));
     for(const c of plan.required_confirmations)review.append(h("p",{text:c.detail}));
+    if(ws.assistProtected)review.append(h("p",{class:"warn-text","data-test":"ws-assist-protection",
+      text:"Applying this proposal permanently protects this block's design. The block must also run on a trusted local destination."}));
     if(await wsDialog("Review proposal",review,["Apply","Discard"])!=="Apply"){wsNote.dataset.state="proposal_discarded";delete wsNote.dataset.code;wsNote.textContent="Proposal discarded";return;}
     const bound={...request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations.map(({kind,digest})=>({kind,digest}))};
     const applied=await wsApi("proposals/apply",bound);
@@ -3563,6 +3820,8 @@ async function wsFollow(id,done){
   const generation=++wsPoll;
   while(generation===wsPoll){
     ws.batch=await wsApi("batches/"+id);if(ws.batch.active_run){try{ws.batch.live=await api("/api/block_runs/"+ws.batch.active_run);}catch(e){/* child may already have ended */}}wsNote.dataset.state=ws.batch.state;delete wsNote.dataset.code;wsNote.textContent=ws.batch.state+" · "+ws.batch.rows.filter(r=>r.state==="terminal").length+" / "+ws.batch.rows.length;
+    if(ws.batch.state==="running")setActivity("workshop",{label:WS_BATCH_LABEL(ws.batch),source:"workshop",open:()=>{selectTab("workshop");}});
+    else setActivity("workshop",null);
     wsResults();if(ws.batch.state!=="running"){if(done)await done(ws.batch);return;}
     await new Promise(resolve=>setTimeout(resolve,250));
   }
@@ -3829,8 +4088,94 @@ $("main-nav").addEventListener("keydown",e=>{
   const n=e.key==="ArrowRight"?(i+1)%3:e.key==="ArrowLeft"?(i+2)%3:e.key==="Home"?0:e.key==="End"?2:-1;
   if(n>=0){e.preventDefault();buttons[n].click();buttons[n].focus();}
 });
-const settingsGroup=h("details",{id:"ws-settings"},h("summary",{"data-test":"ws-settings",text:"Settings"}));
-$("open-settings").before(settingsGroup);settingsGroup.append(h("p",{class:"note","data-test":"settings-overview"},$("summary")),$("open-settings"),$("open-roles"),$("open-servers"));
+// --- Settings (UI-CD v3 CD8): one categorised header dialog shared by every tab ---------------------------------------
+// Overview, Saving & history and Execution preferences render here; Models & roles, Trusted destinations, MCP servers
+// and Cloud keys are reached in one click and open their existing editors over it (same save rules and hooks).
+const settingsHub=h("dialog",{id:"settings-hub","data-test":"settings-hub","aria-labelledby":"settings-hub-title",class:"wide-dialog"});
+const settingsNav=h("nav",{class:"settings-nav","aria-label":"Settings categories","data-test":"settings-categories"}),settingsPane=h("div",{class:"settings-pane","data-test":"settings-pane"});
+settingsHub.append(h("h2",{id:"settings-hub-title",text:"Settings"}),h("div",{class:"settings-layout"},settingsNav,settingsPane),
+  h("div",{class:"row",style:"justify-content:flex-end"},h("button",{type:"button","data-test":"settings-close",text:"Close",onclick:()=>settingsHub.close()})));
+document.body.append(settingsHub);
+const settingsGroup=h("button",{type:"button",id:"ws-settings","data-test":"ws-settings",text:"Settings",onclick:()=>openSettings("overview")});
+$("open-settings").before(settingsGroup);
+const settingsOverview=h("div",{"data-test":"settings-overview"},h("p",{class:"note"},$("summary")));
+const SETTINGS_INLINE={
+  overview:()=>[h("h3",{text:"Overview"}),h("p",{text:$("workspace").textContent||""}),settingsOverview,
+    h("p",{"data-test":"settings-saving-state",text:"Save runs: "+(historyInfo().save_runs?"On":"Off")})],
+  saving:()=>[h("h3",{text:"Saving & history"}),h("p",{text:"Save runs: "+(historyInfo().save_runs?"On":"Off")+". Turn it on or off in the header."}),
+    h("p",{class:"note",text:$("save-runs-control").title}),h("p",{class:"note",text:DISCLOSURE})],
+  execution:()=>{const box=h("div",{"data-test":"settings-execution"},h("h3",{text:"Execution preferences"}));
+    wsApi("workflow-mcp-confirmation").then(pref=>{
+      const msg=h("p",{role:"status","data-test":"settings-execution-status"});
+      const mode=wsChoice(box,"Workflow MCP confirmation",[["every_run","Every MCP workflow run"],["effectful_batches","Only MCP batches"]],pref.mode);
+      box.append(pref.invalid?h("p",{text:"Invalid saved setting. Using Every MCP workflow run."}):"",
+        wsButton("Save confirmation preference",async()=>{const result=await wsApi("workflow-mcp-confirmation",{mode:mode.value,expected_revision:pref.revision});
+          Object.assign(pref,result);msg.dataset.state="preference";msg.textContent="Confirmation preference saved.";},"settings-save-mcp-confirmation"),msg);
+    }).catch(e=>box.append(h("p",{class:"err-text",text:e.message})));
+    return [box];}
+};
+let settingsCategory="overview";
+function settingsCategories(){
+  // Category buttons for the existing editors are the existing header buttons, moved here (hooks preserved).
+  return [["overview","Overview",null],["roles","Models & roles",$("open-roles")],["trust","Trusted destinations",$("header-workflow-settings-button")],
+    ["servers","MCP servers",$("open-servers")],["keys","Cloud keys",$("open-openrouter-key")],["saving","Saving & history",null],["execution","Execution preferences",null]];
+}
+function drawSettings(){
+  settingsNav.replaceChildren();
+  for(const [id,label,existing] of settingsCategories()){
+    if(existing){existing.dataset.category=id;existing.setAttribute("aria-current",String(id===settingsCategory));settingsNav.append(existing);continue;}
+    settingsNav.append(h("button",{type:"button","data-test":"settings-category","data-category":id,"aria-current":String(id===settingsCategory),text:label,
+      onclick:()=>{settingsCategory=id;drawSettings();}}));
+  }
+  if(SETTINGS_INLINE[settingsCategory])settingsPane.replaceChildren(...SETTINGS_INLINE[settingsCategory]());
+  // Model settings stays reachable beside Models & roles (it edits the profile a role points to).
+  if(settingsCategory==="overview")settingsPane.append($("open-settings"));
+}
+// Opens Settings at a category. Categories with their own editor open it over Settings; the promise settles when it
+// closes, so a remedy can return focus to itself and recheck (CD1.9). Closing Settings never touches the open screen.
+function openSettings(category="overview"){
+  const existing=Object.fromEntries(settingsCategories().filter(([, ,b])=>b).map(([id, ,b])=>[id,b]));
+  if(SETTINGS_INLINE[category]){settingsCategory=category;drawSettings();if(!settingsHub.open)settingsHub.showModal();return new Promise(resolve=>settingsHub.addEventListener("close",resolve,{once:true}));}
+  const button=existing[category];
+  if(!button)return Promise.resolve();
+  const target={roles:"roles-dialog",servers:"servers-dialog",keys:"openrouter-key-dialog"}[category];
+  button.click();
+  if(!target)return Promise.resolve();
+  return new Promise(resolve=>$(target).addEventListener("close",resolve,{once:true}));
+}
+settingsHub.addEventListener("close",()=>{for(const [, ,b] of settingsCategories())if(b)$("settings-parking").append(b);});
+for(const id of ["open-settings","open-openrouter-key","open-servers","open-roles"])$("settings-parking").append($(id));
+
+// --- activity indicator (UI-CD v3 CD9): one in-page state fed by the Workshop follower and the workflow poller ---------
+const activityEl=h("button",{type:"button",id:"header-activity","data-test":"header-activity",class:"activity",hidden:true,"data-state":"idle"});
+const activitySources=new Map();
+function setActivity(source,info){
+  if(info)activitySources.set(source,info);else activitySources.delete(source);
+  const current=activitySources.get("workflow")||activitySources.get("workshop");
+  activityEl.hidden=!current;activityEl.dataset.state=current?current.state||"running":"idle";activityEl.dataset.source=current?current.source||source:"";
+  activityEl.replaceChildren(...(current?[h("span",{class:"spinner","aria-hidden":"true"}),h("span",{text:" "+current.label})]:[]));
+  activityEl.onclick=current?()=>current.open():null;   // reopens the operation's own view; never starts anything
+}
+const WS_BATCH_LABEL=batch=>batch?.plan?.describe||batch?.plan?.assistance?"Assistance":(batch?.plan?.candidates?.length>1?"Compare":"Test");
+async function recoverActivity(){
+  try{
+    const active=await wsApi("workflow-active");
+    if(active?.operation_id&&!activitySources.has("workflow"))setActivity("workflow",{label:"Workflow run",source:"workflow",
+      open:()=>{selectTab("workflows");TABS.workflows?.showRun?.();}});
+  }catch(e){/* the indicator stays as it was */}
+  try{
+    const batches=await wsApi("batches");
+    if(batches?.active&&!activitySources.has("workshop")){const batch=await wsApi("batches/"+batches.active).catch(()=>null);
+      setActivity("workshop",{label:WS_BATCH_LABEL(batch),source:"workshop",open:()=>selectTab("workshop")});}
+  }catch(e){/* the indicator stays as it was */}
+}
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)recoverActivity();});
+function arrangeHeader(){
+  // Wide design target: AgentWiz · activity · spacer · Save runs · workspace · Settings · Tutorial (CD9).
+  const header=document.querySelector("header");
+  const order=[header.querySelector("h1"),activityEl,h("span",{class:"header-spacer"}),$("save-runs-control"),$("saving"),$("workspace"),$("open-workspaces"),settingsGroup,$("open-tutorial"),$("switch-msg")];
+  for(const el of order)if(el)header.append(el);
+}
 $("open-roles").textContent="Models & roles";
 $("workspace").after($("save-runs-control"));
 // The help panel sits beside the content when there is room; the page reserves its width while it is open.
@@ -4017,10 +4362,13 @@ Promise.all([contractsScript.then(initContracts), workflowScript]).then(() => {
     openBlock:async(key,revision)=>{
       if(!await wsLeave())return;
       selectTab("workshop");await wsLoad({key,...(revision?{revision}:{})},false);
-    }});
+    },
+    newBlock:async(starter)=>{selectTab("workshop");await wsNew(starter);},
+    activity:setActivity});
   TABS.workflows=workflow;
-  settingsGroup.append(wsButton("Trusted destinations",()=>workflow.settings(),"header-workflow-settings"),
-    h("small",{text:"Save runs can store protected values in unencrypted local files."}));
+  arrangeHeader();recoverActivity();
+  const trustButton=wsButton("Trusted destinations",()=>workflow.settings(),"header-workflow-settings");
+  trustButton.id="header-workflow-settings-button";$("settings-parking").append(trustButton);
 }).catch(startFailure).finally(() => {
   selectTab(fragFromHash(), { hash: false });
   refreshState().then(tutorialInit).catch((e) => {

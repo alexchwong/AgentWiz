@@ -43,17 +43,24 @@ class Workflows:
 
     @staticmethod
     def block_ports(block):
+        """Ports of one captured block (or Gate). `contract` is the port's exact captured contract as exact
+        JSON text and `identifier_map` a conservative server-side shape test (UI-CD v3 CD1.14). Every Design
+        read (`read`, `source_options`, `validate`) projects through here, so the contract always describes
+        the capture being edited or saved, never the block's latest revision."""
         def describe(side, port):
             contract = block.contracts[side][port.name].parsed
             schema = contract.schema
             value_type = 'string' if contract.format == 'text' else schema.get('type') if isinstance(schema, dict) else None
             return {'format': contract.format, 'description': port.description, 'local_only': port.local_only,
-                    'value_types': [value_type] if isinstance(value_type, str) else value_type}
+                    'value_types': [value_type] if isinstance(value_type, str) else value_type,
+                    'contract': exact(dict(contract.raw)), 'identifier_map': identifier_map(contract)}
 
         ports = {side: {port.name: describe(side, port) for port in getattr(block, side)}
                  for side in ('inputs', 'outputs')}
         if block.step.kind == 'gate':
-            ports['inputs'].setdefault('scan', {'format': 'json', 'local_only': False, 'value_types': None})
+            # `scan` keeps its fixed entry whether or not it is bound (any identifier map is checked at run time).
+            ports['inputs']['scan'] = {'format': 'json', 'description': '', 'local_only': False, 'value_types': None,
+                                       'contract': None, 'identifier_map': False}
         return ports
 
     @classmethod
@@ -668,4 +675,30 @@ def old_node_keys(bundle):
 def exact(value):
     from .jsonio import encode_exact
     return encode_exact(value, indent=2)
+
+
+def _string_schema(schema):
+    return isinstance(schema, dict) and schema.get('type') == 'string'
+
+
+def identifier_map(contract):
+    """Whether a contract declares an identifier map in the records form that both the Gate scan and
+    `restore_placeholders` accept: a JSON array of objects, each requiring a string `original`, with an
+    optional string `placeholder` (UI-CD v3 CD1.14). Deliberately conservative: an unrecognised schema, or
+    one requiring any other field, is False. It only proposes a candidate; run time checks the value."""
+    schema = contract.schema
+    if contract.format != 'json' or not isinstance(schema, dict) or schema.get('type') != 'array':
+        return False
+    items = schema.get('items')
+    if not isinstance(items, dict) or items.get('type') != 'object':
+        return False
+    properties, required = items.get('properties'), items.get('required')
+    if not isinstance(properties, dict) or not isinstance(required, list):
+        return False
+    if 'original' not in required or not _string_schema(properties.get('original')):
+        return False
+    if 'placeholder' in properties and not _string_schema(properties['placeholder']):
+        return False
+    return set(required) <= {'original', 'placeholder'} and (
+        'placeholder' not in required or 'placeholder' in properties)
 

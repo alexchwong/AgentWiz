@@ -1105,6 +1105,10 @@ class Service:
             descriptor['assistance']['capabilities'] = selected['capabilities']
             if materials:
                 descriptor['assistance']['evidence'] = selected['evidence']
+        if action == 'assist':
+            # Whether applying the proposal sets inherited design protection (UI-CD v3 CD6); the page shows the
+            # consequence from this value instead of recomputing protection.
+            descriptor['authoring_protected'] = bool(authoring_protected)
         binding = copy.deepcopy(descriptor)
         for candidate in binding.get('candidates', []):
             candidate.pop('schema_observation', None)

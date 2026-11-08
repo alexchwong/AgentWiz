@@ -127,7 +127,10 @@ TOPICS: tuple[Topic, ...] = (
           "The same redaction runs locally, then a Release Gate pauses the run: review the redacted value and the "
           "destinations it will reach, acknowledge the local assessment and approve. Only the approved value reaches "
           "the cloud stand-in; the restore step runs locally. Approval covers the reviewed value at the destinations "
-          "shown, not forwarding inside a provider. All services here are local stand-ins.",
+          "shown, not forwarding inside a provider. All services here are local stand-ins. To build such a route "
+          "yourself in Design: Create block… for the redaction and summary blocks (expose the mapping as a List of "
+          "records), add Restore placeholders from Built-in, connect the ports, select the connection into the cloud "
+          "step, choose Insert Release Gate, then accept the suggested identifier map.",
           "workflows", "0.2.1", "complete", False,
           _page("workflows.tutorial", ["private_summary_release", _private_document(0), "case_1", "document"]), "wf-preflight"),
     *(Topic("assist-" + action, "Assist · " + action.replace("_", " "),

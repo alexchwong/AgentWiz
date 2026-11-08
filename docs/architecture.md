@@ -945,6 +945,13 @@ override, and advanced bypass controls preserve backend-reset intent through the
 customs payload. Role changes refresh default hints without replacing the form. Additional repairs sits
 below Outputs. Assist and Revision actions share navigation in every mode; save locks navigation and the
 revision selector as well as the editor until publication/reload completes.
+Assist (UI-CD v3) is action first: Create, Improve, Suggest examples, Explain failure and Describe, each showing
+only the fields its request uses; sampling overrides fold under Assistant settings. Evidence is a checklist of
+the current batch's results with a run (at most 20) and only checked results are sent as `references`. The plan
+review lists what `descriptor.assistance` actually includes. The `assist` plan descriptor carries
+`authoring_protected` (the value `prepare` computes); when true, the plan and Apply reviews state that applying
+permanently sets inherited design protection, so the block must run on a trusted local destination. Revision
+actions show a consequence line computed from the selected revision and the next revision number.
 Each variable table row retains expandable contract/source controls; structured format selection exposes
 its editor immediately. Destructive format replacement requires confirmation. Stable row identity is
 separate from the edited name; pending form edits flush before contract operations.
@@ -1290,9 +1297,61 @@ Saving off keeps the bounded job view in memory.
 The Workflows browser view loads the form projection from the server. Contracts and
 constants remain exact text in that projection. The editor submits an `editor`
 object or existing clients can submit `definition_text`. The server decodes each
-exact value separately. The form and canvas share node bindings and layout. The
-canvas previews compatible direct connections and uses the same reviewed save
-operation as the form. Layout has no effect on dispatch order.
+exact value separately. Layout has no effect on dispatch order.
+
+**Workflow Design (UI-CD v3).** One draft is edited through a palette, a canvas and an inspector, or through
+List view, which is the whole design form over the same draft, selection and inspector (never two editors for one
+field). The canvas is framework-free (SVG edges plus a CSS-transformed card layer); edge endpoints are measured
+from the rendered port handles. Workflow input, output and constant cards have derived positions and are never
+stored: saved `layout` keeps integer positions keyed by executable node only. Content-width bands come from the
+design container: the palette becomes an icon rail whenever its minimum, the inspector's and the canvas's 560 px
+plus gutters do not fit; if the canvas and inspector still do not fit the inspector moves below the canvas;
+below 720 px List view is the default. Canvas shortcuts act only while focus is on the canvas, a card, a port or
+an edge, never in a field, select, contract editor, popover or dialog.
+
+The page has one validation client, the only caller of `workflow-validate`. It keeps a generation counter that
+never resets within a page session and increments on every graph edit, load, Save, return from a detour,
+workspace switch and configuration change; a response is accepted only when its `generation` equals the current
+one and it belongs to the current load. Chips, port and edge states, Gate setup, the issue list and open-draft
+trust gaps read only the last accepted result; there is no client-side protection calculation. Without an
+accepted result, with `available: false`, or with truncated restriction details, values read "not checked".
+"Design checked" is not readiness: destinations are expected and confirmed at readiness.
+
+Undo and Redo cover graph edits since the last load or Save; a successful Save clears both stacks, because the
+saved bundle keeps only the snapshots its definition references. Save and returns from detours (Create block…,
+Restore placeholders, Open source revision, Settings, Grant, cloud key) keep run inputs, selected examples,
+selection and viewport; an unsaved draft and its undo history stay in memory across a detour. Insert Release Gate
+replaces one edge with `A → gate.value` (keeping the path) and `gate.released → B` as one undoable edit; the
+Gate's contract is the exact projected contract of the value it receives (B's input contract when the path is
+non-empty) and insertion is disabled when that contract is unavailable. The identifier-map suggestion lists
+restricted node outputs whose projected `identifier_map` is true among the producer's siblings and ancestors and
+is never bound automatically.
+
+**Run results and review (UI-CD v3).** Workflow outputs render above the progress list in definition order, each
+with its effective Local-only state, outcome and Copy; an output fed by a `restore_placeholders` transform shows
+a restoration summary read once from that node's detail. Node detail and History records render through the
+page's shared `ResultView` (headline, outputs, checks, failures and repairs, collapsed Troubleshooting with
+Request/Reasoning/Raw/Attempts; attempts open inline). JSON outputs are re-indented without parsing numbers. The
+release panel highlights identifier hits (text by code-point offsets, JSON by path and part) and locatable
+assessment findings, steps through them, finds text, paginates payloads above 200 KB, shows the batch position,
+destination facts from the trust preview and each decision's consequence; the payload and Copy are unchanged.
+Reject and revise submits the same token-bound rejection and navigates to the producer's source revision only
+after the server accepts it. History reads each workflow-run and comparison manifest once per refresh for its
+outcome; workflow detail is node-structured with record files under Troubleshooting.
+
+**Settings and header (UI-CD v3).** Settings is one header dialog with categories (Overview, Models & roles,
+Trusted destinations, MCP servers, Cloud keys, Saving & history, Execution preferences). Models & roles, Trusted
+destinations, MCP servers and Cloud keys keep their existing editors (and save rules) and open over it in one
+click; `openSettings(category)` settles when that editor closes, so remedies can restore focus and recheck. The
+header order is AgentWiz, activity indicator, Save runs, workspace, Settings, Tutorial. The activity indicator is
+fed by the Workshop batch follower and the workflow poller and recovers from `workflow-active` and `batches` on
+load and visibility; clicking it reopens the operation's own view and never starts anything.
+
+**Port projection.** `WorkflowService.block_ports()` adds to each port `contract` (the captured contract as exact
+JSON text) and `identifier_map` (true only for a JSON array of objects that require a string `original`, with an
+optional string `placeholder`, and require nothing else). `read`, `source_options` and `validate` all project
+through it, so the data describes the capture being edited, also after its source revision is removed. A Gate's
+`value` and `released` carry the Gate contract; `scan` keeps a fixed entry with `contract: null`.
 
 
 

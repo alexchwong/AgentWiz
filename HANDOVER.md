@@ -1,3 +1,110 @@
+# UI-CD v3 implementation — 8 November 2026
+
+Implemented `AgentWiz_proposal_ui_CD_v3.md` against AgentWiz devel `3bf61c6` ("core (non-UI) fixes"), still devel
+HEAD when the work started. Version remains the unreleased 0.2.1. No commit, push, merge, tag or publication was made.
+
+**Nothing in this delivery was executed.** The implementing session could not install or run repository code
+(`scripts/dev_setup.sh` and `pip install -e .` were refused by the session's execution policy), so no pytest, page,
+tutorial or smoke check ran. Only syntax checks ran (below). Treat every behavioural claim here as unverified until
+the offline gate passes.
+
+## Apply this delivery
+
+Extract the ZIP over the matching checkout, preserving paths. It contains complete changed files, not a patch.
+No files need deletion (`DELETIONS.txt` is empty). No dependencies were added.
+
+## Behaviour
+
+- **Server (two read-only additions).** CD1.14: `WorkflowService.block_ports()` adds `contract` (exact captured
+  contract text) and `identifier_map` (conservative records-form predicate, `workflow_service.identifier_map`); a
+  Gate's `scan` keeps a fixed entry with `contract: null`. CD6: the `assist` plan descriptor carries
+  `authoring_protected`.
+- **CD1 Workflow Design** (`workflows.js`): palette (search, Create block…, Workflow I/O, Release Gate, Restore
+  placeholders, blocks with description and folded ports; v3 and script blocks disabled with reasons; drag, click,
+  tap or Enter to add), canvas (port rows with handles, edges from measured handle centres, I/O and constants cards
+  at derived positions, pan, Ctrl+wheel/pinch zoom 25–200%, Fit ≥ 60%, click/tap/drag/keyboard wiring, refused
+  connections explain themselves), inspector (workflow, node, Gate, edge, I/O views; Why this stays local; own label
+  folded), List view (whole form, shared selection and inspector), single validation client with a never-resetting
+  generation, response states per CD1.8, issue list, Undo/Redo with Save as checkpoint, Insert Release Gate,
+  identifier-map suggestion, open-draft destination remedies (also in Trusted destinations), detours that keep
+  unsaved work, Run →. `restrictedSources()` is removed.
+- **CD3**: release panel highlighting and Previous/Next finding, Find, pagination above 200 KB, batch position,
+  destination facts (trust preview), decision consequences, Reject and revise; outputs above progress with a
+  restoration summary; restore details in node detail; Revise on rejected/expired outcomes.
+- **CD4**: `ResultView` and an exact JSON re-indenter in the page; adopted for Run node detail and History workflow
+  records (`traceView`).
+- **CD5**: History reads workflow-run and comparison manifests once per refresh (outcome in rows, Failed filter);
+  node-structured workflow detail with record files under Troubleshooting.
+- **CD6**: Assist is action-first with per-action fields, folded Assistant settings, explicit evidence, an
+  Includes list built from the plan and the protection consequence from `authoring_protected`.
+- **CD7**: Revision actions show consequence lines.
+- **CD8**: one Settings dialog with categories; the existing editors open over it in one click; `openSettings()`.
+- **CD9**: header activity indicator (Workshop follower, workflow poller, recovery from `workflow-active` and
+  `batches`) and header order. **CD10**: Chat/Checked request destination line; reasoning and the raw final event
+  folded under Troubleshooting.
+- Tutorial: `private-summary-release` text gains the page assembly steps (`updated_in` stays 0.2.1).
+
+## Departures and interpretations (for owner review)
+
+1. **CD2 spike not run.** The canvas uses option (a), the vanilla engine, because the spike could not be executed
+   here and (b) needs a new dependency. The owner decision on the engine remains open; CD1 is engine-neutral.
+2. Adding a block from the palette uses a small modal dialog (revision + identifier, Enter accepts) rather than an
+   anchored popover.
+3. Bands add a fourth state, `stacked`: when the rail, canvas minimum and inspector minimum still don't fit
+   (Medium below ≈ 940 px), the inspector moves below the canvas instead of either pane shrinking.
+4. While a newer check is pending, the last accepted states stay visible with the design surface dimmed and the
+   status "Checking…"; error states clear to "not checked".
+5. Assessment findings are "locatable" when their free-text `location` occurs in the payload (case-insensitive).
+6. The restoration summary is shown for outputs fed by a transform node with `text` and `pairs` inputs (the
+   restore shape); the block view has no operation field and none was added.
+7. **CD4 partial**: Test, Compare and Saved block runs keep their own markup (they already put outputs before raw
+   panels); `ResultView` is not yet adopted there.
+8. **CD8**: Models & roles, Trusted destinations, MCP servers and Cloud keys open their existing dialogs over
+   Settings (their buttons moved into the category list with hooks unchanged) instead of being re-hosted inside
+   it. MCP confirmation also remains in Trusted destinations.
+9. **CD5.1**: manifests carry no date, so rows show a date only when a manifest or batch provides one.
+10. Duplicate's consequence line names what is open (the existing action duplicates the open draft), not the
+    revision chosen in the picker.
+11. The Narrow inspector is stacked below the list rather than a modal sheet.
+
+## Obsolete (removed or renamed in place; no files deleted)
+
+- `restrictedSources()` and the old `canvas()` in `workflows.js`; hooks `wf-canvas-node-*`,
+  `wf-canvas-input-*`, `wf-canvas-output-*`; the top-level `wf-delete` button (Delete workflow is folded in the
+  workflow inspector, `wf-delete-workflow`); the Add Release Gate identifier dialog.
+- The header Settings disclosure (`details#ws-settings`); `ws-settings` is now the Settings dialog button.
+- `ws-choice-assistant-role` is now `ws-choice-assistant-role-writes-this-proposal`; the Assist Action select is
+  replaced by `ws-assist-action` cards.
+
+## Tests changed (none run)
+
+- `tests/test_core_v3.py`: port projection contract and `identifier_map` (CD1.14).
+- `tests/test_workshop.py`: `authoring_protected` on assist plans (CD6).
+- `tests/test_page.py`: adapted to List view, the prefilled Gate identifier, folded Assist settings, Settings
+  holding Cloud keys and the folded Chat final event; the old canvas drag test replaced; new checks for tap
+  wiring/geometry/undo/layout (C-F3/4/5/13/16/17/19), Insert Gate and sibling map (C-F6/8/9/15/19), validation
+  races and failures (C-F7/18), bands (C-F21, C-F11 layout), the activity indicator (D-F19), Assist fields
+  (D-F12/13/26) and result-first output (D-F24).
+- Not covered by tests: C-F1/E-F1 full page journey, C-F10, C-F12, C-F20, C-F22, C-F23, D-F1–D-F5, D-F7–D-F11,
+  D-F14, D-F15, D-F16 beyond the adapted tests, D-F17, D-F18, D-F20–D-F23, D-F25, D-F27.
+
+## Actual verification
+
+Environment: Linux x86_64, system Python 3.13.18 and Node 22 (no `.venv`; modelSpell unavailable).
+
+- `node --check` on `workflows.js` and the page's inline script: passed.
+- Shipped and changed Python parsed with the Python 3.10 grammar: passed. `git diff --check`: clean.
+- Not run: `python -m pytest -q -m "not live"`, page and tutorial tests, `scripts/build_release.py --smoke`, CI.
+
+## Next actions
+
+Run `scripts/dev_setup.sh`, then the offline gate and `tests/test_page.py`; fix failures (the new page tests were
+written without a browser). Decide the CD2 engine. Add the uncovered checks above, starting with E-F1.
+
+---
+
+Earlier handovers below are historical; the entry above describes this delivery.
+
 # Core v3 implementation — 8 November 2026
 
 Implemented `AgentWiz_proposal_core_combined_v3.md` (Checkpoints B and U, with the owner decisions of

@@ -2,6 +2,17 @@
 
 ## 0.2.1
 
+- Workflow Design is a palette, canvas and inspector editor; List view keeps the whole form.
+- Wire ports by dragging, tapping or keyboard; Undo and Redo cover graph edits until Save.
+- Canvas states come from server validation: what stays local, what is released, and expected destinations.
+- Insert Release Gate on a connection; Design suggests the producer's identifier map without binding it.
+- Create blocks and Restore placeholders from Design, then return without losing unsaved edits.
+- Release review highlights findings, finds text, pages long values, and offers Reject and revise.
+- Workflow outputs appear above progress; restored outputs summarise their restoration.
+- Assist asks for the action first, attaches evidence only when chosen, and states permanent protection.
+- Settings is one categorised dialog; a header indicator shows and reopens running work.
+- History shows workflow and comparison outcomes in the list and node-structured workflow detail.
+
 - Restore placeholders: a built-in transform that puts de-identified originals back, locally and deterministically.
 - Text checks: example expectations that a Text output includes or excludes values, or keeps no placeholder tokens.
 - Trusted destinations now include uses by blocks and saved workflows, and flag destinations saved workflows need.

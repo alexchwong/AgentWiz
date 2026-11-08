@@ -235,6 +235,22 @@ def test_assist_uses_runner_and_applies_without_publication(ui, server):
     assert len(server.requests) == 1
 
 
+def test_assist_plan_reports_authoring_protection(ui, server):
+    """UI-CD v3 CD6: the page shows the permanent protection consequence from the bound plan, not its own guess."""
+    from conftest import save_profile, save_roles
+    save_profile(ui, 'p', model='m', kind='openai_compat', base_url=server.url + '/v1', provider='')
+    save_roles(ui, {'assistant': 'p'})
+    grants = request(ui, '/api/workshop/destination-trust')
+    send(ui, 'destination-trust', expected_revision=grants['revision'], trusted=True,
+         destination={'kind': 'openai_compat', 'url': server.url + '/v1', 'model': 'm', 'provider': ''})
+    draft = send(ui, 'preview', starter='count_text', key='draft_only')['draft']
+    body = {'action': 'improve', 'role': 'assistant', 'draft': draft, 'task': 'Improve.', 'sections': ['purpose']}
+    assert send(ui, 'plans', action='assist', request=body)['descriptor']['authoring_protected'] is False
+    protected = send(ui, 'plans', action='assist', request={**body, 'context_local_only': True})
+    assert protected['descriptor']['authoring_protected'] is True
+    assert len(server.requests) == 0
+
+
 def http_method(ui, path, method, body=None):
     import json
     import urllib.request

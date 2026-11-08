@@ -569,6 +569,27 @@ def test_private_summary_release_sends_only_the_approved_candidate(ui, backends)
     assert len(cloud.requests) == 1
 
 
+def test_port_projection_carries_captured_contract_and_identifier_map(ui):
+    """UI-CD v3 CD1.14: Design inserts a Gate with a port's exact captured contract and proposes identifier
+    maps from a server-side flag. Both come from the capture, also after the source revisions are gone."""
+    from agentwiz import checks, workflow_service
+    name = private_summary.ensure(ui.state.workshop, 'release')
+    ports = request(ui, '/api/workshop/workflows/' + name)['node_ports']
+    deid = ports['deid']['outputs']
+    assert deid['mapping']['identifier_map'] is True
+    assert deid['redacted_text']['identifier_map'] is False
+    assert jsonio.decode_exact(deid['mapping']['contract']) == private_summary.MAPPING['contract']
+    assert jsonio.decode_exact(deid['redacted_text']['contract']) == {'format': 'text'}
+    assert ports['cloud_summary']['outputs']['summary']['identifier_map'] is False
+    assert ports['restore']['outputs']['out']['identifier_map'] is False
+    assert ports['gate']['inputs']['scan']['contract'] is None and ports['gate']['inputs']['scan']['identifier_map'] is False
+    assert jsonio.decode_exact(ports['gate']['outputs']['released']['contract']) == {'format': 'text'}
+    shape = jsonio.decode_exact(jsonio.encode_exact(private_summary.MAPPING['contract']))
+    del shape['schema']['items']['properties']['original']
+    shape['schema']['items']['required'] = ['placeholder']
+    assert workflow_service.identifier_map(checks.parse_contract(shape)) is False
+
+
 def one_repair(draft):
     definition = jsonio.decode_exact(draft['definition_text'])
     definition['steps'][0]['repair'] = {'max_repairs': 1}
