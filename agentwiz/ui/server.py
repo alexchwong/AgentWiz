@@ -49,7 +49,8 @@ from ..workspace import NAME_RE, Workspace
 INDEX = Path(__file__).with_name("index.html")
 # The one static script the page loads besides itself (overhaul spec 15.4): an explicit allowlist entry, never
 # path-based file serving. It is read once, like the page, and needs the session token like every route.
-ASSETS = {"/assets/contracts.js": (Path(__file__).with_name("contracts.js"), "text/javascript; charset=utf-8")}
+ASSETS = {f"/assets/{name}.js": (Path(__file__).with_name(f"{name}.js"), "text/javascript; charset=utf-8")
+          for name in ("contracts", "workflows")}
 JSON = "application/json"
 UPLOAD_LIMIT = 52_428_800          # 50 MiB; the JSON cap is insertion.REQUEST_LIMIT. Tests may lower both.
 UPLOAD_ROUTE = "/api/attachments/extract"
@@ -853,15 +854,46 @@ class Handler(BaseHTTPRequestHandler):
         service = self.server.state.workshop
         parts = path.split('/')
         query = parse_qs(urlparse(self.path).query)
-        if path == 'starters':
-            from ..workshop_editor import STARTERS, examples
-            result = {'format_version': 1, 'starters': [{'id': k, 'version': 1, 'examples': examples(k)} for k in STARTERS]}
+        if path == 'workflow-active':
+            result = service.workflows.active_view()
+        elif path == 'workflows':
+            result = service.workflows.listing()
+        elif len(parts) == 2 and parts[0] == 'workflows':
+            result = service.workflows.read(parts[1])
+        elif len(parts) == 2 and parts[0] == 'workflow-source-options':
+            result = service.workflows.source_options(parts[1], query.get('revision', [None])[0])
+        elif len(parts) == 2 and parts[0] == 'workflow-sources':
+            result = service.workflows.source_fingerprint(parts[1])
+        elif len(parts) == 2 and parts[0] == 'workflow-jobs':
+            job = service.workflows.job(parts[1])
+            result = job.detail(query['node'][0]) if query.get('node') else job.view()
+        elif path == 'workflow-evidence':
+            result = service.workflows.evidence()
+        elif len(parts) == 2 and parts[0] == 'workflow-evidence':
+            result = service.workflows.evidence(parts[1], query.get("record", [None])[0])
+        elif path == 'workflow-mcp-confirmation':
+            from ..workflow_settings import read
+            result = read(self.server.state)
+        elif path == 'destination-trust':
+            from ..outbound_policy import view
+            result = view(self.server.state)
+        elif path == 'messages':
+            from ..messages import catalogue
+            result = catalogue()
+        elif path == 'destination-trust-candidates':
+            from ..outbound_policy import candidates
+            result = candidates(self.server.state)
+        elif path == 'starters':
+            from ..workshop_editor import SCRIPT_IDS, STARTERS, examples
+            result = {'format_version': 1, 'starters': [{'id': k, 'version': 2 if k in SCRIPT_IDS else 1, 'examples': examples(k)} for k in STARTERS]}
         elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'revisions':
             result = service.assets.revisions(parts[1])
         elif len(parts) == 4 and parts[0] == 'blocks' and parts[2] == 'revisions':
             result = service.preview({'key': parts[1], 'revision': parts[3]})
         elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'examples':
             result = service.collection(parts[1])
+        elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'retained-labels':
+            result = service.retained_label_review(parts[1])
         elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'support':
             result = service.support(parts[1])
         elif len(parts) == 2 and parts[0] in ('batches', 'comparisons'):
@@ -886,7 +918,30 @@ class Handler(BaseHTTPRequestHandler):
             raise workshop.WorkshopError('invalid', 400)
         body = {k: v for k, v in body.items() if k != 'format_version'}
         parts = path.split('/')
-        if path == 'input-value':
+        if path == 'workflow-definition':
+            if set(body) != {'editor'}:
+                raise workshop.WorkshopError('invalid', 400)
+            result = {'definition_text': jsonio.encode_exact(service.workflows.editor_definition(body['editor']), indent=2)}
+        elif path == 'workflow-validate':
+            result = service.workflows.validate(body)
+        elif path == 'destination-trust-preview':
+            from ..outbound_policy import preview
+            result = preview(self.server.state, body)
+        elif path == 'workflow-mcp-confirmation':
+            from ..workflow_settings import update
+            result = update(self.server.state, body)
+        elif len(parts) == 3 and parts[0] == 'workflow-evidence' and parts[2] == 'delete':
+            if body:
+                raise workshop.WorkshopError('invalid', 400)
+            result = service.workflows.delete_evidence(parts[1])
+        elif path == 'destination-trust':
+            from ..outbound_policy import update
+            result = update(self.server.state, body)
+        elif path == 'publish-inline':
+            result = service.publish_inline(body)
+        elif path == 'synthesis-inline':
+            result = service.inline_synthesis(body)
+        elif path == 'input-value':
             from ..workshop_editor import input_value
             result = {'text':jsonio.encode_exact(input_value(body['value']))}
         elif path == 'render-value':
@@ -898,10 +953,30 @@ class Handler(BaseHTTPRequestHandler):
             result = {'available': value is not checks.NO_VALUE}
             if result['available']:
                 result.update(value=typed(value), text=jsonio.encode_exact(value))
+        elif path == 'drafts/import':
+            result = service.import_draft(body)
         elif path == 'preview':
             result = service.preview(body)
         elif path == 'plans':
-            result = service.plan(body.get('action'), body.get('request', {}))
+            action = body.get('action')
+            if isinstance(action, str) and action.startswith('workflow_'):
+                result = service.workflows.plan(action, body.get('request', {}))
+            else:
+                result = service.plan(action, body.get('request', {}))
+        elif len(parts) == 3 and parts[0] == 'workflows' and parts[2] in ('save', 'rebind', 'delete', 'run'):
+            request = body.get('request')
+            if not isinstance(request, dict) or request.get('name') != parts[1]:
+                raise workshop.WorkshopError('invalid', 400)
+            if parts[2] == 'run':
+                result = service.workflows.start(body)
+            else:
+                result = service.workflows.edit('workflow_' + parts[2], request, body)
+        elif len(parts) == 3 and parts[0] == 'workflow-jobs' and parts[2] == 'release':
+            result = service.workflows.job(parts[1]).decide_release(body)
+        elif len(parts) == 3 and parts[0] == 'workflow-jobs' and parts[2] == 'review':
+            result = service.workflows.review(parts[1], body)
+        elif len(parts) == 3 and parts[0] == 'workflow-jobs' and parts[2] == 'stop':
+            result = service.workflows.stop(parts[1])
         elif path == 'save':
             result = service.save(body)
         elif path in ('test', 'batches'):
@@ -929,6 +1004,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise workshop.WorkshopError('invalid', 400)
             if len(parts) == 6 and parts[1:3] == ['api', 'workshop'] and parts[3] == 'blocks' and parts[5] == 'examples':
                 return self._send(200, self.server.state.workshop.save_examples(parts[4], body))
+            if len(parts) == 6 and parts[1:3] == ['api', 'workshop'] and parts[3] == 'blocks' and parts[5] == 'retained-labels':
+                return self._send(200, self.server.state.workshop.save_retained_label_review(parts[4], body))
             if len(parts) == 8 and parts[1:4] == ['api', 'workshop', 'blocks'] and parts[5] == 'revisions' \
                     and parts[7] == 'description':
                 return self._send(200, self.server.state.workshop.save_description(parts[4], parts[6], body))
@@ -1170,7 +1247,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- contract synthesis (overhaul spec 14.3) ------------------------------------------------------
     _SYNTHESIS = ('task_description', 'output_name', 'definition_text', 'role')
-    _SYNTHESIS_OPTIONAL = ('settings_text', 'max_tokens')
+    _SYNTHESIS_OPTIONAL = ('settings_text', 'max_tokens', 'context_local_only', 'references')
 
     def _synthesis_body(self, body, extra=()):
         self._v2(body, self._SYNTHESIS + tuple(extra), self._SYNTHESIS_OPTIONAL)
@@ -1578,3 +1655,4 @@ class Handler(BaseHTTPRequestHandler):
         run_id = self._run_id(body.get("run_id"))
         self.server.state.delete_run(run_id, read_only=self.server.workspace.read_only)
         self._send(200, {"deleted": run_id})
+

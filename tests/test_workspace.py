@@ -115,7 +115,7 @@ def test_cli_server_configuration(tmp_path):
         assert config.is_file()
     finally:
         first.stop()
-    edited = config.read_text().replace("http://localhost:1234/v1", "http://127.0.0.1:9876/v1")
+    edited = config.read_text().replace("http://127.0.0.1:1234/v1", "http://127.0.0.1:9876/v1")
     config.write_text(edited)
     second = Launch(tmp_path, "--config", str(config))
     try:

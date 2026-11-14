@@ -13,6 +13,7 @@ from pathlib import Path
 from . import blocks, checks, contract_schema, history, jsonio, model_step, runner, runs, task_settings as ts, templates
 from . import workshop_editor as editor
 from .state import RoleUnresolved
+from . import draft_lineage, outbound_policy
 from .workshop import TOKEN, WorkshopError
 from .workshop_assets import Assets, Capture, decode_files, document, fail, fingerprint, head, key_name, read, relative, wire_files
 from .workspace import write_atomic_bytes
@@ -27,7 +28,7 @@ SYNTHESIS_PROMPT_VERSION = 1
 SYNTHESIS_VALIDATOR = 'contract_synthesis_v1'
 SYNTHESIS_TASK_LIMIT = 16384
 SYNTHESIS_FIELDS = {'task_description', 'output_name', 'definition_text', 'role'}
-SYNTHESIS_OPTIONAL = {'settings_text', 'max_tokens'}
+SYNTHESIS_OPTIONAL = {'settings_text', 'max_tokens', 'context_local_only', 'references'}
 _SYNTHESIS_WRAPPER = {
     'type': 'object',
     'properties': {
@@ -158,9 +159,59 @@ def judgement(outputs, expectation, verified):
             ok = ok and ((not present) if op == 'absent' else present if op == 'present' else
                          present and current is None if op == 'null' else
                          present and exact_equal(current, jsonio.decode_exact(item['value_text'])))
+    elif expectation.get('kind') == 'text':
+        for item in expectation['assertions']:
+            output = outputs.get(item['output'])
+            if output is None:
+                return 'incorrect'
+            ok = ok and text_assertion(output['text'], item)
     else:
         return 'unknown'
     return 'correct' if ok else 'incorrect'
+
+
+TEXT_OPERATIONS = {'includes': {'output', 'operation', 'values', 'case'},
+                   'excludes': {'output', 'operation', 'values', 'case'},
+                   'excludes_pattern': {'output', 'operation', 'pattern'}}
+
+
+def text_assertion(text, item):
+    """One `text` expectation assertion over a Text output: substring checks, or a named pattern."""
+    from .identifier_pairs import SYNTAXES
+    if item['operation'] == 'excludes_pattern':
+        return SYNTAXES[item['pattern']].search(text) is None
+    if item['case'] == 'insensitive':
+        text = text.casefold()
+        values = [value.casefold() for value in item['values']]
+    else:
+        values = item['values']
+    found = [value in text for value in values]
+    return all(found) if item['operation'] == 'includes' else not any(found)
+
+
+def validate_text_expectation(expectation, outputs):
+    """`outputs` maps each declared output name to its contract (or a contract copy)."""
+    from .identifier_pairs import SYNTAXES
+    rows = expectation.get('assertions')
+    if set(expectation) != {'kind', 'assertions'} or not isinstance(rows, list) or not 1 <= len(rows) <= 50:
+        fail()
+    for index, row in enumerate(rows):
+        fields = TEXT_OPERATIONS.get(row.get('operation')) if isinstance(row, dict) else None
+        if fields is None or set(row) != fields or row['output'] not in outputs:
+            fail()
+        if 'values' in fields:
+            values = row['values']
+            if (not isinstance(values, list) or not 1 <= len(values) <= 50
+                    or any(not isinstance(value, str) or not 1 <= len(value) <= 4096 for value in values)
+                    or row['case'] not in ('sensitive', 'insensitive')):
+                fail()
+        elif row['pattern'] not in SYNTAXES:
+            fail()
+        contract = outputs[row['output']]
+        if getattr(contract, 'parsed', contract).format != 'text':
+            raise WorkshopError('example_incompatible', 409, [{
+                'code': 'example_incompatible', 'location': f'expectation.assertions[{index}].output',
+                'message': 'text assertions require Text outputs'}])
 
 
 class Service:
@@ -178,21 +229,39 @@ class Service:
         self.credential_identities = {}
         self.state.blocks.workshop = self.assets
         self.assets.recover()
+        self.drafts = draft_lineage.References(self.lock)
+        from .workflow_service import Workflows
+        self.workflows = Workflows(self)
+
+    def credential_identity(self, value):
+        candidate = secrets.token_hex(16)
+        with self.lock:
+            return self.credential_identities.setdefault(value, candidate)
 
     def source(self, body):
         if 'draft' in body:
             draft = copy.deepcopy(body['draft'])
+            metadata = draft.setdefault('metadata', {})
+            lineage = self.drafts.get(draft.get('draft_ref'))
         elif 'starter' in body:
-            draft = editor.starter(body['starter'], body.get('key', 'new_block'), body.get('role'), body.get('server'), body.get('tool'))
+            draft = editor.starter(body['starter'], body.get('key', 'new_block'), body.get('role'), body.get('server'), body.get('tool'), version=body.get('starter_version', 1),
+                                  data_handling=body.get('data_handling'))
+            lineage = draft_lineage.Lineage.of(draft)
+        elif body.get('fresh') is True:
+            key = key_name(body.get('key'))
+            draft = {'key': key, 'definition_text': jsonio.encode_exact({
+                'format_version': 3, 'name': key, 'inputs': {}, 'outputs': {}, 'steps': []}),
+                'files': {}, 'metadata': {}}
+            lineage = draft_lineage.Lineage(None, None, None)
         else:
-            draft = self.assets.export(body.get('key'), body.get('revision'), body.get('support'))
-        root = self.assets.path / key_name(draft['key'])
-        if root.exists():
-            current = head(self.assets.root(draft['key']))
-            if current:
-                metadata = document(root / '.workshop' / 'revisions' / current['current'], 'workshop.json')
-                if metadata.get('origin') in ('llm_generated', 'derived_from_llm'):
-                    draft.setdefault('metadata', {})['origin'] = 'derived_from_llm'
+            saved = self.saved_selection(body, key_only=True)
+            if saved is not None:
+                draft = saved.draft(base_digest=self.assets.identity(saved.key))
+                lineage = draft_lineage.Lineage.of(draft, saved.revision)
+            else:
+                draft = self.assets.export(body.get('key'), body.get('revision'), body.get('support'))
+                lineage = draft_lineage.Lineage.of(draft)
+        key_name(draft['key'])
         if 'edit' in body:
             draft = editor.edit(draft, body['edit'])
         if 'duplicate_key' in body:
@@ -204,12 +273,31 @@ class Service:
             draft.pop('root_sources', None)
             draft.setdefault('metadata', {}).pop('revision_number', None)
             draft['metadata'].pop('revision_name', None)
+        if body.get('fresh') is True and 'draft' in body:
+            fail()
         if 'display_name' in body:
             draft.setdefault('metadata', {})['display_name'] = body['display_name']
+        definition = jsonio.decode_exact(draft['definition_text'])
+        metadata = draft.setdefault('metadata', {})
+        if lineage.script_origin:
+            metadata['script_origin'] = lineage.script_origin
+        elif draft_lineage.main_source_hash(draft):
+            metadata.pop('script_origin', None)
+        if lineage.protection == 'inherited' and definition.get('context_local_only') is not True:
+            fail('protection_inherited', 409)
+        if lineage.protection:
+            metadata['protection_origin'] = lineage.protection
+        elif definition.get('context_local_only') is True:
+            metadata['protection_origin'] = 'manual'
+        else:
+            metadata.pop('protection_origin', None)
+        metadata.pop('protection_clear_pending', None)
+        if lineage.protection == 'manual' and definition.get('context_local_only') is not True:
+            metadata['protection_clear_pending'] = True
         return draft
 
     # Fields an explicit saved selector never accepts (spec v2 2.1(3)): a saved request is a clean selection.
-    SAVED_FORBIDDEN = ('draft', 'starter', 'edit', 'duplicate_key', 'display_name', 'support', 'metadata')
+    SAVED_FORBIDDEN = ('draft', 'starter', 'edit', 'duplicate_key', 'display_name', 'support', 'metadata', 'fresh')
 
     def saved_selection(self, body, *, key_only=False):
         """The SavedGeneration a request explicitly selects, or None for the draft/key-only paths.
@@ -232,11 +320,31 @@ class Service:
             return None
         return self.assets.saved(body['key'])
 
+    def import_draft(self, body):
+        """Explicitly open external bytes as a draft while preserving supplied provenance conservatively."""
+        if set(body) != {'draft'} or not isinstance(body['draft'], dict):
+            fail()
+        draft = copy.deepcopy(body['draft'])
+        if 'draft_ref' in draft or draft.get('metadata', {}).get('assets'):
+            fail('draft_expired', 409)
+        key_name(draft['key'])
+        definition = jsonio.decode_exact(draft['definition_text'])
+        if not isinstance(definition, dict):
+            fail()
+        source_hash = draft_lineage.main_source_hash(draft)
+        lineage = draft_lineage.Lineage.of(draft)
+        if source_hash and (self.drafts.generated(source_hash)
+                            or draft_lineage.generated_fingerprint(self.assets.path, source_hash)):
+            lineage = dataclasses.replace(lineage, script_origin='derived_from_llm')
+        return self.preview({'draft': self.drafts.issue(draft, lineage)})
+
     def preview(self, body):
         saved = self.saved_selection(body, key_only=True)
         if saved is not None:
             return self.saved_preview(saved, body)
         draft = self.source(body)
+        if 'draft_ref' not in draft:
+            self.drafts.issue(draft, draft_lineage.Lineage.of(draft))
         with self.assets.validate(draft) as captured:
             return self._project(draft, captured, body)
 
@@ -246,6 +354,7 @@ class Service:
         from . import workshop_descriptions as descriptions
         with self.assets.snapshot(saved) as captured:
             draft = saved.draft(base_digest=self.assets.identity(saved.key))
+            self.drafts.issue(draft, draft_lineage.Lineage.of(draft, saved.revision))
             result = self._project(draft, captured, body)
             result['selector'] = saved.selector
             result['revision_number'] = saved.number
@@ -267,7 +376,8 @@ class Service:
         p = captured.parsed
         result = {'format_version': 1, 'draft': draft, 'source_digest': captured.digest,
                   'issues': list(p.problem.issues) if p.problem else [], 'kind': p.kind,
-                  'classification': editor.classification(draft) if p.kind == 'script' else None}
+                  'classification': editor.classification(draft) if p.kind == 'script' else
+                  'starter' if p.kind == 'transform' and draft.get('metadata', {}).get('starter_version') == 2 else None}
         definition = jsonio.decode_exact(draft['definition_text'])
         result['valid'] = p.problem is None
         result['input_ports'] = list(definition.get('inputs', {}))
@@ -292,7 +402,10 @@ class Service:
             if 'file' in value:
                 return captured.files[value['file']].decode()
             return value.get('text', '')
-        result['design'] = {'purpose': definition.get('description', ''), 'kind': step.get('kind'),
+        result['design'] = {'format_version': definition.get('format_version'),
+            'context_local_only': definition.get('context_local_only', False),
+            'protection_origin': draft.get('metadata', {}).get('protection_origin'),
+            'purpose': definition.get('description', ''), 'kind': step.get('kind'),
             'binding': step.get('role', step.get('server', '')), 'system': asset_text(step.get('system', {})),
             'behaviour': asset_text(step.get('prompt', {})) if step.get('kind') == 'model' else
                 captured.files.get(step.get('file'), b'').decode() if step.get('kind') == 'script' else step.get('tool', ''),
@@ -306,7 +419,7 @@ class Service:
                 'format': (declaration['contract'].get('format', 'shared') if isinstance(declaration['contract'], dict) else 'shared'),
                 'reference': ({k: declaration['contract'].get(k) for k in ('name', 'revision', 'digest')}
                               if isinstance(declaration['contract'], dict) and 'format' not in declaration['contract'] else None),
-                'source': jsonio.encode_exact(declaration['contract'])} for name, declaration in definition.get(side, {}).items()]
+                'local_only': declaration.get('local_only'), 'source': jsonio.encode_exact(declaration['contract'])} for name, declaration in definition.get(side, {}).items()]
         if p.block:
             result['contracts'] = {side: {name: editor.contract_view(c.text) for name, c in ports.items()}
                                    for side, ports in p.block.contracts.items()}
@@ -316,11 +429,17 @@ class Service:
                 if p.kind == 'model':
                     snapshot = self.state.resolve_role(p.block.step.role)
                     result['destination'] = {'role': p.block.step.role, 'kind': snapshot.kind, 'base_url': snapshot.endpoint.base_url, 'model': snapshot.model, 'provider': snapshot.provider}
+                    result['destination_facts'] = outbound_policy.facts(self.state, {
+                        'kind': snapshot.kind, 'url': snapshot.endpoint.base_url, 'model': snapshot.model,
+                        'provider': snapshot.provider or ''})
                     from .model_call import task_arguments
                     task_arguments(p.block.step.task, snapshot.kind, snapshot.provider)
                 elif p.kind == 'tool':
                     snapshot = self.state.mcp_snapshot_for_block(p.block.step.server)
                     result['destination'] = {'server': p.block.step.server, 'tool': p.block.step.tool, 'url': snapshot.url}
+                    if p.block.step.tool:
+                        result['destination_facts'] = outbound_policy.facts(self.state, {
+                            'kind': 'mcp', 'url': snapshot.url, 'server': p.block.step.server, 'tool': p.block.step.tool})
                 elif p.kind == 'script':
                     result['script_source'] = captured.files[p.block.step.script_file].decode('utf-8')
                     result['script_warning'] = 'Python runs with user-level filesystem and network access.'
@@ -431,14 +550,17 @@ class Service:
                                        + '. Run the revisions individually, or choose a compatible example.'}])
         ids = set()
         for ex in examples:
-            if not isinstance(ex, dict) or set(ex) - {'id', 'version', 'label', 'inputs', 'expectation', 'origin', 'verified', 'held_out'}:
+            if not isinstance(ex, dict) or set(ex) - {'id', 'version', 'label', 'inputs', 'expectation', 'origin', 'verified', 'held_out', 'restrictions'}:
                 fail()
             if not isinstance(ex.get('id'), str) or ex['id'] in ids or type(ex.get('version')) is not int or ex['version'] < 1:
                 fail()
             ids.add(ex['id'])
+            restrictions = ex.get('restrictions', {})
+            if not isinstance(restrictions, dict) or any(value is not True for value in restrictions.values()):
+                fail()
             self.input_shape(block, ex.get('inputs'))
             e = ex.get('expectation')
-            if not isinstance(e, dict) or e.get('kind') not in ('whole_output', 'fields', 'review') or type(ex.get('verified', False)) is not bool:
+            if not isinstance(e, dict) or e.get('kind') not in ('whole_output', 'fields', 'review', 'text') or type(ex.get('verified', False)) is not bool:
                 fail()
             if e['kind'] == 'whole_output':
                 if set(e) != {'kind', 'values'} or set(e['values']) != {d.name for d in block.outputs} or not all(isinstance(t, str) for t in e['values'].values()):
@@ -453,8 +575,116 @@ class Service:
                         fail()
                     if row['operation'] == 'equals':
                         jsonio.decode_exact(row['value_text'])
+            elif e['kind'] == 'text':
+                validate_text_expectation(e, block.contracts['outputs'])
             elif set(e) != {'kind', 'criterion'} or not isinstance(e['criterion'], str):
                 fail()
+
+    def labelled_pairs(self, key):
+        """(retained revision ID, input name) for every input labelled Local only in a retained v4 revision."""
+        root = self.assets.path / key_name(key)
+        if not root.exists():
+            return []
+        managed = head(self.assets.root(key))
+        if managed is None:
+            return []
+        pairs = []
+        for revision in managed['retained']:
+            definition = document(root / '.workshop' / 'revisions' / revision, 'block.json')
+            if definition.get('format_version') == 4:
+                pairs.extend((revision, name) for name, port in definition.get('inputs', {}).items()
+                             if port.get('local_only') is True)
+        return pairs
+
+    def label_reviews(self, key):
+        """The block's retained-label acknowledgement record (core_03 §3.4). Missing means none."""
+        key_name(key)
+        root = self.state.workspace.path / 'workshop' / 'label_reviews'
+        if not (root / (key + '.json')).exists():
+            return {'format_version': 1, 'revision': None, 'acknowledged': []}
+        obj = document(root, key + '.json', MANIFEST_LIMIT)
+        rows = obj.get('acknowledged')
+        if obj.get('format_version') != 1:
+            fail('newer_format', 409)
+        if (set(obj) != {'format_version', 'revision', 'acknowledged'} or not isinstance(rows, list)
+                or not isinstance(obj['revision'], str) or len(rows) > 1000
+                or any(not isinstance(r, dict) or set(r) != {'revision', 'input'}
+                       or not isinstance(r['revision'], str) or not isinstance(r['input'], str) for r in rows)):
+            fail('unusable', 409)
+        return obj
+
+    def retained_labels(self, key):
+        """Input names a retained revision labelled Local only, less the exact (revision, input) pairs the
+        owner acknowledged. An unreadable record acknowledges nothing, so restriction is kept."""
+        try:
+            acknowledged = {(r['revision'], r['input']) for r in self.label_reviews(key)['acknowledged']}
+        except WorkshopError:
+            acknowledged = set()
+        return {name for revision, name in self.labelled_pairs(key) if (revision, name) not in acknowledged}
+
+    def retained_label_review(self, key):
+        record = self.label_reviews(key)
+        acknowledged = {(r['revision'], r['input']) for r in record['acknowledged']}
+        numbers = {r['id']: r for r in self.assets.revisions(key)['revisions']}
+        pairs = [{'revision': revision, 'input': name, 'acknowledged': (revision, name) in acknowledged,
+                  'revision_number': numbers.get(revision, {}).get('revision_number'),
+                  'revision_name': numbers.get(revision, {}).get('revision_name')}
+                 for revision, name in self.labelled_pairs(key)]
+        examples = [{'id': ex['id'], 'label': ex.get('label') or ex['id'], 'inputs': sorted(ex['restrictions'])}
+                    for ex in self.collection(key)['examples'] if ex.get('restrictions')]
+        return {'format_version': 1, 'key': key, 'revision': record['revision'], 'pairs': pairs,
+                'restricted_examples': examples}
+
+    def save_retained_label_review(self, key, body):
+        """Replace the acknowledged pairs. Each must name a currently retained Local-only input label.
+        Saved-example restrictions and captured values are not changed."""
+        key_name(key)
+        if (not isinstance(body, dict) or set(body) != {'expected_revision', 'acknowledged'}
+                or not isinstance(body['acknowledged'], list) or len(body['acknowledged']) > 1000):
+            fail()
+        if self.state.workspace.read_only:
+            fail('read_only', 409)
+        writer = self.state.register_writer('Workshop label review')
+        try:
+            with self.assets.reserve(key, 'label_reviews'):
+                if self.label_reviews(key)['revision'] != body['expected_revision']:
+                    fail('stale', 409)
+                current = set(self.labelled_pairs(key))
+                chosen = set()
+                for row in body['acknowledged']:
+                    if not isinstance(row, dict) or set(row) != {'revision', 'input'}:
+                        fail()
+                    pair = (row['revision'], row['input'])
+                    if pair not in current:
+                        fail('stale', 409)
+                    chosen.add(pair)
+                record = {'format_version': 1, 'revision': secrets.token_hex(16),
+                          'acknowledged': [{'revision': r, 'input': n} for r, n in sorted(chosen)]}
+                root = self.safe_directory('label_reviews')
+                write_atomic_bytes(root, key + '.json', jsonio.encode_file_exact(record))
+            return self.retained_label_review(key)
+        finally:
+            writer.release()
+
+    def mark_examples(self, examples, labels, previous):
+        for example in examples:
+            retained = previous.get(example['id'], {}).get('restrictions', {})
+            added = example.get('restrictions', {})
+            protected = {name for name in example['inputs']
+                         if name in labels or retained.get(name) is True or added.get(name) is True}
+            if protected:
+                example['restrictions'] = {name: True for name in sorted(protected)}
+
+    def protect_collection(self, key, labels):
+        if not labels:
+            return
+        previous = self.collection(key)
+        examples = copy.deepcopy(previous['examples'])
+        self.mark_examples(examples, labels, {e['id']: e for e in examples})
+        if examples != previous['examples']:
+            root = self.safe_directory('examples')
+            write_atomic_bytes(root, key + '.json', jsonio.encode_file_exact(
+                {'format_version': 1, 'revision': secrets.token_hex(16), 'examples': examples}))
 
     def save_examples(self, key, body):
         key_name(key)
@@ -471,6 +701,7 @@ class Service:
                     self.validate_examples(body.get('examples'), c.parsed.block)
                 old = {e['id']: e for e in previous['examples']}
                 examples = copy.deepcopy(body['examples'])
+                self.mark_examples(examples, self.retained_labels(key), old)
                 for ex in examples:
                     before = old.get(ex['id'])
                     if before and (before['inputs'] != ex['inputs'] or before['expectation'] != ex['expectation']):
@@ -493,11 +724,58 @@ class Service:
             p.mkdir(exist_ok=True, mode=0o700)
         return root / name
 
+    def authoring_references(self, references):
+        if not isinstance(references, list) or len(references) > 20:
+            fail()
+        materials, restricted = {}, False
+        for ref in references:
+            if not isinstance(ref, dict):
+                fail()
+            kind = ref.get('kind')
+            if kind == 'example' and set(ref) == {'kind', 'key', 'id', 'version'}:
+                rows = self.collection(ref['key'])['examples']
+                example = next((row for row in rows if (row['id'], row['version']) ==
+                                (ref['id'], ref['version'])), None)
+                if example is None:
+                    fail('context_unavailable', 409)
+                materials[ref['id']] = example
+                restricted |= bool(example.get('restrictions') or self.retained_labels(ref['key']))
+            elif kind == 'block' and set(ref) == {'kind', 'key', 'revision'}:
+                saved = self.assets.saved(ref['key'], ref['revision'])
+                materials[saved.revision] = saved.draft()
+                restricted |= bool(saved.definition.get('context_local_only'))
+            elif kind == 'proposal' and set(ref) == {'kind', 'id'}:
+                proposal = self.proposal(ref['id'])
+                materials[ref['id']] = proposal['response']
+                restricted |= bool(proposal.get('protected'))
+            elif kind == 'trace' and set(ref) == {'kind', 'id'}:
+                if not runs.valid_run_id(ref['id']):
+                    fail('context_unavailable', 409)
+                try:
+                    result = self.state.store.run_envelope(ref['id'])['result']
+                except (runs.NotHeld, KeyError):
+                    try:
+                        result = self.state.history.read_run(ref['id'])['result']
+                    except (history.NoSuchRun, KeyError):
+                        fail('context_unavailable', 409)
+                if result is None or result.get('redacted'):
+                    fail('context_unavailable', 409)
+                materials[ref['id']] = result
+                restricted |= bool(result.get('protected'))
+            else:
+                fail()
+        return materials, restricted
+
     def prepare(self, action, body):
         captures = []
         original = body
         validators = None
         describe = None
+        authoring_protected = False
+        if action in ('assist', 'contract_synthesize'):
+            if type(body.get('context_local_only', False)) is not bool:
+                fail()
+            authoring_protected = body.get('context_local_only', False)
         if action == 'assist' and isinstance(body, dict) and body.get('action') == 'describe':
             # Server-owned Describe/Refine (spec v2 4.2), routed before capability enumeration, role selection
             # or draft forwarding. The builder owns the role, context, prompt, schema and options.
@@ -505,12 +783,18 @@ class Service:
                 fail('validation_unavailable', 503)
             describe = self.describe_request({k: v for k, v in body.items()
                                               if k not in ('expected_plan', 'confirmations', 'ticket')})
+            authoring_protected |= describe['protected']
             body = {**body, 'draft': describe['draft'], 'inputs': describe['inputs']}
         elif action == 'contract_synthesize':
             if not checks.schema_support()[0]:
                 fail('validation_unavailable', 503)
             # Entirely server-built: nothing from the caller is merged into the definition.
+            references, inherited = self.authoring_references(body.get('references', []))
+            authoring_protected |= inherited
             body = synthesis_request({k: v for k, v in body.items() if k not in ('expected_plan', 'confirmations', 'ticket')})
+            if references:
+                materials, _ = history.redact(references, self.state.credentials())
+                body['inputs']['task_description'] += '\nReferenced context:\n' + jsonio.encode_exact(materials)
             validators = {('outputs', 'proposal'): SYNTHESIS_VALIDATOR}
             try:
                 self.state.resolve_role(SYNTHESIS_ROLE)
@@ -522,6 +806,10 @@ class Service:
             if not checks.schema_support()[0]:
                 fail('validation_unavailable', 503)
             selected = dict(body)
+            materials, inherited = self.authoring_references(body.get('references', []))
+            authoring_protected |= inherited
+            if materials:
+                selected['evidence'] = {**selected.get('evidence', {}), **materials}
             with self.state._lock:
                 roles = list(self.state._roles)
                 servers = list(self.state._mcp.servers)
@@ -531,6 +819,15 @@ class Service:
                 offered[server] = self.state.mcp_client.observed_tools(snap.identity)
             if body.get('draft'):
                 original_definition = jsonio.decode_exact(body['draft']['definition_text'])
+                selected['draft'] = self.source({'draft': body['draft']})
+                selected['draft'].pop('draft_ref', None)
+                authoring_protected |= bool(original_definition.get('context_local_only')
+                                            or selected['draft']['metadata'].get('protection_clear_pending'))
+                if body.get('evidence') or body.get('action') in ('suggest_examples', 'explain_failure'):
+                    authoring_protected |= any(port.get('local_only') is True
+                                               for side in ('inputs', 'outputs')
+                                               for port in original_definition.get(side, {}).values())
+                    authoring_protected |= any(ex.get('restrictions') for ex in self.collection(selected['draft']['key'])['examples'])
                 for step in original_definition.get('steps', []):
                     if step.get('role') and step['role'] not in roles:
                         roles.append(step['role'])
@@ -545,11 +842,13 @@ class Service:
             body = {**body, **workshop_assist.request(selected)}
         descriptor = {'format_version': 1, 'action': action, 'body_digest': digest({k: v for k, v in original.items() if k not in ('expected_plan', 'confirmations', 'ticket')}),
                       # Describe/Refine is session-only even when Save runs is on (spec v2 4.3).
-                      'saving': False if describe is not None else self.state.save_runs_now(),
+                      'saving': False if describe is not None or authoring_protected else self.state.save_runs_now(),
                       'read_only': self.state.workspace.read_only}
         confirmations = []
         if action == 'save':
             draft = self.source(body)
+            if draft['metadata'].get('protection_clear_pending'):
+                confirmations.append('clear_design_protection')
             c = self.assets.validate(draft)
             captures.append(c)
             if c.parsed.problem:
@@ -562,14 +861,26 @@ class Service:
             except WorkshopError:
                 c.close()
                 raise
+            if c.parsed.block.format_version == 4:
+                confirmations.append('labels_reviewed')
+                descriptor['port_labels'] = {side: {port.name: port.local_only for port in getattr(c.parsed.block, side)}
+                                             for side in ('inputs', 'outputs')}
             descriptor['source'] = c.digest
             descriptor['current'] = self.assets.identity(draft['key'])
             if descriptor['current'] != body.get('expected_identity'):
                 fail('stale', 409)
             if 'overwrite_revision' in body:
+                if c.parsed.block.format_version == 4:
+                    c.close()
+                    fail('new_revision_required', 409)
                 if not isinstance(body['overwrite_revision'], str):
                     fail('invalid', 400)
                 target = self.assets.saved(draft['key'], body['overwrite_revision'])
+                # Overwrite replaces a retained slot. A v4 target may carry Local-only input labels or
+                # protected design history; replacing it would erase them, so only a new revision is allowed.
+                if target.definition.get('context_local_only') is True or target.definition.get('format_version') == 4:
+                    c.close()
+                    fail('new_revision_required', 409)
                 descriptor['overwrite'] = {'id': target.revision, 'revision_number': target.number,
                                            'revision_name': target.name}
                 confirmations.append('overwrite_revision')
@@ -649,7 +960,7 @@ class Service:
                 if b.step.kind == 'model':
                     role_capture = self.state.role_capture(b.step.role)
                     snapshot = role_capture.snapshot
-                    key = self.state.key_for(snapshot.kind, snapshot.endpoint.base_url)
+                    key = outbound_policy.credential(snapshot.endpoint)
                     snapshot = dataclasses.replace(snapshot, endpoint=dataclasses.replace(snapshot.endpoint, api_key=key, api_key_env=None))
                     role_capture = dataclasses.replace(role_capture, snapshot=snapshot)
                     try:
@@ -692,6 +1003,70 @@ class Service:
                     if not self.reviewed(draft['key'], source_hash):
                         confirmations.append('generated_source')
                 descriptor['candidates'].append(record)
+            protected_inputs = {port.name for c in captures for port in c.parsed.block.inputs if port.local_only}
+            # Why this run is restricted, for display only (core_03 §3.1 subset); enforcement is unchanged.
+            sources = [{'code': 'declared_label', 'input': name} for name in sorted(protected_inputs)]
+            if not internal:
+                collection = self.collection(draft['key'])
+                descriptor['example_collection_revision'] = collection['revision']
+                chosen = {ex.get('id') for ex in examples}
+                example_names = {(ex['id'], name) for ex in collection['examples'] if ex['id'] in chosen
+                                 for name in ex.get('restrictions', {})}
+                example_names |= {(ex.get('id'), name) for ex in examples for name in ex.get('restrictions', {})}
+                protected_inputs.update(name for _, name in example_names)
+                sources += [{'code': 'example_restriction', 'example': ident, 'input': name}
+                            for ident, name in sorted(example_names, key=str)]
+                retained = self.retained_labels(draft['key'])
+                protected_inputs.update(retained)
+                if retained:
+                    numbers = {r['id']: r['revision_number'] for r in self.assets.revisions(draft['key'])['revisions']}
+                    sources += [{'code': 'retained_label', 'input': name, 'revision_number': numbers.get(rev)}
+                                for rev, name in self.labelled_pairs(draft['key']) if name in retained]
+            if authoring_protected:
+                sources.append({'code': 'context_inherited'})
+            descriptor['restriction_sources'] = sources
+            try:
+                for c, view in zip(captures, descriptor['candidates']):
+                    block = c.parsed.block
+                    if block.context_local_only:
+                        sources.append({'code': 'context_inherited' if c.metadata.get('protection_origin') == 'inherited'
+                                        else 'context_manual'})
+                    if c.metadata.get('protection_clear_pending'):
+                        sources.append({'code': 'context_clear_pending'})
+                    c.protected = bool(authoring_protected or protected_inputs or block.context_local_only
+                                       or c.metadata.get('protection_clear_pending'))
+                    c.dispatch = None
+                    if c.protected and block.step.kind == 'script':
+                        raise WorkshopError('protected_host_script', 409, [{
+                            'code': 'protected_host_script', 'location': 'step',
+                            'message': 'a protected script would run with ordinary host access',
+                            'restriction_sources': sources, 'remedy': outbound_policy.remedy('protected_host_script')}])
+                    if c.protected and block.step.kind in ('model', 'tool'):
+                        c.dispatch = outbound_policy.block_dispatch(self.state, block, c.snapshot)
+                        view['trust_revision'] = c.dispatch.revision
+                        view['protected'] = True
+            except (outbound_policy.Refused, WorkshopError) as exc:
+                for c in captures:
+                    c.close()
+                if isinstance(exc, outbound_policy.Refused):
+                    failed = next((c for c in captures if getattr(c, 'dispatch', 0) is None and c.protected), None)
+                    destination = None
+                    if failed is not None and failed.parsed.block.step.kind == 'model':
+                        snap = failed.snapshot
+                        destination = {'kind': snap.kind, 'url': snap.endpoint.base_url, 'model': snap.model,
+                                       'provider': snap.provider or ''}
+                    elif failed is not None and failed.parsed.block.step.kind == 'tool':
+                        destination = {'kind': 'mcp', 'url': failed.snapshot.url,
+                                       'server': failed.parsed.block.step.server, 'tool': failed.parsed.block.step.tool}
+                    detail = {'location': 'destination', 'message': 'protected values cannot be sent to this destination',
+                              'restriction_sources': sources}
+                    if destination is not None:
+                        detail.update(destination=destination, **outbound_policy.facts(self.state, destination))
+                    fact = outbound_policy.fact_view(self.state, destination)
+                    detail.update(facts=fact, remedy=outbound_policy.remedy(str(exc), fact))
+                    raise WorkshopError(str(exc), 409, [detail]) from None
+                raise
+            descriptor['protected_context'] = authoring_protected
             descriptor['examples'] = examples
             descriptor['trial_count'] = len(examples) * len(captures)
             descriptor['comparison_kind'] = 'general'
@@ -704,7 +1079,8 @@ class Service:
             if proposal.get('kind') != 'block':
                 fail('invalid', 400)
             descriptor['proposal'] = proposal
-            candidate = workshop_assist.apply({**proposal['request'], 'draft': body.get('draft')}, proposal['response'])
+            source = self.source({'draft': body['draft']}) if body.get('draft') is not None else None
+            candidate = workshop_assist.apply({**proposal['request'], 'draft': source}, proposal['response'])
             if 'draft' in candidate:
                 definition = jsonio.decode_exact(candidate['draft']['definition_text'])
                 old = body.get('draft') or {}
@@ -713,16 +1089,6 @@ class Service:
                                           'after': jsonio.encode_exact(definition.get(field))}
                                          for field in ('description','inputs','outputs','steps','budget')
                                          if previous.get(field) != definition.get(field)]
-                if definition.get('steps') and definition['steps'][0].get('kind') == 'script':
-                    path = definition['steps'][0]['file']
-                    before = decode_files(old.get('files', {})).get(path, b'')
-                    after = decode_files(candidate['draft']['files']).get(path, b'')
-                    if before != after:
-                        descriptor['changes'].append({'name':'Python source','before':before.decode(),'after':after.decode()})
-
-                if definition.get('steps') and definition['steps'][0].get('kind') == 'script' and editor.classification(candidate['draft']) == 'custom':
-                    descriptor['generated_source'] = fingerprint(decode_files(candidate['draft']['files']))
-                    confirmations.append('generated_source')
         else:
             fail()
         # Private credential identities participate in binding but are never returned.
@@ -737,6 +1103,12 @@ class Service:
         elif action == 'assist':
             descriptor['assistance'] = {k: v for k, v in original.items() if k not in ('expected_plan', 'confirmations', 'ticket')}
             descriptor['assistance']['capabilities'] = selected['capabilities']
+            if materials:
+                descriptor['assistance']['evidence'] = selected['evidence']
+        if action == 'assist':
+            # Whether applying the proposal sets inherited design protection (UI-CD v3 CD6); the page shows the
+            # consequence from this value instead of recomputing protection.
+            descriptor['authoring_protected'] = bool(authoring_protected)
         binding = copy.deepcopy(descriptor)
         for candidate in binding.get('candidates', []):
             candidate.pop('schema_observation', None)
@@ -774,6 +1146,8 @@ class Service:
             draft = plan['descriptor']['draft']
             metadata = copy.deepcopy(draft.get('metadata', {}))
             metadata['format_version'] = 1
+            if metadata.pop('protection_clear_pending', False):
+                metadata.pop('protection_origin', None)
             # A new generation starts without standard prose and never inherits one (spec v2 section 3).
             metadata.pop('description_sections', None)
             metadata.pop('description_basis', None)
@@ -783,8 +1157,17 @@ class Service:
             metadata['contracts'], metadata['contract_pins'] = captured_maps(captures[0].parsed.block)
             metadata['contracts_digest'] = contract_maps_digest(metadata['contracts'], metadata['contract_pins'])
             self.reject_credentials({'definition': draft['definition_text'], 'files': {p: b.decode('utf-8', errors='replace') for p, b in decode_files(draft['files']).items()}, 'metadata': metadata})
-            result = self.assets.publish(draft, body.get('expected_identity'), metadata, captures[0],
-                                         overwrite_revision=body.get('overwrite_revision'))
+            labels = {port.name for port in captures[0].parsed.block.inputs if port.local_only}
+            if self.state.workspace.read_only:
+                fail('read_only', 409)
+            writer = self.state.register_writer('Workshop block and example protection')
+            try:
+                with self.assets.reserve(draft['key'], 'examples'):
+                    self.protect_collection(draft['key'], labels)
+                    result = self.assets.publish(draft, body.get('expected_identity'), metadata, captures[0],
+                                                 overwrite_revision=body.get('overwrite_revision'))
+            finally:
+                writer.release()
             result['effective_revision'] = self.state.block_loaded(draft['key'], reload=True).revision
             return result
         finally:
@@ -904,6 +1287,15 @@ class Service:
                     row['state'] = 'dispatch_pending'
                 self.persist(batch)  # Durable intent MUST precede the first possible external action.
                 before_trial_dispatch(batch['id'], row)
+                if 'example_collection_revision' in batch['plan']:
+                    key = capture.parsed.block.name
+                    current_examples = self.collection(key)
+                    if current_examples['revision'] != batch['plan']['example_collection_revision']:
+                        reason = 'dependency_changed'
+                        break
+                    if not capture.protected and self.retained_labels(key):
+                        reason = 'dependency_changed'
+                        break
                 loaded = load_capture(capture, jsonio.decode_exact(capture.files['block.json'].decode())['name'])
                 metadata = loaded.workshop
                 if metadata.get('origin') in ('llm_generated', 'derived_from_llm'):
@@ -912,7 +1304,7 @@ class Service:
                 frozen = runner.FrozenSource(capture.snapshot, batch['saving'], {'batch_id': batch['id'], 'trial_id': row['trial_id'],
                     'snapshot_id': capture.digest, 'example_id': row['example']['id'], 'example_version': row['example']['version'],
                     **revision_provenance(batch['plan'], row['arm'])}, capture,
-                    getattr(capture, 'role_capture', None))
+                    getattr(capture, 'role_capture', None), capture.protected, capture.dispatch)
                 observer = Observer()
                 try:
                     result = runner.run_block(self.state, loaded, row['example']['inputs'], observer, frozen=frozen)
@@ -951,6 +1343,7 @@ class Service:
                     with self.lock:
                         self.proposals[proposal_id] = {'kind': 'contract', 'response': response,
                             'base_digest': batch['plan']['synthesis']['source_digest'],
+                            'protected': batch['plan'].get('protected_context', False),
                             'provenance': synthesis_provenance(batch['plan'])}
                         while len(self.proposals) > 200:
                             self.proposals.pop(next(iter(self.proposals)))
@@ -965,7 +1358,7 @@ class Service:
                     request = batch['plan']['assistance']
                     proposal_id = row['run_id']
                     with self.lock:
-                        self.proposals[proposal_id] = {'kind': 'block', 'request': request, 'response': response, 'base_digest': digest(request.get('draft'))}
+                        self.proposals[proposal_id] = {'kind': 'block', 'request': request, 'response': response, 'base_digest': digest(request.get('draft')), 'protected': batch['plan'].get('protected_context', False)}
                         while len(self.proposals) > 200:
                             self.proposals.pop(next(iter(self.proposals)))
                     row['proposal_id'] = proposal_id
@@ -1132,10 +1525,11 @@ class Service:
             if batch.get('action') == 'contract_synthesize':
                 return {'kind': 'contract', 'response': response,
                         'base_digest': batch['plan']['synthesis']['source_digest'],
-                        'provenance': synthesis_provenance(batch['plan'])}
+                        'protected': batch['plan'].get('protected_context', False),
+                            'provenance': synthesis_provenance(batch['plan'])}
             request = batch['plan']['assistance']
             return {'kind': 'block', 'request': request, 'response': response,
-                    'base_digest': digest(request.get('draft'))}
+                    'base_digest': digest(request.get('draft')), 'protected': batch['plan'].get('protected_context', False)}
         except (KeyError, ValueError, WorkshopError):
             fail('proposal_expired', 410)
 
@@ -1170,7 +1564,9 @@ class Service:
         return {'format_version': 1, 'candidates': paths, 'captured': captured, 'captured_details': details}
 
     def support_preview(self, key, body):
-        draft = self.source({'draft': body['draft']}) if 'draft' in body else self.assets.export(key, support=body.get('initial_support'))
+        draft = self.source({'draft': body['draft']}) if 'draft' in body else self.source({'key': key, 'support': body.get('initial_support')})
+        if 'draft_ref' not in draft:
+            self.drafts.issue(draft, draft_lineage.Lineage.of(draft))
         if draft['key'] != key:
             fail()
         files = decode_files(draft['files'])
@@ -1227,6 +1623,7 @@ class Service:
             if parsed.block is None or saved.basis is None:
                 raise WorkshopError('description_unavailable', 409,
                                     list(parsed.problem.issues) if parsed.problem else [])
+            protected = parsed.block.context_local_only
             ports = descriptions.ports_of(parsed.block)
             if mode == 'refine':
                 proposal = self.description_proposal(body['proposal_id'])
@@ -1252,7 +1649,7 @@ class Service:
                   'basis': saved.basis, 'base_token': base_token, 'ports': ports, 'prior': prior,
                   'proposal_id': proposal_id,
                   'prompt': {'id': descriptions.PROMPT_ID, 'version': descriptions.PROMPT_VERSION}}
-        return {'draft': draft, 'inputs': {'context': context}, 'target': target}
+        return {'draft': draft, 'inputs': {'context': context}, 'target': target, 'protected': protected}
 
     def describe_complete(self, batch, row, record):
         """Validate a completed Describe/Refine answer and store a session-only proposal. A failure is the
@@ -1446,10 +1843,73 @@ class Service:
         return {'proposal_id': proposal_id, 'definition_text': text, 'projection': contract_service.project(text),
                 'notes': list(proposal['response'].get('notes', []))}
 
+    def protect_draft(self, draft):
+        definition = jsonio.decode_exact(draft['definition_text'])
+        if definition.get('format_version') == 3:
+            if definition['steps'][0]['kind'] not in ('model', 'tool'):
+                fail('block_upgrade_required', 409)
+            draft = editor.edit(draft, {'kind': 'upgrade_for_workflows'})
+            definition = jsonio.decode_exact(draft['definition_text'])
+        definition['context_local_only'] = True
+        draft['definition_text'] = jsonio.encode_exact(definition)
+        draft['metadata']['protection_origin'] = 'inherited'
+        return self.drafts.issue(draft, draft_lineage.Lineage.of(draft))
+
+    def inline_synthesis(self, body):
+        if set(body) != {'draft', 'proposal_id', 'side', 'port', 'definition_text'}:
+            fail()
+        draft = self.source({'draft': body['draft']})
+        if 'draft_ref' not in draft:
+            fail('draft_expired', 409)
+        definition = jsonio.decode_exact(draft['definition_text'])
+        side, port = body['side'], body['port']
+        if definition.get('format_version') != 4:
+            fail('block_upgrade_required', 409)
+        if side not in ('inputs', 'outputs') or port not in definition[side]:
+            fail()
+        selected = definition[side][port]
+        inline = selected['contract']
+        if not isinstance(inline, dict) or 'format' not in inline:
+            fail()
+        original = jsonio.decode_exact(body['definition_text']) if body['definition_text'] is not None else None
+        if original is not None and inline != original:
+            fail('proposal_stale', 409)
+        proposal = self.contract_proposal(body['proposal_id'])
+        result = self.synthesis_apply(body['proposal_id'], body['definition_text'])
+        selected['contract'] = jsonio.decode_exact(result['definition_text'])
+        draft['definition_text'] = jsonio.encode_exact(definition)
+        if proposal.get('protected'):
+            draft = self.protect_draft(draft)
+        return self.preview({'draft': draft})
+
+    def publish_inline(self, body):
+        if set(body) != {'draft', 'side', 'port', 'name', 'family', 'label'}:
+            fail()
+        draft = self.source({'draft': body['draft']})
+        if 'draft_ref' not in draft:
+            fail('draft_expired', 409)
+        with self.assets.validate(draft) as captured:
+            block = captured.parsed.block
+            if block is None:
+                fail('block_invalid', 409)
+            if block.context_local_only or captured.metadata.get('protection_clear_pending'):
+                fail('protected_contract_publication', 409)
+            side, port = body['side'], body['port']
+            if side not in ('inputs', 'outputs') or port not in block.contracts[side]:
+                fail()
+            declaration = next(item for item in getattr(block, side) if item.name == port)
+            if declaration.reference is not None:
+                fail()
+            text = block.contracts[side][port].text
+            self.reject_credentials(text)
+            return self.state.save_contract(body['name'], body['family'], None, text, body['label'])
+
     def synthesis_origin(self, proposal_id, definition_text):
         """(origin, basis) for a Save naming a proposal: equal digest means synthesized, otherwise derived.
         The basis is built from server-captured provenance only."""
         proposal = self.contract_proposal(proposal_id)
+        if proposal.get('protected'):
+            fail('protected_contract_publication', 409)
         try:
             derived = contract_schema.contract_digest(proposal_definition(proposal['response']))
         except contract_schema.DefinitionError:
@@ -1473,8 +1933,14 @@ class Service:
                 for item in result['examples']:
                     examples.append({k: item[k] for k in ('label', 'inputs', 'expectation')})
                     examples[-1].update(id=secrets.token_hex(16), version=1, origin='llm_generated', verified=False)
+                    if proposal.get('protected'):
+                        examples[-1]['restrictions'] = {name: True for name in item['inputs']}
                 self.validate_examples(examples, captured.parsed.block)
                 result['examples'] = examples
+        if 'draft' in result and 'draft_ref' not in result['draft']:
+            self.drafts.issue(result['draft'], draft_lineage.Lineage.of(result['draft']))
+        if 'draft' in result and proposal.get('protected'):
+            result['draft'] = self.protect_draft(result['draft'])
         if 'draft' in result:
             # Application produces a draft. Invalid/incomplete bindings remain inspectable.
             result['preview'] = self.preview({'draft': result['draft']})

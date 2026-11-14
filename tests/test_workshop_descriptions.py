@@ -30,6 +30,8 @@ def put(ui, path, body):
 
 
 def plan_save(ui, draft, expected=None):
+    if 'draft_ref' not in draft:
+        draft.update(send(ui, 'drafts/import', draft=draft)['draft'])
     body = {'draft': draft, 'expected_identity': expected}
     plan = send(ui, 'plans', action='save', request=body)
     return send(ui, 'save', **body, expected_plan=plan['expected_plan'],

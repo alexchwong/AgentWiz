@@ -4,7 +4,7 @@ A placeholder is exactly `{{inputs.<path>}}` with no spaces. There are no expres
 filters. Model-only helpers also insert declared output descriptions (never future values). Other `{{...}}` text, such
 as `{{name}}` in an example or JSON braces, is left as it is. A `{{` followed by optional spaces and `inputs`
 or `steps` that is not exactly a placeholder is a load error, so a stray space never silently sends literal
-text to a model (P7). `{{steps.<id>.<output>}}` is refused until 0.2.1.
+text to a model (P7). `{{steps.<id>.<output>}}` is refused inside a block.
 
 Messages name locations and rules, never values.
 """
@@ -29,7 +29,7 @@ OUTPUT_PLACEHOLDER = re.compile(r"\{\{output\.([A-Za-z_][A-Za-z0-9_]*)\}\}")
 _OUTPUT_SUSPECT = re.compile(r"\{\{\s*output(?![A-Za-z0-9_])")
 
 MALFORMED = "malformed placeholder; write {{inputs.<name>}} with no spaces"
-STEPS_LATER = "steps placeholders arrive in 0.2.1"
+STEPS_LATER = "steps placeholders are unsupported inside a block"
 MALFORMED_OUTPUT = ("malformed output placeholder; write {{output.<name>}} with no spaces and "
                     "no path below the output")
 
@@ -135,12 +135,22 @@ def _fill(placeholder: Placeholder, where: str, inserted: str) -> dict:
             "sha256": _digest(inserted)}
 
 
-def fill_text(text: str, where: str, values: Mapping[str, Any]) -> tuple[str, list[dict]]:
+def fill_text(text: str, where: str, values: Mapping[str, Any], *, byte_limit: int | None = None) -> tuple[str, list[dict]]:
     """Fill the placeholders of `text`. A string value is inserted as it is; any other value as its exact JSON
     text, `jsonio.encode_exact(value)` (compact). Returns (filled text, fills with provenance)."""
     fills: list[dict] = []
     out: list[str] = []
     last = 0
+    size = 0
+
+    def append(piece: str) -> None:
+        nonlocal size
+        if byte_limit is not None:
+            size += len(piece.encode("utf-8"))
+            if size > byte_limit:
+                raise FillError(where, "rendered text exceeds its size limit")
+        out.append(piece)
+
     for match in _SUSPECT.finditer(text):
         exact = PLACEHOLDER.match(text, match.start())
         if exact is None:
@@ -148,11 +158,11 @@ def fill_text(text: str, where: str, values: Mapping[str, Any]) -> tuple[str, li
         placeholder = Placeholder(exact.group(0), tuple(exact.group(1).split(".")[1:]))
         value = _resolve(placeholder, where, values)
         inserted = value if isinstance(value, str) else jsonio.encode_exact(value)
-        out.append(text[last:exact.start()])
-        out.append(inserted)
+        append(text[last:exact.start()])
+        append(inserted)
         last = exact.end()
         fills.append(_fill(placeholder, where, inserted))
-    out.append(text[last:])
+    append(text[last:])
     return "".join(out), fills
 
 

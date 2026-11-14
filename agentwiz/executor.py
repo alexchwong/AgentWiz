@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from . import checks, jsonio, mcp_ops, model_step, runs, script_step
+from . import checks, jsonio, mcp_ops, model_step, runs, script_step, templates, transforms
 from .errors import report_internal
 
 
@@ -103,6 +103,9 @@ class StepContext:
     script_env: script_step.Env | None = None
     script_handle: script_step.Handle = field(default_factory=script_step.Handle)
     tally: Tally = field(default_factory=lambda: Tally(None))
+    dispatch: Any = None
+    repair_dispatch: Any = None
+    attempt_gate: Any = None
     produced: dict = field(default_factory=dict)  # output name -> value view, filled when the step is ok
 
 
@@ -168,12 +171,24 @@ def _execute_model(ctx: StepContext) -> dict:
                   max_tokens=getattr(p.task, "max_tokens", None))
     tally = ctx.tally
     callbacks = model_step.Callbacks(committed=lambda record, status: ctx.observer.attempt_committed(record))
+    from . import outbound_policy
     parent: dict | None = None
+    dispatch = ctx.dispatch
     while True:
+        try:
+            if parent is not None and ctx.repair_dispatch and (dispatch is None or dispatch.destination is None):
+                dispatch = ctx.repair_dispatch()
+            if dispatch:
+                dispatch.check()
+        except outbound_policy.Refused as exc:
+            return _failed(result, str(exc))
         try:
             number = ctx.store.reserve_attempt(ctx.run)            # the dispatch gate
         except runs.RunStopped:
             return _stopped(ctx, result)
+        if ctx.attempt_gate and not ctx.attempt_gate():
+            ctx.store.abandon_run(ctx.run, number)
+            return _failed(result, runs.BUDGET_EXCEEDED)
         if parent is None:
             prepared = model_step.prepare_block_first(ctx.run, number, snapshot=snap, task=p.task,
                                                       arguments=p.arguments, messages=p.messages, plan=plan,
@@ -185,7 +200,9 @@ def _execute_model(ctx: StepContext) -> dict:
                 ctx.store.abandon_run(ctx.run, number)
                 raise
             result["repairs_used"] += 1
-        record, value = model_step.run_attempt_with_value(ctx.store, prepared, callbacks, ctx.sink)
+        record, value = model_step.run_attempt_with_value(
+            ctx.store, prepared, callbacks, ctx.sink, dispatch=dispatch) if dispatch else (
+            model_step.run_attempt_with_value(ctx.store, prepared, callbacks, ctx.sink))
         result["attempts"].append(record["id"])
         tally.add(record)
         if record["outcome"] == "truncated":
@@ -208,7 +225,8 @@ def _execute_model(ctx: StepContext) -> dict:
         if outcome == "stopped":
             return _stopped(ctx, result)
         if outcome == "error":
-            return _failed(result, "model_error")
+            error = record.get("error") or {}
+            return _failed(result, error["description"] if error.get("class") == "DestinationRefused" else "model_error")
         if outcome in model_step.BLANK_OUTCOMES:
             return _failed(result, "blank_answer")
         if overall == "incomplete":
@@ -290,12 +308,19 @@ def _execute_tool(ctx: StepContext) -> dict:
     token.on_cancel(stop_action)
     started_at = runs.utc_now()
     snap, client = p.snapshot, ctx.client
+    def call(operation):
+        if ctx.dispatch:
+            operation.authorize = ctx.dispatch.check
+        if ctx.run.source == "block" and ctx.attempt_gate is not None:
+            operation.allow_call_retry = False
+        return client.call(operation, snap, p.tool, p.arguments)
+
     with step_lock:
         if state["never"]:
             op = None
         else:
             try:
-                op = ctx.ops.start("call", snap, lambda c: client.call(c, snap, p.tool, p.arguments),
+                op = ctx.ops.start("call", snap, call,
                                    reservation=p.reservation)          # chain C2 inside
             except mcp_ops.Closed:
                 state["never"] = True
@@ -309,6 +334,11 @@ def _execute_tool(ctx: StepContext) -> dict:
     committed = _wait_committed(op)
     operation = _tool_operation(ctx, p, op, committed, started_at)
     result["operation"] = operation
+    if committed["outcome"] == "unknown":
+        result["outcome"], result["failure"] = "unknown", "call_unknown"
+        if token.cancelled:
+            result["trigger"] = _stop_code(ctx)
+        return result
     if op.ctx.abandoned == "stopped":                    # abandonment for cancellation won the gate
         return _stopped(ctx, result)
     outcome = committed["outcome"]
@@ -395,6 +425,28 @@ def _execute_script(ctx: StepContext) -> dict:
     return _failed(result, "script_error")
 
 
+def _execute_transform(ctx: StepContext) -> dict:
+    step = ctx.block.step
+    result = _base(ctx, "transform", [])
+    result["operation"] = {"name": step.raw["operation"], "version": step.raw["operation_version"]}
+    if ctx.run.token.cancelled:
+        return _stopped(ctx, result)
+    try:
+        value, details = transforms.execute(step.raw["operation"], step.raw["parameters"], ctx.values)
+    except templates.FillError as exc:
+        result["issues"] = [{"location": exc.location, "message": exc.message}]
+        return _failed(result, "transform_error")
+    checked, accepted = _output_checks(ctx, {step.output: value})
+    result["output_checks"] = checked
+    result["fills"] = details
+    if ctx.run.token.cancelled:
+        return _stopped(ctx, result)
+    if not accepted:
+        return _failed(result, "output_failed")
+    ctx.produced[step.output] = view_of(ctx.contracts[step.output].parsed, value)
+    return _ok(result)
+
+
 def execute_step(ctx: StepContext) -> dict:
     """Run the block's one step and return its step result (11.1). The accepted output values, as value views,
     are left in `ctx.produced`."""
@@ -403,4 +455,6 @@ def execute_step(ctx: StepContext) -> dict:
         return _execute_model(ctx)
     if kind == "tool":
         return _execute_tool(ctx)
+    if kind == "transform":
+        return _execute_transform(ctx)
     return _execute_script(ctx)

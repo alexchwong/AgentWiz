@@ -149,7 +149,8 @@ def test_stop_abandons_a_call_that_was_sent_and_keeps_its_outcome(ui, make_fake_
     assert stop_block(ui, run_id) == {"status": "stopping"}
     result = final_of(list(it))["result"]
     step = step_of(result)
-    assert result["outcome"] == "stopped" and step["outcome"] == "stopped" and step["failure"] == "stopped"
+    assert result["outcome"] == "unknown" and step["outcome"] == "unknown" and step["failure"] == "call_unknown"
+    assert step["trigger"] == "stopped"
     assert step["operation"]["outcome"] == "unknown"                  # it may have run; the record says so
     assert step["operation"]["cancel_status"] is not None
     fake.release.set()
@@ -168,7 +169,8 @@ def test_the_time_budget_abandons_a_sent_call_as_unknown(ui, make_fake_mcp, fire
     assert wait_until(lambda: fake.holding >= 1)
     fire_timers.fire(55)
     result = final_of(list(it))["result"]
-    assert result["outcome"] == "budget_exceeded" and step_of(result)["failure"] == "budget_exceeded"
+    assert result["outcome"] == "unknown" and step_of(result)["failure"] == "call_unknown"
+    assert step_of(result)["trigger"] == "budget_exceeded"
     assert step_of(result)["operation"]["outcome"] == "unknown"
     assert result["cancel_reason"] == "budget_exceeded"
     fake.release.set()

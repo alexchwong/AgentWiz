@@ -290,7 +290,7 @@ _UNINSPECTABLE = {
     "contract_not_object": ({**_SCRIPT_BLOCK, "inputs": {"x": {"contract": ["shared"]}}}, {}),
     "pin_name_unreadable": ({**_SCRIPT_BLOCK, "inputs": {"x": {"contract": {"name": 7, "revision": 1,
                                                                              "digest": "sha256:" + "0" * 64}}}}, {}),
-    "newer_root_format": ({**_SCRIPT_BLOCK, "format_version": 4}, {}),
+    "newer_root_format": ({**_SCRIPT_BLOCK, "format_version": 5}, {}),
     "boolean_root_format": ({**_SCRIPT_BLOCK, "format_version": True}, {}),
     "root_array": ("[]", {}),
 }

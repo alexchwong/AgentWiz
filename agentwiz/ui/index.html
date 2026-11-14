@@ -37,6 +37,13 @@
   #banner p { margin:0; }
   #settings-msg.warn { color:var(--warn); }
   dialog { border:1px solid var(--line); border-radius:10px; background:var(--bg); color:var(--fg); width:min(560px, 92vw); }
+  dialog.wide-dialog { width:min(1100px, 96vw); }
+  .roles-panes { display:grid; grid-template-columns:minmax(220px,32%) minmax(0,1fr); gap:1rem; align-items:start; }
+  .roles-index { list-style:none; margin:0; padding:0; max-height:55vh; overflow:auto; }
+  .roles-index button { width:100%; text-align:left; display:flex; flex-direction:column; gap:2px; padding:4px 8px; margin:2px 0; }
+  .roles-index button[aria-current="true"] { border-color:var(--accent, #5688cc); }
+  .roles-index small { color:var(--muted); }
+  @media (max-width: 760px) { .roles-panes { grid-template-columns:minmax(0,1fr); } }
   dialog::backdrop { background:rgba(0,0,0,.4); }
   .inline { display:flex; gap:8px; } .inline > :first-child { flex:1; }
   .hidden, [hidden] { display:none !important; }
@@ -77,18 +84,89 @@
   .checkbox[data-check="incomplete"] .overall { color:var(--warn); }
   .checkbox ul { margin:4px 0; padding-left:18px; font-family:ui-monospace, monospace; font-size:12px; }
   .editor { min-height:260px; }
-  #tutorial-box { position:sticky; top:0; z-index:5; background:var(--bg); border:2px solid var(--accent, #5688cc); padding:12px; margin:12px 0; }
+  #tutorial-box { position:fixed; top:0; right:0; bottom:0; width:min(360px, 92vw); overflow:auto; z-index:20; background:var(--bg); border-left:2px solid var(--accent, #5688cc); padding:12px; margin:0; box-sizing:border-box; }
+  @media (min-width:1100px) { body.help-open { padding-right:376px; } }
+  #save-runs-text[data-state="on"] { font-weight:700; } #save-runs-text[data-state="failed"] { color:var(--warn); }
   #tutorial-box p { margin:6px 0; }
   #tutorial-box input[type="checkbox"] { width:auto; }
   .tutorial-target { outline:3px solid var(--accent); outline-offset:3px; }
 .ws-layout input[type=checkbox],dialog input[type=checkbox]{width:auto}#main-nav .mark,.ws-layout aside .mark{display:none}#main-nav [data-state=running] .mark,.ws-layout aside [data-state=running] .mark{display:inline}.ws-facts dd{min-width:0;overflow-wrap:anywhere}
-.ws-table{overflow-x:auto}.ws-table table{border-collapse:collapse;width:100%}.ws-table th,.ws-table td{border:1px solid var(--line);padding:6px;text-align:left}
-#main-nav{display:flex;gap:.5rem;margin:1rem 0}#main-nav [aria-selected=true],#main-nav [aria-pressed=true],.ws-layout [aria-pressed=true]{font-weight:700;border-bottom:3px solid currentColor}.ws-layout{display:grid;grid-template-columns:minmax(10rem,17rem) minmax(0,1fr);gap:1.25rem}.ws-layout aside,.ws-field{display:grid;gap:.35rem;align-content:start}.ws-field{margin:.65rem 0}.ws-layout textarea,dialog textarea{width:100%;min-height:4rem}.ws-port,article{padding:.6rem;border:1px solid var(--line);margin:.5rem 0}.ws-facts{display:grid;grid-template-columns:auto 1fr;gap:.25rem .75rem}.ws-facts dd{margin:0}dialog{max-height:85vh;max-width:min(48rem,92vw);overflow:auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}#tablist[hidden]{display:none}@media(max-width:720px){.ws-layout{grid-template-columns:minmax(0,1fr)}} </style>
+/* Workflow Design (UI-CD v3 CD1): palette · canvas · inspector. Bands follow content width (§0.1). */
+.wf-design{display:grid;gap:.5rem}.wf-design[data-stale="true"] .wf-world,.wf-design[data-stale="true"] .wf-inspector [data-vslot]{opacity:.65}
+.wf-design-toolbar{gap:.5rem;align-items:center}.wf-validation[data-state="checked"]{color:var(--ok,inherit)}.wf-validation[data-state="unavailable"],.wf-validation[data-state="stale"],.wf-validation[data-state="graph_unavailable"]{color:var(--warn)}
+.wf-panes{display:grid;grid-template-columns:minmax(220px,20%) minmax(560px,1fr) minmax(300px,28%);gap:16px;align-items:start}
+.wf-design[data-band="rail"] .wf-panes{grid-template-columns:3rem minmax(0,1fr) minmax(300px,28%)}
+.wf-design[data-band="stacked"] .wf-panes{grid-template-columns:3rem minmax(0,1fr)}.wf-design[data-band="stacked"] .wf-inspector{grid-column:1/-1;border-left:0;border-top:2px solid var(--line);max-height:none}
+.wf-design[data-band="narrow"] .wf-panes{grid-template-columns:minmax(0,1fr)}
+.wf-center{min-width:0}.wf-palette,.wf-inspector{min-width:0;max-height:calc(100vh - 12rem);overflow:auto}.wf-inspector{border-left:1px solid var(--line);padding-left:.75rem}
+.wf-design[data-band="narrow"] .wf-inspector{border-left:0;border-top:2px solid var(--line);padding:.5rem 0;max-height:none}
+.wf-palette{display:grid;gap:.4rem;align-content:start}.wf-palette h4{margin:.6rem 0 .1rem}.wf-palette-group{display:grid;gap:.3rem}
+.wf-rail{position:relative}.wf-rail .wf-palette-group{display:flex;flex-direction:column;gap:.3rem}.wf-design[data-band="narrow"] .wf-rail .wf-palette-group{flex-direction:row;flex-wrap:wrap}
+.wf-palette-overlay{position:absolute;left:3.2rem;top:0;z-index:20;width:min(22rem,80vw);max-height:70vh;overflow:auto;background:var(--bg);border:1px solid var(--line);padding:.5rem;box-shadow:0 4px 16px rgba(0,0,0,.2)}
+.wf-palette-overlay[hidden]{display:none}.wf-palette-list{list-style:none;padding:0;margin:0;display:grid;gap:.35rem}
+.wf-palette-block{border:1px solid var(--line);border-radius:5px;padding:.35rem;cursor:pointer}.wf-palette-block[aria-disabled="true"]{cursor:default;opacity:.6}.wf-palette-block[data-highlight="true"]{outline:2px solid currentColor}
+.wf-palette-desc{margin:.2rem 0;font-size:.85rem}.wf-palette-ports ul{margin:.2rem 0;padding-left:1rem;font-size:.85rem}
+.wf-canvas-pane{position:relative;overflow:hidden;height:max(420px,calc(100vh - 13rem));border:1px solid var(--line);background:var(--bg);touch-action:none;outline-offset:-3px}
+.wf-world{position:absolute;left:0;top:0;transform-origin:0 0}.wf-edges{position:absolute;overflow:visible;pointer-events:none}
+.wf-edge-line{fill:none;stroke:var(--muted);stroke-width:2;color:var(--muted)}.wf-edge-hit{fill:none;stroke:transparent;stroke-width:14;pointer-events:stroke;cursor:pointer}
+.wf-edge[data-state="unchecked"] .wf-edge-line{stroke-dasharray:6 4}.wf-edge[data-state="restricted"] .wf-edge-line{stroke:#b45309;color:#b45309}.wf-edge[data-state="released"] .wf-edge-line{stroke:#15803d;color:#15803d}
+.wf-edge[data-selected="true"] .wf-edge-line{stroke-width:4}.wf-edge-marker,.wf-edge-path{font-size:11px;text-anchor:middle;fill:currentColor}
+.wf-card{position:absolute;width:210px;box-sizing:border-box;border:1px solid var(--line);background:var(--bg);border-radius:6px;font-size:.85rem}
+.wf-card[data-selected="true"]{outline:3px solid currentColor}.wf-card:focus-visible,.wf-handle:focus-visible{outline:3px solid #2563eb;outline-offset:1px}
+.wf-card-head{cursor:grab;touch-action:none;user-select:none;padding:.35rem .5rem;background:var(--line);border-radius:5px 5px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wf-card-input .wf-card-head,.wf-card-output .wf-card-head,.wf-card-constants .wf-card-head{cursor:default}.wf-card-gate{border-width:2px}
+.wf-card-meta,.wf-card-note{margin:.25rem .5rem;color:var(--muted)}.wf-chip{display:inline-block;margin:.15rem .5rem;padding:0 .3rem;border:1px solid var(--line);border-radius:3px;font-size:.78rem}
+.wf-chip[data-state="protected"]{border-color:#b45309}.wf-badge{display:inline-block;margin:.15rem .5rem;color:var(--warn);font-weight:700}
+.wf-card:has(.wf-badge){border-color:var(--warn)}
+.wf-port{display:grid;grid-template-columns:auto 1fr auto;gap:.3rem;align-items:center;padding:.12rem .25rem;min-height:1.6rem}
+.wf-port-out{grid-template-columns:1fr auto auto auto}.wf-port-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wf-port-state{grid-column:1/-1;font-size:.72rem;color:var(--muted)}.wf-port-in .wf-port-state{padding-left:1.2rem}
+.wf-port-state[data-state="restricted"]{color:#b45309}.wf-port-state[data-state="released"]{color:#15803d}
+.wf-format{font-size:.72rem;color:var(--muted)}.wf-consumers{font-size:.72rem;font-weight:700}
+.wf-handle{width:14px;height:14px;min-width:14px;padding:0;border-radius:50%;border:2px solid var(--muted);background:var(--bg);cursor:crosshair}
+.wf-handle[data-compatible="true"]{border-color:#2563eb;background:#bfdbfe}.wf-handle[data-compatible="false"]{opacity:.35}.wf-handle[data-connecting="true"]{background:#2563eb}.wf-handle[data-refused="true"]{border-color:var(--warn)}
+.wf-state{font-size:.85rem}.wf-state[data-state="restricted"]{color:#b45309}.wf-state[data-state="released"]{color:#15803d}
+.wf-inspector-port{border-top:1px solid var(--line);padding:.35rem 0}.wf-why{padding-left:1.2rem;margin:.2rem 0}.wf-link{background:none;border:0;padding:0;text-align:left;text-decoration:underline;cursor:pointer;color:inherit}
+.wf-item{border-bottom:1px solid var(--line);padding:.55rem 0}.wf-binding{margin:.4rem 0}.wf-item pre,#panel-workflows pre{white-space:pre-wrap;overflow-wrap:anywhere}#panel-workflows fieldset{margin:.55rem 0}#panel-workflows .row{flex-wrap:wrap}.ws-table{overflow-x:auto}.ws-table table{border-collapse:collapse;width:100%}.ws-table th,.ws-table td{border:1px solid var(--line);padding:6px;text-align:left}
+#main-nav{display:flex;gap:.5rem;margin:1rem 0}#main-nav [aria-selected=true],#main-nav [aria-pressed=true],.ws-layout [aria-pressed=true]{font-weight:700;border-bottom:3px solid currentColor}.ws-layout{display:grid;grid-template-columns:minmax(10rem,17rem) minmax(0,1fr);gap:1.25rem}.ws-layout aside,.ws-field{display:grid;gap:.35rem;align-content:start}.ws-field{margin:.65rem 0}.ws-layout textarea,dialog textarea{width:100%;min-height:4rem}.ws-port,article{padding:.6rem;border:1px solid var(--line);margin:.5rem 0}.ws-facts{display:grid;grid-template-columns:auto 1fr;gap:.25rem .75rem}.ws-facts dd{margin:0}dialog{max-height:85vh;max-width:min(48rem,92vw);overflow:auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}#tablist[hidden]{display:none}@media(max-width:720px){.ws-layout{grid-template-columns:minmax(0,1fr)}} .wf-release-payload{max-height:28rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+dialog.wide-dialog{max-width:96vw}
+.history-layout{display:grid;grid-template-columns:minmax(16rem,2fr) minmax(0,3fr);gap:1rem;align-items:start}.history-detail{min-width:0}.history-filters button[aria-pressed="true"]{font-weight:700;border-bottom:3px solid currentColor}
+@media (max-width:879px){.history-layout{grid-template-columns:minmax(0,1fr)}}
+.wf-run-layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:1rem;align-items:start}.wf-run-setup,.wf-run-results{min-width:0}
+.wf-run-status{position:sticky;top:0;z-index:4;background:var(--bg);display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}.wf-run-status:empty{display:none}
+.wf-findings{list-style:none;padding:0;margin:.3rem 0}.wf-finding{border-left:3px solid var(--warn);padding:.2rem .5rem;margin:.25rem 0}.wf-finding[data-severity="warning"]{border-left-color:var(--muted)}.wf-finding-code{color:var(--muted);font-size:12px}
+.wf-progress{padding-left:1.4rem}.wf-node-detail{border-top:1px solid var(--line);margin-top:.5rem;max-height:70vh;overflow:auto}.wf-node-detail:empty{display:none}
+.wf-trust-table{border-collapse:collapse;width:100%}.wf-trust-table th,.wf-trust-table td{border-bottom:1px solid var(--line);padding:4px;text-align:left;vertical-align:top;overflow-wrap:anywhere}
+@media (max-width:879px){.wf-run-layout{grid-template-columns:minmax(0,1fr)}}
+</style>
 <style>
 .ws-layout{grid-template-columns:minmax(0,1fr)}
 .ws-layout aside{grid-template-columns:minmax(8rem,14rem) minmax(10rem,20rem) auto minmax(10rem,20rem);align-items:start;justify-content:start}
 .ws-layout aside #tab-blocks{grid-column:1/-1}
-.ws-design-grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1.4fr) minmax(0,1fr);gap:1rem;align-items:start}
+.ws-design-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1.6fr) minmax(0,1fr);grid-template-areas:"ports prompts settings";gap:1rem;align-items:start}
+.ws-variables{grid-area:ports}.ws-instructions{grid-area:prompts}.ws-misc{grid-area:settings}
+.ws-identity-bar{position:sticky;top:0;z-index:4;background:var(--bg);display:flex;flex-wrap:wrap;gap:.6rem;align-items:end;padding:.4rem 0;border-bottom:1px solid var(--line);margin-bottom:.6rem}
+.ws-identity-bar .ws-field{margin:0}.ws-identity-bar .ws-revision-picker{max-width:18rem}.ws-unsaved{color:var(--muted);font-size:13px;padding-bottom:.4rem}.ws-unsaved[data-state="unsaved"]{color:var(--warn)}
+.ws-banner{border:1px solid var(--warn);padding:.4rem .6rem;margin:.4rem 0;display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+.ws-needs-label{outline:2px solid var(--warn)}.ws-protection-card{border:1px solid var(--line);padding:.5rem;display:flex;flex-direction:column;gap:.3rem}.ws-protection-card h3{margin:0;font-size:14px}.ws-protection-card>button{align-self:start}
+.ws-destination{font-size:13px;margin:.2rem 0}
+.ws-trials-layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:1rem;align-items:start}
+.ws-trials-results{min-width:0}.ws-toolbar{position:sticky;bottom:0;background:var(--bg);padding:.3rem 0}
+.ws-readiness-box{border:1px solid var(--line);padding:.4rem .6rem;margin:.4rem 0}.ws-readiness-box h3{margin:0;font-size:14px}
+.ws-readiness[data-state="refused"]{border-left:3px solid var(--warn);padding-left:.5rem}
+.ws-compare-layout{display:flex;flex-direction:column;gap:.5rem}
+.ws-compare-status{position:sticky;top:0;z-index:4;background:var(--bg);display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;border-bottom:1px solid var(--line);padding:.3rem 0}
+.ws-pair{border:1px solid var(--line);padding:.4rem .6rem;margin:.4rem 0}.ws-pair[data-current="true"]{border-color:var(--accent,#5688cc)}.ws-pair h3{margin:0 0 .3rem;font-size:14px}
+.ws-pair-columns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:.8rem}.ws-pair-columns>article{min-width:0}
+@media (max-width:1259px){.ws-trials-layout{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+@media (max-width:879px){.ws-trials-layout,.ws-pair-columns{grid-template-columns:minmax(0,1fr)}}.ws-inserts{display:flex;flex-wrap:wrap;gap:.3rem}.ws-radio{display:block;margin:.15rem 0}
+/* Content-width bands (UI-AB v2 §0.1): Wide ≥1100, Medium 720–1099, Narrow <720 px of content. The open help panel
+   (360 px) is subtracted by the help-open variants. Viewport queries are used because containment would trap the
+   fixed contract drawer. */
+@media (max-width:1259px){.ws-design-grid{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);grid-template-areas:"ports settings" "prompts settings"}}
+@media (max-width:879px){.ws-design-grid{grid-template-columns:minmax(0,1fr);grid-template-areas:"ports" "prompts" "settings"}}
+@media (min-width:1260px) and (max-width:1619px){body.help-open .ws-design-grid{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);grid-template-areas:"ports settings" "prompts settings"}}
+@media (min-width:880px) and (max-width:1239px){body.help-open .ws-design-grid{grid-template-columns:minmax(0,1fr);grid-template-areas:"ports" "prompts" "settings"}}
 .ws-design-grid>section,.ws-body,.ws-design-grid fieldset{min-width:0}
 .ws-instructions textarea{min-height:13rem}.ws-instructions label:first-child textarea{min-height:6rem}
 .ws-port-table{width:100%;table-layout:fixed;border-collapse:collapse}.ws-port-table th{text-align:left;font-size:12px}
@@ -97,8 +175,21 @@
 .ws-port-table tbody{border-bottom:1px solid var(--line)}.ws-port-table details{margin:.3rem 0}
 .ws-misc{display:flex;flex-direction:column;gap:.4rem}.ws-misc>button{align-self:start}
 .ws-revision-save,.ws-model-settings{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.6rem;align-items:end}.ws-model-settings{grid-template-columns:repeat(2,minmax(0,1fr))}.ws-misc .ws-field{margin:.3rem 0}.ws-revision-save>button{margin-bottom:.3rem}.ws-model-settings input::placeholder{color:var(--muted);opacity:1}.ws-role-field{grid-template-columns:minmax(0,1fr) auto;align-items:center}.ws-role-field select{grid-column:1/-1;grid-row:2}.ws-role-config{font-size:12px;padding:0 4px;grid-column:2;grid-row:1}.ws-revision-picker{max-width:20rem}.ws-hint{color:var(--muted);font-size:13px}.ws-standard-description{border:1px solid var(--line);padding:.6rem;margin:.4rem 0}.ws-standard-description h3{margin:0 0 .3rem}.ws-revision-picker .ws-field{margin:0}.ws-workshop-nav{flex-wrap:wrap}
-@media(max-width:1100px){.ws-design-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.ws-misc{grid-column:1/-1}}
-@media(max-width:720px){.ws-design-grid{grid-template-columns:minmax(0,1fr)}.ws-layout aside{grid-template-columns:minmax(0,1fr)}.ws-revision-save,.ws-model-settings{grid-template-columns:minmax(0,1fr)}.ws-revision-save>button{justify-self:start}.ws-port-table td input,.ws-port-table td select{padding:.25rem}}
+@media(max-width:720px){.ws-layout aside{grid-template-columns:minmax(0,1fr)}.ws-revision-save,.ws-model-settings{grid-template-columns:minmax(0,1fr)}.ws-revision-save>button{justify-self:start}.ws-port-table td input,.ws-port-table td select{padding:.25rem}}
+/* UI-CD v3: release review, result view, Assist, Settings and header (CD3, CD4, CD6, CD8, CD9) */
+.wf-release-grid{display:grid;grid-template-columns:minmax(0,3fr) minmax(16rem,2fr);gap:1rem;align-items:start}.wf-release-main,.wf-release-side{min-width:0}
+.wf-release-side{position:sticky;top:0;max-height:80vh;overflow:auto}.wf-release-tools{gap:.4rem;align-items:end}.wf-release-tools .ws-field{margin:0}
+.wf-mark{background:#fde68a;color:inherit}.wf-mark[data-kind="finding"]{background:#fecaca}.wf-mark[data-kind="find"]{background:#bfdbfe}.wf-mark[data-active="true"]{outline:2px solid currentColor}
+.wf-decision-row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:.35rem 0}.wf-outputs{margin:.5rem 0}.wf-revise{border-left:3px solid var(--warn);padding-left:.5rem}
+@media (max-width:879px){.wf-release-grid{grid-template-columns:minmax(0,1fr)}.wf-release-side{position:static;max-height:none}}
+.result-view .result-output{max-height:24rem;overflow:auto}.result-view .result-output.full{max-height:none}.result-headline{font-weight:600}.result-troubleshooting [role=tab][aria-selected=true]{font-weight:700;border-bottom:3px solid currentColor}
+.ws-assist-actions{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.5rem}.ws-assist-card{display:grid;text-align:left;max-width:14rem}.ws-assist-card[aria-pressed=true]{outline:3px solid currentColor}
+.settings-layout{display:grid;grid-template-columns:minmax(10rem,14rem) minmax(0,1fr);gap:1rem;min-width:min(44rem,85vw)}.settings-nav{display:flex;flex-direction:column;gap:.3rem;align-items:stretch}
+.settings-nav [aria-current=true]{font-weight:700;border-left:3px solid currentColor}
+@media (max-width:719px){.settings-layout{grid-template-columns:minmax(0,1fr)}}
+.header-spacer{flex:1}.activity{display:inline-flex;align-items:center;gap:.25rem}.activity .spinner{width:.8rem;height:.8rem;border:2px solid var(--line);border-top-color:currentColor;border-radius:50%;animation:aw-spin 1s linear infinite}
+@keyframes aw-spin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){.activity .spinner{animation:none}}
+.ws-troubleshooting{margin-top:.5rem}
 </style>
 </head>
 <body>
@@ -106,8 +197,8 @@
   <h1>AgentWiz <span id="version"></span></h1>
   <span id="workspace" data-test="header-workspace"></span>
   <span id="summary"></span>
-  <label class="switch" title="Saved as given, except that credentials AgentWiz has held, if at least 8 characters long, are replaced with ***. Shorter credentials are not replaced. Text you paste into a request, including copied documents and tool results, is saved with it.">
-    <input type="checkbox" id="save-runs" data-test="header-save-runs"> Save runs</label>
+  <label class="switch" id="save-runs-control" title="Saved runs can contain local-only values in unencrypted local files. Saved as given, except that credentials AgentWiz has held, if at least 8 characters long, are replaced with ***. Shorter credentials are not replaced. Text you paste into a request, including copied documents and tool results, is saved with it.">
+    <input type="checkbox" id="save-runs" data-test="header-save-runs"> <span id="save-runs-text" data-test="header-save-state" data-state="off">Save runs: Off</span></label>
   <span id="saving" class="saving hidden" data-test="header-saving">Saving runs</span>
   <span id="switch-msg" class="note err-text hidden" data-test="header-switch-msg"></span>
   <button id="open-settings" data-test="header-model-settings">Model settings</button>
@@ -116,6 +207,7 @@
   <button id="open-roles" data-test="header-roles">Roles</button>
   <button id="open-tutorial" data-test="header-tutorial">Tutorial</button>
 </header>
+<div id="settings-parking" hidden></div>
 <aside id="tutorial-box" class="hidden" data-test="tutorial-box" aria-label="Tutorial guidance">
   <strong id="tutorial-title"></strong>
   <p id="tutorial-tip"></p>
@@ -135,8 +227,9 @@
 <div id="banner" class="hidden" data-test="banner"></div>
 
 <nav id="main-nav" aria-label="Main navigation"><button id="tab-workshop" data-test="tab-workshop" aria-controls="panel-workshop">Workshop</button><button id="ws-workbench" data-test="ws-workbench">Workbench</button></nav>
-<nav id="workshop-sections" class="tabs" role="tablist" aria-label="Workshop sections" hidden><button role="tab" id="ws-section-blocks" data-test="ws-section-blocks" aria-controls="panel-workshop" aria-selected="false" tabindex="-1">Blocks</button><button role="tab" id="tab-contracts" data-test="tab-contracts" aria-controls="panel-contracts" aria-selected="false" tabindex="-1" data-state="idle" data-frag="contracts">Contracts<span class="mark" aria-hidden="true">●</span></button></nav>
+<nav id="workshop-sections" class="tabs" role="tablist" aria-label="Workshop sections" hidden><button role="tab" id="ws-section-blocks" data-test="ws-section-blocks" aria-controls="panel-workshop" aria-selected="false" tabindex="-1">Blocks</button><button role="tab" id="tab-contracts" data-test="tab-contracts" aria-controls="panel-contracts" aria-selected="false" tabindex="-1" data-state="idle" data-frag="contracts">Contracts<span class="mark" aria-hidden="true">●</span></button><button role="tab" id="tab-workflows" aria-controls="panel-workflows" aria-selected="false" tabindex="-1">Workflows</button></nav>
 <section id="panel-workshop" data-test="panel-workshop" hidden></section>
+<section role="tabpanel" id="panel-workflows" aria-labelledby="tab-workflows" hidden></section>
 <section role="tabpanel" id="panel-contracts" data-test="panel-contracts" aria-labelledby="tab-contracts" hidden></section>
 <div class="tabs" role="tablist" aria-label="AgentWiz functions" id="tablist">
   <button role="tab" id="tab-chat" data-test="tab-chat" aria-controls="panel-chat" aria-selected="false" tabindex="-1" data-state="idle" data-frag="chat">Chat<span class="mark" aria-hidden="true">●</span></button>
@@ -179,40 +272,52 @@
   <label class="checkbox-label"><input type="checkbox" id="workspaces-evidence" data-test="workspaces-evidence"> Include saved runs and comparisons in a clone</label>
   <p id="workspaces-msg" class="note" data-test="workspaces-msg" role="status"></p>
   <div class="row" style="justify-content:flex-end">
-    <button type="button" id="workspaces-switch" data-test="workspaces-switch">Switch</button>
+    <button type="button" id="workspaces-switch" data-test="workspaces-switch" class="primary">Switch</button>
     <button type="button" id="workspaces-create" data-test="workspaces-create">Create</button>
-    <button type="button" id="workspaces-clone" data-test="workspaces-clone">Clone</button>
-    <button type="button" id="workspaces-reset" data-test="workspaces-reset">Reset</button>
-    <button type="button" id="workspaces-delete" data-test="workspaces-delete">Delete</button>
     <button type="button" id="workspaces-close" data-test="workspaces-close">Close</button>
   </div>
-  <details>
-    <summary>Launch in another process</summary>
+  <details id="workspaces-more" data-test="workspaces-more">
+    <summary>⋯ More actions</summary>
+    <p class="note">Clone copies the chosen source into the new name. Reset and Delete ask you to type the workspace name.</p>
+    <div class="row">
+      <button type="button" id="workspaces-clone" data-test="workspaces-clone">Clone</button>
+      <button type="button" id="workspaces-reset" data-test="workspaces-reset">Reset</button>
+      <button type="button" id="workspaces-delete" data-test="workspaces-delete">Delete</button>
+    </div>
+    <h4>Launch in another process</h4>
     <p class="note">This starts a separate AgentWiz process. Only one process can own a workspace.</p>
     <div class="row" id="workspaces-launch-row"><button type="button" id="workspaces-launch" data-test="workspaces-launch">Show command</button></div>
     <pre id="workspaces-command" data-test="workspaces-command"></pre>
   </details>
 </dialog>
 
-<dialog id="roles-dialog" data-test="roles-dialog" data-state="idle">
-  <h3 style="margin:4px 0">Roles</h3>
-  <p class="note">Roles select saved model profiles for blocks and Workshop assistance. Local means this machine (LM Studio or a loopback OpenAI-compatible server, including llama-server). Cloud roles never use local profiles. Neither location falls back to the other.</p>
-  <p class="note" id="roles-path" data-test="roles-path"></p>
+<dialog id="roles-dialog" data-test="roles-dialog" data-state="idle" class="wide-dialog">
+  <h3 style="margin:4px 0">Models &amp; roles</h3>
+  <p class="note">A role picks a saved model profile. Local roles use a server on this machine; cloud roles never use local profiles, and neither falls back to the other.</p>
   <p class="warn-text" id="roles-missing-defaults" data-test="roles-missing-defaults" role="status" hidden></p>
-  <div class="fields">
-    <label for="roles-location-filter">Find by location<select id="roles-location-filter" data-test="roles-location-filter"><option value="">All locations</option><option value="local">Local</option><option value="cloud">Cloud / remote</option></select></label>
-    <label for="roles-family-filter">Then family / domain<select id="roles-family-filter" data-test="roles-family-filter"></select></label>
+  <div class="roles-panes">
+    <div class="roles-left">
+      <div class="fields">
+        <label for="roles-location-filter">Location<select id="roles-location-filter" data-test="roles-location-filter"><option value="">All locations</option><option value="local">Local</option><option value="cloud">Cloud / remote</option></select></label>
+        <label for="roles-family-filter">Family<select id="roles-family-filter" data-test="roles-family-filter"></select></label>
+      </div>
+      <label for="roles-selection">Role<select id="roles-selection" data-test="roles-selection"></select></label>
+      <p class="note" id="roles-count" data-test="roles-count" role="status"></p>
+      <ul id="roles-index" class="roles-index" data-test="roles-index"></ul>
+    </div>
+    <div class="roles-right">
+      <div id="roles-list"></div>
+      <p id="roles-msg" class="note" data-test="roles-msg"></p>
+    </div>
   </div>
-  <label for="roles-selection">Role<select id="roles-selection" data-test="roles-selection"></select></label>
-  <p class="note" id="roles-count" data-test="roles-count" role="status"></p>
-  <div id="roles-list"></div>
-  <p id="roles-msg" class="note" data-test="roles-msg"></p>
+  <details class="roles-more"><summary>Roles file</summary>
+    <p class="note" id="roles-path" data-test="roles-path"></p>
+  </details>
   <div class="row" style="justify-content:flex-end">
     <button type="button" id="add-role" data-test="roles-add">Add role</button>
     <button type="button" id="default-roles" data-test="roles-defaults">Set up defaults</button>
-    <button type="button" id="role-create-profile" data-test="roles-create-profile">Create / edit model profiles</button>
     <button type="button" id="close-roles" data-test="roles-close">Close</button>
-    <button type="button" id="save-roles" class="primary" data-test="roles-save">Save all changes</button>
+    <button type="button" id="save-roles" class="primary" data-test="roles-save">Save role assignments</button>
   </div>
 </dialog>
 
@@ -226,7 +331,7 @@
     <button type="button" id="openrouter-key-clear" data-test="openrouter-key-clear">Clear session key</button>
     <button type="button" id="openrouter-key-save" data-test="openrouter-key-save">Set / replace</button></div>
 </dialog>
-<dialog id="settings">
+<dialog id="settings" data-test="settings-dialog">
   <form method="dialog" id="settings-form">
     <label for="profile">Profile</label>
     <div class="inline"><select id="profile"></select><button type="button" id="delete-profile">Delete</button></div>
@@ -261,16 +366,20 @@
 const TOKEN = new URLSearchParams(location.search).get("t") || "";
 // The shared contract components (overhaul spec 15.4): one packaged script behind the same session token,
 // awaited before the contract screen, port editors or the Checked request selector are built.
-const contractsScript = new Promise((resolve, reject) => {
+function loadPageScript(name) { return new Promise((resolve, reject) => {
   const script = document.createElement("script");
-  script.src = "/assets/contracts.js?t=" + encodeURIComponent(TOKEN);
-  script.onload = () => resolve(window.AgentWizContracts);
-  script.onerror = () => reject(new Error("The contract editor script could not be loaded; reload the page."));
+  script.src = "/assets/"+name+".js?t=" + encodeURIComponent(TOKEN);
+  script.onload = resolve;
+  script.onerror = () => reject(new Error("The "+name+" script could not be loaded. Reload the page."));
   document.head.append(script);
-});
+}); }
+const contractsScript = loadPageScript("contracts").then(() => window.AgentWizContracts);
+const workflowScript = loadPageScript("workflows");
 let CW = null;                  // the contract components, once contracts.js has loaded
 const startProblems = [];       // shown in the banner on every render
 const $ = (id) => document.getElementById(id);
+// Settings categories can detach the overview; keep its state target available.
+const summaryEl = $("summary");
 const STALE_SEND = "Settings, a contract or the saving switch were changed elsewhere. The page has reloaded them; check them and send again.";
 const STALE_SAVE = "Settings were changed in another tab. The header now shows the current settings; check them and save again.";
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -279,7 +388,7 @@ const LABELS = { complete: "Complete", empty: "Empty answer", reasoning_only: "R
                  stopped: "Stopped", error: "Error" };
 const DISCLOSURE = "Saved as given, except that credentials AgentWiz has held, if at least 8 characters long, are replaced with ***. " +
   "Shorter credentials are not replaced. Text you paste into a request, including copied documents and tool results, is saved with it.";
-const FRAGS = ["workshop","chat", "documents", "mcp-tools", "contracts", "checked-request", "history", "blocks"];
+const FRAGS = ["workshop","chat", "documents", "mcp-tools", "contracts", "workflows", "checked-request", "history", "blocks"];
 const POLL_MS = 2000;
 let state = {};
 const modelContexts = {};       // model id -> context length, from the dialog's last Load models
@@ -375,6 +484,70 @@ function outPanel(prefix, name, label, cls = "") {
   const pre = h("pre", { class: cls, "data-test": `${prefix}-${name}` });
   const copy = copyControl(`${prefix}-copy-${name}`, () => pre.textContent, () => pre);
   return { el: h("div", {}, h("div", { class: "panelhead" }, h("label", { text: label }), copy), pre), pre };
+}
+
+// --- the shared result view (UI-CD v3 CD4) -------------------------------------------------------------------------
+// Re-indents JSON text without parsing numbers, so exact values such as 9007199254740993 are shown as received.
+function prettyExact(text) {
+  let out = "", indent = 0, i = 0;
+  const pad = () => "\n" + "  ".repeat(Math.max(0, indent));
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '"') { let j = i + 1; while (j < text.length && text[j] !== '"') { if (text[j] === "\\") j++; j++; } out += text.slice(i, j + 1); i = j + 1; continue; }
+    if (" \t\n\r".includes(c)) { i++; continue; }
+    if (c === "{" || c === "[") {
+      const close = c === "{" ? "}" : "]"; let k = i + 1;
+      while (k < text.length && " \t\n\r".includes(text[k])) k++;
+      if (text[k] === close) { out += c + close; i = k + 1; continue; }
+      indent++; out += c + pad(); i++; continue;
+    }
+    if (c === "}" || c === "]") { indent--; out += pad() + c; i++; continue; }
+    if (c === ",") { out += "," + pad(); i++; continue; }
+    if (c === ":") { out += ": "; i++; continue; }
+    out += c; i++;
+  }
+  return out;
+}
+function looksJson(text) { try { JSON.parse(text); return /^\s*[[{]/.test(text); } catch (e) { return false; } }
+// ResultView renders one result in a fixed order: headline, readable outputs, checks, failures and repairs, then a
+// collapsed Troubleshooting section (Request · Reasoning · Raw · Attempts). Attempts open inline, never in dialogs.
+function ResultView(result, { compact = false, test = "result" } = {}) {
+  const box = h("section", { class: "result-view" + (compact ? " compact" : ""), "data-test": test + "-view", "data-outcome": result.outcome || "" });
+  const facts = [result.outcome ? (LABELS[result.outcome] || result.outcome) : null, ...(result.facts || []),
+    result.revision ? "Revision " + result.revision : null, result.elapsed_ms !== undefined ? result.elapsed_ms + " ms" : null,
+    result.usage === undefined ? null : "Usage: " + (result.usage ? Object.entries(result.usage).map(([k, v]) => k + " " + v).join(", ") : "unknown")].filter(Boolean);
+  box.append(h("p", { class: "result-headline", "data-test": test + "-headline", text: facts.join(" · ") }));
+  if (result.redacted) box.append(h("p", { class: "note", "data-test": test + "-redacted", text: "Known credentials were redacted from this record." }));
+  for (const row of result.outputs || []) {
+    const json = row.format === "json" || (row.format !== "text" && looksJson(row.text));
+    const pre = h("pre", { class: "result-output", "data-test": test + "-output", "data-output": row.name, text: json ? prettyExact(row.text) : row.text });
+    const expand = h("button", { type: "button", "data-test": test + "-expand", text: "Expand", onclick: () => { pre.classList.toggle("full"); expand.textContent = pre.classList.contains("full") ? "Collapse" : "Expand"; } });
+    box.append(h("div", { class: "result-output-row" }, h("h4", { text: row.name + (row.local_only ? " · Local only" : "") }), pre,
+      h("div", { class: "row" }, copyControl(test + "-copy-output", () => row.text, () => pre), compact ? null : expand)));
+  }
+  if (result.checks?.length) box.append(h("div", { "data-test": test + "-checks" }, h("h4", { text: "Checks" }),
+    h("ul", {}, result.checks.map((c) => h("li", { "data-overall": c.overall || "", text: c.label + " · " + (c.overall || "recorded") + (c.detail ? " · " + c.detail : "") })))));
+  if (result.correctness) box.append(h("p", { "data-test": test + "-correctness", "data-correctness": result.correctness, text: "Correctness · " + result.correctness }));
+  if (result.failures?.length) box.append(h("div", { "data-test": test + "-failures" }, h("h4", { text: "Failures and repairs" }), h("ul", {}, result.failures.map((f) => h("li", { text: f })))));
+  for (const extra of result.extra || []) if (extra) box.append(extra);
+  const t = result.troubleshooting || {};
+  const tabs = [["request", "Request", t.request], ["reasoning", "Reasoning", t.reasoning], ["raw", "Raw", t.raw], ["attempts", "Attempts", t.attempts?.length ? t.attempts : null]].filter(([, , v]) => v);
+  if (tabs.length) {
+    const pane = h("div", { class: "result-pane" }), bar = h("div", { class: "row", role: "tablist" });
+    const showTab = (id) => {
+      for (const b of bar.children) b.setAttribute("aria-selected", String(b.dataset.tab === id));
+      const [, , value] = tabs.find(([k]) => k === id);
+      if (id === "attempts") {
+        const view = h("div", { "data-test": test + "-attempt" });
+        pane.replaceChildren(h("ul", {}, value.map((a) => h("li", {}, h("button", { type: "button", class: "wf-link", "data-test": test + "-attempt-open", "data-attempt": a.id, text: "Attempt " + a.id,
+          onclick: async () => { try { const record = await a.load(); view.replaceChildren(h("pre", { text: JSON.stringify(record, null, 2) }), copyControl(test + "-copy-attempt", () => JSON.stringify(record, null, 2), null)); } catch (e) { view.textContent = e.message; } } })))), view);
+      } else pane.replaceChildren(h("pre", { "data-test": test + "-" + id, text: value }), copyControl(test + "-copy-" + id, () => value, null));
+    };
+    for (const [id, label] of tabs) bar.append(h("button", { type: "button", role: "tab", "data-tab": id, "data-test": test + "-tab", text: label, onclick: () => showTab(id) }));
+    box.append(h("details", { class: "result-troubleshooting", "data-test": test + "-troubleshooting" }, h("summary", { text: "Troubleshooting" }), bar, pane));
+    showTab(tabs[0][0]);
+  }
+  return box;
 }
 
 // Reads NDJSON lines from a response. onEvent(ev, line) may return "stop". Returns "end" (clean end),
@@ -490,7 +663,7 @@ function fragFromHash() {
   return FRAGS.includes(f) ? f : "workshop";
 }
 
-const NOT_WORKBENCH = ["workshop", "contracts", "history", "blocks"];
+const NOT_WORKBENCH = ["workshop", "contracts", "workflows", "history", "blocks"];
 function selectTab(frag, opts = {}) {
   activeFrag = frag;
   $("tablist").hidden = NOT_WORKBENCH.includes(frag);
@@ -502,10 +675,10 @@ function selectTab(frag, opts = {}) {
     $("panel-" + f).hidden = !selected;
   }
   // Workshop holds Blocks | Contracts; the main Workshop tab stays selected in either section.
-  $("workshop-sections").hidden = !["workshop", "contracts"].includes(frag);
+  $("workshop-sections").hidden = !["workshop", "contracts", "workflows"].includes(frag);
   $("ws-section-blocks").setAttribute("aria-selected", String(frag === "workshop"));
   $("ws-section-blocks").tabIndex = frag === "workshop" ? 0 : -1;
-  if (frag === "contracts") $("tab-workshop").setAttribute("aria-selected", "true");
+  if (frag === "contracts" || frag === "workflows") $("tab-workshop").setAttribute("aria-selected", "true");
   if (opts.focus) $("tab-" + frag).focus();
   if (opts.hash !== false && location.hash !== "#" + frag) {
     try { history.replaceState(null, "", "#" + frag); } catch (e) { /* keep the old fragment */ }
@@ -535,8 +708,10 @@ $("ws-section-blocks").addEventListener("click", () => selectTab("workshop"));
 $("workshop-sections").addEventListener("keydown", (e) => {
   if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(e.key)) return;
   e.preventDefault();
-  const next = activeFrag === "workshop" ? (e.key === "Home" ? "workshop" : "contracts") : (e.key === "End" ? "contracts" : "workshop");
-  selectTab(next); (next === "workshop" ? $("ws-section-blocks") : $("tab-contracts")).focus();
+  const tabs = ["workshop","contracts","workflows"];
+  const current = tabs.indexOf(activeFrag);
+  const next = tabs[e.key === "Home" ? 0 : e.key === "End" ? 2 : (current + (e.key === "ArrowRight" ? 1 : 2)) % 3];
+  selectTab(next); $(next === "workshop" ? "ws-section-blocks" : "tab-"+next).focus();
 });
 window.addEventListener("hashchange", () => {
   const f = fragFromHash();
@@ -590,7 +765,7 @@ function renderState() {
   if (problems.length)
     banner.append(h("p", { text: "Repair or restore the file. Workspace and profile files need a restart; the MCP server library, shared defaults and contracts are reloaded when repaired." }));
   const pr = profilesInfo();
-  $("summary").title = `${pr.path || ""}\nDefaults: ${pr.defaults_path || ""}`;
+  summaryEl.title = `${pr.path || ""}\nDefaults: ${pr.defaults_path || ""}`;
   if (pr.unresolved_active) banner.append(h("p", { text: `Profile ${pr.unresolved_active} is missing; default settings are in use.` }));
   if (state.legacy_server_profiles?.length) banner.append(h("p", {text: `Legacy server URLs in profiles ${state.legacy_server_profiles.join(", ")} are ignored. Transfer any needed URLs to ${state.server_config_path}.`}));
   for (const c of (state.contracts && state.contracts.items) || [])
@@ -604,7 +779,7 @@ function renderState() {
   const parts = [profile, state.kind, state.base_url || "(default URL)", state.model || "(no model)"];
   if (state.kind === "openrouter") parts.push("provider=" + (state.provider || "any"));
   parts.push(keySource(state).summary);
-  $("summary").textContent = parts.join(" · ");
+  summaryEl.textContent = parts.join(" · ");
   const keyMissing = state.openrouter_key_source === "none";
   $("open-openrouter-key").textContent = keyMissing ? "OpenRouter key not set" : "OpenRouter key set";
   $("open-openrouter-key").classList.toggle("primary", keyMissing);
@@ -612,6 +787,8 @@ function renderState() {
   const hi = historyInfo();
   $("save-runs").checked = !!hi.save_runs;
   $("save-runs").disabled = !!hi.read_only;
+  // Save runs is shown in both states; a failed switch keeps its own state until the next change (UI-AB v2 AB10.1).
+  if ($("save-runs-text").dataset.state !== "failed") { $("save-runs-text").dataset.state = hi.save_runs ? "on" : "off"; $("save-runs-text").textContent = "Save runs: " + (hi.save_runs ? "On" : "Off"); }
   $("saving").classList.toggle("hidden", !hi.save_runs);
   $("header-note").textContent = hi.save_runs ? DISCLOSURE : "";
   $("header-note").classList.toggle("hidden", !hi.save_runs);
@@ -623,13 +800,15 @@ async function refreshState() {
 }
 
 $("save-runs").onchange = async () => {
-  const want = $("save-runs").checked, msg = $("switch-msg");
+  const want = $("save-runs").checked, msg = $("switch-msg"), text = $("save-runs-text");
   msg.classList.add("hidden");
+  text.dataset.state = "saving"; text.textContent = "Save runs: switching…";
   try {
     state = await api("/api/history/switch", { save_runs: want, revision: historyInfo().revision });
-    renderState();
+    text.dataset.state = ""; renderState();
   } catch (e) {
-    try { await refreshState(); } catch (e2) { /* keep the last state */ }
+    text.dataset.state = ""; try { await refreshState(); } catch (e2) { /* keep the last state */ }
+    if (e.code !== "stale_revision") { text.dataset.state = "failed"; text.textContent = "Save runs: switch failed"; }
     msg.textContent = e.code === "stale_revision" ? "Run saving was changed elsewhere; the switch shows the current setting." : e.message;
     msg.classList.remove("hidden");
   }
@@ -964,6 +1143,25 @@ function makeRequestTab(frag, source) {
   const reasoning = outPanel(prefix, "reasoning", "Reasoning stream", "reasoning");
   const output = outPanel(prefix, "output", "Output");
   const final = outPanel(prefix, "final", "Final event (exact JSON as received)", "exact");
+  // Destination facts (UI-AB v2 §0.2) for the configured model, computed by the server's trust preview.
+  const destination = h("p", { class: "ws-destination", "data-test": prefix + "-destination" });
+  let destinationKey = "";
+  function refreshDestination() {
+    const d = { kind: state.kind, url: state.base_url || "", model: state.model || "", provider: state.provider || "" };
+    const key = JSON.stringify(d);
+    if (key === destinationKey) return;
+    destinationKey = key;
+    const what = (d.kind === "openrouter" ? "OpenRouter" : d.kind === "lmstudio" ? "LM Studio" : "OpenAI compatible") + (d.model ? " · " + d.model : "");
+    destination.textContent = "Connects to: " + what; delete destination.dataset.locality;
+    if (!d.url || !d.kind) return;
+    wsApi("destination-trust-preview", { destination: d }).then((p) => {
+      if (destinationKey !== key) return;
+      const eligible = p.reason === null || p.reason === "destination_untrusted";
+      destination.dataset.locality = p.locality || "unknown"; destination.dataset.eligible = String(eligible); destination.dataset.trusted = String(!!p.trusted);
+      destination.textContent = "Connects to: " + (p.locality === "local" ? "local endpoint" : "remote endpoint") + " · " + what +
+        " · Local-only data: " + (eligible ? "Eligible" : "Not eligible") + " · " + (p.trusted ? "Trusted" : "Not trusted");
+    }).catch(() => {});
+  }
   const checkResult = checkBox(prefix);
   const structured=h("div",{"data-test":prefix+"-structured-preview"});
   let active = null, shown = null, rows = [], override = null;
@@ -991,10 +1189,12 @@ function makeRequestTab(frag, source) {
     checked ? [contractHost, h("div", { class: "row" }, instructionsBtn), instructionsOut.el] : null,
     h("label", { for: prefix + "-system", text: "System prompt (optional)" }), system,
     h("label", { for: prefix + "-prompt", text: "Input" }), prompt, task.el,
-    h("div", { class: "row" }, send, stop, statusEl, attemptEl, sendReason),
-    h("div", { class: "grid" }, reasoning.el, output.el),
+    h("div", { class: "row" }, send, stop, statusEl, attemptEl, sendReason), destination,
+    output.el,
     checked ? [structured,checkResult.el, h("label", { text: "Attempts of this run" }), attemptsEl, repairBox, previewOut.el] : null,
-    final.el);
+    // Troubleshooting (UI-CD v3 CD10): the reasoning stream and the exact final event, folded below the answer.
+    h("details", { class: "ws-troubleshooting", "data-test": prefix + "-troubleshooting" }, h("summary", { text: "Troubleshooting · reasoning and raw final event" }),
+      reasoning.el, final.el));
 
   const mark = (name, value) => { if (value === null || value === undefined) delete statusEl.dataset[name]; else statusEl.dataset[name] = value; };
   const display = (state_, text, style = "") => { statusEl.dataset.state = state_; statusEl.textContent = text; statusEl.className = "status " + style; };
@@ -1346,6 +1546,7 @@ function makeRequestTab(frag, source) {
     submit,
     onState() {
       task.render();
+      refreshDestination();
       if (checked && contractPicker) {
         // Re-read the selected contract only when the library changed; "Latest" then shows the new number.
         const signature = JSON.stringify((state.contracts && state.contracts.items) || []);
@@ -1795,9 +1996,103 @@ function initContracts(components) {
   const count = h("span", { class: "note", "data-test": "history-count" });
   const listEl = h("ul", { class: "list", "data-test": "history-list" });
   const msg = h("div", { class: "note", "data-test": "history-msg" });
-  const detail = h("div", { "data-test": "history-detail" });
+  const detail = h("div", { "data-test": "history-detail", class: "history-detail" });
+  // One list of saved block runs, workflow runs and comparisons (UI-AB v2 AB9.1). Each record keeps its own store and
+  // delete scope; the list only aggregates them for display.
+  let filter = "all";
+  const filters = h("div", { class: "row history-filters", "data-test": "history-filters" });
+  for (const [id, label] of [["all", "All"], ["blocks", "Block runs"], ["workflows", "Workflows"], ["comparisons", "Comparisons"], ["failed", "Failed"]]) {
+    const b = h("button", { type: "button", "data-test": "history-filter", "data-filter": id, "aria-pressed": String(id === filter), text: label });
+    b.onclick = () => { filter = id; for (const x of filters.children) x.setAttribute("aria-pressed", String(x.dataset.filter === filter)); renderList(lastList); };
+    filters.append(b);
+  }
   panel.append(h("p", { class: "panel-intro", text: "History: saved runs, read-only. Open one, copy any part, or delete it. A run is never loaded back into another tab." }),
-    savingNote, warning, h("div", { class: "row" }, refresh, count), listEl, msg, detail);
+    savingNote, warning, h("div", { class: "history-layout", "data-test": "history-layout" },
+      h("div", { class: "history-left" }, filters, h("div", { class: "row" }, refresh, count), listEl, msg), detail));
+  let workflowJobs = [], comparisonIds = [], summaries = new Map();
+  // Node-structured workflow detail (UI-CD v3 CD5.2): outputs first, ordered node rows, release decisions inline,
+  // the selected node through the shared result view; record files move under Troubleshooting.
+  async function openWorkflow(id) {
+    openId = null; detail.replaceChildren(); detail.dataset.job = id; delete detail.dataset.runId;
+    const root = "workflow-evidence/" + encodeURIComponent(id), manifest = await wsApi(root);
+    const view = h("div", { "data-test": "history-workflow-trace" });
+    const show = async (name, title) => {
+      const trace = await wsApi(root + "?record=" + encodeURIComponent(name));
+      view.replaceChildren(h("h4", { text: title || name }), TABS.workflows?.traceView ? TABS.workflows.traceView(trace) : wsShowValue(trace));
+    };
+    const records = h("div", { "data-test": "history-workflow-records" });
+    for (const name of manifest.records) records.append(wsButton(name, () => show(name), "history-workflow-record"));
+    const del = wsButton("Delete evidence", async () => {
+      if (await wsDialog("Delete saved evidence", h("p", { text: "Permanently delete this saved workflow run?" }), ["Delete", "Cancel"]) !== "Delete") return;
+      await wsApi(root + "/delete", {}); detail.replaceChildren(); delete detail.dataset.job; msg.textContent = "Deleted."; await load();
+    }, "history-workflow-delete");
+    // Record names are <example>-<node>.json, <example>-<node>-attempt-<n>.json and <example>-<node>-release-<kind>.json.
+    const cases = new Map();
+    for (const name of manifest.records) {
+      const m = /^(\d+)-(.+?)(?:-(attempt)-\d+|-release-([a-z_]+))?\.json$/.exec(name);
+      if (!m) continue;
+      const [, index, node, attempt, release] = m;
+      if (!cases.has(index)) cases.set(index, new Map());
+      const nodes = cases.get(index);
+      if (!nodes.has(node)) nodes.set(node, { result: null, releases: [] });
+      if (release) nodes.get(node).releases.push([release, name]);
+      else if (!attempt) nodes.get(node).result = name;
+    }
+    const outputs = h("div", { "data-test": "history-workflow-outputs" });
+    if (manifest.records.includes("result.json")) {
+      wsApi(root + "?record=result.json").then((summary) => {
+        const blocks = summary.examples ? summary.examples.map((row, index) => [row.id || "Example " + (index + 1), row.outputs]) : [[null, summary.outputs]];
+        for (const [label, values] of blocks) for (const [name, row] of Object.entries(values || {}))
+          outputs.append(h("div", { class: "wf-item", "data-test": "history-workflow-output", "data-output": name },
+            h("strong", { text: (label ? label + " · " : "") + name + (row.local_only ? " · Local only" : "") }), h("pre", { text: row.text }),
+            copyControl("history-copy-output", () => row.text, null)));
+      }).catch(() => { outputs.append(h("p", { class: "note", text: "The saved result could not be read." })); });
+    }
+    const nodeList = h("div", { "data-test": "history-workflow-nodes" });
+    for (const [index, nodes] of cases) {
+      const ol = h("ol", { class: "wf-progress" });
+      for (const [node, row] of nodes) {
+        const li = h("li", { "data-test": "history-workflow-node", "data-node": node, "data-example": index },
+          row.result ? h("button", { type: "button", class: "wf-link", "data-test": "history-workflow-node-open", text: node, onclick: () => show(row.result, "Node · " + node).catch((e) => { msg.textContent = e.message; }) }) : h("span", { text: node }));
+        for (const [kind, name] of row.releases) {
+          const decision = h("span", { class: "note", "data-test": "history-release-" + kind, text: " · Release " + kind });
+          if (kind === "decision") wsApi(root + "?record=" + encodeURIComponent(name)).then((record) => {
+            decision.dataset.decision = record.decision || ""; decision.textContent = " · Decision: " + (record.decision || "?") + (record.timestamp ? " · " + record.timestamp : "");
+          }).catch(() => {});
+          li.append(decision, " ", h("button", { type: "button", class: "wf-link", "data-test": "history-release-open", text: "open", onclick: () => show(name, "Release " + kind + " · " + node).catch((e) => { msg.textContent = e.message; }) }));
+        }
+        ol.append(li);
+      }
+      nodeList.append(cases.size > 1 ? h("h4", { text: "Example " + (Number(index) + 1) }) : null, ol);
+    }
+    detail.append(h("div", { class: "row" }, h("strong", { "data-test": "history-workflow-title", text: manifest.name + " · " + manifest.outcome }), del),
+      manifest.intent ? h("p", { text: "Unsettled dispatch · " + manifest.intent.node }) : null, outputs, nodeList, view,
+      h("details", { "data-test": "history-workflow-troubleshooting" }, h("summary", { text: "Troubleshooting · record files" }), records));
+  }
+  // Outcomes in the list (CD5.1): each record's manifest is read once per refresh, not on open.
+  async function summarise() {
+    const next = new Map(), jobs = workflowJobs.map((id) => ["job:" + id, () => wsApi("workflow-evidence/" + encodeURIComponent(id)).then((m) => ({ outcome: m.outcome, at: m.created_at || m.started_at || "" }))]);
+    const comps = comparisonIds.map((id) => ["cmp:" + id, () => wsApi("comparisons/" + id).then((b) => ({ outcome: b.state, at: b.created_at || "" }))]);
+    const all = [...jobs, ...comps];
+    for (let i = 0; i < all.length; i += 8)
+      await Promise.all(all.slice(i, i + 8).map(([key, fn]) => fn().then((v) => next.set(key, v)).catch(() => next.set(key, { outcome: "unreadable", at: "" }))));
+    summaries = next;
+  }
+  const failedOutcome = (o) => !!o && !["complete", "running", "succeeded", "finished"].includes(o);
+  async function openComparison(id) {
+    openId = null; detail.replaceChildren(); detail.dataset.comparison = id; delete detail.dataset.runId; delete detail.dataset.job;
+    const batch = await wsApi("comparisons/" + id);
+    const del = wsButton("Delete comparison", async () => {
+      if (await wsDialog("Delete comparison", h("p", { text: "Permanently delete this saved comparison record? Its child runs are kept." }), ["Delete", "Cancel"]) !== "Delete") return;
+      const response = await fetch("/api/workshop/comparisons/" + id, { method: "DELETE", headers: { "X-Session-Token": TOKEN } });
+      if (!response.ok) throw new Error((await response.json()).code);
+      detail.replaceChildren(); msg.textContent = "Deleted."; await load();
+    }, "history-comparison-delete");
+    detail.append(h("div", { class: "row" }, h("strong", { text: "Comparison " + id.slice(0, 8) + " · " + batch.state }), del),
+      wsShowValue({ arms: (batch.plan?.candidates || []).map((c) => c.draft?.key + (c.block_revision_number ? " revision " + c.block_revision_number : "")),
+        trials: (batch.rows || []).map((r) => ({ example: r.example.label || r.example.id, arm: r.arm === 0 ? "baseline" : "candidate", outcome: r.outcome || r.state, correctness: r.correctness || "unreviewed" })),
+        totals: batch.metrics }));
+  }
 
   function sayList(text) { msg.textContent = text; }
 
@@ -1852,8 +2147,25 @@ function initContracts(components) {
     if (!r) return;
     count.textContent = `${r.shown} of ${r.total} shown`;
     count.dataset.shown = String(r.shown); count.dataset.total = String(r.total);
-    if (!r.runs.length) listEl.append(h("li", { class: "muted", text: "No saved runs." }));
-    for (const row of r.runs) {
+    const runs = filter === "workflows" || filter === "comparisons" ? [] : r.runs.filter((row) => filter !== "failed" || (row.outcome && row.outcome !== "complete"));
+    if (filter === "all" || filter === "workflows" || filter === "failed") for (const id of workflowJobs) {
+      const info = summaries.get("job:" + id) || {};
+      if (filter === "failed" && !failedOutcome(info.outcome)) continue;
+      const li = h("li", { class: "pick" + (detail.dataset.job === id ? " current" : ""), "data-test": "history-workflow-row", "data-job": id, "data-outcome": info.outcome || "" },
+        "Workflow run · " + id + (info.outcome ? " · " + (LABELS[info.outcome] || info.outcome) : "") + (info.at ? " · " + info.at : ""));
+      li.onclick = () => openWorkflow(id).catch((e) => { msg.textContent = e.message; });
+      listEl.append(li);
+    }
+    if (filter === "all" || filter === "comparisons" || filter === "failed") for (const id of comparisonIds) {
+      const info = summaries.get("cmp:" + id) || {};
+      if (filter === "failed" && !failedOutcome(info.outcome)) continue;
+      const li = h("li", { class: "pick" + (detail.dataset.comparison === id ? " current" : ""), "data-test": "history-comparison-row", "data-comparison": id, "data-outcome": info.outcome || "" },
+        "Comparison · " + id.slice(0, 8) + (info.outcome ? " · " + info.outcome : "") + (info.at ? " · " + info.at : ""));
+      li.onclick = () => openComparison(id).catch((e) => { msg.textContent = e.message; });
+      listEl.append(li);
+    }
+    if (!runs.length && !listEl.childElementCount) listEl.append(h("li", { class: "muted", text: "No saved records." }));
+    for (const row of runs) {
       const li = h("li", { class: "pick" + (row.run_id === openId ? " current" : ""), "data-test": "history-row", "data-run-id": row.run_id },
         `${row.created_at || row.folder} · ${row.source || "?"}${row.block ? " " + row.block : ""} · ${row.attempts} ${row.attempts === 1 ? "attempt" : "attempts"} · ${row.outcome ? (LABELS[row.outcome] || row.outcome) : "no attempt saved"} · check: ${row.check || "none"}${row.problem ? " · PROBLEM: " + row.problem.message : ""}`);
       li.onclick = () => openRun(row.run_id);
@@ -1863,13 +2175,19 @@ function initContracts(components) {
 
   async function load() {
     setTabRunning("history", true);
-    try { renderList(await api("/api/runs")); }
+    try {
+      const runs = await api("/api/runs");
+      [workflowJobs, comparisonIds] = await Promise.all([wsApi("workflow-evidence").then((x) => x.jobs).catch(() => []),
+        wsApi("comparisons").then((x) => x.comparisons).catch(() => [])]);
+      await summarise();
+      renderList(runs);
+    }
     catch (e) { sayList(e.message); }
     finally { setTabRunning("history", false); }
   }
 
   async function openRun(id) {
-    openId = id;
+    openId = id; delete detail.dataset.job; delete detail.dataset.comparison;
     try { renderRun(await api("/api/runs/" + id)); msg.textContent = ""; }
     catch (e) { openId = null; detail.replaceChildren(); msg.textContent = e.message; if (e.code === "no_such_run") await load(); }
     renderList(lastList);
@@ -2403,13 +2721,45 @@ function renderRoleBrowser(preferred=roleSelected){
   for(const draft of matches)select.add(new Option(draft.name||"New role (enter a name)",String(roleDrafts.indexOf(draft))));
   select.disabled=!matches.length;
   if(roleSelected)select.value=String(roleDrafts.indexOf(roleSelected));else select.add(new Option("No matching roles", ""));
-  $("roles-count").textContent=`${matches.length} matching of ${roleDrafts.length} roles. Changes are retained while browsing; Save all changes persists every role.`;
+  $("roles-count").textContent=`${matches.length} matching of ${roleDrafts.length} roles. Edits are kept while browsing; Save role assignments saves every role.`;
   const info=rolesInfo(),savedNames=new Set([...Object.keys(info.definitions||{}),...Object.keys(info.map||{})]);
   const missing=Object.keys(info.defaults||{}).filter(name=>!savedNames.has(name));
   const notice=$("roles-missing-defaults");notice.hidden=!missing.length;notice.dataset.missing=missing.join(",");
-  notice.textContent=missing.length?`Default roles missing from this workspace: ${missing.join(", ")}. Use Set up defaults, then Save all changes to add them without replacing existing roles.`:"";
+  notice.textContent=missing.length?`Default roles missing from this workspace: ${missing.join(", ")}. Use Set up defaults, then Save role assignments to add them without replacing existing roles.`:"";
   const list=$("roles-list");list.replaceChildren();
   if(roleSelected)list.append(roleRow(roleSelected));else list.append(h("p",{text:"No roles match these filters. Change the filters or add a role."}));
+  roleMatches=matches;renderRoleIndex(matches);
+}
+// Role index (UI-AB v2 AB6.1): name, location rule, resolved model and status per role, from saved state and the
+// destination facts the server reports for each resolved role.
+let roleFacts={};
+async function loadRoleFacts(){
+  try{const data=await api("/api/workshop/destination-trust-candidates");roleFacts={};
+    for(const row of data.candidates)for(const use of row.used_by)if(use.kind==="role")roleFacts[use.name]=row;}
+  catch(e){roleFacts={};}
+  // Update the index and the destination line in place: re-rendering the editor would drop unsaved typing.
+  if($("roles-dialog").open){renderRoleIndex(roleMatches);$("roles-list").querySelector('[data-test="roles-row"]')?.refreshFacts?.();}
+}
+let roleMatches=[];
+function roleStatus(draft){
+  const details=profilesInfo().details||{},p=details[draft.profile],facts=roleFacts[draft.name];
+  if(!draft.profile)return ["unconfigured","Not configured"];
+  if(!p)return ["missing","Missing profile"];
+  if(p.location!==draft.definition.location)return ["incompatible","Location mismatch"];
+  if(!p.model.trim())return ["no-model","No model"];
+  if(draft.definition.location==="local"&&facts&&!facts.eligible)return ["ineligible","Ready · not eligible for local-only data"];
+  return ["ready","Ready"];
+}
+function renderRoleIndex(matches){
+  const index=$("roles-index");index.replaceChildren();
+  const details=profilesInfo().details||{};
+  for(const draft of matches){
+    const [code,text]=roleStatus(draft),p=details[draft.profile];
+    const item=h("button",{type:"button","data-test":"roles-index-item","data-role":draft.name,"data-status":code,"aria-current":String(draft===roleSelected)},
+      h("strong",{text:draft.name||"New role (enter a name)"}),h("small",{text:(draft.definition.location==="local"?"Local":"Cloud")+" · "+(p?.model||"no model")}),h("small",{text}));
+    item.onclick=()=>{rememberRole();renderRoleBrowser(draft);};
+    index.append(h("li",{},item));
+  }
 }
 
 function roleRow(draft) {
@@ -2446,10 +2796,26 @@ function roleRow(draft) {
   }
   function showStatus(){const p=details[select.value];const code=!select.value?"unconfigured":!p?"missing":p.location!==location.value?"incompatible":!p.model.trim()?"no-model":"ready";row.dataset.status=code;status.textContent={unconfigured:"Not configured. Drafting is allowed; running requires a profile.",missing:"Missing profile. Choose a replacement.",incompatible:"Profile location does not match this role.","no-model":"Choose a model in this profile.",ready:"Ready"}[code];}
   location.onchange=()=>update("");select.onchange=showStatus;update(profile);
+  // The saved role's destination, reported separately: where it connects, local-only eligibility and trust.
+  const destination=h("p",{class:"note","data-test":"roles-destination"});
+  row.refreshFacts=()=>{
+    const facts=roleFacts[name];destination.replaceChildren();
+    if(!facts||select.value!==profile)return;
+    destination.dataset.eligible=String(facts.eligible);destination.dataset.trusted=String(facts.trusted);
+    destination.append("Connects to: "+(facts.locality==="local"?"local endpoint":"remote endpoint")+" · "+facts.destination.url+" · Local-only data: "+(facts.eligible?"Eligible":"Not eligible")+" · "+(facts.trusted?"Trusted":"Not trusted"));
+    if(!facts.eligible&&wsRemedyText(facts.reason))destination.append(h("br"),h("span",{"data-test":"roles-remedy",text:"Profiles don't own server addresses. "+wsRemedyText(facts.reason)}));
+  };
+  row.refreshFacts();
+  const profileButton=h("button",{type:"button","data-test":"roles-create-profile",text:"New or edit profile…",disabled:ro});
+  profileButton.onclick=()=>{
+    // The same profile editor as Model settings, opened over this panel; role edits are kept.
+    rememberRole();$("open-settings").click();
+    $("settings").addEventListener("close",()=>{renderRoleBrowser(draft);loadRoleFacts();},{once:true});
+  };
   const remove = h("button", { type: "button", "data-test": "roles-remove", text: "Remove", disabled: ro });
   remove.onclick = () => {if(!draft.saved||confirm(`Remove role ${name}? Existing blocks may still reference it and will need a replacement.`)){roleDrafts=roleDrafts.filter(d=>d!==draft);renderRoleBrowser(null);}};
-  row.append(h("div", { class: "fields" }, h("div", {}, h("label", { text: "Role" }), nameInput), h("div", {}, h("label", { text: "Profile" }), select)),
-    h("div", { class: "fields" }, h("label", {}, "Purpose", description), h("label", {}, "Execution location", location)), status,
+  row.append(h("div", { class: "fields" }, h("div", {}, h("label", { text: "Role" }), nameInput), h("div", {}, h("label", { text: "Profile" }), select, profileButton)),
+    h("div", { class: "fields" }, h("label", {}, "Purpose", description), h("label", {}, "Location rule", location)), status, destination,
     h("label",{},"Family / domain",family),h("div",{class:"row"},familyName,addFamily),
     h("label",{},"Default temperature",defaultTemperature),h("label",{},"Default reasoning",defaultReasoning),
     h("div", { class: "row" }, remove));
@@ -2469,17 +2835,12 @@ function fillRoles(message) {
   $("roles-msg").textContent = message || reason;
 }
 
-$("open-roles").onclick = () => { $("roles-dialog").dataset.state = "idle"; fillRoles(); $("roles-dialog").showModal(); };
+$("open-roles").onclick = () => { $("roles-dialog").dataset.state = "idle"; fillRoles(); $("roles-dialog").showModal(); loadRoleFacts(); };
 $("close-roles").onclick = () => $("roles-dialog").close();
 for(const id of ["roles-location-filter","roles-family-filter"])$(id).onchange=()=>{rememberRole();renderRoleBrowser();};
 $("roles-selection").onchange=()=>{rememberRole();renderRoleBrowser(roleDrafts[Number($("roles-selection").value)]);};
 $("add-role").onclick = () => {rememberRole();const draft=roleDraft("","",{location:$("roles-location-filter").value||"local",family:$("roles-family-filter").value||"General"});roleDrafts.push(draft);renderRoleBrowser(draft);};
 $("default-roles").onclick=()=>{rememberRole();const names=new Set(roleDrafts.map(d=>d.name));for(const [n,d] of Object.entries(rolesInfo().defaults||{}))if(!names.has(n))roleDrafts.push(roleDraft(n,"",d));renderRoleBrowser();};
-$("role-create-profile").onclick=()=>{
-  rememberRole();const dlg=$("roles-dialog");
-  dlg.close();$("open-settings").click();
-  $("settings").addEventListener("close",()=>{renderRoleBrowser();dlg.showModal();},{once:true});
-};
 $("save-roles").onclick = async () => {
   rememberRole();
   const map = Object.create(null), definitions=Object.create(null), dlg = $("roles-dialog");
@@ -2498,11 +2859,11 @@ $("save-roles").onclick = async () => {
   }
   try {
     state = await api("/api/roles/save", { roles: map, definitions, revision: rolesInfo().revision });
-    renderState(); fillRoles("Saved."); dlg.dataset.state = "saved";
+    renderState(); fillRoles("Role assignments saved. Profiles are saved separately."); dlg.dataset.state = "saved"; loadRoleFacts();
   } catch (e) {
     try { await refreshState(); } catch (e2) { /* keep */ }
     if (e.code === "stale_revision") { fillRoles(ROLES_STALE); dlg.dataset.state = "stale"; }
-    else { dlg.dataset.state = "error"; $("roles-msg").textContent = e.message; }
+    else { dlg.dataset.state = "error"; $("roles-msg").textContent = "Role assignments were not saved; your edits are kept. Profiles saved earlier stay saved. " + e.message; }
   }
 };
 
@@ -2526,7 +2887,17 @@ const TUTORIAL_ACTIONS = {
     $("open-roles").click();
     await new Promise((resolve) => { const d = $("roles-dialog"); const done = () => { d.removeEventListener("close", done); resolve(); }; d.addEventListener("close", done); });
   },
-  "wait-script": async (topic) => { await TABS.workshop.tutorialPrepare("wait_for_stop", {}); tutorialTarget("ws-run-test"); },
+  "show-workflow-upgrade": async () => {
+    const key="tutorial_local_model";
+    const sources=await wsApi("workflow-source-options/"+key);
+    const original=sources.revisions.at(-1);
+    if (!original || !await wsLeave()) return;
+    selectTab("workshop");
+    ws.view="design";
+    await wsLoad({key,revision:original.id},false);
+    tutorialTarget("ws-upgrade-for-workflows");
+  },
+  "wait-script": async (topic) => { await TABS.workshop.tutorialPrepare("tutorial_wait", {}); tutorialTarget("ws-run-test"); },
 };
 function tutorialTarget(name) {
   for (const el of document.querySelectorAll(".tutorial-target")) el.classList.remove("tutorial-target");
@@ -2669,7 +3040,8 @@ function wsDirty(){ws.dirty=true;wsHeading.textContent=(ws.draft?.metadata?.disp
 window.addEventListener("beforeunload",e=>{if(ws.dirty||ws.examplesDirty||(TABS.contracts&&TABS.contracts.dirty&&TABS.contracts.dirty())){e.preventDefault();e.returnValue="";}});
 function wsDialog(title,content,choices,beforeClose){
   return new Promise(resolve=>{
-    const dialog=h("dialog",{"data-test":"ws-dialog"},h("h2",{text:title}),content);
+    const headingId="ws-dialog-"+crypto.randomUUID();
+    const dialog=h("dialog",{"data-test":"ws-dialog","aria-labelledby":headingId},h("h2",{id:headingId,text:title}),content);
     const close=v=>{dialog.close();dialog.remove();resolve(v);};
     let submitting=false;
     dialog.append(h("div",{class:"row"},...choices.map(c=>wsButton(c,async()=>{
@@ -2710,14 +3082,33 @@ async function wsPlan(action,request){
   for(const c of d.candidates||[]){
     const dest=c.destination||{},url=dest.base_url||dest.url;let locality=c.kind==="script"?"Local script":"Remote or unknown";
     if(url){try{locality=["localhost","127.0.0.1","[::1]"].includes(new URL(url).hostname)?"Local endpoint":"Remote endpoint";}catch(e){}}
-    disclosure.append(wsShowValue({source:c.block_revision_number?"Saved revision "+c.block_revision_number:"Unsaved draft",destination:c.destination||c.kind,location:locality,effects:c.effects}));if(c.settings)disclosure.append(wsTyped(c.settings));
+    disclosure.append(wsShowValue({source:c.block_revision_number?"Saved revision "+c.block_revision_number:"Unsaved draft",destination:c.destination||c.kind,connects_to:locality,effects:c.effects}));if(c.settings)disclosure.append(wsTyped(c.settings));
   }
   if(d.candidates?.length===2){const [a,b]=d.candidates;disclosure.append(wsShowValue({definition_changed:a.source_digest!==b.source_digest,baseline:a.source_digest,candidate:b.source_digest}));
     disclosure.append(wsSource("Compare exact definitions",a.draft.definition_text+"\n\nCandidate\n"+b.draft.definition_text));}
   disclosure.append(wsShowValue({saving:d.saving,persistence:d.saving?"Saved evidence":"Session only; restart loses results",trials:d.trial_count??1,repairs:d.repair_bounds||[],pruned:(d.pruned||[]).map(id=>{const r=ws.revisionRows.find(r=>r.id===id);return r?wsRevisionLabel(r):id;})}));
+  if(d.port_labels){
+    const labels=h("ul");
+    for(const [side,ports] of Object.entries(d.port_labels))
+      for(const [name,restricted] of Object.entries(ports))
+        labels.append(h("li",{text:side+" · "+name+" · "+(restricted?"Local only":"Unrestricted")}));
+    disclosure.append(h("h4",{text:"Review port locality labels"}),labels);
+  }
+  if(d.restriction_sources?.length)disclosure.append(h("h4",{text:"Run restrictions"}),wsRestrictionList(d.restriction_sources));
   if(d.overwrite)disclosure.append(h("p",{text:"Overwrite selected revision "+wsRevisionLabel(d.overwrite)+"? Its previous contents and standard description will be replaced. Other revisions and existing run evidence are unchanged."}));
   disclosure.append(h("p",{text:"Start makes real model, tool or script calls. Comparison order alternates by example; backend internals and cold starts may differ."}));
-  if(d.assistance)disclosure.append(wsShowValue({action:d.assistance.action,task:d.assistance.task,stage:d.assistance.stage,sections:d.assistance.sections,evidence:d.assistance.evidence}));
+  if(d.assistance&&action==="assist"&&d.assistance.action!=="describe"){
+    // Built from the prepared plan (CD6): what is actually included, and the permanent protection consequence.
+    const a=d.assistance,includes=h("ul",{"data-test":"ws-assist-includes"});
+    if(a.draft)includes.append(h("li",{"data-item":"definition",text:"Block definition"}));
+    if(a.task)includes.append(h("li",{"data-item":"instructions",text:"Your instructions"}));
+    if(a.sections?.length)includes.append(h("li",{"data-item":"sections",text:"Selected sections: "+a.sections.join(", ")}));
+    for(const ref of a.references||[])includes.append(h("li",{"data-item":"evidence","data-run":ref.id,text:"Evidence · run "+ref.id+" · recorded inputs and outputs"}));
+    disclosure.append(h("h4",{text:"Includes"}),includes);
+    ws.assistProtected=!!d.authoring_protected;
+    if(d.authoring_protected)disclosure.append(h("p",{class:"warn-text","data-test":"ws-assist-protection",
+      text:"Applying this proposal permanently protects this block's design. The block must also run on a trusted local destination."}));
+  } else if(d.assistance)disclosure.append(wsShowValue({action:d.assistance.action,task:d.assistance.task,stage:d.assistance.stage,sections:d.assistance.sections,evidence:d.assistance.evidence}));
   const reviewed=plan.required_confirmations.some(c=>c.kind==="generated_source"||c.kind==="support_set");
   for(const draft of [d.draft,...(d.candidates||[]).map(c=>c.draft)].filter(Boolean)){
     const source=h("details",{open:reviewed},h("summary",{text:"Complete selected source · "+draft.key}));
@@ -2790,19 +3181,28 @@ async function wsSupport(){
     await wsLoad({draft:selection.draft},true);
   }
 }
-async function wsNew(){
+// `starter` preselects a starter, for Workflow Design's Create block… and Restore placeholders (UI-CD v3 CD1.12).
+async function wsNew(starter){
   if(!await wsLeave())return;
   state=await api("/api/state");
-  const box=h("div"),name=wsField(box,"Block key"),starters=(await wsApi("starters")).starters;
-  box.append(h("p",{text:"A stable identifier, not a display title: 1–64 letters, digits, dots, underscores or hyphens; start with a letter or digit. Example: summarise_notes. No spaces."}));
+  const box=h("div",{class:"ws-create"}),name=wsField(box,"Block key"),starters=(await wsApi("starters")).starters;
+  name.title="A stable identifier, not a display title: 1–64 letters, digits, dots, underscores or hyphens, starting with a letter or digit.";
+  name.placeholder="summarise_notes";
   const kind=wsChoice(box,"Start with",[...starters.map(s=>[s.id,s.id.replaceAll("_"," ")]),...["model","tool","script"].map(k=>["blank_"+k,"Blank "+k])]);
-  box.append(h("p",{text:"Start with chooses a prepared template or a blank model, tool or Python script block."}));
+  const preview=h("p",{class:"ws-hint","data-test":"ws-create-preview"});box.append(preview);
   const modelBox=h("div"),toolBox=h("div");box.append(modelBox,toolBox);
   const role=wsRoleChoice(modelBox,"Model role","fast");
-  modelBox.append(h("p",{text:"A role is an alias for a saved model profile, not a chat-message role. Configure assignments in Settings → Roles. Unresolved roles can be drafted but must be configured before running."}));
+  role.title="A role is an alias for a saved model profile. Unresolved roles can be drafted but must be configured before running.";
   const server=wsChoice(toolBox,"MCP server",[["","Choose a configured server"],...Object.keys(mcpInfo().servers).map(n=>[n,n])]);
-  const tool=wsChoice(toolBox,"Tool name",[]),discovery=h("p",{role:"status","data-test":"ws-tool-discovery"});
-  toolBox.append(h("p",{text:"Servers come from Settings → MCP servers; unconfigured servers cannot be auto-detected. Tools are discovered from the selected server without calling them."}),discovery);
+  const tool=wsChoice(toolBox,"Tool name",[]),discovery=h("p",{role:"status",class:"ws-hint","data-test":"ws-tool-discovery"});
+  toolBox.append(discovery);
+  // Port labels (core_04): an explicit choice makes a workflow-ready (v4) model or tool block.
+  const labels=h("fieldset",{"data-test":"ws-port-labels","data-state":"unset"},h("legend",{text:"Port labels"}));box.append(labels);
+  const labelChoices=[["private","Local only","Every starter port is labelled Local only."],["not_private","No local-only label","Every starter port declares no restriction of its own."],["per_port","Decide per port","Labels stay unset; saving is refused until each port is chosen."]];
+  const labelGroup="ws-labels-"+crypto.randomUUID();
+  for(const [value,text,hint] of labelChoices){const radio=h("input",{type:"radio",name:labelGroup,value,"data-test":"ws-port-label-"+value.replace("_","-")});radio.onchange=()=>{labels.dataset.state=value;};labels.append(h("label",{class:"ws-radio",title:hint},radio," "+text));}
+  labels.append(h("p",{class:"ws-hint",text:"Labels declare this block's own ports. Restrictions can still come from connected inputs, examples or protected design."}));
+  const chosenLabels=()=>labels.querySelector("input:checked")?.value||"";
   let generation=0;
   async function discover(){
     const current=++generation,selected=server.value;
@@ -2814,11 +3214,20 @@ async function wsNew(){
       if(current!==generation)return;
       tool.replaceChildren(...found.tools.map(t=>new Option(t.title?t.title+" · "+t.name:t.name,t.name)));
       tool.disabled=!found.tools.length;discovery.dataset.state=found.tools.length?"ready":"empty";
-      discovery.textContent=found.tools.length?"Choose an advertised tool. Review its arguments in Design.":"This server advertises no tools.";
+      discovery.textContent=found.tools.length?"Choose an advertised tool. Its arguments are reviewed in Design.":"This server advertises no tools.";
     }catch(e){if(current===generation){discovery.dataset.state="error";discovery.textContent=wsErrorText(e);}}
   }
   server.onchange=discover;toolBox.append(wsButton("Refresh tools",async()=>{state=await api("/api/state");await discover();}));
-  function updateKind(){const k=kind.value;modelBox.hidden=!["blank_model","write_text","summarise","extract_fields","choose_label","check_source"].includes(k);toolBox.hidden=!["call_tool","blank_tool"].includes(k);if(!toolBox.hidden)discover();else ++generation;}
+  const MODEL_STARTERS=["blank_model","write_text","summarise","extract_fields","choose_label","check_source"],TOOL_STARTERS=["call_tool","blank_tool"];
+  function updateKind(){
+    const k=kind.value,model=MODEL_STARTERS.includes(k),toolKind=TOOL_STARTERS.includes(k),version=starters.find(s=>s.id===k)?.version||1;
+    modelBox.hidden=!model;toolBox.hidden=!toolKind;labels.hidden=!(model||toolKind);
+    preview.dataset.kind=model?"model":toolKind?"tool":version===2?"transform":"script";
+    preview.textContent=model||toolKind?"Workflow-ready "+(model?"model":"tool")+" block: input text, output out."
+      :version===2?"Workflow-ready built-in transform. Runs locally.":"Python script blocks run standalone and can't join workflows.";
+    if(!toolBox.hidden)discover();else ++generation;
+  }
+  if(typeof starter==="string"&&[...kind.options].some(o=>o.value===starter))kind.value=starter;
   kind.onchange=updateKind;updateKind();
   const error=h("p",{role:"alert","data-test":"ws-create-error"});box.append(error);
   const choice=await wsDialog("Create a block",box,["Create draft","Create with assistance","Cancel"],async action=>{
@@ -2830,7 +3239,10 @@ async function wsNew(){
     if(!toolBox.hidden&&(!server.value||tool.disabled||!tool.value)){
       error.dataset.code="tool_required";error.textContent="Select a configured server and wait for discovery, then choose an available tool.";return false;
     }
-    try{await wsLoad({key:name.value,starter:kind.value,role:modelBox.hidden?null:role.value,server:toolBox.hidden?null:server.value,tool:toolBox.hidden?null:tool.value},true);return true;}
+    if(!labels.hidden&&!chosenLabels()){
+      error.dataset.code="labels_required";error.textContent="Choose how this block's ports are labelled.";labels.querySelector("input").focus();return false;
+    }
+    try{await wsLoad({key:name.value,starter:kind.value,starter_version:starters.find(s=>s.id===kind.value)?.version||1,role:modelBox.hidden?null:role.value,server:toolBox.hidden?null:server.value,tool:toolBox.hidden?null:tool.value,...(labels.hidden?{}:{data_handling:chosenLabels()})},true);return true;}
     catch(e){error.dataset.code=e.code||"error";error.textContent=wsErrorText(e);return false;}
   });if(!["Create draft","Create with assistance"].includes(choice))return;
   ws.examples=structuredClone(starters.find(s=>s.id===kind.value)?.examples||[]);ws.examplesDirty=ws.examples.length>0;ws.view="design";wsRender();if(choice==="Create with assistance")await wsAssist("create");
@@ -2871,59 +3283,188 @@ function wsPicker(){
   revision.disabled=!rows.length;
   revision.oninput=e=>e.stopPropagation();
   revision.onchange=async e=>{e.stopPropagation();const selected=revision.value;revision.disabled=true;try{
-    if(await wsLeave()){const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};await wsLoad({key:ws.draft.key,revision:selected},false);Object.assign(ws,keep);wsRender();}
+    if(await wsLeave()){
+      // Keep actions on the previous revision unavailable until the new selection is rendered.
+      wsBody.inert=true;wsNav.inert=true;
+      try{
+        const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};
+        await wsLoad({key:ws.draft.key,revision:selected},false);Object.assign(ws,keep);wsRender();
+      }finally{wsBody.inert=false;wsNav.inert=false;}
+    }
   }catch(error){if(error.status===404){wsNote.dataset.state="error";wsNote.dataset.code="missing";wsNote.textContent="That revision is no longer retained. Choose another revision.";const versions=await wsApi("blocks/"+encodeURIComponent(ws.draft.key)+"/revisions").catch(()=>null);if(versions){ws.revisionRows=versions.revisions;ws.currentRevision=versions.current;}wsRender();}else wsError(error);}finally{if(revision.isConnected){revision.value=ws.selectedRevision||"";revision.disabled=!ws.revisionRows.length;}}};
 }
 // A clean managed selection runs through its explicit saved selector; edits use the existing draft path.
 function wsClean(){return !ws.dirty&&!!ws.saved&&ws.saved.selector.key===ws.draft?.key&&ws.saved.selector.revision===ws.selectedRevision;}
 function wsSourceOf(extra){return wsClean()?{key:ws.draft.key,revision:ws.selectedRevision,...extra}:{draft:ws.draft,...extra};}
 function wsSelectionLabel(){return ws.saved?("Revision "+ws.saved.number+(ws.saved.name?" — "+ws.saved.name:"")+(ws.dirty?" · Unsaved edits":"")):"Unsaved draft";}
+// UI-AB v2 §0.2: destination facts are shown as three separate statements.
+const WS_INELIGIBLE={hostname:"uses a host name; local-only data needs a literal loopback address such as 127.0.0.1",remote:"is a remote endpoint",proxied:"is routed through a proxy",provider:"is a provider restricted data is never sent to",address:"has an unsupported address"};
+function wsDestinationLine(destination,facts,onGrant){
+  const line=h("p",{class:"ws-destination","data-test":"ws-destination-line"});
+  if(!destination){line.dataset.state="unresolved";line.textContent="Connects to: unresolved. Configure the role or server to run.";return line;}
+  const what=destination.server?destination.server+" · "+(destination.tool||"no tool chosen"):(destination.kind||"")+" · "+(destination.model||"no model");
+  if(!facts){line.dataset.state="unknown";line.textContent="Connects to: "+what;return line;}
+  line.dataset.locality=facts?.locality||"unknown";line.dataset.eligible=String(!!facts?.eligible);line.dataset.trusted=String(!!facts?.trusted);
+  line.append("Connects to: "+(facts?.locality==="local"?"local endpoint":"remote endpoint")+" · "+what+" · Local-only data: "+(facts?.eligible?"Eligible":"Not eligible ("+(WS_INELIGIBLE[facts?.reason]||"unknown")+")")+" · "+(facts?.trusted?"Trusted":"Not trusted"));
+  if(facts?.eligible&&!facts.trusted&&onGrant){line.append(" ",wsButton("Grant",onGrant,"ws-grant-trust"));}
+  if(facts&&!facts.eligible)line.append(h("span",{class:"ws-hint","data-test":"ws-destination-remedy",text:" "+wsRemedyText(facts.reason)}));
+  return line;
+}
+function wsRemedyText(reason){
+  return reason==="hostname"?"Fix endpoint: use http://127.0.0.1:<port>/v1 for this server in config/model-servers.ini."
+    :reason==="proxied"?"Fix proxy: add 127.0.0.1,[::1] to no_proxy (or NO_PROXY) before starting AgentWiz."
+    :reason==="remote"||reason==="provider"?"Choose a local role, or add a Release Gate before this step in a workflow.":"";
+}
+// Grant trust for one exact destination after the existing preview check (§7). Returns true when granted.
+async function wsGrantTrust(destination){
+  const preview=await wsApi("destination-trust-preview",{destination});
+  if(preview.reason&&preview.reason!=="destination_untrusted"){
+    await wsDialog("Destination can't be trusted",h("p",{"data-test":"ws-trust-refused","data-reason":preview.detail||preview.reason,text:wsRemedyText(preview.detail)||"This destination cannot receive local-only data."}),["Close"]);return false;
+  }
+  if(preview.trusted)return true;
+  const d=preview.destination,box=h("div",{"data-test":"ws-trust-confirm"},
+    h("p",{text:[d.kind,d.url,d.server,d.tool,d.model,d.provider].filter(Boolean).join(" · ")}),
+    h("p",{class:"ws-hint",text:"A trusted service could forward data elsewhere. Trust only services you control."}));
+  if(await wsDialog("Grant destination trust",box,["Confirm","Cancel"])!=="Confirm")return false;
+  await wsApi("destination-trust",{destination:d,expected_revision:preview.revision,trusted:true});
+  return true;
+}
+// Explanation catalogue (core v3 §4.3): server templates filled with an item's own fields, inserted as text only.
+let MESSAGES=null;
+async function loadMessages(){if(MESSAGES)return MESSAGES;try{MESSAGES=await wsApi("messages");}catch(e){MESSAGES=null;}return MESSAGES;}
+function messageText(item,fallback){
+  const row=MESSAGES?.codes?.[item?.code||item?.action];
+  if(!row)return fallback??(item?.message||MESSAGES?.fallback?.body?.replace("{code}",item?.code||"")||item?.code||"");
+  const fields={...item,where:item.location||item.port||item.input||item.consumer||"",example:item.example||item.example_id||"",
+    chain_end:Array.isArray(item.chain)&&Array.isArray(item.chain.at(-1))?item.chain.at(-1).join("."):"",
+    target:item.target&&typeof item.target==="object"?(item.target.model||item.target.tool||item.target.url||""):(item.target||"")};
+  return row.body.replace(/\{([a-z_]+)\}/g,(_,k)=>typeof fields[k]==="string"||typeof fields[k]==="number"?String(fields[k]):"");
+}
+function remedyLabel(remedy){return MESSAGES?.codes?.[remedy?.action]?.remedy_label||"";}
+function codeDetails(code,test){return h("details",{class:"ws-code-details"},h("summary",{text:"Details"}),h("span",{...(test?{"data-test":test}:{}),text:code||"error"}));}
+loadMessages();
+const WS_SOURCE_TEXT={declared_label:r=>"Input "+r.input+" is labelled Local only",example_restriction:r=>"Example "+r.example+" restricts "+r.input,
+  retained_label:r=>"Revision "+(r.revision_number??"?")+" labelled "+r.input+" Local only",context_manual:()=>"Design protection is on",
+  context_inherited:()=>"Design protection is inherited from protected assistance",context_clear_pending:()=>"Design protection was cleared but not yet saved"};
+function wsRestrictionList(sources){
+  const list=h("ul",{"data-test":"ws-restriction-sources"});
+  for(const r of sources||[])list.append(h("li",{"data-code":r.code,text:MESSAGES?.codes?.[r.code]?messageText(r):(WS_SOURCE_TEXT[r.code]||(()=>messageText(r)))(r)}));
+  return list;
+}
+async function wsReviewRetainedLabels(){
+  const key=ws.draft.key,review=await wsApi("blocks/"+encodeURIComponent(key)+"/retained-labels"),box=h("div",{"data-test":"ws-label-review"});
+  const open=review.pairs.filter(p=>!p.acknowledged),done=review.pairs.filter(p=>p.acknowledged);
+  box.append(h("p",{text:"Earlier retained revisions labelled these inputs Local only. Test treats them as restricted until you retire them here."}));
+  const table=h("ul");for(const p of review.pairs)table.append(h("li",{"data-test":"ws-label-pair","data-acknowledged":String(p.acknowledged),text:"Revision "+(p.revision_number??"?")+(p.revision_name?" — "+p.revision_name:"")+" · "+p.input+(p.acknowledged?" · retired":"")}));
+  box.append(review.pairs.length?table:h("p",{text:"No retained revision labels an input Local only."}));
+  if(review.restricted_examples.length)box.append(h("p",{text:"Still restricted after review: saved examples "+review.restricted_examples.map(e=>e.label+" ("+e.inputs.join(", ")+")").join("; ")+". Captured values keep their restriction."}));
+  const choices=[];if(open.length)choices.push("Retire these labels");if(done.length)choices.push("Restore all labels");choices.push("Close");
+  const choice=await wsDialog("Review retained privacy labels",box,choices);
+  if(choice==="Close")return;
+  const acknowledged=choice==="Retire these labels"?review.pairs.map(p=>({revision:p.revision,input:p.input})):[];
+  await wsPut("blocks/"+encodeURIComponent(key)+"/retained-labels",{expected_revision:review.revision,acknowledged});
+  wsNote.dataset.state="saved";delete wsNote.dataset.code;wsNote.textContent=acknowledged.length?"Retained labels retired for this block":"Retained labels restored";
+}
 function wsDesign(){
-  const p=ws.projection,form=h("div",{class:"ws-design-grid"}),d=p.design||{};
-  wsBody.append(form);
-  const instructions=h("section",{class:"ws-instructions"}),variables=h("section",{class:"ws-variables"}),misc=h("section",{class:"ws-misc"});
-  form.append(instructions,variables,misc);
-  const title=wsField(misc,"Display name",ws.draft.metadata.display_name||ws.draft.key),purpose=wsField(instructions,"Purpose",d.purpose,true);
-  purpose.parentElement.firstChild.textContent="Block description";purpose.setAttribute("aria-label","Block description");instructions.append(purpose.parentElement);
-  const revisionSave=h("div",{class:"ws-revision-save"});misc.append(revisionSave);
+  const p=ws.projection,d=p.design||{};
+  // Identity bar: name, revision, unsaved state and the save action stay above the editor (R5).
+  const bar=h("div",{class:"ws-identity-bar","data-test":"ws-identity-bar","data-drawer-anchor":""});wsBody.append(bar);
+  const form=h("div",{class:"ws-design-grid"});
+  const variables=h("section",{class:"ws-variables","aria-label":"Ports"}),instructions=h("section",{class:"ws-instructions","aria-label":"Prompts"}),misc=h("section",{class:"ws-misc","aria-label":"Settings"});
+  form.append(variables,instructions,misc);
+  const title=wsField(bar,"Display name",ws.draft.metadata.display_name||ws.draft.key);
+  bar.append(wsRevisionPicker);
+  const unsaved=h("span",{class:"ws-unsaved","data-test":"ws-unsaved-state","data-state":ws.dirty?"unsaved":"saved",text:ws.dirty?"Unsaved edits":wsSelectionLabel()});bar.append(unsaved);
+  // Opened from a workflow finding: return to that node and review an explicit Rebind (UI-AB v2 §0.4).
+  if(window.agentwizWorkflowReturn)bar.append(wsButton("Return to workflow",async()=>{if(!await wsLeave())return;const key=ws.draft?.key;selectTab("workflows");await TABS.workflows.returnTo({key});},"ws-return-to-workflow"));
+  const revisionSave=h("div",{class:"ws-revision-save"});bar.append(revisionSave);
   const revisionName=wsField(revisionSave,"Revision name (optional)",ws.draft.metadata.revision_name||"");revisionName.maxLength=120;
-  misc.append(wsRevisionPicker);
-  const saveActions=h("div",{class:"row"});misc.append(saveActions);
-  const save=wsButton("Save as new revision",()=>wsSave(),"ws-save-revision");save.title="Saving creates a new revision; older revisions remain unchanged.";
-  const overwrite=wsButton("Overwrite selected revision",()=>wsSave(true),"ws-overwrite-revision");overwrite.disabled=!ws.selectedRevision;saveActions.append(save,overwrite);
+  const save=wsButton("Save as new revision",()=>wsSave(),"ws-save-revision");save.title="Saving creates a new revision; older revisions remain unchanged.";revisionSave.append(save);
   const historical=()=>wsClean()&&ws.selectedRevision!==ws.currentRevision;
   if(historical()){save.disabled=true;save.dataset.historical="true";save.title="Edit this revision or use Revision actions → Restore to draft before saving it as a new revision.";}
+  if(d.format_version===3&&["model","tool"].includes(d.kind)){
+    wsBody.append(h("div",{class:"ws-banner","data-test":"ws-upgrade-banner"},h("span",{text:"This block can't be used in workflows. "}),
+      wsButton("Upgrade for workflows",async()=>{await wsFlush();await wsLoad({draft:ws.draft,edit:{kind:"upgrade_for_workflows"}},true);})));
+  }
+  wsBody.append(form);
+  const purpose=wsField(instructions,"Purpose",d.purpose,true);
+  purpose.parentElement.firstChild.textContent="Block description";purpose.setAttribute("aria-label","Block description");
+  let protection=null;
   const rows={};wsPorts=[];
+  const labelled=()=>{const count={yes:0,no:0,unset:0};for(const r of rows.inputs.concat(rows.outputs))if(r.localOnly)count[r.localOnly.value==="true"?"yes":r.localOnly.value==="false"?"no":"unset"]++;return count;};
+  let refreshInserts=()=>{},refreshCard=()=>{};
   for(const side of ["inputs","outputs"]){
     const area=h("fieldset",{},h("legend",{text:side==="inputs"?"Inputs":"Outputs"}));variables.append(area);rows[side]=[];
     const table=h("table",{class:"ws-port-table"},h("thead",{},h("tr",{},...["Field name","Declared meaning"].map(text=>h("th",{scope:"col",text})))));area.append(table);
     if(side==="outputs"&&d.kind==="model")area.append(h("p",{class:"ws-hint","data-test":"ws-declared-meaning-note",text:"A declared output meaning is part of the executable block and can contribute to the model request. Standard description documentation does not."}));
-    function port(name,format,description,source){
+    function port(name,format,description,source,localOnly){
       const line=h("tbody",{class:"ws-port","data-test":"ws-port","data-side":side,"data-port":name}),cells=[h("td"),h("td")];line.append(h("tr",{class:"ws-port-main"},...cells));
       const n=wsField(cells[0],"Field name",name),desc=wsField(cells[1],"Declared meaning",description);
       const detail=h("td",{colspan:"2"});line.append(h("tr",{},detail));
       const item={original:name,n,desc,format,source};rows[side].push(item);
+      n.addEventListener("input",()=>{line.dataset.port=n.value;refreshInserts();});
+      if(d.format_version===4){
+        item.localOnly=wsChoice(detail,"Local only",[["","Choose a label"],["true","Yes"],["false","No"]],localOnly==null?"":String(localOnly));
+        const mark=()=>{item.localOnly.dataset.state=item.localOnly.value===""?"unset":"set";item.localOnly.classList.toggle("ws-needs-label",item.localOnly.value==="");refreshCard();};
+        item.localOnly.addEventListener("change",mark);mark();
+      }
       // Inline | Saved contract (overhaul spec 15.3): the shared editor and pinned selector from contracts.js.
       // A contract change is an unsaved block edit until the block revision is saved.
       if(CW){
         item.contract=CW.port({side,name,format,source,captured:ws.draft.metadata?.contracts?.[side]?.[name],
+          protected:d.context_local_only||!!d.protection_origin,label:()=>n.value||name,scope:ws.draft.key,
+          onPublish:async details=>{await wsFlush();return wsApi("publish-inline",{draft:ws.draft,side,port:n.value,...details});},
           onChange:(nextFormat,nextSource)=>{item.format=nextFormat;item.source=nextSource;changed();},
           onOpen:async(contract,revision)=>{selectTab("contracts");await TABS.contracts.open(contract,revision);}});
         // Typing in the contract editor is not yet a block edit; only an applied change (onChange) is.
         for(const type of ["input","change"])item.contract.el.addEventListener(type,e=>e.stopPropagation());
         wsPorts.push(item.contract);detail.append(item.contract.el);
       }else detail.append(h("p",{class:"err-text",text:"The contract editor is unavailable; reload the page."}));
-      detail.append(wsButton("Remove",()=>{rows[side]=rows[side].filter(x=>x!==item);wsPorts=wsPorts.filter(x=>x!==item.contract);line.remove();changed();}));table.append(line);
+      detail.append(wsButton("Remove",async()=>{
+        if(item.contract?.pending?.()&&await wsDialog("Remove port",h("p",{text:"This port has contract edits that are not applied. Remove it anyway?"}),["Remove","Keep"])!=="Remove")return;
+        rows[side]=rows[side].filter(x=>x!==item);wsPorts=wsPorts.filter(x=>x!==item.contract);line.remove();changed();refreshInserts();refreshCard();}));table.append(line);
     }
-    for(const field of d[side]||[])port(field.name,field.format,field.description,field.source);
-    area.append(wsButton("Add "+side.slice(0,-1),()=>{port("","text","","");changed();}));
+    for(const field of d[side]||[])port(field.name,field.format,field.description,field.source,field.local_only);
+    area.append(wsButton("Add "+side.slice(0,-1),()=>{port("","text","","");changed();refreshInserts();}));
   }
   const behavior=wsField(instructions,d.kind==="script"?"Python source":d.kind==="tool"?"Tool name":"Instructions",d.behaviour,true);
-  if(d.kind==="model"){behavior.parentElement.firstChild.textContent="User prompt";behavior.setAttribute("aria-label","User prompt");instructions.append(behavior.parentElement);}
-  if(d.kind==="model")for(const input of d.inputs||[])instructions.append(wsButton("Insert "+input.name,()=>{behavior.setRangeText("{{inputs."+input.name+"}}",behavior.selectionStart,behavior.selectionEnd,"end");changed();}));
-  if(d.kind==="script"){const details=h("details",{},h("summary",{text:"Inspect or edit Python source"}));instructions.append(details);details.append(behavior.parentElement);instructions.append(h("p",{text:p.script_warning}));}
-  if(d.kind==="tool")instructions.append(behavior.parentElement);
-  const role=d.kind==="model"?wsChoice(misc,"Model role",[],d.binding):wsField(misc,d.kind==="tool"?"Server":"Role",d.binding);role.parentElement.hidden=d.kind==="script";
+  const system=wsField(instructions,"System instructions",d.system,true);
+  const inserts=h("div",{class:"ws-inserts","data-test":"ws-inserts"}),missing=h("div",{"data-test":"ws-missing-references"});
+  if(d.kind==="model"){
+    behavior.parentElement.firstChild.textContent="User prompt";behavior.setAttribute("aria-label","User prompt");
+    system.parentElement.dataset.test="ws-system";system.parentElement.firstChild.textContent="System prompt";system.setAttribute("aria-label","System prompt");
+    instructions.append(system.parentElement,behavior.parentElement,inserts,missing);
+    // Insert buttons and reference checks follow the current port rows, not the last server projection (R5).
+    let lastFocused=behavior;for(const field of [behavior,system])field.addEventListener("focus",()=>{lastFocused=field;});
+    const REF=/\{\{\s*(inputs|output)\.([^}\s]+)\s*\}\}/g;
+    refreshInserts=()=>{
+      const names={inputs:rows.inputs.map(r=>r.n.value).filter(Boolean),output:rows.outputs.map(r=>r.n.value).filter(Boolean)};
+      inserts.replaceChildren(...names.inputs.map(n=>wsButton("Insert "+n,()=>{lastFocused.setRangeText("{{inputs."+n+"}}",lastFocused.selectionStart,lastFocused.selectionEnd,"end");changed();refreshInserts();})),
+        ...names.output.map(n=>wsButton("Insert output "+n,()=>{lastFocused.setRangeText("{{output."+n+"}}",lastFocused.selectionStart,lastFocused.selectionEnd,"end");changed();refreshInserts();})));
+      missing.replaceChildren();
+      for(const field of [system,behavior]){
+        const used=new Set([...field.value.matchAll(REF)].map(m=>m[1]+"."+m[2]));
+        for(const ref of used){
+          const [scope,ref_name]=ref.split(".");if(names[scope].includes(ref_name))continue;
+          const unused=names[scope].filter(n=>!used.has(scope+"."+n));
+          const row=h("p",{class:"err-text","data-test":"ws-missing-reference","data-ref":ref,text:(field===system?"System":"User")+" prompt refers to "+(scope==="inputs"?"input ":"output ")+ref_name+", which this block does not declare. "});
+          if(unused.length===1){const target="{{"+scope+"."+unused[0]+"}}";row.append(wsButton("Replace with "+target+"?",async()=>{
+            if(await wsDialog("Replace reference",h("p",{text:"Replace every {{"+ref+"}} in this prompt with "+target+"?"}),["Replace","Cancel"])!=="Replace")return;
+            field.value=field.value.replace(new RegExp("\\{\\{\\s*"+scope+"\\."+ref_name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"\\s*\\}\\}","g"),target);changed();refreshInserts();},"ws-replace-reference"));}
+          missing.append(row);
+        }
+      }
+    };
+    for(const field of [behavior,system])field.addEventListener("input",()=>refreshInserts());
+    refreshInserts();
+    variables.append(h("p",{class:"ws-hint",text:"Response: named JSON envelope — one top-level key per output."}));
+  }else if(d.kind==="script"){const details=h("details",{},h("summary",{text:"Inspect or edit Python source"}));instructions.append(details);details.append(behavior.parentElement);instructions.append(h("p",{text:p.script_warning}));}
+  else if(d.kind==="tool")instructions.append(behavior.parentElement);
+  instructions.append(purpose.parentElement);
+  // Settings column: role, destination, sampling, protection, documentation, advanced.
+  const role=d.kind==="model"?wsChoice(misc,"Model role",[],d.binding):wsField(misc,d.kind==="tool"?"Server":"Role",d.binding);role.parentElement.hidden=["script","transform"].includes(d.kind);
+  if(["model","tool"].includes(d.kind))misc.append(wsDestinationLine(p.destination,p.destination_facts,async()=>{
+    if(await wsGrantTrust(d.kind==="model"?{kind:p.destination.kind,url:p.destination.base_url,model:p.destination.model,provider:p.destination.provider||""}:{kind:"mcp",url:p.destination.url,server:p.destination.server,tool:p.destination.tool})){await wsFlush();await wsLoad(wsSourceOf(),ws.dirty);}}));
   let refreshModelDefaults=()=>{};
   if(d.kind==="model"){
     function refreshRoles(){
@@ -2942,11 +3483,10 @@ function wsDesign(){
       if(await wsDialog("Choose a tool",box,["Use tool","Cancel"])==="Use tool"){behavior.value=tool.value;changed();}
     }));
   }
-  const more=h("details",{},h("summary",{"data-test":"ws-advanced-settings",text:d.kind==="model"?"Model advanced settings":"More settings"}));misc.append(more);
-  const system=wsField(d.kind==="model"?instructions:more,"System instructions",d.system,true), sampling={},limits={},settingModes={};
+  const more=h("details",{},h("summary",{"data-test":"ws-advanced-settings",text:d.kind==="model"?"Model advanced settings":"More settings"}));
+  const sampling={},limits={},settingModes={};
   if(d.kind==="model"){
-    system.parentElement.dataset.test="ws-system";system.parentElement.firstChild.textContent="System prompt";system.setAttribute("aria-label","System prompt");behavior.parentElement.before(system.parentElement);
-    const model=h("div",{class:"ws-model-settings"});more.before(model);
+    const model=h("div",{class:"ws-model-settings"});misc.append(model);
     for(const [key,label] of [["temperature","Temperature"],["reasoning","Reasoning level"]]){
       const reset=h("input",{type:"checkbox",checked:d.resets?.includes(key),"data-test":"ws-reset-"+key});more.append(h("label",{class:"ws-field"},h("span",{},reset," Use backend default for "+label.toLowerCase()+" (bypass role)")));
       const mode={value:reset.checked?"reset":d.sampling[key]!=null?"custom":"inherit"};settingModes[key]=mode;
@@ -2962,8 +3502,6 @@ function wsDesign(){
       for(const key of ["temperature","reasoning"])sampling[key].dataset.source=settingModes[key].value;
     };refreshModelDefaults();
     sampling.max_tokens=wsField(more,"Output token cap",d.sampling.max_tokens??"");
-    for(const output of d.outputs||[])instructions.append(wsButton("Insert output "+output.name,()=>{behavior.setRangeText("{{output."+output.name+"}}",behavior.selectionStart,behavior.selectionEnd,"end");changed();}));
-    variables.append(h("p",{text:"Response: named JSON envelope — one top-level key per output."}));
     instructions.append(wsButton("Request preview",async()=>{
       await wsFlush();const p=await wsApi("preview",wsSourceOf({inputs:ws.inputs})),box=h("div",{"data-test":"ws-request-messages"},h("p",{"data-test":"ws-request-source",text:wsSelectionLabel()}));
       if(p.prepared){
@@ -2974,28 +3512,52 @@ function wsDesign(){
       }else box.append(wsShowValue(p.prepared_issues||p.input_checks||p.issues));
       await wsDialog("Request preview",box,["Close"]);
     }));
+  }else{more.append(system.parentElement);}
+  // Protection card (R1): port labels, design protection and where run restrictions come from.
+  if(d.format_version===4){
+    const card=h("section",{class:"ws-protection-card","data-test":"ws-protection-card","data-design":d.protection_origin==="inherited"?"inherited":d.context_local_only?"manual":"off"},h("h3",{text:"Protection"}));misc.append(card);
+    const counts=h("p",{"data-test":"ws-protection-labels"});card.append(counts);
+    refreshCard=()=>{const c=labelled();counts.dataset.unset=String(c.unset);counts.textContent="Port labels: "+c.yes+" Local only · "+c.no+" No label · "+c.unset+" Not set";};
+    protection=h("input",{type:"checkbox",checked:d.context_local_only,disabled:d.protection_origin==="inherited",hidden:true,"data-test":"ws-design-protection"});card.append(protection);
+    const design=h("p",{"data-test":"ws-protection-design"});card.append(design);
+    const showDesign=()=>{design.textContent="Design protection: "+(d.protection_origin==="inherited"?"inherited from protected assistance; it cannot be cleared.":protection.checked?"on (set here).":"off.");};showDesign();
+    if(d.protection_origin!=="inherited")card.append(wsButton("Change design protection…",async()=>{
+      const box=h("div"),check=h("input",{type:"checkbox",checked:protection.checked,"data-test":"ws-design-protection-choice"});
+      box.append(h("p",{text:"Design protection keeps this block's prompts, contracts and examples on trusted local destinations, including for Assist. Clearing it takes effect only in a reviewed new revision."}),h("label",{},check," Protect design context"));
+      if(await wsDialog("Design protection",box,["Apply","Cancel"])!=="Apply")return;
+      protection.checked=check.checked;showDesign();changed();
+    },"ws-change-design-protection"));
+    card.append(h("p",{class:"ws-hint",text:"Run restrictions also depend on connected inputs, examples and earlier revisions. Check readiness in Test or Run."}));
+    if(ws.draft.base_digest)card.append(wsButton("Review retained privacy labels",wsReviewRetainedLabels,"ws-review-retained-labels"));
+    refreshCard();
   }
+  misc.append(wsDescriptionPanel(),more);
+  const overwrite=wsButton("Overwrite selected revision",()=>wsSave(true),"ws-overwrite-revision");
+  overwrite.disabled=!ws.selectedRevision||d.format_version===4;
+  if(d.format_version===4)overwrite.title="Save as a new revision. To retire earlier privacy labels, use Review retained privacy labels.";
+  more.append(overwrite);
   for(const [key,label] of [["max_seconds","Time budget (seconds)"],["max_model_tokens","Model token budget"]])limits[key]=wsField(more,label,d.limits[key]||"");
   const sourceSettings=h("details",{},h("summary",{text:"Advanced settings source"}));more.append(sourceSettings);
   const settings=wsField(sourceSettings,"Task settings source",d.settings,true),budget=wsField(sourceSettings,"Budget source",d.budget,true),repair=wsField(variables,"Additional repairs",d.repairs);
   repair.title="Additional attempts after the initial response fails output validation.";
   if(d.kind!=="model"){system.parentElement.hidden=true;repair.parentElement.hidden=true;}
-  if(d.kind==="tool"){const args=wsField(more,"Tool argument mapping",d.arguments||"{}",true);args.oninput=()=>{d.arguments=args.value;};}
+  if(d.kind==="tool"){const args=wsField(instructions,"Tool argument mapping",d.arguments||"{}",true);args.oninput=()=>{d.arguments=args.value;};}
   const advanced=wsSource("Inspect executable definition",ws.draft.definition_text);more.append(advanced);
-  function changed(){wsDirty();wsPending=async()=>{
+  function changed(){wsDirty();unsaved.dataset.state="unsaved";unsaved.textContent="Unsaved edits";wsPending=async()=>{
     await Promise.all(rows.inputs.concat(rows.outputs).map(r=>r.contract?r.contract.ready():null));   // contract edits in flight land first
-    const ports={};for(const side of ["inputs","outputs"])ports[side]=rows[side].map(r=>({original:r.original,name:r.n.value,description:r.desc.value,format:r.format,source:r.source}));
-    const result=await wsApi("preview",{draft:ws.draft,edit:{kind:"design_form",name:title.value,revision_name:revisionName.value,purpose:purpose.value,ports,arguments:d.arguments,behaviour:behavior.value,binding:role.value,system:system.value,settings:settings.value,sampling:Object.fromEntries(Object.entries(sampling).map(([n,f])=>[n,settingModes[n]&&settingModes[n].value!=="custom"?"":f.value])),resets:Object.entries(settingModes).filter(([,f])=>f.value==="reset").map(([n])=>n),customs:Object.entries(settingModes).filter(([,f])=>f.value==="custom").map(([n])=>n),limits:Object.fromEntries(Object.entries(limits).map(([n,f])=>[n,f.value])),budget:budget.value,repairs:repair.value}});
+    const ports={};for(const side of ["inputs","outputs"])ports[side]=rows[side].map(r=>({original:r.original,name:r.n.value,description:r.desc.value,format:r.format,source:r.source,...(r.localOnly?{local_only:r.localOnly.value===""?null:r.localOnly.value==="true"}:{})}));
+    const result=await wsApi("preview",{draft:ws.draft,edit:{kind:"design_form",name:title.value,revision_name:revisionName.value,purpose:purpose.value,ports,...(protection?{context_local_only:protection.checked}:{}),arguments:d.arguments,behaviour:behavior.value,binding:role.value,system:system.value,settings:settings.value,sampling:Object.fromEntries(Object.entries(sampling).map(([n,f])=>[n,settingModes[n]&&settingModes[n].value!=="custom"?"":f.value])),resets:Object.entries(settingModes).filter(([,f])=>f.value==="reset").map(([n])=>n),customs:Object.entries(settingModes).filter(([,f])=>f.value==="custom").map(([n])=>n),limits:Object.fromEntries(Object.entries(limits).map(([n,f])=>[n,f.value])),budget:budget.value,repairs:repair.value}});
     ws.projection=result;ws.draft=result.draft;
     for(const side of ["inputs","outputs"])for(const r of rows[side])r.original=r.n.value;
   };}
-  form.oninput=changed;form.onchange=changed;
+  for(const el of [form,bar]){el.oninput=changed;el.onchange=changed;}
+  wsRevisionPicker.oninput=e=>e.stopPropagation();wsRevisionPicker.onchange=e=>e.stopPropagation();
   if(p.destination)more.append(wsShowValue(p.destination));if(p.setup_issues?.length)misc.append(wsShowValue(p.setup_issues));
-  if(p.issues?.length)misc.append(h("div",{"data-test":"ws-validation","data-state":"invalid"},wsShowValue(p.issues)));
+  if(p.issues?.length)misc.prepend(h("div",{"data-test":"ws-validation","data-state":"invalid"},wsShowValue(p.issues)));
   more.append(wsButton("Refresh design fields",async()=>{await wsFlush();wsRender();}));
   if(d.kind==="script"&&ws.draft.base_digest)more.append(wsButton("Update support files",wsSupport));
   if(p.classification==="starter"){
-    const area=h("fieldset",{},h("legend",{text:"Starter parameters"}));behavior.closest("details").before(area);
+    const area=h("fieldset",{},h("legend",{text:"Starter parameters"}));instructions.prepend(area);
     const m=ws.draft.metadata,params=m.parameters;let read;
     if(m.starter==="count_text"){
       const unit=wsChoice(area,"Count unit",[["whitespace_words","Whitespace separated words"],["characters","Characters"]],params.unit);read=()=>({unit:unit.value});
@@ -3003,6 +3565,10 @@ function wsDesign(){
       const template=wsField(area,"Report template",params.template,true);
       for(const n of p.facts.inputs)area.append(wsButton("Insert report "+n,()=>template.setRangeText("{{inputs."+n+"}}",template.selectionStart,template.selectionEnd,"end")));
       read=()=>({template:template.value});
+    }else if(m.starter==="restore_placeholders"){
+      const unknown=wsChoice(area,"If a placeholder has no mapping",[["fail","Fail the step"],["keep","Leave it in place"]],params.unknown);
+      unknown.dataset.test="ws-restore-unknown";
+      read=()=>({unknown:unknown.value,placeholder_syntax:params.placeholder_syntax});
     }else{
       const mappings=[];
       function mapping(m={source_path:[],destination:"",required:true}){
@@ -3011,9 +3577,10 @@ function wsDesign(){
       }
       params.mappings.forEach(mapping);area.append(wsButton("Add mapping",()=>mapping()));read=()=>({mappings:mappings.map(fn=>fn())});
     }
+    if(d.kind==="script")area.append(wsButton("Convert to built-in transform",async()=>{await wsFlush();await wsLoad({draft:ws.draft,edit:{kind:"convert_transform"}},true);}));
     area.append(wsButton("Apply parameters",async()=>{await wsFlush();await wsLoad({draft:ws.draft,edit:{kind:"starter_parameters",parameters:read()}},true);}));
   }else if(d.kind==="script")instructions.append(h("p",{text:p.classification==="unsupported_starter_version"?"This starter version is unavailable. Captured source is preserved; parameter editing is disabled.":"Custom Python source; parameter controls are disabled."}));
-  misc.append(wsDescriptionPanel());more.append(wsSource("Details · stable key",ws.draft.key));
+  more.append(wsSource("Details · stable key",ws.draft.key));
 }
 
 // --- Standard description of the selected saved revision (block_metadata_refactor spec v2, section 5) ---------
@@ -3157,6 +3724,18 @@ async function wsRevisions(){
   await wsFlush();const box=h("div"),historyRows=ws.draft.base_digest?(await wsApi("blocks/"+ws.draft.key+"/revisions")).revisions:[];
   const rev=wsChoice(box,"Revision",historyRows.map(r=>[r.id,wsRevisionLabel(r)])),name=wsField(box,"New key for duplicate");
   const examples=h("input",{type:"checkbox"});box.append(h("label",{},examples," Copy examples to the duplicate"));
+  // Consequence lines (UI-CD v3 CD7), computed from the selected revision and the next revision number.
+  const restoreLine=h("p",{class:"ws-hint","data-test":"ws-restore-consequence"}),duplicateLine=h("p",{class:"ws-hint","data-test":"ws-duplicate-consequence"});
+  box.append(restoreLine,duplicateLine);
+  const consequences=()=>{
+    const row=historyRows.find(r=>r.id===rev.value),next=Math.max(0,...historyRows.map(r=>r.revision_number||0))+1;
+    // Duplicate copies what is open now (the existing behaviour), so its line names that, not the picker's choice.
+    const open=ws.dirty?null:historyRows.find(r=>r.id===ws.selectedRevision);
+    restoreLine.dataset.from=String(row?.revision_number??"");restoreLine.dataset.next=String(next);duplicateLine.dataset.from=String(open?.revision_number??"");
+    restoreLine.textContent=row?"Restore to draft: creates a draft from rev "+row.revision_number+". Saving creates rev "+next+" and makes it current.":"";
+    duplicateLine.textContent="Duplicate: creates a new block key from "+(open?"rev "+open.revision_number:"the open draft")+". The original is unchanged.";
+  };
+  rev.addEventListener("change",consequences);consequences();
   const choice=await wsDialog("Revision actions",box,["Restore to draft","Duplicate","Cancel"]);
   if(choice==="Restore to draft"&&await wsLeave())await wsLoad({key:ws.draft.key,revision:rev.value},true);
   if(choice==="Duplicate"){
@@ -3165,27 +3744,65 @@ async function wsRevisions(){
     wsNote.textContent=examples.checked?"Duplicate draft. Save the block, then explicitly save its copied example collection.":"Duplicate draft";
   }
 }
-async function wsAssist(initialAction){
-  await wsFlush();const box=h("div"),action=wsChoice(box,"Action",["create","improve","describe","suggest_examples","explain_failure"].map(x=>[x,x.replaceAll("_"," ")]),initialAction||ws.tutorialAction||"improve"),role=wsRoleChoice(box,"Assistant role","assistant"),task=wsField(box,"Task","",true);
-  const stage=wsChoice(box,"Create stage",[["","Complete block"],["fields","Fields only"],["behaviour","Behaviour only"]]);
+// Assist (UI-CD v3 CD6): choose the action first, then only that action's fields. Evidence is attached only
+// when chosen, and whether applying protects the block's design comes from the bound plan (authoring_protected).
+const WS_ASSIST_ACTIONS=[["create","Create","Draft a new block from your instructions."],["improve","Improve","Propose changes to selected sections."],
+  ["suggest_examples","Suggest examples","Propose examples for Test."],["explain_failure","Explain failure","Explain why a result failed."],
+  ["describe","Describe","Documentation only: write the standard description of the saved revision."]];
+const WS_ASSIST_FIELDS={create:["role","task","stage","keep"],improve:["role","sections","task","evidence","keep"],suggest_examples:["role","task"],explain_failure:["role","evidence"],describe:[]};
+async function wsAssist(initialAction,options={}){
+  await wsFlush();
+  let current=initialAction||ws.tutorialAction||"improve";
+  const box=h("div",{"data-test":"ws-assist-dialog"}),cards=h("div",{class:"ws-assist-actions",role:"group","aria-label":"Assistance action"}),fields=h("div");
+  box.append(cards,fields);
+  const blockRole=(ws.projection?.design?.steps||[]).find(step=>step.role)?.role||ws.projection?.design?.role;
+  const roleBox=h("div"),role=wsRoleChoice(roleBox,"Assistant role — writes this proposal","assistant");
+  if(blockRole)roleBox.append(h("p",{class:"ws-hint","data-test":"ws-assist-block-role",text:"Block role — runs this block: "+blockRole}));
+  const taskBox=h("div"),task=wsField(taskBox,"Instructions","",true);
+  const stageBox=h("details",{},h("summary",{text:"Stage"})),stage=wsChoice(stageBox,"Create stage",[["","Complete block"],["fields","Fields only"],["behaviour","Behaviour only"]]);
+  const keepLocal=h("input",{type:"checkbox","data-test":"ws-assist-keep-local",checked:!!ws.projection?.design?.context_local_only});
+  const keepBox=h("div",{},h("label",{},keepLocal," Keep authoring context local"),h("p",{class:"ws-hint","data-test":"ws-assist-keep-consequence",
+    text:"The proposal is generated on a trusted local destination. Applying it permanently protects this block's design, and the block must then run on a trusted local destination."}));
+  const sectionsBox=h("fieldset",{},h("legend",{text:"Sections"})),sections=[];
+  for(const name of ["purpose","inputs","outputs","behaviour"]){const check=h("input",{type:"checkbox",checked:true,"data-test":"ws-assist-section","data-section":name});sections.push([name,check]);sectionsBox.append(h("label",{},check," "+name));}
+  // Evidence: the current batch's results with a run, at most 20; nothing is attached unless chosen.
+  const evidenceBox=h("fieldset",{"data-test":"ws-assist-evidence"},h("legend",{text:"Evidence (recorded inputs and outputs)"})),evidence=[];
+  const rows=(ws.batch?.rows||[]).filter(row=>row.run_id).slice(0,20);
+  for(const row of rows){const check=h("input",{type:"checkbox","data-test":"ws-assist-evidence-item","data-run":row.run_id,checked:options.runId===row.run_id});
+    evidence.push([row.run_id,check]);evidenceBox.append(h("label",{class:"ws-radio"},check," "+(row.example?.label||row.example?.id||row.run_id)+" · "+(row.outcome||row.state)));}
+  if(!rows.length)evidenceBox.append(h("p",{class:"ws-hint",text:"No results with a recorded run in the current batch."}));
+  const settingsBox=h("details",{"data-test":"ws-assist-settings"},h("summary",{text:"Assistant settings"}));
   const assistantSettings={},assistantModes={};
-  for(const key of ["temperature","reasoning"]){assistantModes[key]=wsChoice(box,"Assistant "+key+" source",[["inherit","Inherit role default"],["custom","Custom"],["reset","Backend default"]]);assistantSettings[key]=key==="reasoning"?wsChoice(box,"Assistant reasoning",["off","low","medium","high"].map(x=>[x,x])):wsField(box,"Assistant temperature","");assistantSettings[key].parentElement.hidden=true;assistantModes[key].onchange=()=>assistantSettings[key].parentElement.hidden=assistantModes[key].value!=="custom";}
-  const sections=[];for(const name of ["purpose","inputs","outputs","behaviour"]){const check=h("input",{type:"checkbox",checked:true});sections.push([name,check]);box.append(h("label",{},check," Improve "+name.replaceAll("_"," ")));}
-  const describeNote=h("p",{class:"ws-hint","data-test":"ws-assist-describe-note",text:"Describe writes the standard description of the selected saved revision with the write_block_description role. The role, task and settings above are not used."});box.append(describeNote);
-  const showDescribe=()=>{describeNote.hidden=action.value!=="describe";};action.addEventListener("change",showDescribe);showDescribe();
+  for(const key of ["temperature","reasoning"]){assistantModes[key]=wsChoice(settingsBox,"Assistant "+key+" source",[["inherit","Inherit role default"],["custom","Custom"],["reset","Backend default"]]);assistantSettings[key]=key==="reasoning"?wsChoice(settingsBox,"Assistant reasoning",["off","low","medium","high"].map(x=>[x,x])):wsField(settingsBox,"Assistant temperature","");assistantSettings[key].parentElement.hidden=true;assistantModes[key].onchange=()=>assistantSettings[key].parentElement.hidden=assistantModes[key].value!=="custom";}
+  const describeNote=h("p",{class:"ws-hint","data-test":"ws-assist-describe-note",text:"Describe writes the standard description of the selected saved revision. It has no other settings."});
+  const parts={role:roleBox,task:taskBox,stage:stageBox,keep:keepBox,sections:sectionsBox,evidence:evidenceBox};
+  function draw(){
+    cards.replaceChildren(...WS_ASSIST_ACTIONS.map(([id,label,hint])=>h("button",{type:"button",class:"ws-assist-card","data-test":"ws-assist-action","data-action":id,
+      "aria-pressed":String(id===current),title:hint,onclick:()=>{current=id;draw();}},h("strong",{text:label}),h("span",{class:"ws-hint",text:" "+hint}))));
+    const wanted=WS_ASSIST_FIELDS[current];
+    fields.dataset.action=current;
+    fields.replaceChildren(...wanted.map(k=>parts[k]),current==="describe"?describeNote:settingsBox);
+    taskBox.querySelector("label").firstChild.textContent=current==="improve"?"Note":current==="suggest_examples"?"Notes":"Task";
+  }
+  draw();
   if(await wsDialog("Block assistance",box,["Prepare request","Cancel"])!=="Prepare request")return;
-  if(action.value==="describe")return wsDescribe();     // the same server-owned action as Standard description
-  const snap=ws.draft,body={action:action.value,role:role.value,task:task.value,draft:snap};
+  if(current==="describe")return wsDescribe();     // the same server-owned action as Standard description
+  const wanted=WS_ASSIST_FIELDS[current];
+  const snap=ws.draft,body={action:current,role:role.value,task:wanted.includes("task")?task.value:"",draft:snap,
+    context_local_only:wanted.includes("keep")?keepLocal.checked:!!ws.projection?.design?.context_local_only};
   body.settings_text=Object.fromEntries(Object.entries(assistantModes).filter(([,m])=>m.value==="custom").map(([key])=>[key,assistantSettings[key].value]));
   body.task_resets=Object.entries(assistantModes).filter(([,m])=>m.value==="reset").map(([key])=>key);
-  if(action.value==="create"&&stage.value)body.stage=stage.value;
-  if(action.value==="improve")body.sections=sections.filter(([,c])=>c.checked).map(([name])=>name);
-  if(["improve","explain_failure"].includes(action.value)&&ws.batch)body.evidence={trial:ws.batch.rows};
+  if(current==="create"&&stage.value)body.stage=stage.value;
+  if(current==="improve")body.sections=sections.filter(([,c])=>c.checked).map(([name])=>name);
+  const chosen=wanted.includes("evidence")?evidence.filter(([,c])=>c.checked).map(([id])=>({kind:"trace",id})):[];
+  if(chosen.length)body.references=chosen;
   await wsStart("assist",body,async batch=>{
     const id=batch.rows[0]?.proposal_id;if(!id)return;
     const request={proposal_id:id,draft:ws.draft},plan=await wsApi("plans",{action:"proposals/apply",request});
     const review=h("div",{},wsShowValue(plan.descriptor.proposal.response));for(const change of plan.descriptor.changes||[])review.append(h("details",{open:change.name==="Python source"},h("summary",{text:change.name}),h("h4",{text:"Before"}),h("pre",{text:change.before}),h("h4",{text:"After"}),h("pre",{text:change.after})));
     for(const c of plan.required_confirmations)review.append(h("p",{text:c.detail}));
+    if(ws.assistProtected)review.append(h("p",{class:"warn-text","data-test":"ws-assist-protection",
+      text:"Applying this proposal permanently protects this block's design. The block must also run on a trusted local destination."}));
     if(await wsDialog("Review proposal",review,["Apply","Discard"])!=="Apply"){wsNote.dataset.state="proposal_discarded";delete wsNote.dataset.code;wsNote.textContent="Proposal discarded";return;}
     const bound={...request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations.map(({kind,digest})=>({kind,digest}))};
     const applied=await wsApi("proposals/apply",bound);
@@ -3205,35 +3822,56 @@ async function wsFollow(id,done){
   const generation=++wsPoll;
   while(generation===wsPoll){
     ws.batch=await wsApi("batches/"+id);if(ws.batch.active_run){try{ws.batch.live=await api("/api/block_runs/"+ws.batch.active_run);}catch(e){/* child may already have ended */}}wsNote.dataset.state=ws.batch.state;delete wsNote.dataset.code;wsNote.textContent=ws.batch.state+" · "+ws.batch.rows.filter(r=>r.state==="terminal").length+" / "+ws.batch.rows.length;
+    if(ws.batch.state==="running")setActivity("workshop",{label:WS_BATCH_LABEL(ws.batch),source:"workshop",open:()=>{selectTab("workshop");}});
+    else setActivity("workshop",null);
     wsResults();if(ws.batch.state!=="running"){if(done)await done(ws.batch);return;}
     await new Promise(resolve=>setTimeout(resolve,250));
   }
 }
+function wsTrialArticle(row){
+  const result=h("article",{"data-test":"ws-trial","data-outcome":row.outcome||row.state,"data-attempts":row.attempts??0,"data-correctness":row.correctness||"unreviewed","data-arm":row.arm},h("strong",{text:(row.arm===0?"Baseline":"Candidate")+(row.block_revision_number?" · revision "+row.block_revision_number:" · draft")+" · "+(row.example.label||row.example.id)+" · "+(row.outcome||row.state)}));
+  for(const [name,v] of Object.entries(row.outputs||{}))result.append(h("h4",{text:name}),v.format==="json"?h("div",{},wsStructured(v.text),h("details",{},h("summary",{text:"Exact answer"}),h("pre",{"data-test":"ws-output","data-output":name,text:v.text}))):h("pre",{"data-test":"ws-output","data-output":name,text:v.text}),copyControl("ws-copy-output",()=>v.text,null));
+  if(row.output_checks)result.append(wsShowValue(row.output_checks));
+  if(typeof row.raw_answer==="string")result.append(h("details",{},h("summary",{text:"Raw model answer (not accepted output)"}),h("pre",{"data-test":"ws-raw-answer",text:row.raw_answer}),copyControl("ws-copy-raw-answer",()=>row.raw_answer,null)));
+  result.append(wsShowValue({execution:row.outcome||row.state,checks:row.final_check||row.check||row.steps?.map(s=>s.check)||"Unknown",correctness:row.correctness||"unreviewed",machine_judgement:row.machine_judgement,human_rating:row.human_rating,evidence:row.evidence_available===false?"Unavailable":row.preview_incomplete?"Partial":"Available",saving:ws.batch.saving?"Saved":"Session only"}),h("p",{text:"Correctness · "+(row.correctness||"unreviewed")}),wsSource("Checks and trace",JSON.stringify(row.steps||[],null,2)));
+  // Correctness review stays with the exact result it rates.
+  if(row.outcome==="complete"&&!row.preview_incomplete)for(const rating of ["correct","incorrect"])result.append(wsButton("Mark "+rating,async()=>{
+    const history=ws.batch.saving?await api("/api/runs/"+row.run_id):null;
+    const review=await wsPut("reviews/"+row.run_id,{context:{snapshot_id:row.snapshot_id,example_id:row.example.id,example_version:row.example.version,result_digest:row.result_digest},judgement:rating,expected_revision:history?.current_review?.revision||wsRatings[row.run_id]||0,persist:ws.batch.saving});
+    wsRatings[row.run_id]=review.revision;ws.batch=await wsApi("batches/"+ws.batch.id);wsResults();
+  }));
+  return result;
+}
+// Compare pairs: one heading per example, baseline then candidate aligned (UI-AB v2 AB4.1).
+function wsExamplePairs(){
+  const order=[],groups=new Map();
+  for(const row of ws.batch.rows){const id=row.example.id;if(!groups.has(id)){groups.set(id,[]);order.push(id);}groups.get(id).push(row);}
+  return order.map(id=>({id,label:groups.get(id)[0].example.label||id,rows:groups.get(id).sort((a,b)=>a.arm-b.arm)}));
+}
 function wsResults(){
   const panel=$("ws-results");if(!panel||!ws.batch)return;panel.replaceChildren();
   if(ws.batch.live)panel.append(wsShowValue({child:ws.batch.active_run,progress:ws.batch.live.state,attempts:ws.batch.live.attempts||[]}));
-  for(const row of ws.batch.rows){
-    const result=h("article",{"data-test":"ws-trial","data-outcome":row.outcome||row.state,"data-attempts":row.attempts??0,"data-correctness":row.correctness||"unreviewed","data-arm":row.arm},h("strong",{text:(row.arm===0?"Baseline":"Candidate")+(row.block_revision_number?" · revision "+row.block_revision_number:" · draft")+" · "+(row.example.label||row.example.id)+" · "+(row.outcome||row.state)}));
-    for(const [name,v] of Object.entries(row.outputs||{}))result.append(h("h4",{text:name}),v.format==="json"?h("div",{},wsStructured(v.text),h("details",{},h("summary",{text:"Exact answer"}),h("pre",{"data-test":"ws-output","data-output":name,text:v.text}))):h("pre",{"data-test":"ws-output","data-output":name,text:v.text}),copyControl("ws-copy-output",()=>v.text,null));
-    if(row.output_checks)result.append(wsShowValue(row.output_checks));
-    if(typeof row.raw_answer==="string")result.append(h("details",{},h("summary",{text:"Raw model answer (not accepted output)"}),h("pre",{"data-test":"ws-raw-answer",text:row.raw_answer}),copyControl("ws-copy-raw-answer",()=>row.raw_answer,null)));
-    result.append(wsShowValue({execution:row.outcome||row.state,checks:row.final_check||row.check||row.steps?.map(s=>s.check)||"Unknown",correctness:row.correctness||"unreviewed",machine_judgement:row.machine_judgement,human_rating:row.human_rating,evidence:row.evidence_available===false?"Unavailable":row.preview_incomplete?"Partial":"Available",saving:ws.batch.saving?"Saved":"Session only"}),h("p",{text:"Correctness · "+(row.correctness||"unreviewed")}),wsSource("Checks and trace",JSON.stringify(row.steps||[],null,2)));
-    if(row.outcome==="complete"&&!row.preview_incomplete)for(const rating of ["correct","incorrect"])result.append(wsButton("Mark "+rating,async()=>{
-      const history=ws.batch.saving?await api("/api/runs/"+row.run_id):null;
-      const review=await wsPut("reviews/"+row.run_id,{context:{snapshot_id:row.snapshot_id,example_id:row.example.id,example_version:row.example.version,result_digest:row.result_digest},judgement:rating,expected_revision:history?.current_review?.revision||wsRatings[row.run_id]||0,persist:ws.batch.saving});
-      wsRatings[row.run_id]=review.revision;ws.batch=await wsApi("batches/"+ws.batch.id);wsResults();
-    }));
-    panel.append(result);
-  }
+  const arms=new Set(ws.batch.rows.map(r=>r.arm));
+  if(arms.size>1){
+    const pairs=wsExamplePairs();
+    pairs.forEach((pair,index)=>{
+      const box=h("section",{class:"ws-pair","data-test":"ws-example-pair","data-example":pair.id,"data-current":String((ws.compareCurrent??0)===index)},
+        h("h3",{text:"Example "+(index+1)+" of "+pairs.length+" · "+pair.label}));
+      const columns=h("div",{class:"ws-pair-columns"});for(const row of pair.rows)columns.append(wsTrialArticle(row));
+      box.append(columns);panel.append(box);
+    });
+    wsCompareStatus?.();
+  }else for(const row of ws.batch.rows)panel.append(wsTrialArticle(row));
   panel.prepend(wsShowValue({persistence:ws.batch.saving?"Saved":"Session only",state:ws.batch.state,save_error:ws.batch.save_error,trial_order:ws.batch.rows.map(r=>({example:r.example.id,arm:r.arm,state:r.state}))}));
   if(ws.batch.metrics)panel.append(h("details",{},h("summary",{text:"Comparison totals"}),wsShowValue(ws.batch.metrics)));
 }
+let wsCompareStatus=null;
 async function wsEditExample(selected){
   const e=ws.examples.find(x=>x.id===selected);if(!e)throw new Error("Select a saved example.");
   const box=h("div"),label=wsField(box,"Label",e.label),fields={};
   const ports=ws.projection.input_ports||ws.projection.facts?.inputs||[];
   for(const n of [...Object.keys(e.inputs),...ports.filter(n=>!(n in e.inputs))])fields[n]=wsInput(box,n,ws.projection.contracts?.inputs?.[n],e.inputs[n]||"",false);
-  const kind=wsChoice(box,"Expectation",[["review","Human review"],["whole_output","Exact output"],["fields","Field assertions"]],e.expectation.kind);
+  const kind=wsChoice(box,"Expectation",[["review","Human review"],["whole_output","Exact output"],["fields","Field assertions"],["text","Text checks"]],e.expectation.kind);
   const criterion=wsField(box,"Review criterion",e.expectation.criterion||"");const values={};
   for(const n of ws.projection.facts.outputs)values[n]=wsInput(box,"Expected "+n,ws.projection.contracts?.outputs?.[n],e.expectation.values?.[n]||"",false);
   const stale=Object.fromEntries(Object.entries(e.expectation.values||{}).filter(([n])=>!ws.projection.facts.outputs.includes(n)));
@@ -3243,12 +3881,25 @@ async function wsEditExample(selected){
   }
   const assertions=h("div"),edits=[];box.append(assertions);
   function assertion(row={}){const line=h("div");assertions.append(line);const output=wsChoice(line,"Output",ws.projection.facts.outputs.map(n=>[n,n]),row.output),path=wsField(line,"Field path",(row.path||[]).join(".")),op=wsChoice(line,"Condition",["equals","absent","present","null"].map(x=>[x,x]),row.operation),v=wsField(line,"Exact value",row.value_text||"");edits.push(()=>({output:output.value,path:path.value.split(".").filter(Boolean),operation:op.value,...(op.value==="equals"?{value_text:v.value}:{})}));}
-  (e.expectation.assertions||[]).forEach(assertion);box.append(wsButton("Add assertion",()=>assertion()));
+  (e.expectation.kind==="fields"?e.expectation.assertions:[]).forEach(assertion);box.append(wsButton("Add assertion",()=>assertion()));
+  // Text checks (core v3 §7.2): substring checks or the named placeholder pattern on Text outputs. An untouched
+  // row returns its stored assertion unchanged, so editing other parts never converts or drops it.
+  const textChecks=h("div",{"data-test":"ws-text-checks"}),textEdits=[];box.append(textChecks);
+  function textCheck(row={operation:"excludes",values:[],case:"insensitive"}){
+    const line=h("div",{"data-test":"ws-text-check"});textChecks.append(line);
+    const output=wsChoice(line,"Checked output",ws.projection.facts.outputs.map(n=>[n,n]),row.output);
+    const op=wsChoice(line,"Text condition",[["includes","Includes every value"],["excludes","Excludes every value"],["excludes_pattern","No placeholder tokens left"]],row.operation);
+    const shown=(row.values||[]).join("\n"),values=wsField(line,"Values, one per line",shown,true);
+    const letterCase=wsChoice(line,"Letter case",[["insensitive","Ignore case"],["sensitive","Match case"]],row.case||"insensitive");
+    textEdits.push(()=>op.value==="excludes_pattern"?{output:output.value,operation:op.value,pattern:row.pattern||"bracket_upper"}
+      :{output:output.value,operation:op.value,values:values.value===shown&&row.values?row.values:values.value.split("\n").filter(Boolean),case:letterCase.value});
+  }
+  (e.expectation.kind==="text"?e.expectation.assertions:[]).forEach(textCheck);box.append(wsButton("Add text check",()=>textCheck(),"ws-add-text-check"));
   const verified=h("input",{type:"checkbox",checked:e.verified});box.append(h("label",{},verified," I verified this expectation"));
   let ex;const error=h("p",{role:"alert"});box.append(error);
   if(await wsDialog("Edit example",box,["Save","Cancel"],async action=>{
     if(action==="Cancel")return true;
-    try{ex={...e,label:label.value,version:e.version+1,inputs:Object.fromEntries(await Promise.all(Object.entries(fields).map(async([n,f])=>[n,await f.read()]))),verified:verified.checked,expectation:kind.value==="review"?{kind:"review",criterion:criterion.value}:kind.value==="fields"?{kind:"fields",assertions:edits.map(fn=>fn())}:{kind:"whole_output",values:{...Object.fromEntries(await Promise.all(Object.entries(values).map(async([n,f])=>[n,await f.read()]))),...stale}} };return true;}
+    try{ex={...e,label:label.value,version:e.version+1,inputs:Object.fromEntries(await Promise.all(Object.entries(fields).map(async([n,f])=>[n,await f.read()]))),verified:verified.checked,expectation:kind.value==="review"?{kind:"review",criterion:criterion.value}:kind.value==="text"?{kind:"text",assertions:textEdits.map(fn=>fn())}:kind.value==="fields"?{kind:"fields",assertions:edits.map(fn=>fn())}:{kind:"whole_output",values:{...Object.fromEntries(await Promise.all(Object.entries(values).map(async([n,f])=>[n,await f.read()]))),...stale}} };return true;}
     catch(e){error.textContent=wsErrorText(e);return false;}
   })!=="Save")return;
   ws.examples=ws.examples.map(x=>x.id===e.id?ex:x);ws.examplesDirty=true;wsRender();
@@ -3306,45 +3957,101 @@ function wsInput(parent,name,contract,initial,remember=true){
   return {set,read:async()=>{await current;const result=await wsApi("input-value",{value:read()});if(remember)ws.inputs[name]=result.text;return result.text;}};
 }
 
+const WS_REFUSAL_TEXT={destination_untrusted:"This destination is not trusted to receive local-only values.",destination_ineligible:"This destination can't receive local-only values.",
+  destination_proxied:"This destination is reached through a proxy, so local-only values can't be sent.",destination_trust_unavailable:"The trust list could not be read.",
+  protected_host_script:"Local-only values can't be passed to a host Python script.",destination_changed:"The destination changed after review. Check readiness again."};
+// Readiness (UI-AB v2 AB3.2): the reviewed plan's destination and restriction sources, or the refusal and its remedies.
+function wsShowReadiness(box,plan,error,recheck){
+  box.replaceChildren();
+  if(error){
+    const issue=(error.body?.issues||[]).find(i=>i.restriction_sources)||{};
+    box.dataset.state="refused";box.dataset.code=error.code||"error";
+    box.append(h("p",{class:"err-text","data-test":"ws-readiness-message",text:MESSAGES?.codes?.[error.code]?messageText({...issue,code:error.code}):WS_REFUSAL_TEXT[error.code]||wsErrorText(error)}));
+    if(issue.destination)box.append(wsDestinationLine({...issue.destination,base_url:issue.destination.url},{locality:issue.locality,eligible:issue.eligible,reason:issue.reason,trusted:issue.trusted}));
+    if(issue.restriction_sources?.length)box.append(h("p",{text:"Restricted because:"}),wsRestrictionList(issue.restriction_sources));
+    const remedies=h("div",{class:"row","data-test":"ws-readiness-remedies"});box.append(remedies);
+    const codes=new Set((issue.restriction_sources||[]).map(r=>r.code));
+    if(issue.destination&&issue.eligible&&!issue.trusted)remedies.append(wsButton("Grant",async()=>{if(await wsGrantTrust(issue.destination))await recheck();},"ws-readiness-grant"));
+    if(codes.has("declared_label"))remedies.append(wsButton("Edit port",()=>wsView("design"),"ws-readiness-edit-port"));
+    if(codes.has("retained_label"))remedies.append(wsButton("Review retained privacy labels",async()=>{await wsReviewRetainedLabels();await recheck();},"ws-readiness-retained"));
+    if(codes.has("example_restriction"))box.append(h("p",{class:"ws-hint",text:"A saved example's restriction stays with its captured values; changing the port label does not clear it. Use a new input instead."}));
+    if(issue.remedy&&issue.remedy.action!=="grant")remedies.append(h("span",{class:"ws-hint","data-test":"ws-readiness-remedy","data-action":issue.remedy.action,text:messageText({action:issue.remedy.action,target:issue.remedy.target})}));
+    box.append(h("details",{},h("summary",{text:"Details"}),h("p",{"data-test":"ws-readiness-code",text:error.code||"error"})));
+    return;
+  }
+  box.dataset.state="ready";delete box.dataset.code;
+  const d=plan.descriptor;
+  box.append(h("p",{"data-test":"ws-readiness-message",text:"Ready to run."}));
+  for(const c of d.candidates||[]){const dest=c.destination;if(dest&&(dest.base_url||dest.url))box.append(h("p",{class:"ws-hint",text:"Connects to: "+[dest.server,dest.tool,dest.kind,dest.model].filter(Boolean).join(" · ")+(c.protected?" · local-only values (trusted)":"")}));}
+  if(d.restriction_sources?.length)box.append(h("p",{text:"Run restrictions:"}),wsRestrictionList(d.restriction_sources));
+}
 function wsTrials(compare){
-  const form=h("div"),results=h("div",{id:"ws-results","aria-live":"polite"});wsBody.append(form,results);
+  const layout=h("div",{class:compare?"ws-compare-layout":"ws-trials-layout","data-test":"ws-trials-layout"});
+  const form=h("section",{class:"ws-trials-setup","aria-label":compare?"Comparison setup":"Inputs"}),results=h("div",{id:"ws-results","aria-live":"polite"});
+  const right=h("section",{class:"ws-trials-results","aria-label":"Results"},results);
+  wsBody.append(layout);
   const valid=ws.projection.valid!==false;
   if(!valid)form.append(h("div",{"data-test":"ws-validation","data-state":"invalid"},h("p",{text:"Correct these definition issues in Design before saving or running. Your inputs are kept."}),wsShowValue(ws.projection.issues)));
   form.append(h("p",{"data-test":"ws-run-source","data-clean":String(wsClean()),text:"Runs use: "+wsSelectionLabel()}));
   if(wsClean()&&ws.saved.runIssues?.length)form.append(h("div",{"data-test":"ws-run-issues"},h("p",{text:"This revision's saved dependencies need repair before it can run."}),wsShowValue(ws.saved.runIssues)));
-  const inputArea=h("fieldset",{"data-test":"ws-inputs"},h("legend",{text:"Inputs — one-off test or selected example"}));form.append(inputArea);
+  const inputArea=h("fieldset",{"data-test":"ws-inputs"},h("legend",{text:"Inputs — one-off test or selected example"}));
   const select=wsChoice(inputArea,"Example",[["","New input — run once without saving an example"],...ws.examples.map(e=>[e.id,e.label])],ws.selectedExample);
-  const selectedInfo=h("div");form.append(selectedInfo);
+  const selectedInfo=h("div");
   const names=ws.projection.input_ports||ws.projection.facts?.inputs||[],inputs={};
   for(const n of names){const contract=ws.projection.contracts?.inputs?.[n];if(contract)inputs[n]=wsInput(inputArea,n,contract,ws.inputs[n]||"");else inputArea.append(h("p",{"data-test":"ws-input-unavailable","data-port":n,text:n+": correct its contract in Design to enable this input."}));}
   if(!names.length)inputArea.append(h("p",{"data-test":"ws-no-inputs",text:"This block requires no inputs."}));
-  inputArea.append(h("p",{text:"New input runs without a saved example. Run-history saving follows the Save runs setting."}));
+  inputArea.append(h("p",{class:"ws-hint",text:"New input runs without a saved example. Run-history saving follows the Save runs setting."}));
   const values=async()=>Object.fromEntries(await Promise.all(Object.entries(inputs).map(async([n,e])=>[n,await e.read()])));
   const showSelected=()=>{const ex=ws.examples.find(e=>e.id===select.value);selectedInfo.replaceChildren();if(ex){const unmatched=Object.keys(ex.inputs).filter(n=>!inputs[n]);if(unmatched.length)selectedInfo.append(h("p",{text:"Example inputs outside this block: "+unmatched.join(", ")}),wsShowValue(ex.inputs));}};
   select.onchange=async()=>{ws.selectedExample=select.value;const ex=ws.examples.find(e=>e.id===select.value);showSelected();for(const [n,e] of Object.entries(inputs))await e.set(ws.inputs[n]=ex?.inputs[n]||"");};showSelected();
-  const examplesArea=h("fieldset",{},h("legend",{text:"Saved examples"}),h("p",{"data-test":"ws-examples-state","data-state":ws.examplesDirty?"unsaved":"saved",text:ws.examplesDirty?"Example changes are in memory. Save example collection to keep them.":"Examples are saved separately from block revisions and run history."}));form.append(examplesArea);
+  // Examples drawer: administration stays one click away and remembers whether it is open.
+  const examplesArea=h("details",{class:"ws-drawer","data-test":"ws-examples-drawer",open:ws.examplesOpen!==false},h("summary",{text:"Examples ("+ws.examples.length+")"}),h("p",{"data-test":"ws-examples-state","data-state":ws.examplesDirty?"unsaved":"saved",text:ws.examplesDirty?"Example changes are in memory. Save example collection to keep them.":"Examples are saved separately from block revisions and run history."}));
+  examplesArea.ontoggle=()=>{ws.examplesOpen=examplesArea.open;};
   const selection=h("fieldset",{},h("legend",{text:"Examples to run"})),selected=[];
   for(const ex of ws.examples){const check=h("input",{type:"checkbox",checked:true,"data-test":"ws-example-choice","data-example":ex.id});selected.push([ex,check]);selection.append(h("label",{},check," "+ex.label+" "));}
   examplesArea.append(selection);
   const chosen=()=>selected.filter(([,check])=>check.checked).map(([ex])=>ex);
   wsPending=async()=>{await values();};
-  if(compare){const baseline=wsChoice(form,"Baseline revision",[]),candidate=wsChoice(form,"Candidate",[["",wsClean()?"Selected revision "+ws.saved.number:"Current draft"]]);
-    wsApi("blocks/"+ws.draft.key+"/revisions").then(x=>{if(!baseline.isConnected)return;baseline.replaceChildren(...x.revisions.map(r=>new Option(wsRevisionLabel(r),r.id)));for(const r of x.revisions)candidate.add(new Option(wsRevisionLabel(r),r.id));}).catch(wsError);
-    form.append(wsButton("Compare versions",()=>wsStart("batches",{candidates:[{key:ws.draft.key,revision:baseline.value},candidate.value?{key:ws.draft.key,revision:candidate.value}:wsSourceOf()],examples:chosen()})));
+  const stop=wsButton("Stop",async()=>{if(ws.batch?.state==="running")await wsApi("batches/"+ws.batch.id+"/stop",{});});
+  const recent=wsButton("Recent runs and comparisons",wsRecords);
+  if(compare){
+    const setup=h("details",{class:"ws-compare-setup","data-test":"ws-compare-setup",open:!ws.batch||ws.batch.state!=="running"},h("summary",{text:"Comparison setup"}));
+    const baseline=wsChoice(setup,"Baseline revision",[]),candidate=wsChoice(setup,"Candidate",[["",wsClean()?"Selected revision "+ws.saved.number:"Current draft"]]);
+    wsApi("blocks/"+ws.draft.key+"/revisions").then(x=>{if(!baseline.isConnected)return;baseline.replaceChildren(...x.revisions.map(r=>new Option(wsRevisionLabel(r),r.id)));for(const r of x.revisions)candidate.add(new Option(wsRevisionLabel(r),r.id));identities();}).catch(wsError);
+    setup.append(examplesArea,wsButton("Compare versions",async()=>{await wsStart("batches",{candidates:[{key:ws.draft.key,revision:baseline.value},candidate.value?{key:ws.draft.key,revision:candidate.value}:wsSourceOf()],examples:chosen()},()=>{setup.open=true;});},"ws-compare-versions"));
+    // Always visible: Stop, state, the example being read and both arm identities (R11).
+    const status=h("div",{class:"ws-compare-status","data-test":"ws-compare-status"});
+    const state_=h("span",{"data-test":"ws-compare-state"}),armA=h("span",{"data-test":"ws-arm-baseline"}),armB=h("span",{"data-test":"ws-arm-candidate"}),current=h("span",{"data-test":"ws-compare-current"});
+    const identities=()=>{const plan=ws.batch?.plan?.candidates;const label=(sel,i)=>plan?.[i]?(plan[i].block_revision_number?"revision "+plan[i].block_revision_number:"draft")+(plan[i].destination?" · "+[plan[i].destination.model,plan[i].destination.tool].filter(Boolean).join(""):""):sel.selectedOptions[0]?.text||"";
+      armA.textContent="Baseline: "+label(baseline,0);armB.textContent="Candidate: "+label(candidate,1);};
+    baseline.addEventListener("change",identities);candidate.addEventListener("change",identities);
+    const move=step=>{const pairs=results.querySelectorAll('[data-test="ws-example-pair"]');if(!pairs.length)return;ws.compareCurrent=Math.min(pairs.length-1,Math.max(0,(ws.compareCurrent??0)+step));wsCompareStatus();pairs[ws.compareCurrent].scrollIntoView({block:"nearest"});};
+    wsCompareStatus=()=>{if(!status.isConnected)return;identities();if(ws.batch?.state==="running"&&setup.dataset.collapsed!=="true"){setup.open=false;setup.dataset.collapsed="true";}state_.textContent=ws.batch?ws.batch.state:"Not started";const pairs=results.querySelectorAll('[data-test="ws-example-pair"]');
+      for(const [i,el] of [...pairs].entries())el.dataset.current=String(i===(ws.compareCurrent??0));const here=pairs[ws.compareCurrent??0];current.textContent=here?here.querySelector("h3").textContent:"";};
+    status.append(stop,state_,armA,armB,current,wsButton("Previous example",()=>move(-1),"ws-compare-previous"),wsButton("Next example",()=>move(1),"ws-compare-next"));
+    form.append(setup);
+    layout.append(form,status,right,recent);
+    wsCompareStatus();
   }else{
-    inputArea.append(wsButton("Preview instructions",async()=>{const p=await wsApi("preview",wsSourceOf({inputs:await values()}));await wsDialog("Prepared behaviour · "+wsSelectionLabel(),wsShowValue(p.prepared||p.input_checks||p.issues),["Close"]);}),
-      wsButton("Run test",async()=>{
-        const input=await values(),ex=ws.examples.find(e=>e.id===select.value);
-        if(ex&&(Object.keys(ex.inputs).some(n=>!inputs[n])||Object.keys(ex.inputs).every(n=>ex.inputs[n]===input[n])))return wsStart("batches",{candidates:[wsSourceOf()],examples:[ex]});
-        return wsStart("test",wsSourceOf({inputs:input}));
-      }),
+    const readiness=h("div",{class:"ws-readiness","data-test":"ws-readiness","data-state":"idle"},h("p",{class:"ws-hint",text:"Check readiness to see where this run connects and what restricts it."}));
+    const check=async()=>{readiness.dataset.state="checking";try{const plan=await wsApi("plans",{action:"test",request:wsSourceOf({inputs:await values()})});wsShowReadiness(readiness,plan,null,check);}catch(e){if(e.body||e.code)wsShowReadiness(readiness,null,e,check);else throw e;}};
+    const toolbar=h("div",{class:"row ws-toolbar","data-test":"ws-test-toolbar"});
+    const run=wsButton("Run test",async()=>{
+      const input=await values(),ex=ws.examples.find(e=>e.id===select.value);
+      try{
+        if(ex&&(Object.keys(ex.inputs).some(n=>!inputs[n])||Object.keys(ex.inputs).every(n=>ex.inputs[n]===input[n])))return await wsStart("batches",{candidates:[wsSourceOf()],examples:[ex]});
+        return await wsStart("test",wsSourceOf({inputs:input}));
+      }catch(e){if((e.body?.issues||[]).some(i=>i.restriction_sources))wsShowReadiness(readiness,null,e,check);throw e;}
+    });
+    toolbar.append(run,stop,wsButton("Preview instructions",async()=>{const p=await wsApi("preview",wsSourceOf({inputs:await values()}));await wsDialog("Prepared behaviour · "+wsSelectionLabel(),wsShowValue(p.prepared||p.input_checks||p.issues),["Close"]);}),
       wsButton("Add example",async()=>{const input=await values(),box=h("div"),label=wsField(box,"Example label"),criterion=wsField(box,"Review criterion","Review against the source");if(await wsDialog("Add example",box,["Save","Cancel"])!=="Save")return;
         const id=crypto.randomUUID();ws.examples.push({id,version:1,label:label.value||"Example",inputs:input,expectation:{kind:"review",criterion:criterion.value},origin:"manual",verified:false});ws.selectedExample=id;ws.examplesDirty=true;wsRender();},"ws-save-as-example"));
-    examplesArea.append(wsButton("Edit selected example",()=>wsEditExample(select.value)),wsButton("Save example collection",wsPersistExamples),wsButton("Run saved examples",()=>wsStart("batches",{candidates:[wsSourceOf()],examples:chosen()})));
+    examplesArea.append(h("div",{class:"row"},wsButton("Edit selected example",()=>wsEditExample(select.value)),wsButton("Save example collection",wsPersistExamples),wsButton("Run saved examples",()=>wsStart("batches",{candidates:[wsSourceOf()],examples:chosen()}))));
+    form.append(inputArea,selectedInfo,h("div",{class:"ws-readiness-box"},h("h3",{text:"Readiness"}),readiness,wsButton("Check readiness",check,"ws-check-readiness")),toolbar,examplesArea,recent);
+    layout.append(form,right);
   }
   for(const button of form.querySelectorAll('[data-test="ws-run-test"], [data-test="ws-run-saved-examples"], [data-test="ws-compare-versions"], [data-test="ws-save-as-example"], [data-test="ws-edit-selected-example"]'))if(!valid)button.disabled=true;
-  form.append(wsButton("Recent runs and comparisons",wsRecords));
-  form.append(wsButton("Stop",async()=>{if(ws.batch?.state==="running")await wsApi("batches/"+ws.batch.id+"/stop",{});}));wsResults();
+  wsResults();
 }
 async function wsRecords(){
   const box=h("div"),key=ws.draft.key;
@@ -3363,7 +4070,7 @@ async function wsRecords(){
 }
 wsSearch.oninput=wsFilter;wsList.onchange=async()=>{const key=wsList.value;try{if(key&&await wsLeave())await wsLoad({key},false);else wsFilter();}catch(e){wsError(e);}};
 wsPanel.append(wsHeading,h("div",{class:"ws-layout"},h("aside",{},wsSearch,wsList,wsButton("New block",wsNew),wsRevisionPicker),h("div",{},wsNav,wsNote,wsBody)));
-TABS.workshop={async tutorialAssist(action){ws.view="design";ws.tutorialAction=action;if(action==="describe"){await wsLoad({key:"tutorial_described"},false);return;}await wsLoad({key:"tutorial_extractor",starter:"extract_fields",role:"fast"},true);}, async tutorialPrepare(key,inputs){ws.view="test";await wsLoad({key,support:[]},false);ws.inputs=inputs;ws.batch=null;wsRender();},async tutorialCreate(){ws.view="design";await wsLoad({starter:"count_text",key:"tutorial_counter"},true);ws.examples=(await wsApi("starters")).starters.find(s=>s.id==="count_text").examples;wsRender();},async onShow(){try{await wsFlush();await wsRefresh();const parts=location.hash.slice(1).split("/");
+TABS.workshop={async tutorialAssist(action){ws.view="design";ws.tutorialAction=action;if(action==="describe"){await wsLoad({key:"tutorial_described"},false);return;}await wsLoad({key:"tutorial_extractor",starter:"extract_fields",role:"fast"},true);}, async tutorialPrepare(key,inputs){ws.view="test";await wsLoad({key,support:[]},false);ws.inputs=inputs;ws.batch=null;wsRender();},async tutorialCreate(){ws.view="design";await wsLoad({starter:"count_text",starter_version:2,key:"tutorial_counter"},true);ws.examples=(await wsApi("starters")).starters.find(s=>s.id==="count_text").examples;wsRender();},async onShow(){try{await wsFlush();await wsRefresh();const parts=location.hash.slice(1).split("/");
   if(parts[1]&&wsBlocks.some(b=>b.name===parts[1])){
     if(!ws.draft||ws.draft.key!==parts[1]){if(!await wsLeave()){wsRender();return;}ws.view=["design","test","compare"].includes(parts[2])?parts[2]:"design";await wsLoad({key:parts[1]},false);}
     else {ws.view=["design","test","compare"].includes(parts[2])?parts[2]:"design";wsRender();}
@@ -3383,8 +4090,98 @@ $("main-nav").addEventListener("keydown",e=>{
   const n=e.key==="ArrowRight"?(i+1)%3:e.key==="ArrowLeft"?(i+2)%3:e.key==="Home"?0:e.key==="End"?2:-1;
   if(n>=0){e.preventDefault();buttons[n].click();buttons[n].focus();}
 });
-const settingsGroup=h("details",{id:"ws-settings"},h("summary",{"data-test":"ws-settings",text:"Settings"}));
-$("open-settings").before(settingsGroup);settingsGroup.append($("open-settings"),$("open-roles"),$("open-servers"),$("save-runs").parentElement);
+// --- Settings (UI-CD v3 CD8): one categorised header dialog shared by every tab ---------------------------------------
+// Overview, Saving & history and Execution preferences render here; Models & roles, Trusted destinations, MCP servers
+// and Cloud keys are reached in one click and open their existing editors over it (same save rules and hooks).
+const settingsHub=h("dialog",{id:"settings-hub","data-test":"settings-hub","aria-labelledby":"settings-hub-title",class:"wide-dialog"});
+const settingsNav=h("nav",{class:"settings-nav","aria-label":"Settings categories","data-test":"settings-categories"}),settingsPane=h("div",{class:"settings-pane","data-test":"settings-pane"});
+settingsHub.append(h("h2",{id:"settings-hub-title",text:"Settings"}),h("div",{class:"settings-layout"},settingsNav,settingsPane),
+  h("div",{class:"row",style:"justify-content:flex-end"},h("button",{type:"button","data-test":"settings-close",text:"Close",onclick:()=>settingsHub.close()})));
+document.body.append(settingsHub);
+const settingsGroup=h("button",{type:"button",id:"ws-settings","data-test":"ws-settings",text:"Settings",onclick:()=>openSettings("overview")});
+$("open-settings").before(settingsGroup);
+const settingsOverview=h("div",{"data-test":"settings-overview"},h("p",{class:"note"},summaryEl));
+const SETTINGS_INLINE={
+  overview:()=>[h("h3",{text:"Overview"}),h("p",{text:$("workspace").textContent||""}),settingsOverview,
+    h("p",{"data-test":"settings-saving-state",text:"Save runs: "+(historyInfo().save_runs?"On":"Off")})],
+  saving:()=>[h("h3",{text:"Saving & history"}),h("p",{text:"Save runs: "+(historyInfo().save_runs?"On":"Off")+". Turn it on or off in the header."}),
+    h("p",{class:"note",text:$("save-runs-control").title}),h("p",{class:"note",text:DISCLOSURE})],
+  execution:()=>{const box=h("div",{"data-test":"settings-execution"},h("h3",{text:"Execution preferences"}));
+    wsApi("workflow-mcp-confirmation").then(pref=>{
+      const msg=h("p",{role:"status","data-test":"settings-execution-status"});
+      const mode=wsChoice(box,"Workflow MCP confirmation",[["every_run","Every MCP workflow run"],["effectful_batches","Only MCP batches"]],pref.mode);
+      box.append(pref.invalid?h("p",{text:"Invalid saved setting. Using Every MCP workflow run."}):"",
+        wsButton("Save confirmation preference",async()=>{const result=await wsApi("workflow-mcp-confirmation",{mode:mode.value,expected_revision:pref.revision});
+          Object.assign(pref,result);msg.dataset.state="preference";msg.textContent="Confirmation preference saved.";},"settings-save-mcp-confirmation"),msg);
+    }).catch(e=>box.append(h("p",{class:"err-text",text:e.message})));
+    return [box];}
+};
+let settingsCategory="overview";
+function settingsCategories(){
+  // Category buttons for the existing editors are the existing header buttons, moved here (hooks preserved).
+  return [["overview","Overview",null],["roles","Models & roles",$("open-roles")],["trust","Trusted destinations",$("header-workflow-settings-button")],
+    ["servers","MCP servers",$("open-servers")],["keys","Cloud keys",$("open-openrouter-key")],["saving","Saving & history",null],["execution","Execution preferences",null]];
+}
+function drawSettings(){
+  settingsNav.replaceChildren();
+  for(const [id,label,existing] of settingsCategories()){
+    if(existing){existing.dataset.category=id;existing.setAttribute("aria-current",String(id===settingsCategory));settingsNav.append(existing);continue;}
+    settingsNav.append(h("button",{type:"button","data-test":"settings-category","data-category":id,"aria-current":String(id===settingsCategory),text:label,
+      onclick:()=>{settingsCategory=id;drawSettings();}}));
+  }
+  if(SETTINGS_INLINE[settingsCategory])settingsPane.replaceChildren(...SETTINGS_INLINE[settingsCategory]());
+  // Model settings stays reachable beside Models & roles (it edits the profile a role points to).
+  if(settingsCategory==="overview")settingsPane.append($("open-settings"));
+}
+// Opens Settings at a category. Categories with their own editor open it over Settings; the promise settles when it
+// closes, so a remedy can return focus to itself and recheck (CD1.9). Closing Settings never touches the open screen.
+function openSettings(category="overview"){
+  const existing=Object.fromEntries(settingsCategories().filter(([, ,b])=>b).map(([id, ,b])=>[id,b]));
+  if(SETTINGS_INLINE[category]){settingsCategory=category;drawSettings();if(!settingsHub.open)settingsHub.showModal();return new Promise(resolve=>settingsHub.addEventListener("close",resolve,{once:true}));}
+  const button=existing[category];
+  if(!button)return Promise.resolve();
+  const target={roles:"roles-dialog",servers:"servers-dialog",keys:"openrouter-key-dialog"}[category];
+  button.click();
+  if(!target)return Promise.resolve();
+  return new Promise(resolve=>$(target).addEventListener("close",resolve,{once:true}));
+}
+settingsHub.addEventListener("close",()=>{for(const [, ,b] of settingsCategories())if(b)$("settings-parking").append(b);});
+for(const id of ["open-settings","open-openrouter-key","open-servers","open-roles"])$("settings-parking").append($(id));
+
+// --- activity indicator (UI-CD v3 CD9): one in-page state fed by the Workshop follower and the workflow poller ---------
+const activityEl=h("button",{type:"button",id:"header-activity","data-test":"header-activity",class:"activity",hidden:true,"data-state":"idle"});
+const activitySources=new Map();
+function setActivity(source,info){
+  if(info)activitySources.set(source,info);else activitySources.delete(source);
+  const current=activitySources.get("workflow")||activitySources.get("workshop");
+  activityEl.hidden=!current;activityEl.dataset.state=current?current.state||"running":"idle";activityEl.dataset.source=current?current.source||source:"";
+  activityEl.replaceChildren(...(current?[h("span",{class:"spinner","aria-hidden":"true"}),h("span",{text:" "+current.label})]:[]));
+  activityEl.onclick=current?()=>current.open():null;   // reopens the operation's own view; never starts anything
+}
+const WS_BATCH_LABEL=batch=>batch?.plan?.describe||batch?.plan?.assistance?"Assistance":(batch?.plan?.candidates?.length>1?"Compare":"Test");
+async function recoverActivity(){
+  try{
+    const active=await wsApi("workflow-active");
+    if(active?.operation_id&&!activitySources.has("workflow"))setActivity("workflow",{label:"Workflow run",source:"workflow",
+      open:()=>{selectTab("workflows");TABS.workflows?.showRun?.();}});
+  }catch(e){/* the indicator stays as it was */}
+  try{
+    const batches=await wsApi("batches");
+    if(batches?.active&&!activitySources.has("workshop")){const batch=await wsApi("batches/"+batches.active).catch(()=>null);
+      setActivity("workshop",{label:WS_BATCH_LABEL(batch),source:"workshop",open:()=>selectTab("workshop")});}
+  }catch(e){/* the indicator stays as it was */}
+}
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)recoverActivity();});
+function arrangeHeader(){
+  // Wide design target: AgentWiz · activity · spacer · Save runs · workspace · Settings · Tutorial (CD9).
+  const header=document.querySelector("header");
+  const order=[header.querySelector("h1"),activityEl,h("span",{class:"header-spacer"}),$("save-runs-control"),$("saving"),$("workspace"),$("open-workspaces"),settingsGroup,$("open-tutorial"),$("switch-msg")];
+  for(const el of order)if(el)header.append(el);
+}
+$("open-roles").textContent="Models & roles";
+$("workspace").after($("save-runs-control"));
+// The help panel sits beside the content when there is room; the page reserves its width while it is open.
+new MutationObserver(()=>document.body.classList.toggle("help-open",!$("tutorial-box").classList.contains("hidden"))).observe($("tutorial-box"),{attributes:true,attributeFilter:["class"]});
 // Workspace administration controls are initialized just below, before the start section.
 const workspacesDialog = $("workspaces-dialog"), workspacesMsg = $("workspaces-msg");
 let workspacesInfo = null, workspacesSelected = "";
@@ -3417,8 +4214,12 @@ function workspacesRender() {
     const radio = h("input", { type: "radio", name: "workspaces-choice", value: row.name,
       checked: row.name === workspacesSelected });
     radio.onchange = () => { workspacesSelected = row.name; $("workspaces-selection").value = row.name; workspacesRender(); };
-    return h("label", { class: "pick", "data-test": "workspaces-row", "data-workspace": row.name,
-      "data-current": String(!!row.current) }, radio, " " + row.name + (row.current ? " (current)" : ""));
+    // Switch is each row's primary action; destructive actions stay in More actions (UI-AB v2 AB10.3).
+    const go = h("button", { type: "button", "data-test": "workspaces-row-switch", text: "Switch",
+      disabled: !!row.current || !info.admin || !!info.tutorial_active });
+    go.onclick = () => { workspacesSelected = row.name; $("workspaces-selection").value = row.name; workspacesRender(); $("workspaces-switch").click(); };
+    return h("div", { class: "row workspaces-line" }, h("label", { class: "pick", "data-test": "workspaces-row", "data-workspace": row.name,
+      "data-current": String(!!row.current) }, radio, " " + row.name + (row.current ? " (current)" : "")), go);
   }));
   const selection = $("workspaces-selection");
   selection.replaceChildren(...info.workspaces.map(row => new Option(row.name + (row.current ? " (current)" : ""), row.name)));
@@ -3475,7 +4276,7 @@ async function workspacesFinishSwitch(target) {
 }
 async function workspacesSwitch(create) {
   const target = create ? $("workspaces-name").value.trim() : $("workspaces-selection").value;
-  if (!target || !await wsLeave()) return;
+  if (!target || !await wsLeave() || (TABS.workflows && !await TABS.workflows.leave())) return;
   try {
     await api("/api/workspaces/" + (create ? "create" : "switch"), { format_version: 1, name: target });
     workspacesReload();
@@ -3502,7 +4303,7 @@ async function workspacesClone() {
 async function workspacesResetWorkspace() {
   const selected = workspacesSelectedRow();
   if (!selected) return;
-  if (selected.current && !await wsLeave()) return;
+  if (selected.current && (!await wsLeave() || (TABS.workflows && !await TABS.workflows.leave()))) return;
   if (!await workspacesConfirm("reset", selected.name)) return;
   try {
     await api("/api/workspaces/reset", { format_version: 1, name: selected.name, confirm: selected.name });
@@ -3557,7 +4358,20 @@ function startFailure(e) {
   $("banner").append(h("p", { text: e.message }));
   $("banner").classList.remove("hidden");
 }
-contractsScript.then(initContracts).catch(startFailure).finally(() => {
+Promise.all([contractsScript.then(initContracts), workflowScript]).then(() => {
+  const workflow = window.createWorkflowPage({h, api, wsApi, dialog:wsDialog, copyControl, contracts:CW,
+    openServers:()=> $("open-servers").click(),
+    openBlock:async(key,revision)=>{
+      if(!await wsLeave())return;
+      selectTab("workshop");await wsLoad({key,...(revision?{revision}:{})},false);
+    },
+    newBlock:async(starter)=>{selectTab("workshop");await wsNew(starter);},
+    activity:setActivity});
+  TABS.workflows=workflow;
+  arrangeHeader();recoverActivity();
+  const trustButton=wsButton("Trusted destinations",()=>workflow.settings(),"header-workflow-settings");
+  trustButton.id="header-workflow-settings-button";$("settings-parking").append(trustButton);
+}).catch(startFailure).finally(() => {
   selectTab(fragFromHash(), { hash: false });
   refreshState().then(tutorialInit).catch((e) => {
     $("banner").replaceChildren(h("p", { text: e.message }));
@@ -3567,3 +4381,4 @@ contractsScript.then(initContracts).catch(startFailure).finally(() => {
 </script>
 </body>
 </html>
+

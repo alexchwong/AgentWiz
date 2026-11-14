@@ -331,3 +331,61 @@ metadata refactor specification v2 and block UI improvement proposal are owner-h
 The [pre-cleanup handover](https://github.com/alexchwong/AgentWiz/blob/e937d268069a0c7815fc525f16e7c37ae6c0bb16/HANDOVER.md) retains the build history,
 including the bounded experiments and the owner dispositions. A broader parser, schema-generation
 or routing change needs a separate decision.
+
+
+
+## 7 November 2026 — Release Gate proposal v2
+
+Owner approved implementation of the Release Gate proposal v2 after review against devel
+`a6f6458320d246caba59866357922db0ac3ef665`. This adds one explicit human-reviewed exception
+to monotonic restriction propagation; source data and sibling outputs retain their restriction.
+Optional local AI assessment is advisory, always protected, and cannot approve a release.
+Keep the current unreleased 0.2.1 version. No production tutorial auto-approval is introduced;
+the tutorial driver explicitly makes its synthetic decision through the ordinary UI.
+
+## 8 November 2026 — 0.2.1 core and UI implementation lineage
+
+The owner-held references are `AgentWiz_proposal_ui_AB_walkthrough_space_v2.md`, the core v3
+proposals, and `AgentWiz_proposal_ui_CD_v3.md`. The deliveries were incorporated in commits
+`f197a52` (UI-AB), `3bf61c6` (core), and `443308e` (UI-CD), followed by UI startup and
+validation/geometry fixes in `16aaf94` and `ef623dc`. The handover at `ef623dc` preserves the
+full delivery descriptions, departures and historical verification reports in Git history.
+Those reports apply to their stated intermediate trees, not to subsequent candidates.
+
+UI-AB applied the owner's retained-privacy-label review and refusal to overwrite workflow-ready
+revisions. The core reference workflow uses the full explicit Gate route. The API continues to
+accept model/tool starter creation without `data_handling` for existing callers (v3); the page
+supplies labels to create workflow-ready v4 blocks. Test/Compare and workflow readiness use
+the same protected-dispatch rules. Current contracts belong in `architecture.md`.
+
+Implementation interpretations include a modal for palette additions, stacked inspectors at
+smaller widths, existing configuration editors opening over Settings, and separate Test/Compare/
+saved-block result markup rather than universal `ResultView` adoption. History rows show dates
+only when their manifests provide them. Add Release Gate readiness guidance does not preselect
+an edge. Core validation keeps Gate issues under `structural`; restore traces remain in `fills`;
+Text assertions on JSON outputs report `example_incompatible`. The tutorial's cloud-kind profile
+uses a local stand-in and a session-only placeholder key, not a live provider.
+
+## 14 November 2026 — 0.2.1 release close-out disposition
+
+The owner reports testing most UI components, though not exhaustively, with basic functionality
+working. Exhaustive subjective UI acceptance is not required for this release.
+
+- Retain the dependency-free vanilla canvas for 0.2.1. Defer the engine comparison/spike until
+  accompanying capability, including script-authoring integration and tool calling, is available.
+  This is not approval to add those features as part of release housekeeping.
+- Defer remaining UI proposal acceptance work, including incomplete shared-result-view adoption
+  and uncovered proposal acceptance identifiers. UI presentation remains subject to change.
+  This does not waive known functional defects, privacy/dispatch contracts, existing regression
+  tests, the offline CI matrix or installed-wheel checks.
+- Consolidate permanent handover content into its owning documents and delete the working-tree
+  handover. Discard superseded ZIP instructions and intermediate next-action lists; preserve
+  their history in Git rather than creating another chronological delivery document.
+- Keep release-tooling hardening outside this close-out: the source-template shipped-file guard,
+  whole-bullet RC1 enforcement and restricting manual release dispatch to main remain separate
+  work. Until addressed, follow the documented human review and main-only operator safeguards
+  in `releases.md`.
+
+Older handovers requested WSL2 verification before sign-off. The current release procedure
+defines the Linux/macOS Python matrix and release tooling as gates; WSL2 remains outside CI
+and must be reported separately, with its documented filesystem constraints unchanged.

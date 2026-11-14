@@ -86,7 +86,7 @@ Paths in this table are relative to the repository root.
 | `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for trying the UI without a model; logs the sampling fields and message roles each request carries. Models `json-pass`, `json-repair` and `slow-headers` serve the README tour. |
 | `scripts/stub_mcp_server.py` | no | Scripted MCP server (`--era dual|modern|legacy`, `--token`) for trying the MCP tools tab; logs every request, disconnect, notice and `DELETE`. |
 | `scripts/install.sh` | no | Installer behind the README one-liner; refuses to run in a checkout without `--dir`; installs required validation dependencies; re-attached to every release as `install.sh`. |
-| `DEVEL.md`, `docs/`, `HANDOVER.md`, `NEWS.md`, `.clinerules` | no | Agent directives, technical/release/history references, task handover, changelog and agent workflow. |
+| `DEVEL.md`, `docs/`, `NEWS.md`, `.clinerules` | no | Agent directives, technical/release/history references, changelog and agent workflow. |
 | `.github/workflows/` | no | `tests.yml` (push, PR) and `release.yml` (push to `main`, manual dispatch). See [release operations](releases.md#branches-and-releases) for dispatch restrictions. |
 
 ## The modelSpell dependency
@@ -241,6 +241,23 @@ listed in specification 13.1 and 13.2. A tab's preparation hook (`TABS.<tab>.tut
 that tab's own inputs from a tutorial topic and moves no data between tabs. The Blocks tab never
 starts a second load of a block while one is in flight (a keep-less load would discard the texts a
 tutorial hook was asked to fill).
+
+**0.2.1 layout (UI-AB v2).** Screens choose pane counts from content-width bands (Wide ≥ 1100 px, Medium
+720–1099, Narrow < 720); viewport media queries approximate them, with `body.help-open` variants subtracting the
+360 px help panel, because CSS containment would trap the fixed contract drawer. DOM, keyboard and visual order
+follow each screen's action order. State attributes added for page checks: Design `ws-identity-bar`,
+`ws-unsaved-state` `data-state`, `ws-upgrade-banner`, `ws-missing-reference` `data-ref`, `ws-protection-card`
+`data-design` and `ws-protection-labels` `data-unset`, `ws-destination-line` `data-locality|eligible|trusted`;
+the Create dialog's `ws-port-labels` `data-state`; port `port-chip` `data-kind` and `port-drawer` `data-state`
+`open|closed` (one drawer at a time, anchored below `[data-drawer-anchor]`, reopened after a re-render of the same
+block port); Test `ws-readiness` `data-state` `idle|checking|ready|refused` with `data-code`; Compare
+`ws-example-pair` `data-current`; Workflow Run `wf-readiness-state` `data-state` `ready|blocked`, `wf-finding`
+`data-code|severity`, `wf-run-status` `data-phase`, `wf-progress-node` `data-outcome`, `wf-node-detail`
+`data-node`; trust `wf-trust-row` `data-eligible|trusted|used` and `wf-settings-status` `data-state|reason`;
+History `history-filter` `aria-pressed`, `history-workflow-row`, `history-comparison-row`; header
+`header-save-state` `data-state` `on|off|saving|failed`. A workflow finding's **Open source revision** stores
+`window.agentwizWorkflowReturn` (workflow, node, run inputs, selected examples); Design's **Return to workflow**
+calls `TABS.workflows.returnTo()`, which reloads the workflow and opens that node's replacement review.
 
 ## Page checks
 
@@ -928,6 +945,13 @@ override, and advanced bypass controls preserve backend-reset intent through the
 customs payload. Role changes refresh default hints without replacing the form. Additional repairs sits
 below Outputs. Assist and Revision actions share navigation in every mode; save locks navigation and the
 revision selector as well as the editor until publication/reload completes.
+Assist (UI-CD v3) is action first: Create, Improve, Suggest examples, Explain failure and Describe, each showing
+only the fields its request uses; sampling overrides fold under Assistant settings. Evidence is a checklist of
+the current batch's results with a run (at most 20) and only checked results are sent as `references`. The plan
+review lists what `descriptor.assistance` actually includes. The `assist` plan descriptor carries
+`authoring_protected` (the value `prepare` computes); when true, the plan and Apply reviews state that applying
+permanently sets inherited design protection, so the block must run on a trusted local destination. Revision
+actions show a consequence line computed from the selected revision and the next revision number.
 Each variable table row retains expandable contract/source controls; structured format selection exposes
 its editor immediately. Destructive format replacement requires confirmation. Stable row identity is
 separate from the edited name; pending form edits flush before contract operations.
@@ -996,7 +1020,8 @@ constraints. Reference/shape-changing schemas refuse visual editing.
 | --- | --- |
 | GET `starters` | Nine starter IDs, versions and two packaged examples each. |
 | POST `render-value`, `input-value`, `answer-view` | Exact literal text to typed presentation, or typed input back to exact text; checked answers use the existing checker/parser for display. |
-| POST `preview` | Accept draft, starter/key/binding, key/support, or a clean saved `{key, revision}` selection. No dispatch/publication. |
+| POST `preview` | Accept draft, starter/key/binding, key/support, or a clean saved `{key, revision}` selection. No dispatch/publication. A model or tool starter may add `data_handling` (`private`, `not_private`, `per_port`): the draft is then v4 with every starter port `local_only` `true`, `false` or unset. Without it the draft stays v3; script and transform starters refuse it. A resolved model or tool design projection adds `destination_facts` `{locality, eligible, reason, trusted}`. |
+| GET/PUT `blocks/<key>/retained-labels` | Retained-label review: `pairs` `[{revision, revision_number, revision_name, input, acknowledged}]` for every input a retained v4 revision labels Local only, `restricted_examples` and the record `revision`. PUT takes `expected_revision` and the complete `acknowledged` list of `{revision, input}`; each pair must be currently retained and labelled (`stale` otherwise). |
 | POST `plans` | `{action,request}` returns `expected_plan`, effective descriptor and required confirmations. |
 | POST `save` | Draft/source, `expected_identity`, expected plan and confirmations publish one revision. |
 | GET `blocks/<key>/revisions[/<id>]` | Revision summaries or the saved preview of one retained revision. |
@@ -1004,6 +1029,7 @@ constraints. Reference/shape-changing schemas refuse visual editing.
 | GET `blocks/<key>/support` | Bounded root candidates and captured support set. |
 | POST `blocks/<key>/support/preview` | Explicit `replace`/`remove` paths update a draft, retaining old revisions. |
 | GET/PUT `blocks/<key>/examples` | Collection with revision or save using `expected_revision`. |
+| GET `destination-trust-candidates` | One row per exact destination reachable from configuration: each resolved model role and each observed MCP tool, with `destination`, `exact`, `locality`, `eligible`, `reason`, `trusted` and `used_by` (`{kind: role|server, name}`), plus `unused_grants`. No discovery or network access. |
 | POST `test` | One source (draft, key, or saved `{key, revision}`) and input-text map start a frozen normal run. |
 | POST `batches` | One/two candidates and ordered exact examples start serial independent trials. |
 | GET `batches` | Current and latest completed session batch IDs. |
@@ -1013,6 +1039,12 @@ constraints. Reference/shape-changing schemas refuse visual editing.
 | POST `proposals/apply` | Proposal ID, matching draft and expected plan produce draft/examples only. |
 | PUT `reviews/<run>` | Result-bound rating and optional durable review, with expected revision. |
 | GET `comparisons[/<id>]`, DELETE `comparisons/<id>` | Saved comparison listing/read or independent deletion. |
+
+`test` and `batches` plans add `restriction_sources` for display: `{code}` rows with `declared_label`,
+`example_restriction` (`example`, `input`), `retained_label` (`input`, `revision_number`), `context_manual`,
+`context_inherited` or `context_clear_pending`. They do not change enforcement. A protected refusal (for example
+`destination_untrusted`) carries one issue with `restriction_sources` and, when known, `destination` with
+`locality`, `eligible`, `reason` and `trusted`.
 
 Start requests require a server-issued ticket. Plan a request before sending it.
 Echo each required `{kind,digest}` acknowledgement, omitting `detail`. Repeat the
@@ -1073,7 +1105,10 @@ first new generation anchors the baseline so pruning does not renumber survivors
 history cannot be recovered. The first confirmed Workshop save of a valid unmanaged v3 block captures the original as
 revision 1 and the edited block as revision 2. New blocks and duplicates start at 1. Restore appends, never rewrites an old generation. The UI starts a new revision label blank;
 Overwrite replaces the selected retained entry with a fresh immutable generation, preserving its number
-and list position. The default changes only when its entry is replaced. The expected head identity and
+and list position. It is refused with `new_revision_required` when the draft or the target revision is v4, or
+the target has `context_local_only`: replacing such an entry would remove Local-only input labels from
+`retained_labels` or a protected-design record without trace. Retired labels use the recorded acknowledgement
+instead. The default changes only when its entry is replaced. The expected head identity and
 review plan bind the target; old IDs leave retention while pinned readers finish against unchanged files.
 Existing evidence retains its original ID and captured contents; replacement descriptions start empty.
 Revision names may be changed on overwrite. Restore-as-new still appends. Retention remains 20.
@@ -1200,3 +1235,258 @@ batch reads of a Describe request use `describe_public`/`describe_public_batch`:
 locality, persistence, progress, outcome, bounded issues and the validated proposal; never context,
 feedback, prior prose, raw answers, prepared requests or child run IDs. The full private descriptor still
 binds the plan.
+
+
+### Workflow-ready blocks and destination trust
+
+Executable definitions v3 and v4 use the same contract and runner paths. V4 requires
+explicit port locality labels and supports in-process transforms. Workshop draft references are
+opaque, workspace-scoped and process-local. Open fresh drafts explicitly, and use
+`POST /api/workshop/drafts/import` to open external bytes as a new draft. After restarting,
+reopen saved revisions to obtain a current draft reference.
+
+`GET /api/workshop/destination-trust` returns the current revision and non-secret grants.
+The corresponding POST takes `format_version: 1`, `expected_revision`, the exact `destination`
+and a boolean `trusted`. Model identities contain `kind`, `url`, `model` and `provider`.
+MCP identities contain `kind: "mcp"`, `url`, `server` and `tool`.
+Trust is persisted in `destination_trust.json`. The runner checks the current grant and
+configuration before protected model calls and repairs and before MCP arguments are sent.
+`POST destination-trust-preview` also returns `detail` (the ineligibility reason: `hostname`, `remote`,
+`address`, `provider` or `proxied`) and `locality` (`local` for a loopback address or `localhost`, else `remote`).
+`outbound_policy.ineligibility` reports the reason for display only; dispatch still uses `canonical_url` and
+`decide`, so enforcement is unchanged.
+
+Workshop Test restricts an input when any retained v4 revision labelled it Local only
+(`retained_labels`). The owner may retire exact `(revision, input)` pairs: the acknowledgement record
+`workshop/label_reviews/<key>.json` (`format_version` 1, `revision`, sorted `acknowledged`) is written under the
+`label_reviews` reservation with the workspace writer registered. `retained_labels` ignores those pairs only; an
+unreadable record acknowledges nothing. Saved-example restrictions are unchanged, so values captured under a label
+stay restricted. A later revision labelling the input again creates a new pair. Clearing the list restores the
+previous behaviour.
+
+
+### Headless workflow engine
+
+Workflow bundles live at `workflows/<name>.json`. The file token hashes the complete file.
+The executable digest covers the definition and its immutable node snapshots. Layout and examples
+can be updated without refreshing snapshots. The planner validates exact captures, orders all
+nodes by dependency and lexical tie-break, and calculates locality before resolving destinations.
+Jobs use the Workshop slot and the shared block runner. They run selected examples in order.
+
+All paths below are relative to `/api/workshop`. POSTs require `format_version: 1`.
+
+| Route | Request or result |
+| --- | --- |
+| `GET workflows` and `GET workflows/<name>` | List names or read exact definition text, file token, sources, layout and examples. |
+| `GET workflow-sources/<key>` | Obtain the reviewed fingerprint of an unmanaged v4 block. |
+| `POST plans` | Send `action` and `request`. Actions are `workflow_save`, `workflow_rebind`, `workflow_delete` and `workflow_run`. |
+| `POST workflows/<name>/save` or `.../rebind` | Send the reviewed `request`, `expected_plan` and `confirmations`. The request contains `name`, `file_token`, `definition_text` and optional `selections`, `layout` and `examples`. Select new node sources by `{key, revision}` or `{key, fingerprint}`. |
+| `POST workflows/<name>/delete` | Apply a reviewed deletion with `name` and `file_token`. |
+| `POST workflows/<name>/run` | Apply a reviewed run using a Workshop ticket. Supply `name` and either exact input texts or example ID/version pairs. |
+| `GET workflow-jobs/<id>` and `POST workflow-jobs/<id>/stop` | Poll the job or request Stop. Query `node` for a node trace. Batch trace keys use the zero-based example index followed by a colon and node ID. |
+| `POST workflow-jobs/<id>/review` | Submit a judgement bound to the example ID/version and result and executable digests. |
+| `GET workflow-mcp-confirmation` and `POST workflow-mcp-confirmation` | Read or change the workspace preference. POST takes `mode` and `expected_revision`. |
+| `GET workflow-evidence`, `GET workflow-evidence/<id>`, `POST workflow-evidence/<id>/delete` | Browse or delete saved jobs. Query `record` to read a manifest-listed record. |
+
+Saving creates a private job folder under `runs/workflows/<id>/`. The initial capture is staged,
+then each node has a durable intent before dispatch. The manifest indexes node records, model
+attempts and the result. A running manifest left by an interrupted process is shown as interrupted.
+Saving off keeps the bounded job view in memory.
+
+
+The Workflows browser view loads the form projection from the server. Contracts and
+constants remain exact text in that projection. The editor submits an `editor`
+object or existing clients can submit `definition_text`. The server decodes each
+exact value separately. Layout has no effect on dispatch order.
+
+**Workflow Design (UI-CD v3).** One draft is edited through a palette, a canvas and an inspector, or through
+List view, which is the whole design form over the same draft, selection and inspector (never two editors for one
+field). The canvas is framework-free (SVG edges plus a CSS-transformed card layer); edge endpoints are measured
+from the rendered port handles. Workflow input, output and constant cards have derived positions and are never
+stored: saved `layout` keeps integer positions keyed by executable node only. Content-width bands come from the
+design container: the palette becomes an icon rail whenever its minimum, the inspector's and the canvas's 560 px
+plus gutters do not fit; if the canvas and inspector still do not fit the inspector moves below the canvas;
+below 720 px List view is the default. Canvas shortcuts act only while focus is on the canvas, a card, a port or
+an edge, never in a field, select, contract editor, popover or dialog.
+
+The page has one validation client, the only caller of `workflow-validate`. It keeps a generation counter that
+never resets within a page session and increments on every graph edit, load, Save, return from a detour,
+workspace switch and configuration change; a response is accepted only when its `generation` equals the current
+one and it belongs to the current load. Chips, port and edge states, Gate setup, the issue list and open-draft
+trust gaps read only the last accepted result; there is no client-side protection calculation. Without an
+accepted result, with `available: false`, or with truncated restriction details, values read "not checked".
+While a newer check is pending, the last accepted states remain visible on a dimmed surface;
+an error clears them to "not checked". "Design checked" is not readiness: destinations are
+expected and confirmed at readiness.
+
+Undo and Redo cover graph edits since the last load or Save; a successful Save clears both stacks, because the
+saved bundle keeps only the snapshots its definition references. Save and returns from detours (Create block…,
+Restore placeholders, Open source revision, Settings, Grant, cloud key) keep run inputs, selected examples,
+selection and viewport; an unsaved draft and its undo history stay in memory across a detour. Insert Release Gate
+replaces one edge with `A → gate.value` (keeping the path) and `gate.released → B` as one undoable edit; the
+Gate's contract is the exact projected contract of the value it receives (B's input contract when the path is
+non-empty) and insertion is disabled when that contract is unavailable. The identifier-map suggestion lists
+restricted node outputs whose projected `identifier_map` is true among the producer's siblings and ancestors and
+is never bound automatically.
+
+**Run results and review (UI-CD v3).** Workflow outputs render above the progress list in definition order, each
+with its effective Local-only state, outcome and Copy; an output fed by a `restore_placeholders` transform shows
+a restoration summary read once from that node's detail (the page recognizes the transform's `text`/`pairs`
+input shape). Workflow node detail and saved workflow History records render through the
+page's shared `ResultView` (headline, outputs, checks, failures and repairs, collapsed Troubleshooting with
+Request/Reasoning/Raw/Attempts; attempts open inline). Test, Compare and saved block runs retain their own
+result markup. JSON outputs are re-indented without parsing numbers. The
+release panel highlights identifier hits (text by code-point offsets, JSON by path and part) and locatable
+assessment findings whose free-text location occurs in the payload (case-insensitive), steps through them,
+finds text, paginates payloads above 200 KB, shows the batch position,
+destination facts from the trust preview and each decision's consequence; the payload and Copy are unchanged.
+Reject and revise submits the same token-bound rejection and navigates to the producer's source revision only
+after the server accepts it. History reads each workflow-run and comparison manifest once per refresh for its
+outcome; workflow detail is node-structured with record files under Troubleshooting.
+
+**Settings and header (UI-CD v3).** Settings is one header dialog with categories (Overview, Models & roles,
+Trusted destinations, MCP servers, Cloud keys, Saving & history, Execution preferences). Models & roles, Trusted
+destinations, MCP servers and Cloud keys keep their existing editors (and save rules) and open over it in one
+click; `openSettings(category)` settles when that editor closes, so remedies can restore focus and recheck. The
+header order is AgentWiz, activity indicator, Save runs, workspace, Settings, Tutorial. The activity indicator is
+fed by the Workshop batch follower and the workflow poller and recovers from `workflow-active` and `batches` on
+load and visibility; clicking it reopens the operation's own view and never starts anything.
+
+**Port projection.** `WorkflowService.block_ports()` adds to each port `contract` (the captured contract as exact
+JSON text) and `identifier_map` (true only for a JSON array of objects that require a string `original`, with an
+optional string `placeholder`, and require nothing else). `read`, `source_options` and `validate` all project
+through it, so the data describes the capture being edited, also after its source revision is removed. A Gate's
+`value` and `released` carry the Gate contract; `scan` keeps a fixed entry with `contract: null`.
+
+
+
+### Restoration, explanations, design-time validation and saved-use trust (core v3)
+
+**Identifier mappings.** `identifier_pairs.parse(value, profile=)` is the one mapping parser. The `scan` profile
+keeps the Gate's behaviour (string or `{original, placeholder?}` entries; missing placeholders become the entry
+index; duplicates kept). The `restore` profile accepts objects only, requires a placeholder fully matching the
+declared syntax (`bracket_upper`: `\[[A-Z][A-Z0-9_]*\]`), collapses identical pairs and refuses one placeholder
+mapped to different originals. Both bound 1,000 entries, originals of 1–4,096 and placeholders of at most 256
+characters, and raise only `PairsError(index, message)`; the Gate maps it to `scan_invalid` at `gate.scan`, the
+transform to `inputs.pairs` or `inputs.pairs[i]`.
+
+**`restore_placeholders` (operation version 1).** Inputs `text` (Text) and `pairs` (JSON); parameters exactly
+`unknown` (`fail`|`keep`) and `placeholder_syntax` (`bracket_upper`). One streaming `finditer` pass; inserted text
+is never rescanned; unknown/absent detection uses input tokens only. The JSON-escaped output length (jsonio's
+ASCII encoding, quotes included) is accumulated in 256-character chunks before each append, so an oversized value
+is never built; `transforms.execute`'s final check remains. Trace (`fills`) is one object with bounded
+`replacements`, `unknown` and `absent` lists (200 each, `truncated` flags). The starter exists only as a v4
+transform (`TRANSFORM_ONLY_IDS`), every port Local only.
+
+**`text` expectations.** `{kind: "text", assertions: [...]}` with 1–50 assertions: `includes`/`excludes` take
+`output`, `operation`, `values` (1–50 strings of 1–4,096) and `case` (`sensitive`|`insensitive`, `casefold`);
+`excludes_pattern` takes `output`, `operation` and a named `pattern`. Outputs must be declared Text outputs;
+a JSON output is `example_incompatible`. Judgement follows the existing rules (unverified → `unknown`, missing
+output → `incorrect`).
+
+**Explanation projection.** `Graph.explain(example=None)` describes, never decides: `values[id]` (dotted source
+identity) reports `restricted` from `Graph.restricted` with causes `workflow_io`, `declared_label` (a labelled
+output, or the labelled receiving port when every receiver is labelled), `consumer_label` (fan-out: a labelled
+receiver restricts unlabelled siblings), `example_restriction` (example basis only), `upstream` (a chain of at
+most 8 hops through bindings) and, for unrestricted Gate outputs, `released`. `nodes[n]` reports `protected` from
+`Graph.protected_nodes` with `restricted_input`, `context_manual`/`context_inherited` and `release_assessment`
+(a Gate's local assessment). At most 10 causes each, with `more`. Selecting a basis replaces the previous one.
+`GET workflows/<name>` adds `restriction` (base) and `effective` beside each declared `local_only` in
+`node_ports`; readiness adds `restriction` per example plan.
+
+**Design-time validation.** `POST workflow-validate` takes `name`, `file_token` (null for new), `generation`,
+`editor`, optional `selections`, advisory `rebind`, `layout` and `example_id`. It shares
+`Workflows.candidate(base, edits, stack, *, replacements)` with Save and Rebind (Save passes no replacements,
+Rebind its selected existing nodes) and builds the Graph in lenient mode: located binding issues are collected; a
+cycle or unknown source fills `unplannable`, sets `available: false` and omits `restriction` and `destinations`
+entirely. Planned graphs add Gate findings (as readiness) to `structural`, `gates`, and `destinations` from
+`State.destination_config()` and `outbound_policy.facts` only. It never writes, publishes or authorises a Rebind.
+No capture cache; captures close before responding; the response is capped at 256 KiB (`truncated`). Strict
+planning for Save, readiness and execution is unchanged.
+
+**Configuration-only projection.** `State.destination_config()` reads roles, profiles and server base URLs and
+the already-loaded MCP library under the state lock: no `Endpoint`, no credential, token or session-key read, no
+`view()` and no MCP refresh. It may lag an MCP library edit until the next ordinary refresh.
+
+**Saved-use inventory.** `outbound_policy.saved_uses(state)` lists configured roles, blocks' current default
+revisions and up to 50 saved workflows (opened with `Workflows.open_saved`, one graph per workflow, captures
+released before the next). `requires_trust` is set when a saved workflow dispatches from a protected node under its
+base restrictions or any one example's (Gate assessments always). `destination-trust-candidates` merges these rows
+with the authenticated enumeration and adds `requires_trust`, `remedy`, `observed` (MCP; `unknown` when only the
+inventory knows it), `used_by_truncated`, `trust_gaps` (eligible, untrusted, required) and `scan`
+(`complete`, `workflows`, `workflows_skipped`, `reasons`). It runs when Trusted destinations is opened.
+
+**Remedies and catalogue.** Protected refusals (Workshop Test/Compare and assistance), readiness issues and the
+run-time `destination_changed` issue carry `remedy: {action, target?} | null`; readiness destination issues also
+carry `facts`. Actions: `grant`, `fix_address`, `fix_proxy`, `choose_local_role`, `add_release_gate` (workflow
+readiness only, when the node is protected solely by upstream restriction), `configure_role`, `configure_server`,
+`refresh_readiness`, `repair_trust_settings`, `explain`. `protected_host_script` is now a located issue with
+`explain`. `messages.py` holds the scoped catalogue (`CODES`, `explain(item)` with a generic fallback); `GET
+messages` serves its templates and the page fills them with `textContent`, keeping the code in a details line.
+
+**Reference workflows.** `tutorial_support/private_summary.py` holds the synthetic documents, the deterministic
+redaction and summary used by the packaged stand-in models `private-deid` and `private-summary`, the block and
+workflow definitions and their ten `text`-checked examples. The tutorial topics `private-summary-local` and
+`private-summary-release` and the tests prepare the same fixture.
+
+### Release Gate boundary
+
+`release_gate.py` owns built-in Gate validation, local identifier matching and the fixed,
+versioned assessment definition. `workflow_definition.py` accepts bundle versions 1 and 2;
+a Gate row has `gate` and `bindings`, never `snapshot_id`. Saves containing Gates write version 2;
+ordinary workflows continue to write version 1. Gate contracts are exact-text fields in the
+editor projection, as are workflow input/output contracts. Assessment prompt, version and
+contract participate in Gate executable identity and saved capture evidence. The internal
+assessment is a captured v4 model block using the existing runner, validation and repair path.
+
+A Gate reads `value` and optional restricted `scan`; its sole output is `released`. Planning
+allows that output to be unrestricted while runtime creates it only after an explicit decision.
+No source/sibling identity is relabelled. Existing source-level reverse marking and ordinary
+all-output inheritance apply after the boundary. Scan sources must already be restricted.
+Unprotected candidate ancestors are errors, except dispatches whose variable lineage already
+passes through earlier Gates. Traversal continues on other branches. Downstream review scope
+includes indirect dispatch consumers and later Gates' local assessments, stopping at those
+Gates' outputs. Captured destination guards remain authoritative before actual sends.
+
+The Gate's own optional assessment is always protected and requires a literal-loopback grant.
+It uses a separate role, fixed instructions and a JSON findings contract, with one repair.
+Assessment data, findings and traces remain restricted; only the candidate becomes released.
+Invalid assessment responses allow an acknowledged manual decision, but Stop, budget exhaustion,
+unknown send outcomes, evidence failure and destination refusals do not become advisory passes.
+
+Jobs remain `outcome: running` and expose phases `assessing_release`, `awaiting_release` and
+`deciding_release`. A Condition shares the job lock; Stop notifies it and performs child Stop
+outside the lock. A generation-bound execution timer prevents a cancelled callback from firing
+against a human pause. Remaining execution time resumes after the decision; review waits have
+a separate monotonic timeout. Evidence writes and model calls occur outside the job lock.
+The Workshop slot and registered writer remain owned until normal job cleanup.
+
+Additional authenticated Workshop routes:
+
+| Route | Behaviour |
+| --- | --- |
+| `GET workflow-active` | Returns operation ID, name and batch flag for the active workflow, or an empty object. |
+| `POST workflow-validate` | Advisory design-time validation of an unsaved draft (see core v3 above). |
+| `GET messages` | The explanation catalogue's templates. |
+| `POST workflow-jobs/<id>/release` | Sends token, payload/executable/scope/checks digests, decision (`release` or `reject`) and optional boolean acknowledgements. |
+
+The `release` object in a waiting job contains the immutable candidate, destination scope,
+checks, expiry and a fresh token. Tokens are run/example/node specific, never saved, and never
+accepted across pauses. Validation and one-shot decision selection are atomic under the job lock.
+Exact duplicate submissions are idempotent; conflicting/stale/expired submissions return
+`409 release_stale`. Missing required acknowledgement returns `409 release_acknowledgement_required`.
+The worker persists a selected decision before exposing output when saving is enabled; a
+write failure prevents downstream execution. A successful submission response acknowledges
+selection, not completion of subsequent execution. Stop still prevents later dispatch.
+
+Review/decision records use the existing private evidence store only when Save runs is enabled.
+Compact decision records contain hit offsets and placeholder/index labels, not copied originals,
+JSON paths potentially containing originals, assessment prose or approval tokens. Restricted
+review records retain paths and optional assessment traces subject to existing redaction/limits.
+A process restart shows incomplete evidence as interrupted and cannot resume approval.
+
+Identifier checking accepts up to 1000 bounded nonempty originals and 1000 hits, with a
+16 MiB character-comparison work limit. Exceeding a limit or malformed input fails visibly.
+Unicode case-fold expansions map back to original code-point offsets. JSON property names and
+string values are checked with paths; numeric/null/boolean values are preserved. JSON release
+review uses deterministic exact serialisation, not a claim about downstream HTTP byte layout.

@@ -1,4 +1,51 @@
 # NEWS
+
+## 0.2.1
+
+- Workflow Design is a palette, canvas and inspector editor; List view keeps the whole form.
+- Wire ports by dragging, tapping or keyboard; Undo and Redo cover graph edits until Save.
+- Canvas states come from server validation: what stays local, what is released, and expected destinations.
+- Insert Release Gate on a connection; Design suggests the producer's identifier map without binding it.
+- Create blocks and Restore placeholders from Design, then return without losing unsaved edits.
+- Release review highlights findings, finds text, pages long values, and offers Reject and revise.
+- Workflow outputs appear above progress; restored outputs summarise their restoration.
+- Assist asks for the action first, attaches evidence only when chosen, and states permanent protection.
+- Settings is one categorised dialog; a header indicator shows and reopens running work.
+- History shows workflow and comparison outcomes in the list and node-structured workflow detail.
+
+- Restore placeholders: a built-in transform that puts de-identified originals back, locally and deterministically.
+- Text checks: example expectations that a Text output includes or excludes values, or keeps no placeholder tokens.
+- Trusted destinations now include uses by blocks and saved workflows, and flag destinations saved workflows need.
+- Refusals and readiness findings explain themselves in plain language and name the action that would fix them.
+- Two tutorial topics walk through a private summary, all-local and with a Release Gate before a cloud stand-in.
+
+- New model and tool blocks ask for port labels and are workflow-ready without an upgrade step.
+- Design reads in order: a top bar with revision and Save, then ports, prompts and settings.
+- Insert buttons follow port renames; stale prompt references are flagged with a confirmed replacement.
+- A Protection card shows port labels, design protection and where run restrictions come from.
+- Review retained privacy labels retires an earlier revision's Local-only labels with a recorded acknowledgement.
+- Overwrite stays unavailable for workflow-ready revisions, which may hold privacy labels; the button explains why.
+- Contracts show a readable summary; Edit opens a side drawer with list, record and choice shortcuts.
+- Saving an inline contract as reusable and using it for the port takes one dialog.
+- Test shows inputs beside results and checks readiness, with Grant and other remedies in place.
+- Compare keeps Stop and both arms visible and shows each example's answers side by side.
+- Models & roles lists roles with status and opens the profile editor without losing role edits.
+- Workflow Run orders inputs, readiness, findings and Run; findings offer remedies such as Grant or Add Release Gate.
+- Workflow progress follows execution order, shows release phases, and opens node traces beside it.
+- History combines block runs, workflow runs and comparisons with kind and failure filters.
+- Save runs shows On or Off beside the workspace name; the tutorial opens as a side panel.
+
+- Release Gates pause workflows for explicit human approval without removing local-only protection from source data.
+- Optional trusted local AI assessment and identifier checks assist release review; acknowledgements are enforced by the server.
+- Reopen Workflows after a browser reload to recover an active review; restart invalidates pending approvals.
+
+- Run workflows from Workshop with saved examples and inspect their traces.
+- Added v4 block ports, built-in transforms and explicit conversion of legacy starters.
+- Added headless workflow planning, serial execution, saved examples and private run evidence.
+- Protected model and MCP calls require a workspace grant for the exact literal-loopback destination.
+- Workshop records draft lineage and refuses attributable generated host Python.
+- Stop preserves an unknown MCP outcome when the call may already have been sent.
+
 ## 0.2.0
 - The contract editor preserves a new choice while an earlier edit finishes.
 - Workshop Design places revision selection above Save as new revision and Overwrite selected revision.
@@ -132,3 +179,4 @@
 - API keys stay in memory, are never shown again, and error messages never include them.
 - `agentwiz --version` reports AgentWiz and modelSpell versions; `--port` and `--no-browser` control launch.
 - Released as a wheel on GitHub releases; pin it by URL and sha256.
+

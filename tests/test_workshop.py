@@ -30,6 +30,8 @@ def send(ui, route, **body):
 
 
 def plan_save(ui, draft, expected=None, **options):
+    if 'draft_ref' not in draft:
+        draft.update(send(ui, 'drafts/import', draft=draft)['draft'])
     body = {'draft': draft, 'expected_identity': expected, **options}
     plan = send(ui, 'plans', action='save', request=body)
     return send(ui, 'save', **body, expected_plan=plan['expected_plan'],
@@ -233,6 +235,22 @@ def test_assist_uses_runner_and_applies_without_publication(ui, server):
     assert len(server.requests) == 1
 
 
+def test_assist_plan_reports_authoring_protection(ui, server):
+    """UI-CD v3 CD6: the page shows the permanent protection consequence from the bound plan, not its own guess."""
+    from conftest import save_profile, save_roles
+    save_profile(ui, 'p', model='m', kind='openai_compat', base_url=server.url + '/v1', provider='')
+    save_roles(ui, {'assistant': 'p'})
+    grants = request(ui, '/api/workshop/destination-trust')
+    send(ui, 'destination-trust', expected_revision=grants['revision'], trusted=True,
+         destination={'kind': 'openai_compat', 'url': server.url + '/v1', 'model': 'm', 'provider': ''})
+    draft = send(ui, 'preview', starter='count_text', key='draft_only')['draft']
+    body = {'action': 'improve', 'role': 'assistant', 'draft': draft, 'task': 'Improve.', 'sections': ['purpose']}
+    assert send(ui, 'plans', action='assist', request=body)['descriptor']['authoring_protected'] is False
+    protected = send(ui, 'plans', action='assist', request={**body, 'context_local_only': True})
+    assert protected['descriptor']['authoring_protected'] is True
+    assert len(server.requests) == 0
+
+
 def http_method(ui, path, method, body=None):
     import json
     import urllib.request
@@ -318,7 +336,7 @@ def test_exact_editor_preservation_and_unsupported_schema_refusal(ui):
         'ratio': {'type': 'number', 'minimum': jsonio.decode_exact('0.10000000000000000001')}},
         'required': ['id'], 'additionalProperties': False}}
     draft = {'key': 'b', 'definition_text': jsonio.encode_exact(obj), 'files': MODEL_FILES, 'metadata': {}}
-    result = port_edit(ui, send(ui, 'preview', draft=draft), 'outputs', 'out',
+    result = port_edit(ui, send(ui, 'drafts/import', draft=draft), 'outputs', 'out',
                        {'op': 'set_description', 'path': ['id'], 'description': 'Identifier'})
     edited = jsonio.decode_exact(result['draft']['definition_text'])
     assert edited['outputs']['out']['contract']['schema']['properties']['id']['description'] == 'Identifier'
@@ -335,7 +353,7 @@ def test_exact_editor_preservation_and_unsupported_schema_refusal(ui):
     refused = failure_of(lambda: request(ui, '/api/contracts/edit', {'format_version': 2, 'definition_text': unsupported,
         'edit': {'op': 'set_description', 'path': ['id'], 'description': 'Identifier'}}))
     assert refused.status == 400 and refused.body['code'] == 'unsupported_keyword'
-    carried = send(ui, 'preview', draft=draft)
+    carried = send(ui, 'drafts/import', draft=draft)
     operation = design_edit(carried)
     operation['ports']['outputs'][0]['source'] = unsupported
     invalid = send(ui, 'preview', draft=carried['draft'], edit=operation)
@@ -518,6 +536,7 @@ def test_generated_source_requires_ack_and_compatibility_enforces_review(ui):
     draft = {'key': 'generated', 'definition_text': jsonio.encode_exact(obj),
              'files': {'scripts/main.py': 'print(\'{"out":3}\')\n'},
              'metadata': {'origin': 'llm_generated', 'support': [], 'effects': 'unknown'}}
+    draft = send(ui, 'drafts/import', draft=draft)['draft']
     body = {'draft': draft, 'expected_identity': None}
     plan = send(ui, 'plans', action='save', request=body)
     assert 'generated_source' in {r['kind'] for r in plan['required_confirmations']}

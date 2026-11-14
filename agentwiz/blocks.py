@@ -32,7 +32,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping
 
-from . import checks, jsonio, templates, tool_forms
+from . import checks, jsonio, templates, tool_forms, transforms
 from .contracts import DIGEST_RE, ContractStore
 from .model_step import ContractCopy
 from .task_settings import OVERRIDABLE, TaskSettingError, TaskSettings, parse_task
@@ -40,7 +40,8 @@ from .workspace import NAME_RE, NAME_RULE, valid_name
 
 DIRECTORY = "blocks"
 FILE = "block.json"
-FORMAT_VERSION = 3               # executable definitions; 2 is the Workshop managed head
+FORMAT_VERSION = 3
+WORKFLOW_FORMAT_VERSION = 4               # executable definitions; 2 is the Workshop managed head
 BLOCK_FILE_LIMIT = 1 << 20      # block.json
 FILE_LIMIT = 4 << 20            # each referenced prompt or script file
 LIST_LIMIT = 200                # blocks shown in the listing (never limits which blocks can be opened or run)
@@ -90,6 +91,7 @@ class Declared:
     description: str
     contract: checks.Contract | None      # an inline contract, parsed
     reference: Reference | None = None    # a saved contract's exact pin
+    local_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -137,6 +139,8 @@ class Block:
     texts: Mapping[str, str]              # relative path -> text, for block.json and prompt files
     contracts: Mapping[str, Mapping[str, ContractCopy]]   # {"inputs": {...}, "outputs": {...}}, captured
     notes: tuple[str, ...]
+    format_version: int = FORMAT_VERSION
+    context_local_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -284,6 +288,7 @@ _STEP_KEYS = {
     "model": ("id", "kind", "role", "system", "prompt", "response_mode", "task", "task_resets", "repair"),
     "tool": ("id", "kind", "server", "tool", "arguments", "output"),
     "script": ("id", "kind", "file", "timeout_s"),
+    "transform": ("id", "kind", "operation", "operation_version", "parameters", "output"),
 }
 _DECLARATION_KEYS = ("contract", "description")
 
@@ -339,6 +344,7 @@ class _Parse:
 
     def __init__(self, folder: Path, name: str, contract_store: ContractStore, *, internal_contracts=False,
                  validators=None):
+        self.version = FORMAT_VERSION
         self.folder = folder
         self.name = name
         self.contract_store = contract_store
@@ -389,8 +395,11 @@ class _Parse:
         if not isinstance(declaration, Mapping):
             self.issues.add(where, "must be an object")
             return None
+        local_only = declaration.get("local_only")
+        if self.version == WORKFLOW_FORMAT_VERSION and type(local_only) is not bool:
+            self.issues.add(f"{where}.local_only", "must be an explicit boolean")
         for key in declaration:
-            if key not in _DECLARATION_KEYS:
+            if key not in _DECLARATION_KEYS and not (key == "local_only" and self.version == WORKFLOW_FORMAT_VERSION):
                 self.issues.add(f"{where}.{key}", "is not a key of an input or output declaration")
         description = declaration.get("description", "")
         if "description" in declaration and not isinstance(description, str):
@@ -414,7 +423,7 @@ class _Parse:
                     self.issues.add(f"{location}.{item['location']}", item["message"])
                 return None
             self.captured[section][name] = ContractCopy.inline(parsed)
-            return Declared(name, description, parsed, None)
+            return Declared(name, description, parsed, None, local_only is True)
         if isinstance(contract, Mapping):
             reference = self.reference(contract, location)
             if reference is None:
@@ -431,7 +440,7 @@ class _Parse:
             else:
                 self.captured[section][name] = ContractCopy.reference(reference.name, reference.revision,
                                                                       reference.digest, revision.contract)
-            return Declared(name, description, None, reference)
+            return Declared(name, description, None, reference, local_only is True)
         if isinstance(contract, str):
             self.issues.add(location, "reference_invalid: a saved contract is referenced by an exact "
                             '{"name", "revision", "digest"} pin, not by its name alone')
@@ -496,7 +505,7 @@ def _parse_step(p: _Parse, steps: object, outputs: tuple[Declared, ...]) -> Step
         return None
     if len(steps) > 1:
         # the block is unusable, but the first step is still checked so every issue is listed in one pass
-        issues.add("steps", "0.1.4 runs blocks with one step; multi-step blocks arrive in 0.2.1")
+        issues.add("steps", "a block runs exactly one step")
     raw = steps[0]
     where = "steps[0]"
     if not isinstance(raw, Mapping):
@@ -513,10 +522,14 @@ def _parse_step(p: _Parse, steps: object, outputs: tuple[Declared, ...]) -> Step
         issues.add(f"{where}.kind", 'is required: "model", "tool" or "script"')
         return None
     if kind == "block":
-        issues.add(f"{where}.kind", "block steps arrive in 0.2.1")
+        issues.add(f"{where}.kind", "connect separate blocks in a workflow")
         return None
-    if kind not in _STEP_KEYS:
+    if not isinstance(kind, str) or kind not in _STEP_KEYS:
         issues.add(f"{where}.kind", 'must be "model", "tool" or "script"')
+        return None
+    if (kind == "script" and p.version == WORKFLOW_FORMAT_VERSION
+            or kind == "transform" and p.version != WORKFLOW_FORMAT_VERSION):
+        issues.add(f"{where}.kind", "host scripts require v3 and transforms require v4")
         return None
     for key in raw:
         if key in _STEP_KEYS[kind]:
@@ -569,6 +582,17 @@ def _parse_step(p: _Parse, steps: object, outputs: tuple[Declared, ...]) -> Step
                 p.check_placeholders([placeholder], f"{where}.{loc}")
         return Step(step_id, "tool", raw, output=output, server=server if isinstance(server, str) else None,
                     tool=tool if isinstance(tool, str) else None, arguments=arguments)
+    if kind == "transform":
+        output = declared_output()
+        if len(output_names) != 1:
+            issues.add("outputs", "a transform declares exactly one output")
+        if type(raw.get("operation_version")) is not int or raw["operation_version"] != 1:
+            issues.add(f"{where}.operation_version", "must be integer 1")
+        try:
+            transforms.validate(raw.get("operation"), raw.get("parameters"), p.declared_inputs)
+        except (templates.TemplateError, ValueError) as exc:
+            issues.add(f"{where}.parameters", str(exc))
+        return Step(step_id, kind, raw, output=output)
     # script
     ref = raw.get("file")
     path: Path | None = None
@@ -777,8 +801,8 @@ def parse_block(folder: Path, name: str, contract_store: ContractStore, *, inter
         p.issues.add("format_version", "is required")
     elif not _is_int(version) or version < 1:
         p.issues.add("format_version", "must be an integer of at least 1")
-    elif version > FORMAT_VERSION:
-        p.issues.add("format_version", f"is greater than {FORMAT_VERSION}: written for a newer AgentWiz")
+    elif version > WORKFLOW_FORMAT_VERSION:
+        p.issues.add("format_version", f"is greater than {WORKFLOW_FORMAT_VERSION}: written for a newer AgentWiz")
         problem = p.issues.problem(file_name)
         return finish(problem=BlockProblem(problem.file, "newer_format", problem.issues, problem.total))
     elif version == 2:
@@ -789,8 +813,12 @@ def parse_block(folder: Path, name: str, contract_store: ContractStore, *, inter
                      f"format_version {FORMAT_VERSION} with the new contract definitions; it is never converted "
                      "automatically", "migration_required")
         return finish(problem=p.issues.problem(file_name))
+    p.version = version
+    context_local_only = obj.get("context_local_only", False)
+    if version == WORKFLOW_FORMAT_VERSION and type(context_local_only) is not bool:
+        p.issues.add("context_local_only", "must be a boolean")
     for key in obj:
-        if key not in _TOP_KEYS:
+        if key not in _TOP_KEYS and not (key == "context_local_only" and version == WORKFLOW_FORMAT_VERSION):
             p.issues.add(key, "is not a key of a block file")
     block_name = obj.get("name")
     if "name" not in obj:
@@ -849,7 +877,7 @@ def parse_block(folder: Path, name: str, contract_store: ContractStore, *, inter
         return finish(description if isinstance(description, str) else "", kind, None, p.issues.problem(file_name))
     assert step is not None
     block = Block(name, 0, description, inputs, outputs, step, budget, dict(p.files), dict(p.texts),
-                  {k: dict(v) for k, v in p.captured.items()}, tuple(p.notes))
+                  {k: dict(v) for k, v in p.captured.items()}, tuple(p.notes), version, context_local_only)
     return finish(description, kind, block, None)
 
 
@@ -1012,6 +1040,8 @@ def _declared_view(block: Block, section: str, declared: Declared, with_form: bo
            "contract_text": copy_.text if copy_ is not None else None,
            "reference": declared.reference.view() if declared.reference is not None else None,
            "digest": copy_.digest if copy_ is not None else None}
+    if block.format_version == WORKFLOW_FORMAT_VERSION:
+        row["local_only"] = declared.local_only
     if with_form:
         form, notes = (tool_forms.form_spec(parsed.schema)
                        if parsed is not None and parsed.format == "json" and parsed.schema is not None
@@ -1030,6 +1060,8 @@ def _step_view(step: Step) -> dict:
                    task_resets=list(step.task_resets))
     elif step.kind == "tool":
         out.update(server=step.server, tool=step.tool)
+    elif step.kind == "transform":
+        out.update(operation=step.raw["operation"], operation_version=step.raw["operation_version"])
     else:
         out.update(file=step.script_file, timeout_s=step.timeout_s)
     return out

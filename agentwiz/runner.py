@@ -32,6 +32,9 @@ class FrozenSource:
     owner: Any = None
     capture: Any = None          # state.RoleCapture: the destination and the role's defaults, taken together
 
+    protected: bool = False
+    dispatch: Any = None
+    attempt_gate: Any = None
 
 
 # --- hooks tests replace ----------------------------------------------------------------------------------------
@@ -180,6 +183,8 @@ class _Slot:
 def _admit(state: Any, kind: str):
     """Reserve the step kind's slot with a non-blocking acquire (10.3). Returns (slot, reservation). Raises Busy
     or ShuttingDown; nothing is taken then."""
+    if kind == "transform":
+        return None, None
     if kind == "model":
         budget, name = state.budget, "model requests"
     elif kind == "script":
@@ -406,6 +411,9 @@ def _build_result(ex: _Execution, outcome: str, end: runs.EndPoint) -> dict:
             "input_checks": ex.checked.results, "outputs": outputs, "issues": issues,
             "steps": [ex.step] if ex.step is not None else [],
             "budget": run.budget, "usage": ex.tally.view(),
+            "protected": bool(block.context_local_only or ex.loaded.workshop.get("protection_clear_pending")
+                              or any(port.local_only for port in (*block.inputs, *block.outputs))
+                              or (ex.frozen and ex.frozen.protected)),
             "workshop": ex.frozen.provenance if ex.frozen else {},
             "agentwiz_version": __version__, "modelspell_version": modelspell.__version__}
 
@@ -466,12 +474,24 @@ def _execute(ex: _Execution) -> None:
         from .workshop_assets import validate_generation
         root = ex.loaded.physical_root
         validate_generation(root, ex.loaded.workshop)
-    if ex.loaded.workshop.get('origin') in ('llm_generated', 'derived_from_llm'):
-        from .workshop_assets import read, fingerprint
-        source = {p: read(ex.loaded.physical_root, p) for p in [block.step.script_file, *ex.loaded.workshop.get('support', [])]} if kind == 'script' else {}
-        if kind == 'script' and ex.loaded.workshop.get('source_review') != fingerprint(source):
-            ex.preparation = _rejected('source', 'generated source review is required')
+    if kind == "script" and any(
+            ex.loaded.workshop.get(key) in ("llm_generated", "derived_from_llm")
+            for key in ("script_origin", "origin")):
+        ex.preparation = _rejected("source", "generated_script_disabled: model-written host Python cannot run")
+        return
+    if kind == "script":
+        from .draft_lineage import generated_fingerprint
+        source_hash = block.files.get(block.step.script_file)
+        if (state.workshop.drafts.generated(source_hash)
+                or generated_fingerprint(state.workspace.path / "blocks", source_hash)):
+            ex.preparation = _rejected("source", "generated_script_disabled: source matches a generated script")
             return
+    protected = (block.context_local_only or ex.loaded.workshop.get("protection_clear_pending")
+                 or any(port.local_only for port in block.inputs)
+                 or bool(ex.frozen and ex.frozen.protected))
+    if kind == "script" and protected:
+        ex.preparation = _rejected("source", "protected data cannot be sent to host Python")
+        return
     if ex.frozen is not None and kind == 'model':
         if ex.frozen.capture is None:
             ex.preparation = _rejected('steps[0].role', 'the captured role defaults are missing')
@@ -484,7 +504,7 @@ def _execute(ex: _Execution) -> None:
     elif ex.frozen is not None and kind == 'tool':
         current = state.mcp_snapshot_for_block(block.step.server)
         if current != ex.frozen.snapshot:
-            ex.preparation = _rejected('server', 'captured server configuration changed')
+            ex.preparation = _rejected('server', 'destination_changed')
         else:
             class CapturedState:
                 def mcp_snapshot_for_block(self, server):
@@ -494,12 +514,27 @@ def _execute(ex: _Execution) -> None:
         ex.preparation = _prepare_model(state, block, values)
     elif kind == "tool":
         ex.preparation = _prepare_tool(state, block, values, ex.reservation)
+    elif kind == "transform":
+        ex.preparation = _Preparation("prepared")
     else:
         ex.preparation = _prepare_script(block, run)
     if ex.preparation.status == "prepared" and run.token.cancelled:
         ex.preparation = _Preparation("cancelled")
     if ex.preparation.status != "prepared":
         return
+    from . import outbound_policy
+    dispatch = None
+    repair_dispatch = None
+    if kind in ("model", "tool") and (protected or (ex.frozen and ex.frozen.dispatch)):
+        try:
+            dispatch = (ex.frozen.dispatch if ex.frozen and ex.frozen.dispatch else
+                        outbound_policy.block_dispatch(state, block, ex.preparation.prepared.snapshot))
+            dispatch.check()
+        except outbound_policy.Refused as exc:
+            ex.preparation = _rejected("destination", str(exc))
+            return
+    if kind == "model" and not protected and any(port.local_only for port in block.outputs):
+        repair_dispatch = lambda: outbound_policy.block_dispatch(state, block, ex.preparation.prepared.snapshot)
     sink = state.history if run.save_runs else None
     script_env = None
     if kind == "script":
@@ -514,7 +549,9 @@ def _execute(ex: _Execution) -> None:
         run=run, block=block, values=values, prepared=ex.preparation.prepared,
         contracts=block.contracts["outputs"], store=state.store, sink=sink, ops=state.mcp_ops,
         observer=ex.observer, client=state.mcp_client, key_for=(lambda kind, url: ex.frozen.snapshot.endpoint.api_key) if ex.frozen and kind == 'model' else state.key_for, script_env=script_env,
-        script_handle=ex.handle, tally=ex.tally, produced=ex.produced)
+        script_handle=ex.handle, tally=ex.tally, produced=ex.produced,
+        dispatch=dispatch, repair_dispatch=repair_dispatch,
+        attempt_gate=ex.frozen.attempt_gate if ex.frozen else None)
     ex.step = executor.execute_step(ctx)
 
 

@@ -178,6 +178,18 @@ class Tutorial:
             state = self.child.state
             if state.store.running_count() or state.store.active_block_runs() or state.mcp_ops.active_count():
                 return {"busy": True}
+            if topic.id == "script-block":
+                from .tutorial_support.workshop import ensure_stop_fixtures
+                ensure_stop_fixtures(state)
+            if topic.id == "release-gate":
+                from .tutorial_support.workshop import ensure_release_fixture
+                ensure_release_fixture(state, self.backend_url)
+            if topic.id.startswith("private-summary-"):
+                from .tutorial_support.private_summary import prepare_tutorial
+                prepare_tutorial(state, self.backend_url, topic.id[len("private-summary-"):])
+            if topic.id == "workflow":
+                from .tutorial_support.workshop import ensure_workflow_fixture
+                ensure_workflow_fixture(state, self.backend_url)
             if topic.id.startswith("assist-"):
                 action = topic.id[len("assist-"):]
                 state.save_profile({"name":"tutorial-assistant","kind":"openai_compat",
@@ -263,3 +275,4 @@ class Tutorial:
     def shutdown_all(self):
         """`Tutorial.shutdown_all()` (14.5): both halves."""
         self.finish(self.begin_shutdown())
+

@@ -42,16 +42,16 @@ def test_configured_endpoint_and_key_boundary(make_ui, make_server, tmp_path, mo
 def test_initialize_preserves_existing_config(tmp_path):
     path = tmp_path / "config" / "model-servers.ini"
     initialize(path)
-    assert load(path)["lmstudio"].base_url == "http://localhost:1234/v1"
+    assert load(path)["lmstudio"].base_url == "http://127.0.0.1:1234/v1"
     path.write_text("user-edited", encoding="utf-8")
     initialize(path)
     assert path.read_text(encoding="utf-8") == "user-edited"
 
 
 @pytest.mark.parametrize("change", [
-    lambda text: text.replace("http://localhost:1234/v1", "http://secret@localhost/v1"),
-    lambda text: text.replace("http://localhost:1234/v1", "http://localhost:bad/v1"),
-    lambda text: text.replace("http://localhost:1234/v1", "http://localhost/has space"),
+    lambda text: text.replace("http://127.0.0.1:1234/v1", "http://secret@localhost/v1"),
+    lambda text: text.replace("http://127.0.0.1:1234/v1", "http://localhost:bad/v1"),
+    lambda text: text.replace("http://127.0.0.1:1234/v1", "http://localhost/has space"),
     lambda text: text + "\n[openrouter]\nbase_url = https://example.com/v1\n",
     lambda text: text.replace("[openrouter]", "[openrouter]\napi_key = secret"),
 ])

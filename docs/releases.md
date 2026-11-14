@@ -16,6 +16,12 @@ sandbox tutorial with tips and prepared inputs; no manual setup runbook, screens
 dossier or acknowledgement is required. Objective regression checks belong in automation.
 Historical owner dispositions are recorded in `decisions.md`, not as current test results.
 
+For 0.2.1, the owner deferred canvas-engine evaluation and remaining UI proposal acceptance
+work; see the dated disposition in `decisions.md`. This does not waive functional regressions,
+the offline matrix or installed-wheel validation. WSL2 is not covered by CI; report its
+verification status separately rather than treating an old handover's follow-up as another
+automated release gate. Keep the documented workspace filesystem limitations.
+
 ## Installed-wheel smoke
 
 Run from the repository root in the activated checkout `.venv`:
@@ -95,13 +101,14 @@ judgement.
 2. Confirm the offline CI matrix passes on Ubuntu and macOS, Python 3.10 and 3.13. A Linux-only
    local pass does not verify macOS. Optional subjective review/live checks are not gates.
 3. Run `python scripts/build_release.py --smoke` on the intended committed tree; require
-   RC1–RC3 and the installed-wheel smoke S1–S15 to pass.
+   RC1–RC3 and the installed-wheel smoke S1–S17 to pass. Run the installed-wheel page/tutorial
+   checks below as well; source-checkout browser results do not establish packaged UI behavior.
 4. Merge `devel` into `main` when authorized. The release workflow reruns tests and checks
    before publishing; inspect its result.
 
 NEWS authoring and version-bump requirements are defined in `../DEVEL.md`.
 
-Release 0.2.0 also runs S15 in the installed smoke. It creates a captured
+S15 in the installed smoke creates a captured
 Workshop script starter, publishes it through a bound plan, runs it through the
 normal coordinator, checks the returned count and verifies duplicate Start identity.
 This exercises packaged starter runtime/license resources without requiring the
@@ -109,6 +116,18 @@ model backend. Validate the final installed UI using `tests/test_page.py` and `t
 against an environment where the built wheel replaces the editable package and the
 existing dev dependencies are installed. Use `python -I -m pytest` from outside
 the checkout and verify AgentWiz imports from that environment's site-packages. This
-runs the completion journey, narrow/desktop authoring, retained utilities and all
-fourteen tutorial paths against the installed package. These are objective automated
+runs the completion journey, narrow/desktop authoring, retained utilities and the current
+tutorial paths against the installed package. These are objective automated
 checks; tutorial walking remains optional.
+
+Release 0.2.1 adds S16 and S17. S16 checks the installed Workflows browser asset, publishes a
+captured v4 transform workflow, preflights it, and verifies its final output through
+the installed server. S17 runs a Release Gate workflow, explicitly submits its token-bound
+human decision through the ordinary API and verifies the released output. No live backend
+or automatic approval is used.
+
+For an uncommitted candidate, transfer the tracked working-tree changes (including deletions)
+to a throwaway clone and commit only there, then run the normal release command in that clone.
+Keep build output separate from old `dist/` artifacts. Copy the tests, including their fixtures,
+outside the checkout for installed-wheel page/tutorial checks. Confirm the intended committed
+candidate with the normal release command before publishing.

@@ -79,10 +79,31 @@ def clip(page):
     return page.evaluate("navigator.clipboard.readText()")
 
 
+def test_settings_overview_updates_while_detached(ui, server, open_page, monkeypatch):
+    """Startup and state refresh must work before Overview and while another category is open."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    configure(ui, server, model="initial-model")
+    page = open_page(ui, "chat")
+    has(page, "header-openrouter-key", "data-state", "missing")
+    tid(page, "ws-settings").click()
+    overview = tid(page, "settings-overview")
+    expect(overview).to_contain_text("initial-model")
+    page.locator('[data-test="settings-category"][data-category="saving"]').click()
+    tid(page, "settings-close").click()
+
+    configure(ui, server, model="updated-model")
+    say(page, "chat", "refresh after settings changed")
+    has(page, "chat-status", "data-state", "stale")
+    assert server.requests == []
+    tid(page, "ws-settings").click()
+    expect(overview).to_contain_text("updated-model")
+
+
 def test_openrouter_key_dialog(ui, open_page, monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     page = open_page(ui)
     has(page, "header-openrouter-key", "data-state", "missing")
+    tid(page, "ws-settings").click()                                     # Cloud keys is a Settings category (UI-CD CD8)
     tid(page, "header-openrouter-key").click()
     tid(page, "openrouter-key-save").click()
     expect(tid(page, "openrouter-key-dialog")).to_be_visible()
@@ -159,6 +180,7 @@ def test_page_chat_send_and_copy(ui, server, open_page):
     has(page, "chat-status", "data-outcome", "complete")
     assert tid(page, "chat-output").text_content() == text
     assert copy_of(page, "chat-copy-output") == text
+    tid(page, "chat-troubleshooting").locator("summary").click()        # raw final event is folded (UI-CD CD10)
     line = copy_of(page, "chat-copy-final")
     final = json.loads(line)
     assert final["type"] == "final" and final["record"]["result"]["text"] == text
@@ -387,7 +409,7 @@ def add_field(page, parent, name, kind, prefix="contracts"):
 def change(locator, value):
     """Fill a control and commit it (the editor applies a targeted edit on change)."""
     locator.fill(value)
-    locator.dispatch_event("change")
+    locator.blur()
 
 
 def save_contract_from_page(page, state="saved"):
@@ -396,11 +418,39 @@ def save_contract_from_page(page, state="saved"):
     has(page, "contracts-status", "data-state", state)
 
 
+def open_port(card):
+    """Open a port's contract drawer (it stays open while the block re-renders)."""
+    if tid(card, "port-drawer").get_attribute("data-state") != "open":
+        tid(card, "port-edit").click()
+    has(card, "port-drawer", "data-state", "open")
+
+
+def close_port(card):
+    """Done closes the drawer; the settings column is reachable again."""
+    if tid(card, "port-drawer").get_attribute("data-state") == "open":
+        tid(card, "port-done").click()
+    has(card, "port-drawer", "data-state", "closed")
+
+
+def open_more(page):
+    """Clone, Reset and Delete live in the Workspaces dialog's More actions."""
+    more = tid(page, "workspaces-more")
+    if more.get_attribute("open") is None:
+        more.locator("summary").click()
+
+
+def pick_labels(dialog, choice="not-private"):
+    """Model and tool starters need an explicit port-label choice; other starters show none."""
+    if tid(dialog, "ws-port-labels").is_visible():
+        tid(dialog, "ws-port-label-" + choice).check()
+
+
 def new_block(page, key, starter="write_text"):
     dialog = tid(page, "ws-dialog")
     tid(page, "ws-new-block").click()
     tid(dialog, "ws-field-block-key").fill(key)
     tid(dialog, "ws-choice-start-with").select_option(starter)
+    pick_labels(dialog)
     tid(dialog, "ws-create-draft").click()
 
 
@@ -444,10 +494,14 @@ def test_page_contract_library_builds_nested_exact_contracts_and_refuses_invalid
     tid(detail, "contracts-add-choice").click()
     expect(tid(row_detail(page, "lines/[]/status"), "contracts-choice").nth(1)).to_have_value("closed")
     quantity = row_detail(page, "lines/[]/quantity")
+    digest = editor.get_attribute("data-digest")
     change(quantity.locator('[data-test="contracts-bound"][data-keyword="minimum"]'), FINE)
-    quantity = row_detail(page, "lines/[]/quantity")
+    # Each accepted edit rebuilds the controls. Wait for that rebuild before editing the next bound.
+    expect(editor).not_to_have_attribute("data-digest", digest)
+    digest = editor.get_attribute("data-digest")
     change(quantity.locator('[data-test="contracts-bound"][data-keyword="maximum"]'), BIG)
-    expect(row_detail(page, "lines/[]/quantity").locator('[data-test="contracts-bound"][data-keyword="maximum"]')).to_have_value(BIG)
+    expect(editor).not_to_have_attribute("data-digest", digest)
+    expect(quantity.locator('[data-test="contracts-bound"][data-keyword="maximum"]')).to_have_value(BIG)
     has(page, "contracts-editor", "data-state", "valid")
 
     # Advanced source is the same subset: an unsupported keyword stays in the buffer and cannot be saved.
@@ -493,6 +547,7 @@ def test_page_saved_contract_pin_survives_appends_and_select_newer_is_explicit(u
     page = open_page(ui)
     new_block(page, "pinned")
     output = page.locator('[data-test="ws-port"][data-side="outputs"]')
+    open_port(output)
     tid(output, "port-mode").select_option("saved")
     tid(output, "port-contract").select_option("label_choice")
     has(output, "port-pin", "data-revision", "1")
@@ -500,8 +555,10 @@ def test_page_saved_contract_pin_survives_appends_and_select_newer_is_explicit(u
     assert definition["outputs"]["out"]["contract"] == {"name": "label_choice", "revision": 1, "digest": first["digest"]}
     second = save_contract(ui, "label_choice", '{"format":"json","schema":{"type":"string","enum":["a","b","c"]}}',
                            token=first["file_token"])
+    close_port(output)
     tid(page, "ws-advanced-settings").click()
     tid(page, "ws-refresh-design-fields").click()
+    open_port(output)
     has(output, "port-pin", "data-revision", "1")                                      # the pin did not move
     expect(tid(output, "port-newer")).to_be_visible()
     assert saved_definition(ui, "pinned")["outputs"]["out"]["contract"]["revision"] == 1
@@ -656,17 +713,18 @@ def test_page_contract_synthesis_apply_save_and_inline_attachment_are_separate(u
     tid(page, "ws-section-blocks").click()
     new_block(page, "attach")
     output = page.locator('[data-test="ws-port"][data-side="outputs"]')
+    open_port(output)
     change(tid(output, "port-min-length"), "3")
     tid(output, "port-save-reusable").click()
     tid(dialog, "port-reusable-name").fill("reply_text")
+    tid(dialog, "port-reusable-use").uncheck()
     tid(dialog, "ws-save-contract").click()
-    tid(dialog, "ws-keep-inline").click()
+    has(output, "port-msg", "data-state", "saved_reusable")
     has(output, "port-card", "data-mode", "inline")
     assert jsonio.decode_exact(request(ui, "/api/contracts/reply_text")["definition_text"]) == {"format": "text", "min_length": 3}
     tid(output, "port-save-reusable").click()
     tid(dialog, "port-reusable-name").fill("reply_text_2")
-    tid(dialog, "ws-save-contract").click()
-    tid(dialog, "ws-use-saved-revision").click()
+    tid(dialog, "ws-save-contract").click()                       # publishing and using it take one dialog
     has(output, "port-card", "data-mode", "saved")
     has(output, "port-pin", "data-name", "reply_text_2")
     assert request(ui, "/api/blocks")["total"] == 0                                    # the block is not saved yet
@@ -763,7 +821,9 @@ def test_page_stale_revision(ui, server, open_page):
     say(page, "chat", "hi")
     has(page, "chat-status", "data-state", "stale")
     assert server.requests == []                                      # nothing was sent, nothing resent
-    expect(page.locator("#summary")).to_contain_text("other", timeout=WAIT)     # the page reloaded the state
+    tid(page, "ws-settings").click()
+    expect(tid(page, "settings-overview")).to_contain_text("other", timeout=WAIT)
+    tid(page, "settings-close").click()
     expect(tid(page, "chat-prompt")).to_have_value("hi")             # its inputs are kept
     tid(page, "chat-send").click()
     has(page, "chat-status", "data-state", "done")
@@ -779,6 +839,7 @@ def test_page_workspaces_clone_switch_and_delete(ui, open_page):
     expect(page.locator('[data-test="workspaces-row"]')).to_have_count(1)
     has(page, "workspaces-dialog", "data-state", "idle")
     tid(page, "workspaces-name").fill("clone")
+    open_more(page)
     tid(page, "workspaces-clone").click()
     expect(page.locator('[data-test="workspaces-row"][data-workspace="clone"]')).to_have_count(1)
     tid(page, "workspaces-selection").select_option("clone")
@@ -789,12 +850,14 @@ def test_page_workspaces_clone_switch_and_delete(ui, open_page):
     tid(page, "workspaces-switch").click()
     expect(tid(page, "header-workspace")).to_have_attribute("data-workspace", original, timeout=WAIT)
     tid(page, "header-workspaces").click()
+    open_more(page)
     tid(page, "workspaces-reset").click()
     tid(page, "workspaces-confirm-name").fill(original)
     tid(page, "ws-confirm").click()
     expect(tid(page, "header-workspace")).to_have_attribute("data-workspace", original, timeout=WAIT)
     tid(page, "header-workspaces").click()
     tid(page, "workspaces-selection").select_option("clone")
+    open_more(page)
     tid(page, "workspaces-delete").click()
     tid(page, "workspaces-confirm-name").fill("clone")
     tid(page, "ws-confirm").click()
@@ -1032,6 +1095,7 @@ def test_workshop_design_save_compare_and_review(ui, open_page, width):
     dialog=tid(page,"ws-dialog")
     tid(dialog,"ws-field-block-key").fill("counter")
     tid(dialog,"ws-choice-start-with").select_option("count_text")
+    pick_labels(dialog)
     tid(dialog,"ws-create-draft").click()
     tid(page,"ws-save-revision").click()
     tid(dialog,"ws-confirm").click()
@@ -1080,6 +1144,7 @@ def test_workshop_new_block_validation_and_roles(ui, server, open_page, assisted
     expect(role).to_have_value("writer")
     expect(tid(dialog, "ws-choice-mcp-server")).to_be_hidden()
     create = tid(dialog, "ws-create-with-assistance" if assisted else "ws-create-draft")
+    pick_labels(dialog)
     for invalid in ("", "My new block"):
         key.fill(invalid)
         create.click()
@@ -1095,7 +1160,7 @@ def test_workshop_new_block_validation_and_roles(ui, server, open_page, assisted
     expect(key).to_have_value("new_writer")
     create.click()
     if assisted:
-        expect(tid(dialog, "ws-choice-assistant-role")).to_have_value("writer")
+        expect(tid(dialog, "ws-choice-assistant-role-writes-this-proposal")).to_have_value("writer")
         tid(dialog, "ws-cancel").click()
     else:
         expect(dialog).to_have_count(0)
@@ -1117,8 +1182,9 @@ def test_roles_filter_profiles_and_preserve_unsaved_edits(ui, server, open_page)
     expect(row.locator('[data-key="profile"] option')).to_have_count(2)
     row.locator('[data-key="profile"]').select_option("cloud")
     tid(page, "roles-create-profile").click()
-    expect(tid(page, "roles-dialog")).not_to_be_visible()
+    expect(tid(page, "settings-dialog")).to_be_visible()                  # the same profile editor, over Roles
     page.keyboard.press("Escape")
+    expect(tid(page, "settings-dialog")).not_to_be_visible()
     expect(tid(page, "roles-dialog")).to_be_visible()
     expect(row.locator('[data-key="description"]')).to_have_value("My cloud helper")
     expect(row.locator('[data-key="location"]')).to_have_value("cloud")
@@ -1192,6 +1258,7 @@ def test_workshop_new_tool_discovery(ui, make_fake_mcp, open_page):
     tid(dialog, "ws-field-block-key").fill("new_tool")
     tid(dialog, "ws-choice-start-with").select_option("call_tool")
     expect(tid(dialog, "ws-choice-model-role")).to_be_hidden()
+    pick_labels(dialog)
     tid(dialog, "ws-create-draft").click()
     has(dialog, "ws-create-error", "data-code", "tool_required")
     server = tid(dialog, "ws-choice-mcp-server")
@@ -1207,11 +1274,13 @@ def test_workshop_new_tool_discovery(ui, make_fake_mcp, open_page):
     empty.override("tools/list", lambda call: call.error(-32603, "discovery failed"))
     tid(dialog, "ws-refresh-tools").click()
     has(dialog, "ws-tool-discovery", "data-state", "error")
+    pick_labels(dialog)
     tid(dialog, "ws-create-draft").click()
     has(dialog, "ws-create-error", "data-code", "tool_required")
     server.select_option("first")
     has(dialog, "ws-tool-discovery", "data-state", "ready")
     tool.select_option("search")
+    pick_labels(dialog)
     tid(dialog, "ws-create-draft").click()
     expect(dialog).to_have_count(0)
     expect(tid(page, "ws-field-server")).to_have_value("first")
@@ -1229,6 +1298,7 @@ def test_workshop_extractor_revision_journey(ui, server, open_page):
     tid(page,"ws-new-block").click()
     tid(dialog,"ws-field-block-key").fill("shop_extract")
     tid(dialog,"ws-choice-start-with").select_option("extract_fields")
+    pick_labels(dialog)
     tid(dialog,"ws-create-draft").click()
     original=tid(page,"ws-field-instructions").input_value()
     tid(page,"ws-save-revision").click()
@@ -1314,6 +1384,7 @@ def test_workshop_numbered_revision_selection_keeps_dirty_edits_and_names(ui, op
     tid(page, 'ws-new-block').click()
     tid(dialog, 'ws-field-block-key').fill('numbered')
     tid(dialog, 'ws-choice-start-with').select_option('write_text')
+    pick_labels(dialog)
     tid(dialog, 'ws-create-draft').click()
     original = tid(page, 'ws-field-instructions').input_value()
     tid(page, 'ws-field-revision-name-optional-').fill('Initial')
@@ -1354,16 +1425,14 @@ def test_workshop_numbered_revision_selection_keeps_dirty_edits_and_names(ui, op
 
 
 def test_workshop_overwrite_selected_revision(ui, open_page):
+    """Overwrite stays available for standalone (v3) blocks, which the page no longer creates."""
     from conftest import request
+    from test_workshop import plan_save, send
+    plan_save(ui, send(ui, 'preview', starter='write_text', key='overwrite', role='fast')['draft'])
     page = open_page(ui)
     dialog = tid(page, 'ws-dialog')
-    tid(page, 'ws-new-block').click()
-    tid(dialog, 'ws-field-block-key').fill('overwrite')
-    tid(dialog, 'ws-choice-start-with').select_option('write_text')
-    tid(dialog, 'ws-create-draft').click()
-    expect(tid(page, 'ws-overwrite-revision')).to_be_disabled()
-    save_new_revision(page, ui, 'overwrite')
-    has(page, 'ws-status', 'data-state', 'saved')
+    tid(page, 'ws-list').select_option('overwrite')
+    has(page, 'ws-identity-bar', 'data-test', 'ws-identity-bar')
     first = current_revision(ui, 'overwrite')
     tid(page, 'ws-field-instructions').fill('Second {{inputs.text}}')
     save_new_revision(page, ui, 'overwrite')
@@ -1374,6 +1443,7 @@ def test_workshop_overwrite_selected_revision(ui, open_page):
         tid(dialog, 'ws-discard').click()
     expect(tid(page, 'ws-save-revision')).to_be_disabled()
     tid(page, 'ws-field-instructions').fill('Replacement {{inputs.text}}')
+    tid(page, 'ws-advanced-settings').click()
     tid(page, 'ws-overwrite-revision').click()
     tid(dialog, 'ws-cancel').click()
     expect(tid(page, 'ws-field-instructions')).to_have_value('Replacement {{inputs.text}}')
@@ -1394,8 +1464,10 @@ def test_workshop_variable_format_exposes_editor_and_confirms_data_loss(ui, open
     tid(page, 'ws-new-block').click()
     tid(dialog, 'ws-field-block-key').fill('variables')
     tid(dialog, 'ws-choice-start-with').select_option('write_text')
+    pick_labels(dialog)
     tid(dialog, 'ws-create-draft').click()
     output = page.locator('[data-test="ws-port"][data-side="outputs"]')
+    open_port(output)
     tid(output, 'port-format').select_option('structured')               # a fresh closed Group, editable at once
     has(output, 'port-editor', 'data-format', 'structured')
     tid(output, 'port-new-name').fill('message')
@@ -1421,6 +1493,7 @@ def test_workshop_invalid_design_keeps_inputs_and_located_save_error(ui, open_pa
     dialog = tid(page, 'ws-dialog')
     tid(dialog, 'ws-field-block-key').fill('invalid_design')
     tid(dialog, 'ws-choice-start-with').select_option('write_text')
+    pick_labels(dialog)
     tid(dialog, 'ws-create-draft').click()
     tid(page, 'ws-field-field-name').first.fill('message')
     tid(page, 'ws-save-revision').click()
@@ -1456,6 +1529,7 @@ def test_workshop_one_off_and_pending_examples_survive_cancel_and_write_failure(
     dialog = tid(page, 'ws-dialog')
     tid(dialog, 'ws-field-block-key').fill('pending_examples')
     tid(dialog, 'ws-choice-start-with').select_option('count_text')
+    pick_labels(dialog)
     tid(dialog, 'ws-create-draft').click()
     tid(page, 'ws-test').click()
     tid(page, 'ws-field-text').fill('one two three')
@@ -1537,6 +1611,7 @@ def test_workshop_model_role_defaults_and_missing_binding_preserve_intent(ui, se
     tid(dialog, 'ws-field-block-key').fill('role_defaults')
     tid(dialog, 'ws-choice-start-with').select_option('write_text')
     tid(dialog, 'ws-choice-model-role').select_option('fast')
+    pick_labels(dialog)
     tid(dialog, 'ws-create-draft').click()
     role = tid(page, 'ws-choice-model-role')
     temperature = tid(page, 'ws-field-temperature')
@@ -1592,6 +1667,7 @@ def test_workshop_design_controls_overrides_request_preview_cards_and_assistance
     tid(page, 'ws-new-block').click()
     tid(dialog, 'ws-field-block-key').fill('authoring')
     tid(dialog, 'ws-choice-start-with').select_option('extract_fields')
+    pick_labels(dialog)
     tid(dialog, 'ws-create-draft').click()
     expect(tid(page, 'ws-field-system-instructions')).to_be_visible()
 
@@ -1630,6 +1706,7 @@ def test_workshop_design_controls_overrides_request_preview_cards_and_assistance
     tid(dialog, 'ws-close').click()
 
     card = page.locator('[data-test="ws-port"][data-side="outputs"][data-port="out"]')
+    open_port(card)
     expect(tid(card, 'port-editor')).to_have_count(1)                         # the output's own card edits its fields
 
     def add_property(parent, name, kind):
@@ -1653,6 +1730,11 @@ def test_workshop_design_controls_overrides_request_preview_cards_and_assistance
     assert list(schema['properties']['extras']['properties']) == ['note']
 
     tid(page, 'ws-assist').click()
+    # Action first, then only that action's fields (UI-CD CD6): Describe renders no role, task or settings.
+    dialog.locator('[data-test="ws-assist-action"][data-action="describe"]').click()
+    expect(dialog.locator('select, textarea, [data-test="ws-assist-settings"]')).to_have_count(0)
+    dialog.locator('[data-test="ws-assist-action"][data-action="improve"]').click()
+    tid(dialog, 'ws-assist-settings').locator('summary').click()            # folded Assistant settings (UI-CD CD6)
     tid(dialog, 'ws-choice-assistant-temperature-source').select_option('custom')
     tid(dialog, 'ws-field-assistant-temperature').fill('0')
     tid(dialog, 'ws-choice-assistant-reasoning-source').select_option('reset')
@@ -1660,6 +1742,7 @@ def test_workshop_design_controls_overrides_request_preview_cards_and_assistance
         tid(dialog, 'ws-prepare-request').click()
     body = json.loads(sent.value.post_data)['request']
     assert body['settings_text'] == {'temperature': '0'} and body['task_resets'] == ['reasoning']
+    assert 'references' not in body                                            # no evidence unless chosen (D-F26)
 
 
 def test_workshop_example_dialog_offers_an_input_the_example_lacks(ui, open_page):
@@ -1669,6 +1752,7 @@ def test_workshop_example_dialog_offers_an_input_the_example_lacks(ui, open_page
     tid(page, 'ws-new-block').click()
     tid(dialog, 'ws-field-block-key').fill('late_port')
     tid(dialog, 'ws-choice-start-with').select_option('count_text')
+    pick_labels(dialog)
     tid(dialog, 'ws-create-draft').click()
     tid(page, 'ws-test').click()
     tid(page, 'ws-field-text').fill('one two')
@@ -1678,6 +1762,7 @@ def test_workshop_example_dialog_offers_an_input_the_example_lacks(ui, open_page
     tid(page, 'ws-design').click()
     tid(page, 'ws-add-input').click()
     tid(page, 'ws-field-field-name').nth(1).fill('extra')
+    tid(page, 'ws-choice-local-only').nth(1).select_option('false')
     tid(page, 'ws-test').click()
     expect(tid(page, 'ws-choice-example')).to_have_value(selected)
     tid(page, 'ws-edit-selected-example').click()
@@ -1762,8 +1847,18 @@ def test_workshop_revision_selection_describe_refine_save_and_test(ui, server, o
     picker.select_option(second["durable_id"])
     expect(tid(page, "ws-description-use")).to_contain_text("Counts characters in the text.")
     # Test the older revision through its explicit saved selector; the default stays put.
-    picker.select_option(first["durable_id"])
+    held_previews = []
+    preview_url = "**/api/workshop/preview"
+    page.route(preview_url, lambda route: held_previews.append(route), times=1)
+    with page.expect_request(preview_url):
+        picker.select_option(first["durable_id"])
+    try:
+        # A slow revision load must block actions against the previous selection.
+        assert tid(page, "ws-test").evaluate("button => Boolean(button.closest('[inert]'))")
+    finally:
+        held_previews[0].continue_()
     tid(page, "ws-test").click()
+    expect(tid(page, "ws-run-source")).to_have_text("Runs use: Revision 1")
     expect(tid(page, "ws-run-source")).to_have_attribute("data-clean", "true")
     tid(page, "ws-field-text").fill("one two")
     tid(page, "ws-run-test").click()
@@ -1777,3 +1872,833 @@ def test_workshop_revision_selection_describe_refine_save_and_test(ui, server, o
     expect(tid(page, "ws-describe-block")).to_be_disabled()
     expect(tid(page, "ws-save-revision")).to_be_enabled()
     expect(tid(page, "ws-choice-block-revision")).to_have_attribute("data-dirty", "true")
+
+
+def test_workflow_form_only_edit_save_preflight_run_and_trace(ui, open_page):
+    from test_workshop import plan_save, send
+    from conftest import request
+    draft = send(ui, "preview", key="counter", starter="count_text", starter_version=2)["draft"]
+    plan_save(ui, draft)
+    page = open_page(ui)
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-new").click()
+    tid(page, "wf-list-view").click()                                     # the whole design form (UI-CD CD1.1)
+    tid(page, "wf-workflow-name").fill("browser_flow")
+    for side, name in (("input", "text"), ("output", "count")):
+        tid(page, "wf-add-" + side).click()
+        dialog = tid(page, "ws-dialog")
+        tid(dialog, "wf-identifier").fill(name)
+        tid(dialog, "ws-add").click()
+    tid(page, "wf-add-node").click()
+    dialog = tid(page, "ws-dialog")
+    tid(dialog, "wf-block-picker").select_option("counter")
+    expect(dialog).to_contain_text("Ready to capture")
+    tid(dialog, "wf-node-identifier").fill("count_words")
+    tid(dialog, "ws-add").click()
+    page.get_by_label("Bind text").select_option(label="Input · text")
+    page.get_by_label("Output source").select_option(label="count_words · out")
+    # The count node returns a JSON number. Use the readable contract selector.
+    page.locator('[data-test="wf-contract-chip"][data-port="count"]').click()
+    page.locator('details[open] [data-test="wf-contract-format"]').select_option("any")
+    expect(page.locator('details[open] [data-test="wf-contract-editor"]')).to_have_attribute("data-format", "any")
+    tid(page, "wf-save").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+    tid(page, "wf-run-view").click()
+    tid(page, "wf-text").fill("one two")
+    tid(page, "wf-preflight").click()
+    expect(tid(page, "wf-review")).to_contain_text("Order: count_words")
+    tid(page, "wf-run").click()
+    expect(tid(page, "wf-trace")).to_contain_text("browser_flow · complete")
+    expect(tid(page, "wf-trace").locator("pre")).to_have_text("2")
+    tid(page, "wf-inspect-node").click()
+    expect(tid(page, "wf-node-detail")).to_have_attribute("data-node", "count_words")    # inline, no nested dialog
+    expect(tid(page, "ws-dialog")).to_have_count(0)
+    assert request(ui, "/api/workshop/workflows")["workflows"] == ["browser_flow"]
+
+
+def test_workflow_settings_reviews_trust_and_confirmation(ui, open_page):
+    from conftest import request
+    page = open_page(ui)
+    tid(page, "ws-settings").click()
+    tid(page, "header-workflow-settings").click()
+    settings = page.get_by_role("dialog", name="Trusted destinations")
+    tid(settings, "wf-mcp-confirmation").select_option("effectful_batches")
+    tid(settings, "wf-save-mcp-confirmation").click()
+    has(settings, "wf-settings-status", "data-state", "preference")
+    tid(settings, "wf-trust-manual").locator("summary").click()             # manual entry is folded
+    tid(settings, "wf-endpoint-url").fill("http://localhost:1234/v1")
+    tid(settings, "wf-model").fill("local-model")
+    has(settings, "wf-trust-manual-status", "data-reason", "hostname")       # live eligibility before submitting
+    tid(settings, "wf-review-trust").click()
+    has(settings, "wf-settings-status", "data-reason", "hostname")
+    tid(settings, "wf-endpoint-url").fill("http://127.0.0.1:1234/v1")
+    tid(settings, "wf-review-trust").click()
+    confirm = page.get_by_role("dialog", name="Grant destination trust")
+    expect(confirm).to_contain_text("http://127.0.0.1:1234/v1")
+    tid(confirm, "ws-confirm").click()
+    has(settings, "wf-settings-status", "data-state", "granted")
+    assert request(ui, "/api/workshop/destination-trust")["grants"][0]["model"] == "local-model"
+    expect(settings.locator('[data-test="wf-trust-row"][data-trusted="true"]')).to_have_count(1)
+    tid(settings, "wf-revoke-trust").click()
+    tid(page.get_by_role("dialog", name="Revoke destination trust"), "ws-confirm").click()
+    has(settings, "wf-settings-status", "data-state", "revoked")
+    assert request(ui, "/api/workshop/destination-trust")["grants"] == []
+
+
+def test_workflow_form_round_trips_exact_constant(ui, open_page):
+    from conftest import request
+    page = open_page(ui)
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-new").click()
+    tid(page, "wf-list-view").click()
+    tid(page, "wf-workflow-name").fill("exact_constant")
+    for side, name in (("output", "answer"), ("constant", "value")):
+        tid(page, "wf-add-" + side).click()
+        dialog = tid(page, "ws-dialog")
+        tid(dialog, "wf-identifier").fill(name)
+        tid(dialog, "ws-add").click()
+    page.get_by_label("Constant format").select_option("json")
+    text = '{"big":9007199254740993,"ratio":0.10000000000000000001}'
+    tid(page, "wf-constant-value").fill(text)
+    page.get_by_label("Output source").select_option(label="Constant · value")
+    page.locator('[data-test="wf-contract-chip"][data-port="answer"]').click()
+    page.locator('details[open] [data-test="wf-contract-format"]').select_option("any")
+    expect(page.locator('details[open] [data-test="wf-contract-editor"]')).to_have_attribute("data-format", "any")
+    tid(page, "wf-save").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+    tid(page, "wf-purpose").fill("Keep exact values across edits")
+    tid(page, "wf-save").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+    saved = request(ui, "/api/workshop/workflows/exact_constant")
+    assert "9007199254740993" in saved["editor"]["constants"]["value"]["value"]
+    assert "0.10000000000000000001" in saved["editor"]["constants"]["value"]["value"]
+    tid(page, "wf-run-view").click()
+    tid(page, "wf-preflight").click()
+    tid(page, "wf-run").click()
+    expect(tid(page, "wf-trace").locator("pre")).to_have_text(text)
+
+
+def test_workflow_rebind_keeps_verified_expectation_and_snapshot_runs(ui, open_page):
+    import shutil
+    from conftest import request, switch_history
+    from test_workshop import plan_save, send
+    from test_workflows import publish_workflow, transform, port
+    first = transform("counter", "count_text", {"unit":"whitespace_words"}, {"text":port()}, port("json"))
+    example = {"id":"fixed", "version":1, "label":"Two words", "verified":True, "inputs":{"text":"one two"},
+               "expectation":{"kind":"whole_output", "values":{"out":"2"}}}
+    publish_workflow(ui, first, examples=[example])
+    replacement = transform("characters", "count_text", {"unit":"characters"}, {"text":port()}, port("json"))
+    plan_save(ui, replacement)
+    switch_history(ui, True)
+    page = open_page(ui)
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-picker").select_option("chain")
+    tid(page, "wf-list-view").click()
+    tid(page, "wf-rebind-node").click()
+    dialog = page.get_by_role("dialog", name="Choose replacement revision")
+    tid(dialog, "wf-block-picker").select_option("characters")
+    expect(dialog).to_contain_text("Ready to capture")
+    tid(dialog, "ws-use-revision").click()
+    tid(page, "wf-save").click()
+    review = page.get_by_role("dialog", name="Review node rebind")
+    expect(review).to_contain_text("counter → characters")
+    tid(review, "ws-confirm").click()
+    expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+    shutil.rmtree(ui.state.workspace.path / "blocks" / "characters")
+    tid(page, "wf-picker").select_option("")
+    tid(page, "wf-picker").select_option("chain")
+    expect(tid(page, "wf-source-only")).to_contain_text("Workflow snapshot")
+    tid(page, "wf-run-view").click()
+    page.get_by_label("Two words", exact=True).check()
+    tid(page, "wf-preflight").click()
+    tid(page, "wf-run").click()
+    expect(tid(page, "wf-trace")).to_contain_text("Checks passed 1/1")
+    expect(tid(page, "wf-trace")).to_contain_text("Incorrect 1")
+    tid(page, "wf-examples").click()
+    tid(page, "wf-edit-example").click()
+    tid(page.get_by_role("dialog", name="Workflow example"), "wf-expected-out-(exact-json)").fill("7")
+    tid(page.get_by_role("dialog", name="Workflow example"), "ws-keep-example").click()
+    tid(page, "wf-save").click()
+    tid(page.get_by_role("dialog", name="Review workflow save"), "ws-confirm").click()
+    expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+    row = request(ui, "/api/workshop/workflows/chain")["examples"][0]
+    assert row["version"] == 2 and row["verified"] is False
+    page.get_by_role("tab", name="History", exact=True).click()
+    tid(page, "history-workflow-row").first.click()                    # workflow runs are in the History list
+    expect(tid(page, "history-workflow-title")).to_contain_text("chain · complete")
+    expect(tid(page, "ws-dialog")).to_have_count(0)
+
+
+def handle_gap(page, handle_id, edge_target, end):
+    """Distance in canvas units between a port handle's rendered centre and an edge endpoint (UI-CD C-F3)."""
+    return page.evaluate("""([handle, target, end]) => {
+        const world = document.querySelector('[data-test="wf-canvas"]');
+        const zoom = Number(document.querySelector('[data-test="wf-canvas-pane"]').dataset.zoom) / 100;
+        const w = world.getBoundingClientRect(), r = document.querySelector(`.wf-handle[data-handle="${handle}"]`).getBoundingClientRect();
+        const edge = document.querySelector(`[data-test="wf-edge"][data-target="${target}"]`);
+        const x = (r.left + r.width / 2 - w.left) / zoom, y = (r.top + r.height / 2 - w.top) / zoom;
+        return Math.hypot(x - Number(edge.dataset["x" + end]), y - Number(edge.dataset["y" + end]));
+    }""", [handle_id, edge_target, end])
+
+
+def test_workflow_canvas_wires_by_tap_keeps_geometry_undoes_and_persists_layout(ui, open_page):
+    """UI-CD v3 C-F3, C-F4, C-F5, C-F13, C-F16, C-F17: tap wiring with no drag, edge endpoints on the handle
+    centres at 50/100/200% zoom, delete then Undo, a refused incompatible connection, the focus boundary, and a
+    moved card saved as integer layout keyed by node only."""
+    from conftest import request
+    from test_workflows import edit, port, transform
+    from test_workshop import plan_save
+    from agentwiz.jsonio import encode_exact
+
+    first = plan_save(ui, transform("counter", "count_text", {"unit": "whitespace_words"},
+                                    {"text": port()}, port("json")))
+    second = plan_save(ui, transform("reporter", "format_report", {"template": "Words: {{inputs.n}}"},
+                                     {"n": port("json")}, port()))
+    definition = {
+        "name": "canvas_flow", "purpose": "", "inputs": {"text": port()}, "constants": {},
+        "nodes": {"count": {"bindings": {"text": {"kind": "input", "port": "text"}}},
+                  "report": {"bindings": {}}},
+        "outputs": {"answer": {**port(), "binding": {"kind": "node", "node": "report", "port": "out"}}},
+    }
+    edit(ui, "save", {"name": "canvas_flow", "file_token": None, "definition_text": encode_exact(definition),
+                      "selections": {"count": {"key": "counter", "revision": first["durable_id"]},
+                                     "report": {"key": "reporter", "revision": second["durable_id"]}}})
+    page = open_page(ui)
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-picker").select_option("canvas_flow")
+    has(page, "wf-design-area", "data-view", "canvas")
+    has(page, "wf-validation", "data-state", "checked")
+    handle = lambda name: page.locator(f'.wf-handle[data-handle="{name}"]')
+    edge = page.locator('[data-test="wf-edge"][data-target="node:report:n"]')
+    # A JSON number can't feed a Text input: the reason is shown and nothing changes (C-F5).
+    handle("out:count:out").click()
+    handle("in:count:text").click()
+    expect(page.locator('[data-test="wf-edge"][data-target="node:count:text"]')).to_have_attribute("data-source", "input.text")
+    # Tap wiring: output handle, then a compatible input; no drag events (C-F17).
+    handle("out:count:out").click()
+    expect(handle("in:report:n")).to_have_attribute("data-compatible", "true")
+    handle("in:report:n").click()
+    expect(edge).to_have_count(1)
+    expect(edge).to_have_attribute("data-source", "node.count.out")
+    pane = tid(page, "wf-canvas-pane")
+    for zoom_delta, zoom in ((0, "100"), (-208, "200"), (416, "50")):
+        if zoom_delta:
+            box = pane.bounding_box()
+            page.mouse.move(box["x"] + 30, box["y"] + 30)
+            page.keyboard.down("Control")
+            page.mouse.wheel(0, zoom_delta)
+            page.keyboard.up("Control")
+        has(page, "wf-canvas-pane", "data-zoom", zoom)
+        assert handle_gap(page, "out:count:out", "node:report:n", 1) <= 4
+        assert handle_gap(page, "in:report:n", "node:report:n", 2) <= 4
+    # Select the edge, Delete, then Undo restores it identically (C-F4).
+    handle("in:report:n").click()
+    has(page, "wf-inspector", "data-selection", "edge")
+    handle("in:report:n").press("Delete")
+    expect(edge).to_have_count(0)
+    tid(page, "wf-undo").click()
+    expect(edge).to_have_attribute("data-source", "node.count.out")
+    # Focus boundary: Delete in an inspector field acts on the field, never on the selected node (C-F16).
+    page.locator('.wf-card[data-key="node:report"], .wf-card[data-key="report"]').first.click()
+    has(page, "wf-inspector", "data-selection", "node")
+    tid(page, "wf-inspector").locator("select").first.press("Delete")
+    expect(page.locator('.wf-card[data-key="report"]')).to_have_count(1)
+    expect(edge).to_have_count(1)
+    # Move a card by its header; layout is saved as integers keyed by node (C-F13).
+    tid(page, "wf-fit").click()
+    head = tid(page, "wf-canvas-move-count")
+    bounds = head.bounding_box()
+    zoom = int(pane.get_attribute("data-zoom")) / 100
+    x, y = bounds["x"] + 20, bounds["y"] + 8
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + 34 * zoom, y + 22 * zoom, steps=4)
+    page.mouse.up()
+    tid(page, "wf-save").click()
+    tid(page.get_by_role("dialog", name="Review workflow save"), "ws-confirm").click()
+    expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+    expect(tid(page, "wf-undo")).to_be_disabled()                           # a Save is an undo checkpoint (C-F19)
+    saved = request(ui, "/api/workshop/workflows/canvas_flow")
+    assert set(saved["layout"]) == {"count", "report"}
+    assert all(type(value) is int for point in saved["layout"].values() for value in point.values())
+    assert abs(saved["layout"]["count"]["x"] - 34) <= 1 and abs(saved["layout"]["count"]["y"] - 22) <= 1
+    assert saved["editor"]["nodes"]["report"]["bindings"]["n"]["node"] == "count"
+    tid(page, "wf-run-view").click()
+    tid(page, "wf-text").fill("one two")
+    tid(page, "wf-preflight").click()
+    tid(page, "wf-run").click()
+    expect(tid(page, "wf-output").locator("pre")).to_have_text("Words: 2")
+
+
+def test_workflow_design_insert_gate_offers_the_sibling_map_and_undoes_in_one_step(ui, open_page, make_server):
+    """UI-CD v3 C-F6/C-F8 (states from the accepted validation), C-F9 (insertion keeps the edge contract), C-F15
+    (the producer's sibling map is suggested, never bound until accepted) and C-F19 (Save keeps run inputs)."""
+    from conftest import request
+    from test_core_v3 import cloud_chain
+    local, cloud = make_server(), make_server()
+    cloud_chain(ui, local, cloud, gate_node=False)
+    page = open_page(ui)
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-picker").select_option("chain")
+    has(page, "wf-validation", "data-state", "checked")
+    feeding = page.locator('[data-test="wf-edge"][data-target="node:cloud_summary:text"]')
+    expect(feeding).to_have_attribute("data-state", "restricted")          # derived from the private document
+    page.locator('.wf-handle[data-handle="in:cloud_summary:text"]').click()
+    tid(page, "wf-insert-gate").click()
+    has(page, "wf-inspector", "data-selection", "node")
+    has(page, "wf-validation", "data-state", "checked")
+    expect(page.locator('[data-test="wf-inspector"] [data-test="wf-scan-state"]')).to_have_attribute("data-state", "suggested")
+    expect(page.locator('[data-test="wf-edge"][data-target="node:gate:scan"]')).to_have_count(0)
+    released = page.locator('[data-test="wf-edge"][data-target="node:cloud_summary:text"]')
+    expect(released).to_have_attribute("data-source", "node.gate.released")
+    expect(released).to_have_attribute("data-state", "released")
+    # One Undo restores the original edge; Redo brings the Gate back (C-F9).
+    tid(page, "wf-undo").click()
+    expect(feeding).to_have_attribute("data-source", "node.deid.redacted_text")
+    expect(page.locator('.wf-card[data-key="gate"]')).to_have_count(0)
+    tid(page, "wf-redo").click()
+    page.locator('.wf-card[data-key="gate"]').click()
+    tid(tid(page, "wf-inspector"), "wf-use-scan").click()
+    page.locator('.wf-card[data-key="gate"]').click()
+    expect(page.locator('[data-test="wf-inspector"] [data-test="wf-gate-setup"]')).to_have_attribute("data-scan", "true")
+    tid(page, "wf-run-view").click()
+    tid(page, "wf-document").fill("Jane Example")
+    tid(page, "wf-design").click()
+    tid(page, "wf-save").click()
+    tid(page.get_by_role("dialog", name="Review workflow save"), "ws-confirm").click()
+    expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+    saved = request(ui, "/api/workshop/workflows/chain")["editor"]["nodes"]
+    assert jsonio.decode_exact(saved["gate"]["gate"]["contract"]) == {"format": "text"}
+    value = saved["gate"]["bindings"]["value"]
+    assert (value["kind"], value["node"], value["port"], value.get("path", [])) == ("node", "deid", "redacted_text", [])
+    assert saved["gate"]["bindings"]["scan"]["port"] == "mapping"
+    assert saved["cloud_summary"]["bindings"]["text"]["node"] == "gate"
+    tid(page, "wf-run-view").click()
+    expect(tid(page, "wf-document")).to_have_value("Jane Example")          # Save keeps run inputs (C-F19)
+    assert local.requests == cloud.requests == []
+
+
+def test_workflow_design_validation_ignores_stale_responses_and_reports_failures(ui, open_page):
+    """UI-CD v3 C-F7 and C-F18: a response for an older generation is never displayed; a failed request shows
+    Retry with chips "not checked"; the request sends `rebind` as a list."""
+    from test_workflows import edit, port, transform
+    from test_workshop import plan_save
+    from agentwiz.jsonio import encode_exact
+    first = plan_save(ui, transform("counter", "count_text", {"unit": "whitespace_words"}, {"text": port()}, port("json")))
+    definition = {"name": "race", "purpose": "", "inputs": {"text": port(restricted=True)}, "constants": {},
+                  "nodes": {"count": {"bindings": {"text": {"kind": "input", "port": "text"}}}},
+                  "outputs": {"out": {**port("json"), "binding": {"kind": "node", "node": "count", "port": "out"}}}}
+    edit(ui, "save", {"name": "race", "file_token": None, "definition_text": encode_exact(definition),
+                      "selections": {"count": {"key": "counter", "revision": first["durable_id"]}}})
+    page = open_page(ui)
+    page.get_by_role("tab", name="Workflows").click()
+    held, bodies = [], []
+    def hold_validation(route):
+        bodies.append(json.loads(route.request.post_data))
+        held.append(route)
+        page.evaluate("n => document.documentElement.dataset.heldValidations = String(n)", len(held))
+    page.route("**/api/workshop/workflow-validate", hold_validation)
+    # Playwright must dispatch route callbacks while waiting for the debounced request.
+    # The backend's sleeping wait_until helper blocks that browser event dispatch.
+    tid(page, "wf-picker").select_option("race")
+    expect(page.locator("html")).to_have_attribute("data-held-validations", "1")
+    assert bodies[0]["rebind"] == []
+    page.locator('.wf-card[data-key="count"]').click()
+    page.locator('.wf-card[data-key="count"]').press("ArrowRight")         # an edit: a newer generation
+    expect(page.locator("html")).to_have_attribute("data-held-validations", "2")
+    held[0].continue_()                                                    # response n arrives after the edit
+    has(page, "wf-validation", "data-state", "checking")
+    expect(page.locator('.wf-port-state[data-state="restricted"]')).to_have_count(0)
+    held[1].abort()                                                        # the newest request fails
+    has(page, "wf-validation", "data-state", "unavailable")
+    expect(tid(page, "wf-validation-retry")).to_be_visible()
+    expect(page.locator('.wf-port-state[data-state="open"]')).to_have_count(0)
+    page.unroute("**/api/workshop/workflow-validate")
+    tid(page, "wf-validation-retry").click()
+    has(page, "wf-validation", "data-state", "checked")
+    expect(page.locator('.wf-handle[data-handle="out:input:text"]').locator("xpath=..").locator(".wf-port-state")).to_have_attribute("data-state", "restricted")
+    # Accepted validation adds labels/chips to the cards; edges must follow the new handle positions.
+    assert handle_gap(page, "out:input:text", "node:count:text", 1) <= 4
+    assert handle_gap(page, "in:count:text", "node:count:text", 2) <= 4
+
+
+def test_workflow_design_bands_keep_pane_minimums(ui, open_page):
+    """UI-CD v3 C-F21 and the S10 layout part of C-F11: no Design pane is narrower than its minimum; the palette
+    becomes a rail whenever the three minimums plus gutters don't fit; Narrow opens List view without horizontal
+    page scroll."""
+    page = open_page(ui)
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-new").click()
+    for width in (1100, 1136, 1400, 900, 700):
+        page.set_viewport_size({"width": width, "height": 800})
+        page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+        m = page.evaluate("""() => {
+            const d = document.querySelector('[data-test="wf-design-area"]'), w = d.parentElement.clientWidth;
+            const r = s => document.querySelector(s)?.getBoundingClientRect().width || 0;
+            return {band: d.dataset.band, view: d.dataset.view, width: w, palette: r('[data-test="wf-palette"]'),
+                    canvas: r('[data-test="wf-canvas-pane"]'), inspector: r('[data-test="wf-inspector"]'),
+                    scroll: document.documentElement.scrollWidth - document.documentElement.clientWidth};
+        }""")
+        need = max(220, m["width"] * .2) + max(300, m["width"] * .28) + 560 + 32
+        if m["width"] < 720:
+            assert m["band"] == "narrow" and m["view"] == "list" and m["scroll"] <= 0, m
+            continue
+        assert m["band"] == ("wide" if need <= m["width"] else m["band"]) and (m["band"] != "wide") == (need > m["width"]), m
+        assert m["canvas"] >= 559, m
+        if m["band"] in ("wide", "rail"):
+            assert m["inspector"] >= 299, m
+        if m["band"] == "wide":
+            assert m["palette"] >= 219, m
+
+
+def test_workflow_preflight_confirmation_modes_and_stop(ui, open_page, make_fake_mcp):
+    from conftest import add_server, simple_tool, wait_until
+    from test_workflows import port, publish_workflow
+    from agentwiz.jsonio import encode_exact
+
+    fake = make_fake_mcp("modern", tools=[simple_tool("lookup", behave=lambda call: (call.start_sse(), call.hold()))])
+    add_server(ui, "docs", fake.url)
+    publish_workflow(ui, {"key": "lookup", "files": {}, "definition_text": encode_exact({
+        "format_version": 4, "name": "lookup", "inputs": {"text": port()}, "outputs": {"out": port("json")},
+        "steps": [{"id": "lookup", "kind": "tool", "server": "docs", "tool": "lookup",
+                   "arguments": {"q": "{{inputs.text}}"}, "output": "out"}]})})
+    page = open_page(ui)
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-picker").select_option("chain")
+    tid(page, "wf-run-view").click()
+    tid(page, "wf-text").fill("query")
+    tid(page, "wf-preflight").click()
+    expect(tid(page, "wf-review")).to_contain_text("Every MCP workflow run")
+    tid(page, "wf-run").click()
+    tid(page.get_by_role("dialog", name="Confirm MCP workflow execution"), "ws-cancel").click()
+    assert not fake.methods("tools/call")
+    tid(page, "wf-preflight-settings").click()
+    settings = page.get_by_role("dialog", name="Trusted destinations")
+    tid(settings, "wf-mcp-confirmation").select_option("effectful_batches")
+    tid(settings, "wf-save-mcp-confirmation").click()
+    expect(settings).to_contain_text("Confirmation preference saved.")
+    tid(settings, "ws-close").click()
+    tid(page, "wf-preflight").click()
+    expect(tid(page, "wf-review")).to_contain_text("Only MCP batches")
+    try:
+        tid(page, "wf-run").click()
+        wait_until(lambda: fake.holding > 0)
+        tid(page, "wf-stop").click()
+        expect(tid(page, "wf-trace")).to_contain_text("chain · unknown")
+        assert len(fake.methods("tools/call")) == 1
+    finally:
+        fake.release.set()
+
+
+@pytest.mark.parametrize("lose_lookup", [False, True])
+def test_workflow_start_recovers_lost_response(ui, open_page, lose_lookup):
+    from test_workflows import port, publish_workflow, transform
+
+    publish_workflow(ui, transform("count", "count_text", {"unit":"characters"}, {"text":port()}, port("json")))
+    page = open_page(ui)
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-picker").select_option("chain")
+    tid(page, "wf-run-view").click()
+    tid(page, "wf-text").fill("test")
+    tid(page, "wf-preflight").click()
+    bodies, operations = [], []
+
+    def intercept(route):
+        bodies.append(route.request.post_data_json)
+        response = route.fetch()
+        operations.append(response.json()["operation_id"])
+        if len(bodies) == 1:
+            route.abort()
+        else:
+            route.fulfill(response=response)
+
+    page.route("**/api/workshop/workflows/chain/run", intercept)
+    if lose_lookup:
+        page.route("**/api/workshop/tickets/*", lambda route: route.abort(), times=1)
+    tid(page, "wf-run").click()
+    if lose_lookup:
+        expect(tid(page, "wf-run")).to_have_text("Retry start")
+        expect(tid(page, "wf-picker")).to_be_disabled()
+        tid(page, "wf-run").click()
+    expect(tid(page, "wf-trace")).to_contain_text("chain · complete")
+    assert len(bodies) == (2 if lose_lookup else 1)
+    assert all(body == bodies[0] for body in bodies)
+    assert len(set(operations)) == 1
+
+
+
+def test_release_gate_form_approval_and_browser_reconnect(ui, open_page):
+    page = open_page(ui)
+    errors = []
+    page.on('pageerror', lambda exc: errors.append(str(exc)))
+    page.get_by_role('tab', name='Workflows').click()
+    tid(page, 'wf-new').click()
+    tid(page, 'wf-list-view').click()
+    tid(page, 'wf-workflow-name').fill('browser_gate')
+    for side, name in [('input', 'text'), ('output', 'out')]:
+        tid(page, 'wf-add-' + side).click()
+        dialog = tid(page, 'ws-dialog')
+        tid(dialog, 'wf-identifier').fill(name)
+        tid(dialog, 'ws-add').click()
+    page.get_by_role('checkbox', name='Local only', exact=True).first.check()
+    tid(page, 'wf-add-gate').click()                                      # prefilled unique identifier (UI-CD CD1.2)
+    page.get_by_label('Bind value').select_option(label='Input · text')
+    page.get_by_label('Output source').select_option(label='gate · released')
+    tid(page, 'wf-save').click()
+    tid(tid(page, 'ws-dialog'), 'ws-confirm').click()
+    expect(tid(page, 'wf-save')).to_be_disabled()
+    saved = request(ui, '/api/workshop/workflows/browser_gate')
+    assert saved['editor']['nodes']['gate']['gate']['kind'] == 'release'
+    tid(page, 'wf-run-view').click()
+    text = 'Reviewed candidate\n' * 100
+    tid(page, 'wf-text').fill(text)
+    tid(page, 'wf-preflight').click()
+    tid(page, 'wf-run').click()
+    expect(tid(page, 'wf-release-payload')).to_have_text(text.strip())
+    # Reopening the page recovers the active pause through the authenticated endpoint.
+    page.reload()
+    page.get_by_role('tab', name='Workflows').click()
+    expect(tid(page, 'wf-release-panel')).to_be_visible()
+    # The header activity indicator reports the pause and reopens the same review, starting nothing (D-F19).
+    has(page, 'header-activity', 'data-state', 'awaiting_release')
+    panel = tid(page, 'wf-release-panel').element_handle()                 # bound to one review token
+    page.get_by_role('tab', name='Contracts').click()
+    tid(page, 'header-activity').click()
+    expect(tid(page, 'wf-release-panel')).to_be_visible()
+    assert page.evaluate("(element) => element === document.querySelector('[data-test=\"wf-release-panel\"]')", panel)
+    expect(tid(page, 'wf-release-approve')).to_be_enabled()
+    tid(page, 'wf-release-approve').click()
+    expect(tid(page, 'wf-release-panel')).to_have_count(0)
+    assert request(ui, '/api/workshop/workflow-active') == {}
+    tid(page, 'wf-inspect-node').click()
+    expect(tid(page, 'wf-review-payload')).to_have_text(text.strip())
+    assert errors == []
+
+
+# UI-AB v2 -------------------------------------------------------------------------------------------------------
+def local_role(ui, server):
+    from conftest import save_profile, save_roles
+    save_profile(ui, "p", model="m", kind="openai_compat", base_url=server.url + "/v1", provider="")
+    save_roles(ui, {"fast": "p"})
+
+
+def test_create_requires_port_labels_and_insert_buttons_follow_renames(ui, server, open_page):
+    """Create needs an explicit label choice and makes a workflow-ready block; Insert buttons and missing-reference
+    checks follow port edits, and a single-candidate replacement changes the prompt only after confirmation."""
+    local_role(ui, server)
+    page = open_page(ui)
+    dialog = tid(page, "ws-dialog")
+    tid(page, "ws-new-block").click()
+    tid(dialog, "ws-field-block-key").fill("labelled")
+    tid(dialog, "ws-choice-start-with").select_option("write_text")
+    tid(dialog, "ws-create-draft").click()
+    has(dialog, "ws-create-error", "data-code", "labels_required")
+    tid(dialog, "ws-port-label-private").check()
+    tid(dialog, "ws-create-draft").click()
+    expect(dialog).to_have_count(0)
+    expect(tid(page, "ws-upgrade-banner")).to_have_count(0)                   # workflow-ready from creation
+    expect(tid(page, "ws-choice-local-only")).to_have_count(2)
+    has(page, "ws-protection-labels", "data-unset", "0")
+    tid(page, "ws-field-field-name").first.fill("summary")
+    expect(tid(page, "ws-insert-summary")).to_have_count(1)
+    expect(tid(page, "ws-insert-text")).to_have_count(0)
+    has(page, "ws-missing-reference", "data-ref", "inputs.text")
+    tid(page, "ws-replace-reference").click()
+    tid(dialog, "ws-cancel").click()
+    expect(dialog).to_have_count(0)
+    assert "{{inputs.text}}" in tid(page, "ws-field-instructions").input_value()       # nothing rewritten unasked
+    tid(page, "ws-replace-reference").click()
+    tid(dialog, "ws-replace").click()
+    expect(tid(page, "ws-missing-reference")).to_have_count(0)
+    definition = save_new_revision(page, ui, "labelled")
+    assert "{{inputs.summary}}" in definition["steps"][0]["prompt"]["text"]
+    assert definition["format_version"] == 4 and definition["inputs"]["summary"]["local_only"] is True
+
+
+def test_standalone_block_shows_upgrade_banner(ui, open_page):
+    from test_workshop import plan_save, send
+    plan_save(ui, send(ui, "preview", starter="write_text", key="legacy", role="fast")["draft"])
+    page = open_page(ui)
+    tid(page, "ws-list").select_option("legacy")
+    tid(page, "ws-upgrade-for-workflows").click()
+    expect(tid(page, "ws-upgrade-banner")).to_have_count(0)
+    expect(page.locator('[data-test="ws-choice-local-only"][data-state="unset"]')).to_have_count(2)
+
+
+def test_test_readiness_grants_and_retires_retained_labels_in_place(ui, server, open_page):
+    """A protected Test refusal is explained in place; Grant clears it, and retiring an earlier revision's label is
+    an explicit, recorded action. Nothing is sent while refused."""
+    from test_workshop import plan_save, send
+    local_role(ui, server)
+    first = plan_save(ui, send(ui, "preview", starter="write_text", key="kept", role="fast", data_handling="private")["draft"])
+    selected = send(ui, "preview", key="kept", revision=first["durable_id"])["draft"]
+    definition = jsonio.decode_exact(selected["definition_text"])
+    definition["inputs"]["text"]["local_only"] = definition["outputs"]["out"]["local_only"] = False
+    selected["definition_text"] = jsonio.encode_exact(definition)
+    plan_save(ui, selected, selected["base_digest"])
+    page = open_page(ui)
+    dialog = tid(page, "ws-dialog")
+    tid(page, "ws-list").select_option("kept")
+    tid(page, "ws-test").click()
+    tid(page, "ws-field-text").fill("value")
+    tid(page, "ws-check-readiness").click()
+    has(page, "ws-readiness", "data-code", "destination_untrusted")
+    expect(page.locator('[data-test="ws-restriction-sources"] [data-code="retained_label"]')).to_have_count(1)
+    tid(page, "ws-readiness-retained").click()
+    expect(tid(dialog, "ws-label-pair")).to_have_count(1)
+    tid(dialog, "ws-retire-these-labels").click()
+    has(page, "ws-readiness", "data-state", "ready")                          # nothing restricts this run now
+    assert request(ui, "/api/workshop/blocks/kept/retained-labels")["pairs"][0]["acknowledged"] is True
+    tid(page, "ws-design").click()
+    tid(page, "ws-choice-local-only").first.select_option("true")            # a current label needs trust
+    tid(page, "ws-test").click()
+    tid(page, "ws-check-readiness").click()
+    has(page, "ws-readiness", "data-code", "destination_untrusted")
+    tid(page, "ws-readiness-grant").click()
+    tid(dialog, "ws-confirm").click()
+    has(page, "ws-readiness", "data-state", "ready")
+    assert not server.requests
+
+
+def test_port_chip_shape_shortcut_and_done_keep_draft(ui, server, open_page):
+    local_role(ui, server)
+    page = open_page(ui)
+    new_block(page, "shaped")
+    output = page.locator('[data-test="ws-port"][data-side="outputs"]')
+    has(output, "port-chip", "data-kind", "text")
+    open_port(output)
+    tid(output, "port-shortcut-list").click()
+    dialog = tid(page, "ws-dialog")
+    tid(dialog, "port-shortcut-name").nth(0).fill("placeholder")
+    tid(dialog, "port-shortcut-name").nth(1).fill("original")
+    tid(dialog, "ws-use-shape").click()
+    has(output, "port-editor", "data-format", "structured")
+    tid(output, "port-done").click()
+    has(output, "port-drawer", "data-state", "closed")
+    has(output, "port-chip", "data-kind", "structured")
+    has(page, "ws-unsaved-state", "data-state", "unsaved")                  # Done closes; saving stays with the block
+    schema = save_new_revision(page, ui, "shaped")["outputs"]["out"]["contract"]["schema"]
+    assert schema == {"type": "array", "items": {"type": "object", "properties": {
+        "placeholder": {"type": "string"}, "original": {"type": "string"}},
+        "required": ["placeholder", "original"], "additionalProperties": False}}
+
+
+def test_workflow_readiness_finding_grants_in_place(ui, server, open_page):
+    from test_workflows import port, publish_workflow
+    local_role(ui, server)
+    draft = {"key": "writer", "files": {}, "definition_text": jsonio.encode_exact({
+        "format_version": 4, "name": "writer", "inputs": {"text": port(restricted=True)}, "outputs": {"out": port()},
+        "steps": [{"id": "write", "kind": "model", "role": "fast", "response_mode": "named_json",
+                   "prompt": {"text": "{{inputs.text}}"}}]})}
+    publish_workflow(ui, draft)
+    page = open_page(ui)
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-picker").select_option("chain")
+    tid(page, "wf-run-view").click()
+    tid(page, "wf-text").fill("protected")
+    tid(page, "wf-preflight").click()
+    has(page, "wf-readiness-state", "data-state", "blocked")
+    finding = page.locator('[data-test="wf-finding"][data-code="destination_untrusted"]')
+    tid(finding, "wf-finding-grant").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    has(page, "wf-readiness-state", "data-state", "ready")
+    expect(tid(page, "wf-run")).to_be_enabled()
+    assert not server.requests
+
+
+# core v3 §5 -------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("starter", ["write_text", "summarise", "extract_fields", "choose_label", "check_source",
+                                     "blank_model", "call_tool", "blank_tool"])
+def test_page_create_dialog_makes_v4_blocks_with_the_chosen_labels(ui, open_page, make_fake_mcp, starter):
+    """The ordinary Create a block dialog never yields a v3 model or tool block: each starter becomes v4 and
+    every starter port carries the chosen label."""
+    tool_kind = starter in ("call_tool", "blank_tool")
+    if tool_kind:
+        fake = make_fake_mcp("modern", tools=[simple_tool("echo")])
+        add_server(ui, "tools", fake.url, **FAST)
+    page = open_page(ui)
+    tid(page, "ws-new-block").click()
+    dialog = tid(page, "ws-dialog")
+    tid(dialog, "ws-field-block-key").fill("guarded")
+    tid(dialog, "ws-choice-start-with").select_option(starter)
+    if tool_kind:
+        tid(dialog, "ws-choice-mcp-server").select_option("tools")
+        has(dialog, "ws-tool-discovery", "data-state", "ready")
+        tid(dialog, "ws-choice-tool-name").select_option("echo")
+    tid(dialog, "ws-port-label-private").check()
+    with page.expect_response(lambda r: r.url.endswith("/api/workshop/preview")) as caught:
+        tid(dialog, "ws-create-draft").click()
+    sent = caught.value.request.post_data_json
+    assert sent["data_handling"] == "private"
+    definition = jsonio.decode_exact(caught.value.json()["draft"]["definition_text"])
+    assert definition["format_version"] == 4
+    ports = [p for side in ("inputs", "outputs") for p in definition[side].values()]
+    assert ports and all(p["local_only"] is True for p in ports)
+
+
+# core v3 §7.4 journeys ---------------------------------------------------------------------------------
+def open_workflow_run(page, name):
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-picker").select_option(name)
+    tid(page, "wf-run-view").click()
+
+
+def test_page_s2a_local_private_summary_runs_with_only_local_trusted_destinations(ui, open_page, make_server):
+    from test_core_v3 import Backend, prepare
+    local = Backend()
+    try:
+        prepare(ui, "local", local)
+        page = open_page(ui)
+        open_workflow_run(page, "private_summary_local")
+        tid(page, "wf-document").fill("Jane Example reported fatigue. Record TEST-123.")
+        tid(page, "wf-preflight").click()
+        has(page, "wf-readiness-state", "data-state", "ready")
+        plan = request(ui, "/api/workshop/plans", {"format_version": 1, "action": "workflow_run",
+                       "request": {"name": "private_summary_local", "inputs": {"document": "x"}}})
+        assert all(row["protected"] and row["trust_revision"] for row in plan["descriptor"]["destinations"].values())
+        expect(tid(page, "wf-release-panel")).to_have_count(0)
+        tid(page, "wf-run").click()
+        expect(tid(page, "wf-trace")).to_contain_text("complete")
+    finally:
+        local.close()
+
+
+def test_page_s2_release_private_summary_pauses_for_review_then_completes(ui, open_page):
+    from test_core_v3 import Backend, prepare
+    local, cloud = Backend(), Backend()
+    try:
+        prepare(ui, "release", local, cloud)
+        plan = request(ui, "/api/workshop/plans", {"format_version": 1, "action": "workflow_run",
+                       "request": {"name": "private_summary_release", "inputs": {"document": "x"}}})
+        destinations = plan["descriptor"]["destinations"]
+        assert destinations["cloud_summary"]["protected"] is False and destinations["cloud_summary"]["kind"] == "openrouter"
+        assert all(row["protected"] for node, row in destinations.items() if node != "cloud_summary")
+        page = open_page(ui)
+        open_workflow_run(page, "private_summary_release")
+        tid(page, "wf-document").fill("Jane Example reported fatigue. Record TEST-123.")
+        tid(page, "wf-preflight").click()
+        has(page, "wf-readiness-state", "data-state", "ready")
+        tid(page, "wf-run").click()
+        expect(tid(page, "wf-release-panel")).to_be_visible()
+        assert cloud.requests == []
+        page.get_by_role("checkbox", name="I have reviewed the AI concerns or assessment unavailability").check()
+        tid(page, "wf-release-approve").click()
+        expect(tid(page, "wf-release-panel")).to_have_count(0)
+        expect(tid(page, "wf-trace")).to_contain_text("complete")
+        assert len(cloud.requests) == 1
+        # The workflow result comes first, with Copy, its Local-only state and a restoration summary (D-F24).
+        restored = page.locator('[data-test="wf-output"][data-output="restored"]')
+        expect(restored).to_have_attribute("data-local-only", "true")
+        expect(restored.locator('[data-test="wf-copy-output"]')).to_have_count(1)
+        expect(restored.locator('[data-test="wf-restore-summary"]')).to_have_attribute("data-state", "available")
+        assert page.evaluate("""() => {
+            const output = document.querySelector('[data-test="wf-output"][data-output="restored"]');
+            const progress = document.querySelector('[data-test="wf-progress"]');
+            return !!(output && progress && (output.compareDocumentPosition(progress) & Node.DOCUMENT_POSITION_FOLLOWING));
+        }""")
+    finally:
+        local.close()
+        cloud.close()
+
+
+def test_page_s3_refusal_offers_a_release_gate_without_contacting_the_cloud(ui, open_page, make_server):
+    from test_core_v3 import cloud_chain
+    local, cloud = make_server(), make_server()
+    cloud_chain(ui, local, cloud, gate_node=False)
+    page = open_page(ui)
+    open_workflow_run(page, "chain")
+    tid(page, "wf-document").fill("Jane Example")
+    tid(page, "wf-preflight").click()
+    has(page, "wf-readiness-state", "data-state", "blocked")
+    finding = page.locator('[data-test="wf-finding"][data-remedy="add_release_gate"]')
+    expect(finding).to_have_count(1)
+    expect(tid(finding, "wf-finding-add-gate")).to_be_visible()
+    expect(finding.locator('details [data-test="wf-finding-code"]')).to_have_count(1)
+    assert local.requests == cloud.requests == []
+
+
+def test_page_s6_saved_use_banner_reports_a_model_change(ui, open_page, server):
+    from conftest import save_profile, save_roles
+    from test_core_v3 import save_definition
+    from test_release_gate import model_draft, node
+    from test_workflows import port
+    from test_workshop import plan_save, send
+    save_profile(ui, "local", model="old", kind="openai_compat", base_url=server.url + "/v1", provider="")
+    save_roles(ui, {"local": "local"})
+    saved = plan_save(ui, model_draft("deid", "local", {"text": port()}, {"out": port()}))
+    save_definition(ui, {"name": "model", "purpose": "", "inputs": {"text": port(restricted=True)}, "constants": {},
+                         "nodes": {"m": {"bindings": {"text": {"kind": "input", "port": "text"}}}},
+                         "outputs": {"out": {**port(), "binding": node("m")}}},
+                    {"m": {"key": "deid", "revision": saved["durable_id"]}})
+    grants = request(ui, "/api/workshop/destination-trust")
+    send(ui, "destination-trust", expected_revision=grants["revision"], trusted=True,
+         destination={"kind": "openai_compat", "url": server.url + "/v1", "model": "old", "provider": ""})
+    save_profile(ui, "local", model="new", kind="openai_compat", provider="")
+    page = open_page(ui)
+    tid(page, "ws-settings").click()
+    tid(page, "header-workflow-settings").click()
+    settings = page.get_by_role("dialog", name="Trusted destinations")
+    has(settings, "wf-saved-trust-gaps", "data-count", "1")
+    has(settings, "wf-saved-trust-gaps", "data-complete", "true")
+    expect(settings.locator('[data-test="wf-trust-row"][data-requires-trust="true"][data-trusted="false"]')).to_have_count(1)
+    assert not server.requests
+
+
+def test_page_restore_parameter_control_saves_its_choice(ui, open_page):
+    page = open_page(ui)
+    new_block(page, "restorer", "restore_placeholders")
+    tid(page, "ws-restore-unknown").select_option("keep")
+    tid(page, "ws-apply-parameters").click()
+    expect(tid(page, "ws-restore-unknown")).to_have_value("keep")
+    definition = save_new_revision(page, ui, "restorer")
+    assert definition["steps"][0]["parameters"] == {"unknown": "keep", "placeholder_syntax": "bracket_upper"}
+
+
+TEXT_CHECKS = {"kind": "text", "assertions": [
+    {"output": "out", "operation": "excludes", "values": ["Jane\nExample", "TEST-1"], "case": "insensitive"},
+    {"output": "out", "operation": "excludes_pattern", "pattern": "bracket_upper"}]}
+
+
+def test_page_block_example_editor_preserves_text_checks(ui, open_page):
+    from test_workshop import http_method, plan_save, send
+    plan_save(ui, send(ui, "preview", starter="format_report", starter_version=2, key="checked")["draft"])
+    http_method(ui, "blocks/checked/examples", "PUT", {"expected_revision": None, "examples": [
+        {"id": "t", "version": 1, "label": "Before", "inputs": {"text": "x"}, "expectation": TEXT_CHECKS,
+         "origin": "manual", "verified": True}]})
+    page = open_page(ui, "workshop/checked/test")
+    tid(page, "ws-choice-example").select_option("t")
+    tid(page, "ws-edit-selected-example").click()
+    dialog = tid(page, "ws-dialog")
+    expect(tid(dialog, "ws-text-check")).to_have_count(2)
+    tid(dialog, "ws-field-label").fill("After")
+    tid(dialog, "ws-save").click()
+    tid(page, "ws-save-example-collection").click()
+    assert wait_until(lambda: request(ui, "/api/workshop/blocks/checked/examples")["examples"][0]["label"] == "After")
+    assert request(ui, "/api/workshop/blocks/checked/examples")["examples"][0]["expectation"] == TEXT_CHECKS
+
+
+def test_page_workflow_example_editor_preserves_text_checks(ui, open_page):
+    from test_core_v3 import Backend, prepare
+    local = Backend()
+    try:
+        prepare(ui, "local", local)
+        before = request(ui, "/api/workshop/workflows/private_summary_local")["examples"][0]
+        page = open_page(ui)
+        page.get_by_role("tab", name="Workflows").click()
+        tid(page, "wf-picker").select_option("private_summary_local")
+        tid(page, "wf-examples").click()
+        tid(page, "wf-edit-example").first.click()
+        dialog = page.get_by_role("dialog", name="Workflow example")
+        expect(tid(dialog, "wf-text-check")).to_have_count(3)
+        tid(dialog, "wf-example-label").fill("Relabelled")
+        tid(dialog, "ws-keep-example").click()
+        tid(page, "wf-save").click()
+        tid(page.get_by_role("dialog", name="Review workflow save"), "ws-confirm").click()
+        expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+        after = request(ui, "/api/workshop/workflows/private_summary_local")["examples"][0]
+        assert after["label"] == "Relabelled" and after["expectation"] == before["expectation"]
+    finally:
+        local.close()

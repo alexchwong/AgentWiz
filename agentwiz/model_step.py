@@ -294,6 +294,9 @@ def _new_record(p: PreparedAttempt, aid: str) -> dict:
 
 def _error_fields(exc: BaseException, p: PreparedAttempt) -> dict:
     """{"class", "status", "description", "hint"?}: AgentWiz's own text, never backend text."""
+    from .outbound_policy import Refused
+    if isinstance(exc, Refused):
+        return {"class": "DestinationRefused", "status": None, "description": str(exc)}
     if isinstance(exc, ModelSpellError):
         status = getattr(exc, "status", None)
         status = status if isinstance(status, int) and not isinstance(status, bool) else None
@@ -325,7 +328,7 @@ def run_attempt(store: runs.AttemptStore, prepared: PreparedAttempt, callbacks: 
 
 
 def run_attempt_with_value(store: runs.AttemptStore, prepared: PreparedAttempt, callbacks: Callbacks = Callbacks(),
-                           sink: history.Writer | None = None) -> tuple[dict, object]:
+                           sink: history.Writer | None = None, *, dispatch=None) -> tuple[dict, object]:
     """Section 8.4, returning (the committed record, the checked value). For a page attempt the value is what
     the one check that decided the attempt parsed (`checks.check_answer_value`); for a block's named envelope
     it is `{name: value}` for every declared output (`checks.check_named_answer`). Both are
@@ -369,8 +372,12 @@ def run_attempt_with_value(store: runs.AttemptStore, prepared: PreparedAttempt, 
         if not started_failed:
             try:
                 model_info = None
+                if dispatch:
+                    dispatch.check()
                 if p.snapshot.kind == "lmstudio" and p.task.reasoning == "off":
                     model_info, lookup = model_call.lmstudio_model_info(p.snapshot.endpoint, p.snapshot.model)
+                if dispatch:
+                    dispatch.check()
                 model_called = True
                 result = model_call.call_model(p.snapshot, p.messages_sent, p.arguments, model_info=model_info,
                                                on_text=wrap(callbacks.text), on_reasoning=wrap(callbacks.reasoning),
