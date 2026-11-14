@@ -30,18 +30,16 @@
 - Test shows inputs beside results and checks readiness, with Grant and other remedies in place.
 - Compare keeps Stop and both arms visible and shows each example's answers side by side.
 - Models & roles lists roles with status and opens the profile editor without losing role edits.
-- Trusted destinations lists configured endpoints with eligibility, trust and uses; Grant needs no retyping.
 - Workflow Run orders inputs, readiness, findings and Run; findings offer remedies such as Grant or Add Release Gate.
 - Workflow progress follows execution order, shows release phases, and opens node traces beside it.
-- History lists block runs, workflow runs and comparisons together with filters.
+- History combines block runs, workflow runs and comparisons with kind and failure filters.
 - Save runs shows On or Off beside the workspace name; the tutorial opens as a side panel.
 
 - Release Gates pause workflows for explicit human approval without removing local-only protection from source data.
 - Optional trusted local AI assessment and identifier checks assist release review; acknowledgements are enforced by the server.
 - Reopen Workflows after a browser reload to recover an active review; restart invalidates pending approvals.
 
-- Create and run workflows from Workshop using forms or a drag-and-connect canvas.
-- Review saved examples, workflow traces, and destination trust in the browser.
+- Run workflows from Workshop with saved examples and inspect their traces.
 - Added v4 block ports, built-in transforms and explicit conversion of legacy starters.
 - Added headless workflow planning, serial execution, saved examples and private run evidence.
 - Protected model and MCP calls require a workspace grant for the exact literal-loopback destination.

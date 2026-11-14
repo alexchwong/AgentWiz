@@ -86,7 +86,7 @@ Paths in this table are relative to the repository root.
 | `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for trying the UI without a model; logs the sampling fields and message roles each request carries. Models `json-pass`, `json-repair` and `slow-headers` serve the README tour. |
 | `scripts/stub_mcp_server.py` | no | Scripted MCP server (`--era dual|modern|legacy`, `--token`) for trying the MCP tools tab; logs every request, disconnect, notice and `DELETE`. |
 | `scripts/install.sh` | no | Installer behind the README one-liner; refuses to run in a checkout without `--dir`; installs required validation dependencies; re-attached to every release as `install.sh`. |
-| `DEVEL.md`, `docs/`, `HANDOVER.md`, `NEWS.md`, `.clinerules` | no | Agent directives, technical/release/history references, task handover, changelog and agent workflow. |
+| `DEVEL.md`, `docs/`, `NEWS.md`, `.clinerules` | no | Agent directives, technical/release/history references, changelog and agent workflow. |
 | `.github/workflows/` | no | `tests.yml` (push, PR) and `release.yml` (push to `main`, manual dispatch). See [release operations](releases.md#branches-and-releases) for dispatch restrictions. |
 
 ## The modelSpell dependency
@@ -1315,7 +1315,9 @@ workspace switch and configuration change; a response is accepted only when its 
 one and it belongs to the current load. Chips, port and edge states, Gate setup, the issue list and open-draft
 trust gaps read only the last accepted result; there is no client-side protection calculation. Without an
 accepted result, with `available: false`, or with truncated restriction details, values read "not checked".
-"Design checked" is not readiness: destinations are expected and confirmed at readiness.
+While a newer check is pending, the last accepted states remain visible on a dimmed surface;
+an error clears them to "not checked". "Design checked" is not readiness: destinations are
+expected and confirmed at readiness.
 
 Undo and Redo cover graph edits since the last load or Save; a successful Save clears both stacks, because the
 saved bundle keeps only the snapshots its definition references. Save and returns from detours (Create block…,
@@ -1329,11 +1331,14 @@ is never bound automatically.
 
 **Run results and review (UI-CD v3).** Workflow outputs render above the progress list in definition order, each
 with its effective Local-only state, outcome and Copy; an output fed by a `restore_placeholders` transform shows
-a restoration summary read once from that node's detail. Node detail and History records render through the
+a restoration summary read once from that node's detail (the page recognizes the transform's `text`/`pairs`
+input shape). Workflow node detail and saved workflow History records render through the
 page's shared `ResultView` (headline, outputs, checks, failures and repairs, collapsed Troubleshooting with
-Request/Reasoning/Raw/Attempts; attempts open inline). JSON outputs are re-indented without parsing numbers. The
+Request/Reasoning/Raw/Attempts; attempts open inline). Test, Compare and saved block runs retain their own
+result markup. JSON outputs are re-indented without parsing numbers. The
 release panel highlights identifier hits (text by code-point offsets, JSON by path and part) and locatable
-assessment findings, steps through them, finds text, paginates payloads above 200 KB, shows the batch position,
+assessment findings whose free-text location occurs in the payload (case-insensitive), steps through them,
+finds text, paginates payloads above 200 KB, shows the batch position,
 destination facts from the trust preview and each decision's consequence; the payload and Copy are unchanged.
 Reject and revise submits the same token-bound rejection and navigates to the producer's source revision only
 after the server accepts it. History reads each workflow-run and comparison manifest once per refresh for its

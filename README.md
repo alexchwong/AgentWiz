@@ -7,10 +7,10 @@ You choose a model backend (LM Studio, OpenRouter, or any OpenAI-compatible serv
 llama-server), type an optional system prompt and an input, and watch the reasoning and the answer
 stream back, followed by token usage, cost and a clear outcome.
 
-What 0.2.0 adds:
+AgentWiz 0.2.1 includes:
 
 - **Workshop:** create, understand, save, test and compare one model, tool or Python block at a time.
-- **Nine starters** and blank blocks, exact structured fields, prompt preview and a standard description for each saved revision.
+- **Ten starters** and blank blocks, exact structured fields, prompt preview and a standard description for each saved revision.
 - **Saved revisions:** display names, duplicate, restore, explicit import of unmanaged v3 blocks and newest-20 retention. Eligible retained
   revisions can be selected, described, tested and compared without changing the default.
 - **Examples and correctness:** exact outputs, field assertions or human review, independently of contract acceptance.
@@ -20,14 +20,16 @@ What 0.2.0 adds:
   editor (advanced source optional), sample checks, Used by and reviewable model-drafted proposals.
 - **Workbench:** Chat, Documents, MCP tools and Checked request remain independent utilities.
 - **History:** saved runs, checks, attempts and source attribution, with saving off by default.
-- **Eighteen tutorial topics** using isolated local services, with no API keys or live model required.
+- **Workflows:** exact captured block revisions, a palette/canvas/inspector editor and a full-form List view,
+  destination trust, built-in transforms and explicit human-reviewed Release Gates.
+- **Guided tutorial topics** using isolated local services, with no API keys or live model required.
 
 Model profiles, roles and MCP servers are shared settings. Credentials stay in process memory.
 Scripts run with your filesystem and network access. AgentWiz uses the pinned modelSpell 0.3.0 public API.
 
 ## Install
 
-This guide covers AgentWiz 0.2.0, which requires Python 3.10 or later.
+This guide covers AgentWiz 0.2.1, which requires Python 3.10 or later.
 
 ```bash
 curl -fsSL https://github.com/alexchwong/AgentWiz/releases/latest/download/install.sh | bash
@@ -44,12 +46,12 @@ files report `migration_required`. Recreate or deliberately rewrite them as exec
 and current Text/JSON contracts. Reusable contract references need exact revision pins. For model
 steps, update the reply instructions to match the [named JSON envelope](#named-outputs).
 
-If you already have a locally built 0.2.0 wheel or have downloaded its published wheel, install it with:
+If you have a locally built 0.2.1 wheel, or its published wheel once available, install it with:
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install ./agentwiz-0.2.0-py3-none-any.whl
+python -m pip install ./agentwiz-0.2.1-py3-none-any.whl
 ```
 
 For a published wheel, you can pass the URL with the `#sha256=…` fragment from the release notes
@@ -106,11 +108,12 @@ starting with a letter or digit.
 
 ## Navigation
 
-**Workshop** is the default, with two sections: **Blocks** (its compact saved-block selector is above
-Design, Test and Compare) and **Contracts**. **Workbench** groups the four independent utilities below. **History**
+**Workshop** is the default, with **Blocks** (its compact saved-block selector is above
+Design, Test and Compare), **Contracts** and **Workflows**. **Workbench** groups the four independent utilities below. **History**
 opens saved block runs, workflow runs and comparisons. **Save runs: On/Off** sits beside the workspace name and
-shows its state either way. Settings in the header holds the configuration summary, model profiles, **Models &
-roles**, MCP servers and **Trusted destinations**; the Workspaces control beside the workspace name opens
+shows its state either way. The header activity indicator reopens running work without starting it again.
+Settings is a categorised dialog with the configuration summary, model profiles, **Models &
+roles**, MCP servers, **Cloud keys** and **Trusted destinations**; the Workspaces control beside the workspace name opens
 workspace management. The tutorial opens as a help panel at the side, over the page on narrow screens.
 
 | Location | Address | Purpose |
@@ -352,10 +355,12 @@ removes its description.
 ## Workflows
 
 In **Workshop → Workflows**, create a named workflow, add inputs and outputs, then add
-nodes from exact v4 block revisions. Use the binding forms to connect inputs, constants
-and node outputs. A binding can select an object field or an array index. The optional
-**Canvas** lets you drag cards and connect compatible ports. The Nodes form provides
-the same wiring and positioning controls with a keyboard.
+nodes from exact v4 block revisions. **Design** combines a searchable palette, canvas and
+inspector. Connect compatible ports by dragging, tapping or keyboard; use **List view** for
+the whole binding form over the same draft. A binding can select an object field or an array
+index. **Undo** and **Redo** cover graph edits until Save. Validation explains what stays
+local and the expected destinations; it does not replace Run's readiness check. Create a
+block or Restore placeholders from Design and return without discarding the unsaved graph.
 
 Save before running. In **Run**, the left column reads inputs or saved examples → **Check readiness** → findings
 → **Run**. Each finding names its location and offers a remedy for the object that owns it: **Grant** for an
@@ -365,7 +370,8 @@ outputs, or **Open source revision** for a captured block. From that revision, *
 node's explicit Rebind review; nothing is rebound or cleared automatically. Privacy warnings such as an
 unprotected upstream call stay visible; routine notices fold. While running, **Stop**, the current phase
 (including Assessing release, Awaiting your review and Submitting decision) and saving state stay at the top of
-the left column. Progress lists nodes in execution order; **Inspect** opens a node's trace beside it.
+the left column. Outputs appear above progress, with a restoration summary where applicable.
+Progress lists nodes in execution order; **Inspect** opens a node's trace beside it.
 Rebind explicitly to update a node's captured revision.
 A saved capture remains usable if its original block revision is removed.
 
@@ -383,7 +389,9 @@ and a protected model stage on an isolated local stand-in.
 
 ### Release Gates
 
-Choose **Add Release Gate** in a workflow. Bind `value` to the redacted text or JSON you
+Choose **Add Release Gate** in a workflow, or **Insert Release Gate** on a connection.
+Insertion preserves the connection through the new Gate; an identifier-map suggestion is never bound automatically.
+Bind `value` to the redacted text or JSON you
 want to release. Optionally bind `scan` to a local-only list of identifier originals
 (strings, or objects with `original` and optional `placeholder`). The Gate has an explicit
 contract for the selected value. Connect its `released` output to the next stage.
@@ -456,11 +464,11 @@ file. Edit the URLs and, if needed, local-server API keys there, then restart Ag
 to select another file. Protect this file if it contains local-server credentials. Do not put an OpenRouter
 key in it.
 
-Use the standalone **OpenRouter key** button to enter a write-only session key. It is highlighted when
-no key is available. A session key takes precedence over `OPENROUTER_API_KEY`; clearing it exposes that
+Open **Settings → Cloud keys** to enter a write-only OpenRouter session key. A session key
+takes precedence over `OPENROUTER_API_KEY`; clearing it exposes that
 environment fallback if present. Neither is saved by AgentWiz.
 
-Open **Model settings** in the header to choose the model:
+Open **Settings → Model settings** to choose the model:
 
 | Setting | Notes |
 | --- | --- |
@@ -472,7 +480,7 @@ Reasoning and max tokens are set in each request panel (see **Task settings**).
 
 **Apply** uses the dialog's settings for this AgentWiz process.
 
-The header shows the workspace (hover for its folder), the active profile, the current settings and
+The header shows the workspace (hover for its folder). Settings shows the active profile, current settings and
 where the key comes from: `key: session`, `key: env OPENROUTER_API_KEY`, `key: config`, or `key: none`.
 
 ### Profiles

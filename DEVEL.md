@@ -18,7 +18,6 @@ architecture encyclopedia or chronological build log.
 | `docs/attachment_interface.md` | The versioned reader/consumer interface contract and its coordinated change rules. | General maintenance instructions or unrelated product documentation. |
 | `docs/releases.md` | Owner/authorized-maintainer release workflow, branch/publication mechanics, RC1–RC3 reference and installed-wheel smoke procedures. | Authority for an agent to publish, test-result history or feature usage. |
 | `docs/decisions.md` | Specification lineage, dated owner dispositions, approved departures and historical implementation/build decisions. | New standing directives, current checklists or claims that old results validate current code. |
-| `HANDOVER.md` | Release/task-specific changes, departures, actual checks/results, blockers and next actions. | Permanent policy or a second architecture manual. |
 | `NEWS.md` | Concise user-visible changes, grouped by release. | Internal maintenance narratives, test logs and owner procedures. |
 
 Before adding documentation, classify its audience and purpose and update the owning document.
@@ -37,7 +36,8 @@ For work in an area, read the relevant sections of [the architecture reference](
 behavior contracts, including field/protocol/format and lifecycle details. Relocation is not
 permission to weaken a requirement. Use current source and tests with the architecture reference.
 Consult [the decision history](docs/decisions.md) for accepted departures and historical design
-references, and `HANDOVER.md` for current verification. Raise conflicts explicitly.
+references. Verify the current candidate with actual check results; historical delivery reports
+do not validate later changes. Raise conflicts explicitly.
 
 ## Workflow and scope
 
@@ -233,7 +233,7 @@ by themselves require a release. Follow [release operations](docs/releases.md) w
 
 NEWS contains user-visible changes only, newest release first, one change per bullet and at most
 20 words per whole bullet, including continuation lines. Never edit released sections. Keep internal maintenance changes out of NEWS.
-Keep handover check results factual and task-specific; do not copy historical passes into current
+Keep check reports factual and task-specific; do not copy historical passes into current
 validation claims. Nothing in this guide, `docs/`, `.clinerules`, `tests/`, `scripts/` or `.github/`
 ships in the release wheel.
 
@@ -306,8 +306,8 @@ All three inherit `AGENTWIZ_LIVE_TIMEOUT`, whose default is 600 seconds per read
 whole-test deadline. For a model that takes longer to load or reason before its first visible
 token, add `export AGENTWIZ_LIVE_TIMEOUT=1200` inside the chosen block before the pytest command.
 A skip because required variables are missing is not a successful live check. These optional
-checks do not replace the offline gate. OpenRouter's additional Stop and checked-request
-checks remain separate; LM Studio and llama-server variants remain blocked as described below.
+checks do not replace the offline gate. Additional Stop and checked-request checks remain
+separate for all three backends, as described below.
 
 ### Additional live checks and variables
 
@@ -326,7 +326,9 @@ Additional checks:
 - **OpenRouter:** `test_live_stop_openrouter` sends a long padded prompt, then Stop after
   `started`; judgment uses `tests/live_stop.py`, itself tested offline.
   `test_live_checked_request_openrouter` uses a JSON contract with up to two repairs.
-  LM Studio and llama-server variants skip as blocked until AgentWiz 0.2.0 (D72).
+  LM Studio and llama-server use `test_live_stop_local` and `test_live_checked_request_local`,
+  each parametrized over both backends. Set both backends' URL/model variables to run both cases,
+  or select one with `-k lmstudio` or `-k llamaserver`. LM Studio's key is optional.
 - **MCP:** `test_live_mcp` requires `AGENTWIZ_LIVE_MCP_URL`, `AGENTWIZ_LIVE_MCP_TOOL` and
   `AGENTWIZ_LIVE_MCP_ARGUMENTS` (JSON text); `AGENTWIZ_LIVE_MCP_TOKEN` is optional.
   With web-retrieval-mcp running, an example is `http://127.0.0.1:8765/mcp`, `search_web`,

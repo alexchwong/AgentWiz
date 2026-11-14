@@ -333,7 +333,7 @@ try:
         return json.loads(api('/api/workshop/' + path, payload).read())
 
     starters = workshop('starters')
-    check(len(starters['starters']) == 9, 'installed Workshop starter inventory')
+    check(len(starters['starters']) == 10, 'installed Workshop starter inventory')
     draft = workshop('preview', {'starter': 'count_text', 'key': 'installed_counter'})['draft']
     save = {'draft': draft, 'expected_identity': None}
     plan = workshop('plans', {'action': 'save', 'request': save})
