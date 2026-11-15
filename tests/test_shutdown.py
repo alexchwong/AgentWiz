@@ -74,7 +74,7 @@ def test_the_mcp_routes_and_new_block_admission_are_closed(ui, make_fake_mcp):
     assert fail.status == 503 and fail.body["code"] == "busy"
     with pytest.raises(errors.ShuttingDown):
         ui.state.mcp_ops.reserve()
-    assert not ui.state.scripts.try_acquire()
+    assert not ui.state.python.try_acquire()
     assert fake.requests == []
 
 

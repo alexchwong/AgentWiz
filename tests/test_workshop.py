@@ -38,8 +38,15 @@ def plan_save(ui, draft, expected=None, **options):
                 confirmations=[{'kind': r['kind'], 'digest': r['digest']} for r in plan['required_confirmations']])
 
 
+def model_draft(key):
+    """A v3 block draft: only v3 revisions may be overwritten."""
+    import json
+    from test_blocks import model_block, MODEL_FILES
+    return {'key': key, 'definition_text': json.dumps(model_block(name=key)), 'files': MODEL_FILES, 'metadata': {}}
+
+
 def test_overwrite_selected_revision_keeps_number_order_and_default(ui, restart):
-    draft = send(ui, 'preview', starter='count_text', key='replace')['draft']
+    draft = model_draft('replace')
     first = plan_save(ui, draft)
     draft = send(ui, 'preview', key='replace')['draft']
     second = plan_save(ui, draft, draft['base_digest'])
@@ -82,7 +89,7 @@ def test_revision_numbers_survive_retention_restore_duplicate_and_restart(ui, re
     """User versions must not shift with retention or trust copied/client numbering."""
     from agentwiz import workshop_assets
     monkeypatch.setattr(workshop_assets, 'REVISION_LIMIT', 3)
-    draft = send(ui, 'preview', starter='count_text', key='versions')['draft']
+    draft = send(ui, 'preview', starter='count_text', starter_version=2, key='versions')['draft']
     for number in range(1, 6):
         draft['metadata'].update(revision_number=900, revision_name='Named' if number == 2 else '')
         saved = plan_save(ui, draft, draft.get('base_digest'))
@@ -108,7 +115,7 @@ def test_unnumbered_history_is_anchored_without_rewriting_generations(ui, monkey
     """Upgrade numbering remains stable as unnumbered generations are pruned."""
     from agentwiz import jsonio, workshop_assets
     monkeypatch.setattr(workshop_assets, 'REVISION_LIMIT', 3)
-    draft = send(ui, 'preview', starter='count_text', key='old')['draft']
+    draft = send(ui, 'preview', starter='count_text', starter_version=2, key='old')['draft']
     for _ in range(3):
         plan_save(ui, draft, draft.get('base_digest'))
         draft = send(ui, 'preview', key='old')['draft']
@@ -133,8 +140,8 @@ def test_unnumbered_history_is_anchored_without_rewriting_generations(ui, monkey
             assert rows[0]['revision_name'] == 'Label'
 
 
-def test_script_starter_save_reopen_run_compare_restore(ui):
-    preview = send(ui, 'preview', starter='count_text', key='counter')
+def test_transform_starter_save_reopen_run_compare_restore(ui):
+    preview = send(ui, 'preview', starter='count_text', starter_version=2, key='counter')
     assert preview['issues'] == []
     assert preview['classification'] == 'starter'
     draft = preview['draft']
@@ -142,7 +149,6 @@ def test_script_starter_save_reopen_run_compare_restore(ui):
     assert request(ui, '/api/blocks/counter')['problem'] is None
     reopened = send(ui, 'preview', key='counter')
     assert reopened['classification'] == 'starter'
-    assert reopened['draft']['metadata']['runtime_digest'] == draft['metadata']['runtime_digest']
     ticket = send(ui, 'tickets')['ticket']
     body = {'key': 'counter', 'inputs': {'text': 'three blue notebooks'}, 'ticket': ticket}
     plan = send(ui, 'plans', action='test', request=body)
@@ -188,7 +194,7 @@ def start_planned(ui, action, body):
 
 def test_compare_exact_examples_and_stop_reuse(ui):
     from agentwiz import jsonio
-    draft = send(ui, 'preview', starter='count_text', key='words')['draft']
+    draft = send(ui, 'preview', starter='count_text', starter_version=2, key='words')['draft']
     saved = plan_save(ui, draft)
     alternate = send(ui, 'preview', draft=draft, edit={'kind': 'starter_parameters', 'parameters': {'unit': 'characters'}})['draft']
     examples = [{'id': 'e1', 'version': 1, 'label': 'one', 'inputs': {'text': 'a b'},
@@ -209,7 +215,7 @@ def test_assist_uses_runner_and_applies_without_publication(ui, server):
     from conftest import answer, save_profile, save_roles
     save_profile(ui, 'p', model='m', kind='openai_compat', base_url=server.url + '/v1', provider='')
     save_roles(ui, {'assistant': 'p'})
-    draft = send(ui, 'preview', starter='count_text', key='draft_only')['draft']
+    draft = send(ui, 'preview', starter='count_text', starter_version=2, key='draft_only')['draft']
     response = {'format_version': 1, 'action': 'improve', 'payload': {'purpose': 'Reviewed purpose'},
                 'assumptions': [], 'unmet_requirements': []}
     server.reply(answer(json.dumps({'proposal': response})))
@@ -243,7 +249,7 @@ def test_assist_plan_reports_authoring_protection(ui, server):
     grants = request(ui, '/api/workshop/destination-trust')
     send(ui, 'destination-trust', expected_revision=grants['revision'], trusted=True,
          destination={'kind': 'openai_compat', 'url': server.url + '/v1', 'model': 'm', 'provider': ''})
-    draft = send(ui, 'preview', starter='count_text', key='draft_only')['draft']
+    draft = send(ui, 'preview', starter='count_text', starter_version=2, key='draft_only')['draft']
     body = {'action': 'improve', 'role': 'assistant', 'draft': draft, 'task': 'Improve.', 'sections': ['purpose']}
     assert send(ui, 'plans', action='assist', request=body)['descriptor']['authoring_protected'] is False
     protected = send(ui, 'plans', action='assist', request={**body, 'context_local_only': True})
@@ -269,7 +275,7 @@ def test_durable_intent_precedes_dispatch_and_owns_deletion(ui, monkeypatch):
     from agentwiz import workshop_service
     from conftest import switch_history
     switch_history(ui, True)
-    draft = send(ui, 'preview', starter='count_text', key='persisted')['draft']
+    draft = send(ui, 'preview', starter='count_text', starter_version=2, key='persisted')['draft']
     plan_save(ui, draft)
     reached, release = threading.Event(), threading.Event()
     def hold(ident, row):
@@ -308,7 +314,7 @@ def test_durable_intent_precedes_dispatch_and_owns_deletion(ui, monkeypatch):
 def test_result_specific_review_and_saved_examples(ui):
     from conftest import switch_history
     switch_history(ui, True)
-    draft = send(ui, 'preview', starter='count_text', key='reviewable')['draft']
+    draft = send(ui, 'preview', starter='count_text', starter_version=2, key='reviewable')['draft']
     plan_save(ui, draft)
     examples = [{'id': 'e', 'version': 1, 'label': 'two words', 'inputs': {'text': 'a b'},
                  'verified': True, 'expectation': {'kind': 'whole_output', 'values': {'out': '2'}}}]
@@ -411,7 +417,7 @@ def test_marker_write_failure_dispatches_nothing(ui, monkeypatch):
     from agentwiz import workshop_service
     from conftest import switch_history
     switch_history(ui, True)
-    draft = send(ui, 'preview', starter='count_text', key='disk_failure')['draft']
+    draft = send(ui, 'preview', starter='count_text', starter_version=2, key='disk_failure')['draft']
     plan_save(ui, draft)
     calls = []
     original = workshop_service.write_atomic_bytes
@@ -487,75 +493,8 @@ def test_legacy_conversion_confirmation_and_retention(ui):
     assert saved['revision_number'] == 22
 
 
-def test_custom_script_support_versions_are_frozen(ui):
-    from agentwiz import jsonio
-    obj = {'format_version': 3, 'name': 'helper', 'inputs': {}, 'outputs': {'out': {'contract': {'format': 'json'}}},
-           'steps': [{'id': 'run', 'kind': 'script', 'file': 'scripts/main.py', 'timeout_s': 5}]}
-    files = {'scripts/main.py': 'from pathlib import Path\nimport helper\nprint(\'{"out":\' + str(helper.N + int(Path(__file__).with_name("data.txt").read_text())) + "}")\n',
-             'scripts/helper.py': 'N = 2\n', 'scripts/data.txt': '3'}
-    draft = {'key': 'helper', 'definition_text': jsonio.encode_exact(obj), 'files': files,
-             'metadata': {'support': ['scripts/helper.py', 'scripts/data.txt'], 'origin': 'manual'}}
-    first = plan_save(ui, draft)
-    root = ui.workspace.path / 'blocks/helper/scripts'
-    root.mkdir()
-    (root / 'helper.py').write_text('N = 7\n')
-    changed = send(ui, 'blocks/helper/support/preview', replace=['scripts/helper.py'])['draft']
-    # Publication must recheck the working-copy bytes selected by support Preview.
-    (root / 'helper.py').write_text('N = 99\n')
-    refusal = failure_of(lambda: plan_save(ui, changed, first['base_digest']))
-    assert refusal.status == 409 and refusal.body['code'] == 'source_changed'
-    assert request(ui, '/api/workshop/blocks/helper/revisions')['current'] == first['durable_id']
-    (root / 'helper.py').write_text('N = 7\n')
-    plan_save(ui, changed, first['base_digest'])
-    old_batch = completed(ui, start_planned(ui, 'test', {'key': 'helper', 'revision': first['durable_id'], 'inputs': {}})['batch_id'])
-    current = completed(ui, start_planned(ui, 'test', {'key': 'helper', 'inputs': {}})['batch_id'])
-    assert old_batch['rows'][0]['outputs']['out']['text'] == '5'
-    assert current['rows'][0]['outputs']['out']['text'] == '10'
-
-
-def test_captured_runtime_upgrade_preserves_starter_controls(ui, monkeypatch, tmp_path):
-    from agentwiz import jsonio
-    original = send(ui, 'preview', starter='count_text', key='upgrade')['draft']
-    first = plan_save(ui, original)
-    changed_runtime = tmp_path / 'jsonio.py'
-    changed_runtime.write_text(__import__('pathlib').Path(jsonio.__file__).read_text() + '\n# simulated installed update\n')
-    monkeypatch.setattr(jsonio, '__file__', str(changed_runtime))
-    reopened = send(ui, 'preview', key='upgrade')
-    assert reopened['classification'] == 'starter'
-    changed = send(ui, 'preview', key='upgrade', edit={'kind': 'starter_parameters', 'parameters': {'unit': 'characters'}})['draft']
-    assert changed['metadata']['runtime_digest'] != original['metadata']['runtime_digest']
-    plan_save(ui, changed, first['base_digest'])
-    old = completed(ui, start_planned(ui, 'test', {'key': 'upgrade', 'revision': first['durable_id'], 'inputs': {'text': 'a b'}})['batch_id'])
-    assert old['rows'][0]['outputs']['out']['text'] == '2'
-
-
-def test_generated_source_requires_ack_and_compatibility_enforces_review(ui):
-    from agentwiz import jsonio
-    obj = {'format_version': 3, 'name': 'generated', 'inputs': {}, 'outputs': {'out': {'contract': {'format': 'json'}}},
-           'steps': [{'id': 'run', 'kind': 'script', 'file': 'scripts/main.py', 'timeout_s': 5}]}
-    draft = {'key': 'generated', 'definition_text': jsonio.encode_exact(obj),
-             'files': {'scripts/main.py': 'print(\'{"out":3}\')\n'},
-             'metadata': {'origin': 'llm_generated', 'support': [], 'effects': 'unknown'}}
-    draft = send(ui, 'drafts/import', draft=draft)['draft']
-    body = {'draft': draft, 'expected_identity': None}
-    plan = send(ui, 'plans', action='save', request=body)
-    assert 'generated_source' in {r['kind'] for r in plan['required_confirmations']}
-    assert failure_of(lambda: send(ui, 'save', **body, expected_plan=plan['expected_plan'], confirmations=[])).status == 409
-    assert not (ui.workspace.path / 'blocks/generated').exists()
-    saved = plan_save(ui, draft)
-    # Simulate an unreviewed managed generation and exercise the compatibility route.
-    path = ui.workspace.path / 'blocks/generated/.workshop/revisions' / saved['durable_id'] / 'workshop.json'
-    metadata = jsonio.decode_file_exact(path.read_bytes())
-    metadata.pop('source_review')
-    path.write_bytes(jsonio.encode_file_exact(metadata))
-    from conftest import run_block, result_of
-    result = result_of(run_block(ui, 'generated', {}))
-    assert result['outcome'] == 'rejected'
-    assert result['steps'] == []
-
-
 def test_changed_immutable_asset_refuses_publication(ui):
-    draft = send(ui, 'preview', starter='count_text', key='integrity')['draft']
+    draft = send(ui, 'preview', starter='blank_python', data_handling='not_private', key='integrity')['draft']
     saved = plan_save(ui, draft)
     root = ui.workspace.path / 'blocks/integrity'
     source = root / '.workshop/revisions' / saved['durable_id'] / 'scripts/main.py'
@@ -595,7 +534,7 @@ def test_standard_prose_is_not_carried_by_drafts_or_new_saves(ui):
     a new revision starts without standard prose and never inherits it, while starter prose may remain a
     draft display hint."""
     from agentwiz import jsonio
-    p = send(ui, 'preview', starter='count_text', key='freshness')
+    p = send(ui, 'preview', starter='count_text', starter_version=2, key='freshness')
     assert 'description' not in p
     assert p['draft']['metadata']['description_sections']['use']          # starter hint, draft only
     refusal = failure_of(lambda: send(ui, 'preview', draft=p['draft'], edit={'kind': 'description', 'sections': {

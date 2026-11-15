@@ -86,22 +86,6 @@ def test_transform_exact_paths_and_bounded_rendering():
         transforms.execute('format_report', {'template': '{{inputs.x}}{{inputs.x}}'}, {'x': 'é' * (2 << 20)})
 
 
-def test_legacy_starter_conversion_adds_script_free_generation(ui):
-    legacy = send(ui, 'preview', starter='count_text', key='counter')['draft']
-    original = plan_save(ui, legacy)
-    old = send(ui, 'preview', key='counter', revision=original['durable_id'])
-    result = send(ui, 'preview', draft=old['draft'], edit={'kind': 'convert_transform'})
-    assert result['valid'] and result['kind'] == 'transform'
-    assert result['draft']['files'] == {}
-    assert result['design']['format_version'] == 4
-    body = {'draft': result['draft'], 'expected_identity': old['draft']['base_digest']}
-    plan = send(ui, 'plans', action='save', request=body)
-    assert [item['kind'] for item in plan['required_confirmations']] == ['labels_reviewed']
-    created = plan_save(ui, result['draft'], old['draft']['base_digest'])
-    assert created['durable_id'] != original['durable_id']
-    assert send(ui, 'preview', key='counter', revision=original['durable_id'])['kind'] == 'script'
-
-
 def test_workflow_cycle_is_refused_before_publication(ui):
     saved = plan_save(ui, transform('report', 'format_report', {'template': '{{inputs.text}}'},
                                     {'text': port()}, port()))

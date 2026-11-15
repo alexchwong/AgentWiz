@@ -61,8 +61,14 @@ Paths in this table are relative to the repository root.
 | `agentwiz/roles.py` | yes | **0.1.4.** `roles.json`: parsing, reading, writing. Called from `state.py` under the state lock. No HTTP. |
 | `agentwiz/templates.py` | yes | **0.1.4.** `{{inputs.x.y}}` scanning and filling (text and typed), with provenance. No HTTP. |
 | `agentwiz/blocks.py` | yes | **0.1.4.** The block loader, problems, the block store (fingerprints, effective revisions, cache) and the `GET /api/blocks/<name>` view. Reads unmanaged executable v3 blocks and v3 generations selected by managed v2 heads. Workshop publication lives in workshop_assets. No HTTP. |
-| `agentwiz/script_step.py` | yes | **0.1.4.** The script step: the single `selectors` supervisor owning the pipes, process-group handling, `Retained` cleanup owners. Hooks `spawn`, `after_spawn`. No HTTP. |
-| `agentwiz/executor.py` | yes | **0.1.4.** `execute_step` for model, tool and script steps; token tally; step results. Called only by `runner.py`. No HTTP. |
+| `agentwiz/python_step.py` | yes | **0.2.2.** Python steps through scriptSpell's public `run`: engine identity, float rejection, issue mapping, `CleanupFailed`. No HTTP. |
+| `agentwiz/python_authoring.py` | yes | **0.2.2.** Workshop **Describe it** for Python: examples, source generation and local checks through `YamlAuthoring`; at most three requests. No HTTP. |
+| `agentwiz/agent_tools.py` | yes | **0.2.2.** Built-in tool definitions and the pure utilities (`current_datetime`, `calculate`, `date_arithmetic`). No HTTP. |
+| `agentwiz/agent_documents.py` | yes | **0.2.2.** Agentic Chat conversations: staged documents and drafts (`dir_fd`, `O_NOFOLLOW`/`O_EXCL`), labels, memory. No HTTP. |
+| `agentwiz/agent_capabilities.py` | yes | **0.2.2.** MCP tool classifications and the capability inventory with exclusions. No HTTP. |
+| `agentwiz/agent_loop.py` | yes | **0.2.2.** The agent loop: capture, plan, preflight, model turns through `complete_with_tools`, validation, approval binding, dispatch, labels, records; `Manager`. No HTTP. |
+| `agentwiz/prompts/agent_system.md` | yes | Packaged Agentic Chat system prompt (`agent_system`, version 1). |
+| `agentwiz/executor.py` | yes | **0.1.4.** `execute_step` for model, tool, Python and built-in tool steps; token tally; step results. Called only by `runner.py`. No HTTP. |
 | `agentwiz/runner.py` | yes | **0.1.4.** `run_block`: input checks, admission, preparation, the executor, the one finaliser, the observer, timers (`make_timer`, `before_run_end`). No HTTP. |
 | `agentwiz/tutorial.py`, `agentwiz/tutorial_topics.py` | yes | The tutorial session manager (child UI, seeding, the pending session) and, **0.1.4**, the topic registry the server, page and tests read. |
 | `agentwiz/tutorial_support/blocks/` | yes | **0.1.4.** The four example blocks (`extract_fields`, `echo_numbers`, `word_count`, `wait_for_stop`) copied byte for byte into the tutorial's temporary workspace. |
@@ -76,12 +82,13 @@ Paths in this table are relative to the repository root.
 | `agentwiz/ui/server.py` | yes | The HTTP server; the only module that knows HTTP. `Handler.write_event` is the one writer of stream events. |
 | `agentwiz/ui/index.html` | yes | Workshop/Workbench/History, shared Settings dialogs; one framework-free file with no build step. |
 | `pyproject.toml`, `README.md`, `LICENSE` | metadata | Packaging, wheel description, MIT license. |
-| `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`; 0.1.3: `test_checks.py`, `test_contracts.py`, `test_runs.py`, `test_model_step.py`, `test_attempts.py`, `test_history.py`, `test_page.py`, `test_live_judgement.py`; 0.1.4: `test_roles.py`, `test_templates.py`, `test_blocks.py`, `test_block_routes.py`, `test_block_tool.py`, `test_scripts.py`, `test_script_cleanup.py`, `test_runner.py`, `test_shutdown.py`, `test_signals.py`, `test_tutorial.py`; 0.2.0: `test_workspace_admin.py`, `test_workspace_lifecycle.py`, `test_named_outputs.py`, `test_contract_overhaul.py`, `test_workshop_descriptions.py`), opt-in live checks (`test_live.py`, with the pure judgement function `live_stop.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
+| `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`; 0.1.3: `test_checks.py`, `test_contracts.py`, `test_runs.py`, `test_model_step.py`, `test_attempts.py`, `test_history.py`, `test_page.py`, `test_live_judgement.py`; 0.1.4: `test_roles.py`, `test_templates.py`, `test_blocks.py`, `test_block_routes.py`, `test_block_tool.py`, `test_runner.py`, `test_shutdown.py`, `test_signals.py`, `test_tutorial.py`; 0.2.0: `test_workspace_admin.py`, `test_workspace_lifecycle.py`, `test_named_outputs.py`, `test_contract_overhaul.py`, `test_workshop_descriptions.py`; 0.2.2: `test_agent.py` with `agent_helpers.py`), opt-in live checks (`test_live.py`, with the pure judgement function `live_stop.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
 | `docs/attachment_interface.md` | no | The attachment interface (companion document, version 3, draft). |
-| `scripts/build_release.py` | no | Builds the release wheel from `HEAD`, runs release checks RC1–RC3; `--smoke`; `--no-isolation`; `--modelspell-wheel` (offline smoke); `--changed-since`. |
+| `scripts/build_release.py` | no | Builds the release wheel from `HEAD`, runs release checks RC1–RC3; `--smoke`; `--no-isolation`; `--modelspell-wheel`, `--scriptspell-wheel` (offline smoke); `--changed-since`. |
+| `scripts/agent_eval.py` | no | Owner evaluation of Agentic Chat routes against a live model; not part of the offline suite. |
 | `scripts/replay_output.py` | no | Replays captured named-output evidence using the current checker. |
 | `scripts/workshop_experiment.py` | no | Prepares Workshop fixtures and compares outcomes through the coordinator. |
-| `scripts/smoke_installed.py` | no | Smoke check (S1–S15) against an installed wheel. |
+| `scripts/smoke_installed.py` | no | Smoke check (S1–S22) against an installed wheel. |
 | `scripts/dev_setup.sh` | no | Developer setup: `./.venv` with an editable install, pytest, `jsonschema`, Playwright and Chromium. |
 | `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for trying the UI without a model; logs the sampling fields and message roles each request carries. Models `json-pass`, `json-repair` and `slow-headers` serve the README tour. |
 | `scripts/stub_mcp_server.py` | no | Scripted MCP server (`--era dual|modern|legacy`, `--token`) for trying the MCP tools tab; logs every request, disconnect, notice and `DELETE`. |
@@ -499,7 +506,7 @@ refuse a renderer it does not know. The section is composed in
 `{{output.NAME}}`; `scan_text`, `fill_text` and `fill_arguments` stay input-only. A filled text is never
 rescanned.
 
-## Blocks, roles and scripts
+## Blocks, roles and Python steps
 
 - **Loader.** `blocks.py` turns a folder into a `Block` or a problem (`unreadable`, `invalid`,
   `newer_format`, `unusable`; precedence `invalid` > `unreadable` > `unusable`, `newer_format` alone).
@@ -513,18 +520,28 @@ rescanned.
 - **Admission.** `POST /api/blocks/run` checks, in order, body and size, the block at the revision the
   page showed (404 `no_such_block`, 409 `stale_revision`, 409 `block_unusable`), the `inputs` shape,
   then the runner: **inputs are checked before any slot is taken** (BD-03), then non-blocking
-  admission (503 `busy` naming the budget), then preparation (role, fills, server, script hash).
+  admission (503 `busy` naming the budget), then preparation (role, fills, server, Python source and engine).
 - **One finaliser.** `runner._finalise` decides the outcome from explicit input, preparation and step
   results, commits the run, releases slots, delivers `final` (best effort) and saves `result.json`
   once. Delivery is an observer (`BlockDelivery`); no delivery failure affects a run.
 - **Cancellation.** One token per run with a reason (first cancellation wins: `user_stop`,
   `budget_exceeded`). Each step kind has one dispatch gate (model: `reserve_attempt`; tool and
-  script: the step lock). Cancellation is inspected before repair, exhaustion and the token allowance.
-- **Script steps.** `script_step.py`: one `selectors` supervisor owns every pipe; the unbuffered pipe
-  objects are the sole close owners of their descriptors (never `os.close` on a recorded number);
-  every wait is bounded and every deadline is a `runner.make_timer` timer. A group whose cleanup
-  cannot be confirmed is handed, with the process and pipes, to a `Retained` owner that keeps the
-  script slot and a writer registration until the group is gone. Scripts need POSIX process groups.
+  Python: the step lock). Cancellation is inspected before repair, exhaustion and the token allowance.
+- **Python steps (0.2.2).** `python_step.run` calls scriptSpell's public `run` with the block's source,
+  the checked inputs and limits no higher than scriptSpell's; Stop and the block deadline reach it through
+  its cancel callback. A float at any depth fails the step (`float_output`). Admission takes one of four
+  `state.python` slots. If scriptSpell reports that a worker's cleanup could not be confirmed,
+  `state.python_cleanup_failed()` closes the budget and sets `python_restart_required` until restart.
+  v4 Tool steps with `builtin` run `agent_tools` locally and take no MCP slot. v3 `script` steps load as
+  unusable (`host_script_retired`); an engine other than the installed one loads as `engine_changed`
+  (workflow snapshots load with `engine_check=False` and report it at readiness).
+- **Agentic Chat (0.2.2).** `state.agent` is one `agent_loop.Manager`: one live conversation and at most one
+  run. Each run captures the destination, inventory, labels and limits, preflights with `check_tool_request`,
+  then loops model turns through `complete_with_tools`. Every tool request is validated against the captured
+  definitions; MCP calls that may change state wait for an approval bound to the SHA-256 of the materialised
+  arguments. Saved blocks run as child block runs through `runner` with `FrozenSource.parent_guard` and
+  `before_tool`. Reading restricted material promotes the run; an untrusted destination then ends it with
+  `restricted_result`. The deadline is a `runner.make_timer` timer.
 - **Roles.** `roles.json` through `roles.py`, under the state lock, with its own revision; a save
   refuses a profile that does not exist. Resolution is live, at preparation (`state.resolve_role`).
   Version 2 retains the string assignment map and adds `definitions`, keyed by role, each containing
@@ -582,10 +599,10 @@ rescanned.
   `UIServer.server_close(wait=)` calls it (and the tutorial's halves around it); `__main__.py` owns the
   one signal controller. `UIServer.grace_s` exists so the tutorial's bounded Exit can be lowered in tests.
 - **Hooks tests use (all do nothing in shipped code):** `runner.make_timer`, `runner.before_run_end`,
-  `script_step.spawn`, `script_step.after_spawn`, `state.before_register_writer`, `state.before_write`,
+  `state.before_register_writer`, `state.before_write`,
   and the `BlockDelivery` write boundary (`Handler.write_event`).
 - **Constants tests lower:** `blocks.BLOCK_FILE_LIMIT`, `FILE_LIMIT`, `LIST_LIMIT`, `CACHE_LIMIT`;
-  `script_step.POLL_S`, `RETAINED_POLL_S`, `OUTPUT_LIMIT`, `STDERR_TAIL`, `KILL_GRACE_S`;
+  `state.POLL_S`; `agent_documents` limits;
   `runs.RESULT_LIMIT`, `RESULT_BYTES`; `state.SHUTDOWN_GRACE_S` (and `UIServer.grace_s`).
 - **New error mappings.** 400 `block_body`; 404 `no_such_block`, `no_such_run`; 409 `stale_revision`,
   `block_unusable` (with the problem), `not_held` (410); 503 `busy` (with `budget` for admission);

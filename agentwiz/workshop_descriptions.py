@@ -357,7 +357,7 @@ def build_context(saved, parsed, *, proposal=None, feedback=None, credentials=()
                                  'remain properties of their contract.'}
         if parsed.kind == 'model':
             ctx['model'] = {'role': step.role, 'system': ex(step.system or ''), 'prompt': ex(step.prompt or '')}
-        elif parsed.kind == 'script':
+        elif parsed.kind in ('script', 'python'):
             raw = saved.files.get(step.script_file, b'')
             try:
                 source = raw.decode('utf-8')
@@ -365,6 +365,8 @@ def build_context(saved, parsed, *, proposal=None, feedback=None, credentials=()
                 source = ''
             ctx['script'] = {'starter': saved.metadata.get('starter'), 'main_source': ex(source),
                              'support_files': 'omitted'}
+        elif parsed.kind == 'tool' and step.builtin is not None:
+            ctx['tool'] = {'builtin': step.builtin, 'bindings': binding_structure(step.arguments)}
         elif parsed.kind == 'tool':
             ctx['tool'] = {'server': step.server, 'tool': step.tool, 'bindings': binding_structure(step.arguments),
                            'tool_description': 'unavailable'}

@@ -1,5 +1,20 @@
 # NEWS
 
+## 0.2.2
+
+- Agentic Chat: a Chat switch lets the model run one approved capability per turn.
+- Built-in tools list, search and read staged documents, create drafts, tell the time and calculate.
+- MCP tools stay disabled until classified for effects, local file reach and Local only results.
+- Calls that may change state ask first, showing the exact arguments; approvals are single-use.
+- Local only documents and results restrict the run; untrusted models never receive restricted results.
+- Conversation memory keeps answered turns and drafts in process memory; one record per saved run.
+- Python blocks run restricted Python in scriptSpell's runner, standalone, in workflows and from agentic Chat.
+- Describe it drafts Python examples and source, checks them locally, and applies them for review.
+- Tool blocks can bind a built-in utility: date and time, calculator or date arithmetic.
+- Starters are grouped by type: LLM, Tool, Python and Transform.
+- Host Python (v3 script) blocks are retired and load as unusable.
+- Pins modelSpell 0.4.0 and scriptSpell 0.3.0.
+
 ## 0.2.1
 
 - Workflow Design is a palette, canvas and inspector editor; List view keeps the whole form.

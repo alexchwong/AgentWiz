@@ -15,11 +15,10 @@ from playwright.sync_api import expect
 
 from agentwiz import history, jsonio
 from agentwiz.ui import server as server_module
-from conftest import (DONE, JSON_CONTRACT, JSON_CONTRACT_NO_SCHEMA, Reply, answer, configure, delta, group_gone, iter_events,
+from conftest import (python_block, DONE, JSON_CONTRACT, JSON_CONTRACT_NO_SCHEMA, Reply, answer, configure, delta, group_gone, iter_events,
                       json_answer, read_until, request, run_block, run_folders, save_contract, save_profile,
                       save_roles, simple_tool, text_result, upload, wait_until, add_server, write_block, get_state)
 from test_runner import setup_model
-from test_scripts import PREAMBLE, write_script
 
 SSE = {"Content-Type": "text/event-stream"}
 FAST = {"idle_timeout_s": 60, "call_deadline_s": 60, "discovery_deadline_s": 60}
@@ -952,19 +951,19 @@ def test_page_blocks(ui, server, open_page):
 
 
 # 109 -----------------------------------------------------------------------------------------------------
-def test_page_blocks_stop_and_reattach(ui, server, open_page, spawned):
-    write_script(ui, PREAMBLE + "time.sleep(60)\n", timeout_s=30)
+def test_page_blocks_stop_and_reattach(ui, server, open_page):
+    # Stop a running Python block from the page (0.2.2: host scripts are retired).
+    write_block(ui, "sc", python_block("sc", inputs={"a": {"format": "text"}}),
+                {"scripts/go.py": "def transform(inputs):\n    n = 0\n    while True:\n        n += 1\n"})
     page = open_page(ui, "blocks")
     pick(page, "sc")
     input_of(page, "a").fill("go")
     tid(page, "blocks-run").click()
-    tid(tid(page,"ws-dialog"),"ws-use-selection").click()
-    assert wait_until(lambda: spawned)
+    assert wait_until(lambda: ui.state.python.in_flight == 1)
     has(page, "blocks-status", "data-state", "running")
-    has(page, "blocks-operation", "data-kind", "script")
     tid(page, "blocks-stop").click()
     has(page, "blocks-status", "data-outcome", "stopped")
-    assert wait_until(lambda: group_gone(spawned[0]))
+    assert wait_until(lambda: ui.state.python.in_flight == 0)
     # a held model block run, reattached after a reload
     setup_model(ui, server)
     server.reply(Reply(hold_headers=True, body=[delta('{"out":"fine"}'), delta(finish="stop"), DONE], headers=SSE))
@@ -1339,14 +1338,14 @@ def test_workshop_extractor_revision_journey(ui, server, open_page):
 def test_workshop_structured_inputs_keep_exact_literals_across_views_and_reload(ui, open_page):
     """The shared field form must not coerce long numbers or merge absence/null/empty values."""
     from test_workshop import send, plan_save
-    p=send(ui,'preview',starter='select_fields',key='exact_form')
+    p=send(ui,'preview',starter='select_fields',starter_version=2,key='exact_form')
     draft=send(ui,'preview',draft=p['draft'],edit={'kind':'starter_parameters','parameters':{
         'mappings':[{'source_path':['data'],'destination':'payload','required':True}]}})['draft']
     definition=jsonio.decode_exact(draft['definition_text'])
     schema={'type':'object','properties':{'n':{'type':'integer'},'d':{'type':'number'},
         'yes':{'type':'boolean'},'nil':{'type':['string','null']},'empty':{'type':'string'},
         'missing':{'type':'string'}},'required':['n','d','yes','nil','empty'],'additionalProperties':False}
-    definition['inputs']={'data':{'contract':{'format':'json','schema':schema}}}
+    definition['inputs']={'data':{'contract':{'format':'json','schema':schema},'local_only':False}}
     draft['definition_text']=jsonio.encode_exact(definition)
     plan_save(ui,draft)
     from test_workshop import http_method
@@ -1784,7 +1783,7 @@ def test_workshop_revision_selection_describe_refine_save_and_test(ui, server, o
                     confirmations=[{"kind": r["kind"], "digest": r["digest"]} for r in plan["required_confirmations"]])
     save_profile(ui, "p", model="m", kind="openai_compat", base_url=server.url + "/v1", provider="")
     save_roles(ui, {"write_block_description": "p"})
-    draft = send("preview", starter="count_text", key="journey")["draft"]
+    draft = send("preview", starter="count_text", starter_version=2, key="journey")["draft"]
     first = publish(draft)
     characters = send("preview", draft=draft, edit={"kind": "starter_parameters", "parameters": {"unit": "characters"}})["draft"]
     second = publish(characters, first["base_digest"])
@@ -2702,3 +2701,103 @@ def test_page_workflow_example_editor_preserves_text_checks(ui, open_page):
         assert after["label"] == "Relabelled" and after["expectation"] == before["expectation"]
     finally:
         local.close()
+
+
+# --- 0.2.2: agentic Chat, tool classification, Python blocks and Start with groups ------------------------------
+def test_page_agentic_chat_stages_a_document_approves_a_call_and_offers_the_draft(ui, server, open_page, make_fake_mcp,
+                                                                                tmp_path):
+    from agent_helpers import text_turn, tool_call
+    from conftest import load_tools
+    configure(ui, server)
+    fake = make_fake_mcp("modern", tools=[simple_tool("change", behave=lambda c: c.result(text_result("changed")))])
+    add_server(ui, "inv", fake.url)
+    load_tools(ui, "inv")
+    page = open_page(ui, "chat")
+    # Settings → MCP servers: classify the tool so it can be offered (O-4).
+    tid(page, "ws-settings").click()
+    page.locator("#open-servers").click()
+    tid(page, "agent-classify").locator("summary").click()
+    row = page.locator('[data-test="agent-classify-row"][data-tool="change"]')
+    row.locator('[data-key="enabled"]').check()
+    row.locator('[data-key="effects"]').select_option("changes state")
+    row.locator('[data-key="no_host_files"]').check()
+    row.locator('[data-key="results_local_only"]').uncheck()
+    tid(row, "agent-classify-save").click()
+    expect(tid(page, "agent-classify-msg")).to_have_text("Saved.")
+    page.locator("#close-servers").click()
+    tid(page, "settings-close").click()
+    tid(page, "agent-switch").check()
+    has(page, "agent-preflight", "data-state", "ok")
+    source = tmp_path / "bins.txt"
+    source.write_text("bin B17 holds part 007\n")
+    tid(page, "agent-upload-local").uncheck()
+    tid(page, "agent-upload").set_input_files(str(source))
+    expect(page.locator('[data-test="agent-document"][data-kind="document"]')).to_have_count(1)
+    ident = page.locator('[data-test="agent-document"]').get_attribute("data-id")
+    mcp = page.locator('[data-test="agent-capability"][data-kind="mcp"]').get_attribute("data-name")
+    for name in ("aw_read_document", "aw_create_draft", mcp):
+        page.locator(f'[data-test="agent-capability-tick"][data-name="{name}"]').check()
+    has(page, "agent-preflight", "data-branch", "tools")
+    server.reply(tool_call("aw_read_document", {"document_id": ident, "start_line": 1}),
+                 tool_call(mcp, {}, "c2"),
+                 tool_call("aw_create_draft", {"name": "summary", "format": "md", "content": "# B17"}, "c3"),
+                 text_turn("Drafted."))
+    tid(page, "agent-message").fill("Summarise the bins")
+    tid(page, "agent-send").click()
+    expect(tid(page, "agent-approval")).to_be_visible()
+    expect(tid(page, "agent-approval-arguments")).to_have_text("{}")
+    tid(page, "agent-approve").click()
+    has(page, "agent-status", "data-stop-reason", "answered")
+    expect(tid(page, "agent-output")).to_have_text("Drafted.")
+    expect(page.locator('[data-test="agent-action"]')).to_have_count(3)
+    expect(page.locator('[data-test="agent-draft"]')).to_have_count(1)
+    assert len([r for r in fake.requests if isinstance(r.get("body"), dict)
+                and r["body"].get("method") == "tools/call"]) == 1
+
+
+def test_page_start_with_groups_create_python_and_builtin_tool_blocks(ui, open_page):
+    page = open_page(ui, "workshop")
+    dialog = tid(page, "ws-dialog")
+    groups = page.locator('[data-test="ws-new-block"]')
+    groups.click()
+    options = tid(dialog, "ws-choice-start-with").locator("optgroup")
+    expect(options).to_have_count(4)
+    assert [options.nth(i).get_attribute("data-group") for i in range(4)] == ["llm", "tool", "python", "transform"]
+    tid(dialog, "ws-field-block-key").fill("py_words")
+    tid(dialog, "ws-choice-start-with").select_option("blank_python")
+    has(page, "ws-create-preview", "data-kind", "python")
+    pick_labels(dialog)
+    tid(dialog, "ws-create-draft").click()
+    expect(tid(page, "ws-python-source")).to_be_visible()
+    assert "def transform" in tid(page, "ws-python-source").input_value()
+    preview = request(ui, "/api/workshop/preview", {"format_version": 1, "starter": "builtin_utility",
+                                                    "key": "calc", "data_handling": "not_private"})
+    assert preview["valid"] and preview["destination"] == {"builtin": "calculate"}
+
+
+def test_page_describe_python_generates_checks_and_applies_examples(ui, server, open_page):
+    from agent_helpers import plain_answer
+    save_profile(ui, "p", model="m", kind="openai_compat", base_url=server.url + "/v1", provider="")
+    save_roles(ui, {"fast": "p"})
+    # The blank Python block declares a Text input and a Text output, so the interface is fixed to str -> str.
+    yaml = ("interface:\n  inputs:\n    text: str\n  outputs:\n    out: str\nexamples:\n"
+            "  - inputs:\n      text: one two\n    outputs:\n      out: '2'\n"
+            "  - inputs:\n      text: a\n    outputs:\n      out: '1'\n"
+            "  - inputs:\n      text: ''\n    outputs:\n      out: '0'\n")
+    source = "def transform(inputs):\n    return {'out': str(len(inputs['text'].split()))}\n"
+    server.reply(plain_answer(yaml), plain_answer(source))
+    page = open_page(ui, "workshop")
+    dialog = tid(page, "ws-dialog")
+    tid(page, "ws-new-block").click()
+    tid(dialog, "ws-field-block-key").fill("described")
+    tid(dialog, "ws-choice-start-with").select_option("describe_python")
+    pick_labels(dialog)
+    tid(dialog, "ws-create-draft").click()
+    tid(dialog, "ws-python-instruction").fill("Count the words in the text")
+    tid(dialog, "ws-generate-examples").click()
+    expect(page.locator('[data-test="ws-python-example"]')).to_have_count(3)
+    tid(page.locator('[data-test="ws-dialog"]'), "ws-generate-and-check").click()
+    expect(page.locator('[data-test="ws-python-result"][data-status="match"]')).to_have_count(3)
+    has(page, "ws-python-status", "data-requests", "2")
+    tid(page.locator('[data-test="ws-dialog"]'), "ws-apply").click()
+    expect(tid(page, "ws-python-source")).to_have_value(source)

@@ -46,9 +46,15 @@ def tool_block(name="t"):
 
 
 def script_block(name="sc"):
+    """A retired v3 host-script block (0.2.2, 10.6): it loads as unusable."""
     return {"format_version": 3, "name": name, "inputs": {"a": {"contract": {"format": "text"}}},
             "outputs": {"x": {"contract": {"format": "text"}}, "y": {"contract": {"format": "json"}}},
             "steps": [{"id": "run", "kind": "script", "file": "scripts/go.py", "timeout_s": 5}]}
+
+
+def py_block(name="sc"):
+    from conftest import python_block
+    return python_block(name, inputs={"a": {"format": "text"}}, outputs={"x": {"format": "text"}, "y": {"format": "json"}})
 
 
 @pytest.fixture
@@ -95,13 +101,13 @@ def test_public_inline_contracts_cannot_select_rich_or_legacy_policy(ws, store, 
     assert any(i['location'].startswith('outputs.out.contract') for i in problem.issues)
 
 
-@pytest.mark.parametrize('kind', ['model', 'tool', 'script'])
+@pytest.mark.parametrize('kind', ['model', 'tool', 'python'])
 def test_schema_output_requires_validator_before_any_block_dispatch(ws, store, monkeypatch, kind):
     from types import SimpleNamespace
-    obj = model_block() if kind == 'model' else tool_block('b') if kind == 'tool' else script_block('b')
+    obj = model_block() if kind == 'model' else tool_block('b') if kind == 'tool' else py_block('b')
     output = next(iter(obj['outputs']))
     obj['outputs'][output]['contract'] = {'format': 'json', 'schema': {'type': 'integer'}}
-    files = MODEL_FILES if kind == 'model' else {'scripts/go.py': "print('hi')\n"} if kind == 'script' else {}
+    files = MODEL_FILES if kind == 'model' else {'scripts/go.py': "def transform(inputs):\n    return {}\n"} if kind == 'python' else {}
     write_block(ws, 'b', obj, files)
     loaded = store.get('b')
     assert loaded.problem is None
@@ -112,11 +118,11 @@ def test_schema_output_requires_validator_before_any_block_dispatch(ws, store, m
         runner.run_block(SimpleNamespace(register_writer=no_admission), loaded, {})
 
 
-def test_valid_model_tool_and_script_blocks_load_with_exact_hashes(ws, store):
+def test_valid_model_tool_and_python_blocks_load_with_exact_hashes(ws, store):
     write_block(ws, "b", model_block(), MODEL_FILES)
     write_block(ws, "t", tool_block())
-    write_block(ws, "sc", script_block(), {"scripts/go.py": "print('hi')\n"})
-    for name, kind in (("b", "model"), ("t", "tool"), ("sc", "script")):
+    write_block(ws, "sc", py_block(), {"scripts/go.py": "def transform(inputs):\n    return {}\n"})
+    for name, kind in (("b", "model"), ("t", "tool"), ("sc", "python")):
         loaded = store.get(name)
         assert loaded.problem is None and loaded.block is not None and loaded.kind == kind, loaded.problem
         folder = ws / "blocks" / name
@@ -129,10 +135,21 @@ def test_valid_model_tool_and_script_blocks_load_with_exact_hashes(ws, store):
     assert model.step.max_repairs == 2 and model.budget.max_seconds == 1800
     assert set(model.texts) == {"block.json", "prompts/system.md", "prompts/user.md"}
     script = store.get("sc").block
-    assert set(script.files) == {"block.json", "scripts/go.py"} and script.step.timeout_s == 5
+    assert set(script.files) == {"block.json", "scripts/go.py"}
+    assert script.texts["scripts/go.py"] == "def transform(inputs):\n    return {}\n"     # the source is captured
     assert script.step.script_path == (ws / "blocks" / "sc" / "scripts" / "go.py")
     assert [d.name for d in script.outputs] == ["x", "y"]
     assert store.get("t").block.step.arguments["extra"] == ["a", "{{inputs.n}}"]
+
+
+def test_a_changed_engine_and_a_v3_script_are_unusable_with_their_codes(ws, store):
+    stale = py_block("old_engine")
+    stale["steps"][0]["engine"] = {**stale["steps"][0]["engine"], "codec": 999}
+    write_block(ws, "old_engine", stale, {"scripts/go.py": "def transform(inputs):\n    return {}\n"})
+    write_block(ws, "sc", script_block(), {"scripts/go.py": "print('hi')\n"})
+    for name, code in (("old_engine", "engine_changed"), ("sc", "host_script_retired")):
+        problem = store.get(name).problem
+        assert problem.code == "unusable" and problem.issues[0]["message"].startswith(code + ":")
 
 
 def test_a_prompt_file_loses_its_byte_order_mark_but_keeps_its_hash(ws, store):

@@ -52,7 +52,8 @@ def block(config, bindings):
     inputs = tuple(blocks.Declared(key, '', value) for key, value in ports.items())
     return SimpleNamespace(
         inputs=inputs, outputs=(blocks.Declared('released', '', contract),), context_local_only=False,
-        step=SimpleNamespace(kind='gate', role=config.get('assessment', {}).get('role'), tool=None, server=None),
+        step=SimpleNamespace(kind='gate', role=config.get('assessment', {}).get('role'), tool=None, server=None,
+                             builtin=None, mcp=False, local=False),
         contracts={'inputs': {key: ContractCopy.inline(value) for key, value in ports.items()},
                    'outputs': {'released': ContractCopy.inline(contract)}})
 

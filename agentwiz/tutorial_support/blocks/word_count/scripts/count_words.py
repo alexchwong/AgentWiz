@@ -1,5 +1,2 @@
-import json
-import sys
-
-data = json.load(sys.stdin)
-print(json.dumps({"words": len(data["text"].split())}))
+def transform(inputs):
+    return {"words": len(inputs["text"].split())}

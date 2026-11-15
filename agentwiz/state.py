@@ -31,7 +31,7 @@ from types import MappingProxyType
 import modelspell
 from modelspell import Endpoint
 
-from . import workshop, blocks, checks, contracts, history, mcp_client, mcp_ops, roles, runs, script_step, writers
+from . import workshop, blocks, checks, contracts, history, mcp_client, mcp_ops, roles, runs, writers
 from . import mcp_library as ml
 from . import profiles as pf
 from . import task_settings as ts
@@ -42,6 +42,7 @@ from .workspace import Problem, Workspace
 
 
 SHUTDOWN_GRACE_S = 5.0
+POLL_S = 0.05                   # shutdown's polling interval
 
 
 def before_register_writer(label: str) -> None:
@@ -251,12 +252,12 @@ class ProcessState:
             self._roles = dict(loaded_roles.roles)
             self._role_definitions = dict(loaded_roles.definitions)
             self._roles_revision = 1
-            # Block definitions (8.8) and the script-process budget (11.4).
+            # Block definitions (8.8) and the Python budget (0.2.2, 10.2): restricted-runner Python steps.
             self.blocks = blocks.BlockStore(workspace.path, self.contracts)
-            self.scripts = RequestBudget(4)
+            self.python = RequestBudget(4)
+            self.python_restart_required = False      # set once a scriptSpell cleanup could not be confirmed
             self.writers = writers.WriterBarrier()
             self.workshop_operations = workshop.Operations()
-            self.cleanups = script_step.Registry()            # cleanup owners and running script steps
             self._deliveries: set = set()                       # objects with interrupt(), under their own lock
             self._deliveries_lock = threading.Lock()
             self._shutdown_lock = threading.Lock()              # leaf: decides the first call
@@ -283,6 +284,8 @@ class ProcessState:
                 self._refresh_mcp_locked(initial=True)
             from .workshop_service import Service
             self.workshop = Service(self)
+        from .agent_loop import Manager
+        self.agent = Manager(self)                             # agentic Chat (0.2.2, 4, 7); outside the lock
 
     def _refresh_defaults_locked(self, initial=False):
         signature = pf.fingerprint(self.library.path)
@@ -357,7 +360,8 @@ class ProcessState:
                 "mcp": self._mcp_view_locked(),
                 "roles": self._roles_view_locked(),
                 "blocks": {"path": str(self.blocks.path), "active_runs": len(self.store.active_block_runs())},
-                "scripts": {"running": self.scripts.in_flight, "limit": self.scripts.limit},
+                "python": {"running": self.python.in_flight, "limit": self.python.limit,
+                           "closed": self.python.closed, "restart_required": self.python_restart_required},
                 "contracts": self._contracts_view_locked(),
                 "history": self._history_view_locked(),
                 "attempts": {"running": self.store.running_count()},
@@ -1077,30 +1081,37 @@ class ProcessState:
             self.writers.close()                      # 1. close admission, one gate at a time
             self.store.close()
             self.mcp_ops.close()
-            self.scripts.close()
+            self.python.close()
             self._interrupt_deliveries()              # 2. delivery never delays anything
+            self.agent.cancel_all()                   #    an agent run ends as interrupted
             self.store.stop_all()                     # 3. cancel admitted work through the token path
             self.mcp_ops.cancel_all()                 #    and abandon every registered MCP operation
             end = time.monotonic() + grace_s          # 4. grace
             while time.monotonic() < end:
                 if not self.store.active_block_runs() and self.store.running_count() == 0:
                     break
-                time.sleep(script_step.POLL_S / 5)
-            self.cleanups.kill_all()
+                time.sleep(POLL_S / 5)
         elif not wait:
             return self.writers.outstanding()
         while True:                                   # 5. drain
             end = time.monotonic() + grace_s
             while time.monotonic() < end:
-                self.cleanups.service_idle()
-                if self.writers.wait_drained(min(script_step.POLL_S, max(0.0, end - time.monotonic()))):
+                if self.writers.wait_drained(min(POLL_S, max(0.0, end - time.monotonic()))):
+                    self.agent.close_all()            # the conversation's staging folder (7.5)
                     return []
             outstanding = self.writers.outstanding()
             if not outstanding:
+                self.agent.close_all()
                 return []
             self._report_outstanding(outstanding)
             if not wait:
                 return outstanding
+
+    def python_cleanup_failed(self) -> None:
+        """scriptSpell could not confirm a worker's cleanup (10.2): the Python budget closes for the rest of the
+        process, and the Overview asks for a restart."""
+        self.python_restart_required = True
+        self.python.close()
 
     # --- requests ----------------------------------------------------------------------------
     def snapshot(self, revision: int) -> RequestSnapshot:

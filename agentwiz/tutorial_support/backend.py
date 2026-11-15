@@ -41,6 +41,7 @@ MODELS = {
     "block-fields": "Answers the named envelope for the example model block: {\"fields\": …, \"note\": …}.",
     "block-fields-repair": "Answers an envelope whose id is a string, not an integer; a repair gets block-fields' answer.",
     "slow-headers": "Waits 20 s before sending anything, not even the status line; logs the client's disconnect.",
+    "agent-demo": "Agentic Chat: asks for aw_calculate once, then answers with the tool's result.",
 }
 USAGE = '{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}'
 
@@ -144,6 +145,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(404, {"error": {"message": f"unknown stub model {model!r}"}})
         if model == "slow-headers":
             return self._slow_headers()
+        if model == "agent-demo":
+            return self._agent(body)
         if "assistant" in roles:            # a repair: answer as the passing stand-in would
             model = {"json-repair": "json-pass", "block-fields-repair": "block-fields"}.get(model, model)
         self.send_response(200)
@@ -158,6 +161,31 @@ class Handler(BaseHTTPRequestHandler):
             self._stream(model)
         except OSError:
             log(f"client disconnected (model={model!r})")
+
+    def _agent(self, body: dict) -> None:
+        """agent-demo: the first turn calls aw_calculate; once its result is in the transcript, answer with it."""
+        results = [m.get("content") for m in body.get("messages", []) if isinstance(m, dict) and m.get("role") == "tool"]
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        try:
+            if not results:
+                call = {"index": 0, "id": "call_1", "type": "function",
+                        "function": {"name": "aw_calculate", "arguments": json.dumps({"expression": "12 * 3"})}}
+                text = json.dumps({"id": "stub-1", "model": "stub", "choices": [
+                    {"index": 0, "delta": {"tool_calls": [call]}, "finish_reason": None}]})
+                for c in (b"data: " + text.encode() + b"\n\n", chunk(finish="tool_calls", usage_json=USAGE), DONE):
+                    self._send(c)
+                return
+            try:
+                value = json.loads(results[-1])["result"]["result"]
+            except (ValueError, KeyError, TypeError):
+                value = "unknown"
+            for c in words(f"12 × 3 = {value}, worked out by the calculator tool.") + [
+                    chunk(finish="stop", usage_json=USAGE), DONE]:
+                self._send(c)
+        except OSError:
+            log("client disconnected (model='agent-demo')")
 
     def _slow_headers(self) -> None:
         """Send nothing, not even the status line, for 20 s; log the client's disconnect (Stop before headers)."""

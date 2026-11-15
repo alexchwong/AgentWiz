@@ -32,15 +32,15 @@ python scripts/build_release.py --smoke
 
 The script builds committed `HEAD`, not the working tree. For uncommitted work, transfer changes
 to a throwaway clone and commit only there. Do not commit the implementation checkout merely
-to run the smoke. Prepare hatchling and the hash-checked pinned modelSpell wheel before an
+to run the smoke. Prepare hatchling and the hash-checked pinned modelSpell and scriptSpell wheels before an
 offline smoke; do not rely on a warm pip cache as proof of preparation.
 
 ```bash
-python scripts/build_release.py --smoke --no-isolation --modelspell-wheel ../agentwiz-prep/wheels/modelspell-0.3.0-py3-none-any.whl --dependency-wheels ../agentwiz-prep/wheels
+python scripts/build_release.py --smoke --no-isolation --modelspell-wheel ../agentwiz-prep/wheels/modelspell-0.4.0-py3-none-any.whl --scriptspell-wheel ../agentwiz-prep/wheels/scriptspell-0.3.0-py3-none-any.whl --dependency-wheels ../agentwiz-prep/wheels
 ```
 
-`--modelspell-wheel` refuses a file whose name is not the pinned URL's file name or whose sha256 is
-not the pin; the smoke then installs both wheels with `pip install --no-index --no-deps` and runs
+`--modelspell-wheel` and `--scriptspell-wheel` each refuse a file whose name is not the pinned URL's file name
+or whose sha256 is not the pin; the smoke then installs the wheels with `pip install --no-index --no-deps` and runs
 `pip check`. Prepare `jsonschema>=4.26,<5` and its transitive wheels in the directory supplied
 with `--dependency-wheels`; they are installed with `--no-index --find-links`. Without that
 option the validator dependencies are installed from the package index. Without a local modelSpell
@@ -56,8 +56,8 @@ both and on pull requests (Ubuntu and macOS × Python 3.10 and 3.13).
 passed them (`github.sha`, never a re-read of `main`):
 
 - **If `vX.Y.Z` is not yet released:** builds the wheel from that commit, runs the release checks
-  RC1–RC3 on it, installs it into a fresh venv with `--no-index` (the pinned modelSpell wheel is
-  still fetched) and runs the smoke check, then creates release `vX.Y.Z` tagged at that commit, with
+  RC1–RC3 on it, installs it into a fresh venv with `--no-index` (the pinned modelSpell
+  and scriptSpell wheels are still fetched) and runs the smoke check, then creates release `vX.Y.Z` tagged at that commit, with
   the wheel, the NEWS section as notes and a pinned install line with the sha256. A failed check
   stops the job before anything is published.
 - **If `vX.Y.Z` already exists:** fails if a path covered by the shipped-file guard changed since the tag; otherwise skips
@@ -86,7 +86,7 @@ They are release tooling under the owner's exception to T2, not tests:
 | --- | --- |
 | RC1 | `NEWS.md` has exactly one line `## <version>`; its section has at least one `- ` bullet, each opening bullet line of at most 20 words. Review the entire bullet, including continuation lines, against the policy. |
 | RC2 | The wheel is `agentwiz-<version>-py3-none-any.whl`; every member is under `agentwiz/` or `agentwiz-<version>.dist-info/`; `agentwiz/ui/index.html` and `agentwiz/model-servers.ini.template` are present; the `.dist-info` members are exactly `METADATA`, `WHEEL`, `RECORD`, `entry_points.txt`, `licenses/LICENSE`. |
-| RC3 | `METADATA` has `Name: AgentWiz`, `Version: <version>`, `License-Expression: MIT`, the required `jsonschema>=4.26,<5`, and exactly one other runtime dependency: modelSpell's direct URL, identical to the pinned release-wheel URL and sha256 in `pyproject.toml`. |
+| RC3 | `METADATA` has `Name: AgentWiz`, `Version: <version>`, `License-Expression: MIT`, the required `jsonschema>=4.26,<5`, and exactly two other runtime dependencies: the modelSpell and scriptSpell direct URLs, identical to the pinned release-wheel URLs and sha256 in `pyproject.toml`. |
 
 Each prints `RCn ok` or `RCn FAILED: <reason>`; all three run; on any failure nothing is copied to
 `--output-dir` and the script exits non-zero. Whether NEWS bullets are user-visible stays a human
@@ -101,7 +101,7 @@ judgement.
 2. Confirm the offline CI matrix passes on Ubuntu and macOS, Python 3.10 and 3.13. A Linux-only
    local pass does not verify macOS. Optional subjective review/live checks are not gates.
 3. Run `python scripts/build_release.py --smoke` on the intended committed tree; require
-   RC1–RC3 and the installed-wheel smoke S1–S17 to pass. Run the installed-wheel page/tutorial
+   RC1–RC3 and the installed-wheel smoke S1–S22 to pass. Run the installed-wheel page/tutorial
    checks below as well; source-checkout browser results do not establish packaged UI behavior.
 4. Merge `devel` into `main` when authorized. The release workflow reruns tests and checks
    before publishing; inspect its result.
@@ -125,6 +125,11 @@ captured v4 transform workflow, preflights it, and verifies its final output thr
 the installed server. S17 runs a Release Gate workflow, explicitly submits its token-bound
 human decision through the ordinary API and verifies the released output. No live backend
 or automatic approval is used.
+
+Release 0.2.2 makes S13 a standalone Python block run and adds S18–S22 against a scripted stub (`agent-two-step`,
+`agent-docs`, `agent-python` and a non-streaming `author` model): S18 a two-step agentic run, S19 search, read and
+a downloaded draft over a staged document, S20 the S13 Python run, S21 Python Describe it (examples, then Generate and
+check), and S22 an agentic run that calls a saved Python block.
 
 For an uncommitted candidate, transfer the tracked working-tree changes (including deletions)
 to a throwaway clone and commit only there, then run the normal release command in that clone.

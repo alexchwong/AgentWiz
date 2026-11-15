@@ -1,12 +1,12 @@
 """The block definition routes and the state body's 0.1.4 keys: techspec 0.1.4, 15.2 and 15.3 (read side)."""
 import pytest
 
-from conftest import failure_of, get_state, request, write_block
-from test_blocks import MODEL_FILES, model_block, script_block, tool_block
+from conftest import failure_of, get_state, python_engine, request, write_block
+from test_blocks import MODEL_FILES, model_block, py_block, tool_block
 
 
 
-def test_state_body_carries_roles_blocks_and_scripts(ui):
+def test_state_body_carries_roles_blocks_and_python(ui):
     state = get_state(ui)
     roles = state["roles"]
     assert {k: roles[k] for k in ("map", "revision", "read_only", "path", "problem")} == {
@@ -16,13 +16,13 @@ def test_state_body_carries_roles_blocks_and_scripts(ui):
     assert roles["defaults"] == roles["definitions"]
     assert {u["role"] for u in roles["unresolved"]} == set(roles["definitions"])
     assert state["blocks"] == {"path": str(ui.workspace.path / "blocks"), "active_runs": 0}
-    assert state["scripts"] == {"running": 0, "limit": 4}
+    assert state["python"] == {"running": 0, "limit": 4, "closed": False, "restart_required": False}
 
 
 def test_listing_and_detail(ui):
     write_block(ui, "b", model_block(description="Say it"), MODEL_FILES)
     write_block(ui, "t", tool_block())
-    write_block(ui, "sc", script_block(), {"scripts/go.py": "print(1)\n"})
+    write_block(ui, "sc", py_block(), {"scripts/go.py": "def transform(inputs):\n    return {}\n"})
     write_block(ui, "broken", model_block(name="broken", extra=1), MODEL_FILES)
     listing = request(ui, "/api/blocks")
     rows = {r["name"]: r for r in listing["blocks"]}
@@ -48,9 +48,9 @@ def test_listing_and_detail(ui):
     assert detail["budget"] == {"max_seconds": 1800, "max_model_tokens": None}
     assert request(ui, "/api/blocks/t")["step"] == {"id": "call", "kind": "tool", "server": "docs", "tool": "lookup"}
     script = request(ui, "/api/blocks/sc")
-    assert script["step"] == {"id": "run", "kind": "script", "file": "scripts/go.py", "timeout_s": 5}
+    assert script["step"] == {"id": "run", "kind": "python", "file": "scripts/go.py", "engine": python_engine()}
     assert [f["path"] for f in script["files"]] == ["block.json", "scripts/go.py"]
-    assert script["files"][1]["text"] is None or "print" in script["files"][1]["text"]
+    assert "transform" in script["files"][1]["text"]
 
 
 def test_a_block_with_a_problem_still_returns_the_files_it_can_read(ui):

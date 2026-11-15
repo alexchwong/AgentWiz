@@ -48,26 +48,6 @@ def test_restricted_endpoint_requires_eligible_literal(endpoint):
         outbound_policy.canonical_url(endpoint)
 
 
-def test_generated_script_descendant_remains_refused_after_duplication(ui):
-    source = 'print(\'{"out": 709}\')\n'
-    created = plan_save(ui, script_draft('generated', [], source=source, origin='llm_generated'))
-    draft = send(ui, 'preview', key='generated', revision=created['durable_id'])['draft']
-    draft['files']['scripts/main.py'] = 'print(\'{"out": 710}\')\n'
-    draft['metadata']['origin'] = 'manual'
-    draft['metadata'].pop('script_origin', None)
-    duplicate = send(ui, 'preview', draft=draft, duplicate_key='copy')['draft']
-    plan_save(ui, duplicate)
-    result = result_of(run_block(ui, 'copy', {}))
-    assert result['outcome'] == 'rejected'
-    assert not result['steps']
-    bare = script_draft('exact_copy', [], source=source)
-    write_block(ui, 'exact_copy', jsonio.decode_exact(bare['definition_text']), bare['files'])
-    assert result_of(run_block(ui, 'exact_copy', {}))['outcome'] == 'rejected'
-    duplicate['draft_ref'] = 'bad'
-    response = failure_of(lambda: send(ui, 'preview', draft=duplicate))
-    assert response.body['code'] == 'draft_expired'
-
-
 def test_trust_revoked_after_model_reply_blocks_repair(ui, server, monkeypatch):
     from agentwiz import model_step
 

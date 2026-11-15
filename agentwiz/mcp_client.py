@@ -21,6 +21,7 @@ system store; redirects are never followed. Knows nothing about AgentWiz's own H
 from __future__ import annotations
 
 import base64
+import copy
 import http.client
 import itertools
 import hashlib
@@ -407,6 +408,7 @@ class MCPClient:
         self._eras: dict[str, tuple[str, str]] = {}  # url -> (era, version)
         self._entries: dict[tuple, Entry] = {}
         self._observations = OrderedDict()
+        self._schemas: dict = {}
         self.session_lock = threading.Lock()          # Section 9.2's session lock
         self._sessions: dict[tuple, Session] = {}     # identity -> its open session
         self._all_sessions: list[Session] = []
@@ -420,11 +422,26 @@ class MCPClient:
     def observe(self, identity, tools, era, version):
         values = {tool['name']: {'digest': hashlib.sha256(encode_exact(tool.get('inputSchema')).encode()).hexdigest(),
                                 'era': era, 'version': version} for tool in tools[:TOOL_LIMIT]}
+        # Agentic Chat (0.2.2, 5.2) offers an observed tool with the exact schema whose digest it checks, and its
+        # bounded description. Both are kept beside the digest, never in the observation views.
+        schemas = {tool['name']: (tool.get('inputSchema'), tool.get('description') if isinstance(
+            tool.get('description'), str) else '') for tool in tools[:TOOL_LIMIT]}
         with self._lock:
             self._observations[identity] = values
+            self._schemas[identity] = schemas
             self._observations.move_to_end(identity)
             while len(self._observations) > 128:
-                self._observations.popitem(last=False)
+                gone, _ = self._observations.popitem(last=False)
+                self._schemas.pop(gone, None)
+
+    def observed_schema(self, identity, tool):
+        """(digest, inputSchema, description) from the latest tool list, or None (0.2.2, 5.2)."""
+        with self._lock:
+            value = self._observations.get(identity, {}).get(tool)
+            schema = self._schemas.get(identity, {}).get(tool)
+            if value is None or schema is None:
+                return None
+            return value['digest'], copy.deepcopy(schema[0]), schema[1]
 
     def observed_tools(self, identity):
         with self._lock:

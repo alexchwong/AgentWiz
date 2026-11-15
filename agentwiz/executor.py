@@ -14,10 +14,9 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from . import checks, jsonio, mcp_ops, model_step, runs, script_step, templates, transforms
+from . import agent_tools, checks, jsonio, mcp_ops, model_step, python_step, runs, templates, transforms
 from .errors import report_internal
 
 
@@ -44,12 +43,18 @@ class PreparedTool:
 
 
 @dataclass(frozen=True)
-class PreparedScript:
-    path: Path
-    sha256: str
+class PreparedPython:
+    source: str                        # the captured source text (the exact revision's bytes)
     file: str
-    timeout_s: int
-    run_folder: Path | None            # the run's folder when it is being saved (scratch goes under it)
+    sha256: str
+
+
+@dataclass(frozen=True)
+class PreparedBuiltin:
+    builtin: str                       # agent_tools.UTILITY_TOOLS
+    arguments: Any                     # filled, exact, checked against the built-in's schema
+    arguments_text: str
+    fills: list
 
 
 class Tally:
@@ -92,7 +97,7 @@ class StepContext:
     run: runs.Run
     block: Any                                   # blocks.Block
     values: Mapping[str, object]                 # checked input values (exact)
-    prepared: Any                                # PreparedModel | PreparedTool | PreparedScript
+    prepared: Any                                # PreparedModel | PreparedTool | PreparedPython | PreparedBuiltin
     contracts: Mapping[str, Any]                 # captured output contracts by output name (ContractCopy)
     store: runs.AttemptStore
     sink: Any                                    # history.Writer | None
@@ -100,12 +105,13 @@ class StepContext:
     observer: Any                                # attempt_committed(record), operation_started(kind); never raises
     client: Any = None                           # mcp_client.MCPClient
     key_for: Callable[[str, str], str | None] | None = None
-    script_env: script_step.Env | None = None
-    script_handle: script_step.Handle = field(default_factory=script_step.Handle)
     tally: Tally = field(default_factory=lambda: Tally(None))
     dispatch: Any = None
     repair_dispatch: Any = None
     attempt_gate: Any = None
+    parent_guard: Any = None                     # agent parent: Stop, deadline, configuration (0.2.2, 5.6)
+    tool_authorize: Any = None                   # agent parent: the MCP send-gate check of its approval (5.5)
+    on_python_cleanup_failed: Any = None
     produced: dict = field(default_factory=dict)  # output name -> value view, filled when the step is ok
 
 
@@ -180,6 +186,8 @@ def _execute_model(ctx: StepContext) -> dict:
                 dispatch = ctx.repair_dispatch()
             if dispatch:
                 dispatch.check()
+            if ctx.parent_guard:
+                ctx.parent_guard()
         except outbound_policy.Refused as exc:
             return _failed(result, str(exc))
         try:
@@ -308,9 +316,16 @@ def _execute_tool(ctx: StepContext) -> dict:
     token.on_cancel(stop_action)
     started_at = runs.utc_now()
     snap, client = p.snapshot, ctx.client
+    checks_at_gate = [check for check in (ctx.dispatch.check if ctx.dispatch else None, ctx.parent_guard,
+                                          ctx.tool_authorize) if check is not None]
+
+    def authorize() -> None:
+        for check in checks_at_gate:            # the child's own destination check, then the parent's (5.6)
+            check()
+
     def call(operation):
-        if ctx.dispatch:
-            operation.authorize = ctx.dispatch.check
+        if checks_at_gate:
+            operation.authorize = authorize
         if ctx.run.source == "block" and ctx.attempt_gate is not None:
             operation.allow_call_retry = False
         return client.call(operation, snap, p.tool, p.arguments)
@@ -380,7 +395,7 @@ def _wait_committed(op: Any) -> dict:
             raise RuntimeError("an MCP operation did not commit after its deadline")
 
 
-# --- script steps (11.4) ------------------------------------------------------------------------------------------------------
+# --- Python steps and output checks -------------------------------------------------------------------------------------------
 def _output_checks(ctx: StepContext, values: Mapping) -> tuple[dict, bool]:
     results: dict = {}
     for declared in ctx.block.outputs:
@@ -396,33 +411,52 @@ def _output_checks(ctx: StepContext, values: Mapping) -> tuple[dict, bool]:
     return results, all(c["overall"] == "pass" for c in results.values())
 
 
-def _execute_script(ctx: StepContext) -> dict:
+def _execute_python(ctx: StepContext) -> dict:
+    """A restricted-runner Python step through the shared adapter (0.2.2, 10.2)."""
     p, token = ctx.prepared, ctx.run.token
-    result = _base(ctx, "script", [])
+    result = _base(ctx, "python", [])
     outputs = tuple(d.name for d in ctx.block.outputs)
-    done = script_step.run(p.path, ctx.values, step_id=ctx.run.step_id, run_folder=p.run_folder,
-                           timeout_s=p.timeout_s, token=token, run_id=ctx.run.run_id,
-                           block_name=ctx.block.name, sha256=p.sha256, outputs=outputs, file=p.file,
-                           env=ctx.script_env, handle=ctx.script_handle)
-    operation = done["operation"]
-    result["operation"] = operation
-    if done["never"] or done["stopped"]:
-        return _stopped(ctx, result)
-    if operation["outcome"] == "ok":
-        checked, accepted = _output_checks(ctx, done["values"])
-        result["output_checks"] = checked
-        if accepted:
-            for declared in ctx.block.outputs:
-                ctx.produced[declared.name] = view_of(ctx.contracts[declared.name].parsed, done["values"][declared.name])
-            return _ok(result)
-        if token.cancelled:
-            return _stopped(ctx, result)
-        return _failed(result, "output_failed")
     if token.cancelled:
         return _stopped(ctx, result)
-    if operation["outcome"] == "timeout":
-        return _failed(result, "timeout")
-    return _failed(result, "script_error")
+    done = python_step.run(p.source, ctx.values, outputs, token=token,
+                           on_cleanup_failed=ctx.on_python_cleanup_failed or (lambda: None))
+    result["operation"] = done["operation"]
+    if done["outcome"] == "stopped" or (done["outcome"] != "ok" and token.cancelled):
+        return _stopped(ctx, result)
+    if done["outcome"] != "ok":
+        return _failed(result, done["failure"])
+    checked, accepted = _output_checks(ctx, done["values"])
+    result["output_checks"] = checked
+    if not accepted:
+        return _stopped(ctx, result) if token.cancelled else _failed(result, "output_failed")
+    for declared in ctx.block.outputs:
+        ctx.produced[declared.name] = view_of(ctx.contracts[declared.name].parsed, done["values"][declared.name])
+    return _ok(result)
+
+
+def _execute_builtin(ctx: StepContext) -> dict:
+    """A Tool step bound to a built-in utility (0.2.2, 6.8): local execution, no slot, no destination."""
+    step, p, token = ctx.block.step, ctx.prepared, ctx.run.token
+    contract = ctx.contracts[step.output]
+    result = _base(ctx, "tool", p.fills)
+    operation = {"builtin": p.builtin, "arguments_text": p.arguments_text, "outcome": None, "code": None}
+    result["operation"] = operation
+    if token.cancelled:
+        return _stopped(ctx, result)
+    try:
+        value = agent_tools.run_utility(p.builtin, p.arguments)
+    except agent_tools.ToolError as exc:
+        operation.update(outcome="tool_error", code=exc.code)
+        return _failed(result, "tool_error")
+    operation["outcome"] = "ok"
+    parsed = contract.parsed
+    produced = value if parsed.format == "json" else jsonio.encode_exact(value)
+    check = checks.check_value(parsed, produced)
+    result["output_checks"] = {step.output: check}
+    if check["overall"] != "pass":
+        return _failed(result, "output_failed")
+    ctx.produced[step.output] = view_of(parsed, produced)
+    return _ok(result)
 
 
 def _execute_transform(ctx: StepContext) -> dict:
@@ -453,8 +487,12 @@ def execute_step(ctx: StepContext) -> dict:
     kind = ctx.block.step.kind
     if kind == "model":
         return _execute_model(ctx)
+    if kind == "tool" and ctx.block.step.builtin is not None:
+        return _execute_builtin(ctx)
     if kind == "tool":
         return _execute_tool(ctx)
     if kind == "transform":
         return _execute_transform(ctx)
-    return _execute_script(ctx)
+    if kind == "python":
+        return _execute_python(ctx)
+    raise ValueError("host_script_retired")

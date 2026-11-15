@@ -37,6 +37,7 @@ from .. import (__version__, attachments, checks, contract_schema, contract_serv
                 output_protocol, runner, runs, tool_forms, tutorial_topics, workshop)
 from .. import workspace as wsmod
 from .. import workspace_admin
+from .. import agent_documents, agent_loop
 from ..errors import ShuttingDown, report_internal  # noqa: F401  (re-exported; defined in errors.py since 0.1.4)
 from ..mcp_client import MCPError
 from ..model_call import SettingsError, describe_error
@@ -54,6 +55,7 @@ ASSETS = {f"/assets/{name}.js": (Path(__file__).with_name(f"{name}.js"), "text/j
 JSON = "application/json"
 UPLOAD_LIMIT = 52_428_800          # 50 MiB; the JSON cap is insertion.REQUEST_LIMIT. Tests may lower both.
 UPLOAD_ROUTE = "/api/attachments/extract"
+AGENT_UPLOAD_ROUTE = "/api/agent/documents"     # the second raw-body route (0.2.2, 4.9)
 WORKSPACES_ROUTE = "/api/workspaces"
 _HEX = set("0123456789abcdefABCDEF")
 
@@ -247,7 +249,8 @@ class UIServer(ThreadingHTTPServer):
                 ("block_attempt", state.store.running_count()),
                 ("block_run", len(state.store.active_block_runs())),
                 ("mcp_operation", state.mcp_ops.active_count()),
-                ("script", state.scripts.in_flight)):
+                ("python", state.python.in_flight),
+                ("agent_run", 1 if state.agent.active is not None else 0)):
             if count:
                 active.append({"kind": kind, "count": count})
         outstanding = state.writers.outstanding()
@@ -516,6 +519,31 @@ class BlockDelivery(_Delivery, runner.Observer):
         self._write(event)
 
 
+class AgentDelivery(_Delivery, agent_loop.Observer):
+    """The HTTP observer of an agent run: best effort, bounded by the page timeout. After the first failure it
+    drops every later event; the run continues, and its state stays readable by run ID (4.8)."""
+
+    def __init__(self, handler: "Handler"):
+        super().__init__(handler)
+        self.head_sent = False
+
+    def event(self, event: dict) -> None:
+        with self._lock:
+            if self.gone:
+                return
+        try:
+            if not self.head_sent:
+                self.head_sent = True
+                self.handler.send_response(200)
+                self.handler.send_header("Content-Type", "application/x-ndjson")
+                self.handler.send_header("Cache-Control", "no-store")
+                self.handler.end_headers()
+            self.handler.write_event(event)
+        except OSError:
+            with self._lock:
+                self.gone = True
+
+
 class Handler(BaseHTTPRequestHandler):
     server: UIServer
     protocol_version = "HTTP/1.0"  # each response closes its connection, which delimits the stream
@@ -577,6 +605,8 @@ class Handler(BaseHTTPRequestHandler):
         """Run a route, mapping every failure to a reply that cannot contain a credential."""
         try:
             fn()
+        except agent_loop.AgentError as exc:     # fixed codes and AgentWiz's own fields, never a value
+            self._reply_safely(exc.status, {"error": "agentic Chat request refused", "code": exc.code, **exc.extra})
         except workshop.WorkshopError as exc:
             self._reply_safely(exc.status, {"error": "Workshop request refused", "code": exc.code, **({"issues": exc.issues} if exc.issues else {}), **({"plan": exc.plan} if hasattr(exc, "plan") else {})})
         except workspace_admin.WorkspaceAdminError as exc:
@@ -740,6 +770,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._attempt_poll(path[len("/api/attempts/"):])
         if path.startswith("/api/block_runs/"):
             return self._block_run_poll(path[len("/api/block_runs/"):])
+        if path.startswith("/api/agent/"):
+            return self._agent_get(path[len("/api/agent/"):])
         if path == "/api/runs":
             return self._send(200, self.server.state.history.list_runs())
         if path.startswith("/api/runs/"):
@@ -784,6 +816,10 @@ class Handler(BaseHTTPRequestHandler):
                   "/api/mcp/servers": self._mcp_servers, "/api/mcp/token": self._mcp_token,
                   "/api/mcp/tools": self._mcp_tools, "/api/mcp/call": self._mcp_call,
                   "/api/mcp/cancel": self._mcp_cancel}
+        if path == AGENT_UPLOAD_ROUTE:
+            return self._agent_upload()
+        if path.startswith("/api/agent/"):
+            return self._agent_post(path[len("/api/agent/"):], self._body())
         if path == UPLOAD_ROUTE:
             return self._upload()
         body = self._body(" Copy a smaller part of the file." if path == "/api/complete" else "")
@@ -793,7 +829,9 @@ class Handler(BaseHTTPRequestHandler):
         handler(body)
 
     def _state_body(self, view: dict) -> dict:
+        from .. import python_step
         out = {**view, "agentwiz_version": __version__, "modelspell_version": modelspell.__version__,
+               "scriptspell_version": python_step.version(),
                "limits": {"request_bytes": insertion.REQUEST_LIMIT, "upload_bytes": UPLOAD_LIMIT}}
         out["workspace"] = {**view["workspace"], "admin": self.server.workspace_admin_enabled}
         return out
@@ -884,8 +922,9 @@ class Handler(BaseHTTPRequestHandler):
             from ..outbound_policy import candidates
             result = candidates(self.server.state)
         elif path == 'starters':
-            from ..workshop_editor import SCRIPT_IDS, STARTERS, examples
-            result = {'format_version': 1, 'starters': [{'id': k, 'version': 2 if k in SCRIPT_IDS else 1, 'examples': examples(k)} for k in STARTERS]}
+            from ..workshop_editor import GROUPS, STARTERS, TRANSFORM_IDS, examples
+            result = {'format_version': 1, 'starters': [{'id': k, 'version': 2 if k in TRANSFORM_IDS else 1, 'examples': examples(k)} for k in STARTERS],
+                      'groups': [{'id': ident, 'label': label, 'entries': list(entries)} for ident, label, entries in GROUPS]}
         elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'revisions':
             result = service.assets.revisions(parts[1])
         elif len(parts) == 4 and parts[0] == 'blocks' and parts[2] == 'revisions':
@@ -983,6 +1022,18 @@ class Handler(BaseHTTPRequestHandler):
             result = service.start(path, body)
         elif path == 'assist':
             result = service.assist(body)
+        elif len(parts) == 2 and parts[0] == 'python':
+            # Python authoring (0.2.2, 10.7): Describe it, Generate examples, Edit as YAML, Generate and check, Apply.
+            flows = service.python
+            if parts[1] == 'start':
+                result = flows.start(body)
+            elif parts[1] in ('examples', 'generate', 'apply', 'stop') and set(body) == {'flow'}:
+                result = {'examples': flows.generate_examples, 'generate': flows.generate_and_check,
+                          'apply': flows.apply, 'stop': flows.stop}[parts[1]](body['flow'])
+            elif parts[1] == 'accept' and set(body) == {'flow', 'text'}:
+                result = flows.accept_examples(body['flow'], body['text'])
+            else:
+                return self._send(404, {'code': 'missing'})
         elif path == 'proposals/apply':
             result = service.apply(body)
         elif len(parts) == 3 and parts[0] == 'batches' and parts[2] == 'stop':
@@ -1479,6 +1530,124 @@ class Handler(BaseHTTPRequestHandler):
             raise BodyError("model must be a string")
         self._send(200, {"providers": self._entries(modelspell.list_providers(endpoint, model or ""))})
 
+
+    # --- agentic Chat (0.2.2, 4.9) -----------------------------------------------------------------------------
+    def _agent_get(self, path: str) -> None:
+        manager = self.server.state.agent
+        query = parse_qs(urlparse(self.path).query)
+        if path == "conversation":
+            return self._send(200, manager.view())
+        if path == "inventory":
+            body: dict = {}
+            try:
+                if "revision" in query:
+                    body["revision"] = int(query["revision"][0])
+                if "task" in query:
+                    body["task"] = json.loads(query["task"][0])
+                if "capabilities" in query:
+                    body["capabilities"] = json.loads(query["capabilities"][0])
+                if "limits" in query:
+                    body["limits"] = json.loads(query["limits"][0])
+            except (ValueError, IndexError):
+                raise BodyError("revision, task, capabilities and limits must be JSON") from None
+            return self._send(200, manager.inventory(body))
+        if path.startswith("runs/"):
+            return self._send(200, manager.run_view(path[len("runs/"):]))
+        if path.startswith("drafts/"):
+            conversation = query.get("conversation", [None])[0]
+            name, data = manager.draft_bytes(path[len("drafts/"):], conversation)
+            ctype = "text/markdown; charset=utf-8" if name.endswith(".md") else "text/plain; charset=utf-8"
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if path == "capabilities":
+            return self._send(200, self._capabilities_view())
+        return self._send(404, {"error": "not found"})
+
+    def _capabilities_view(self) -> dict:
+        from .. import agent_capabilities
+        state = self.server.state
+        revision, rows = state.agent.store.read()
+        eligible, refused = agent_capabilities.mcp_candidates(state, rows)
+        tools = [{"url": c.url, "server": c.server, "tool": c.tool, "schema_digest": c.schema_digest,
+                  "name": c.name, "eligible": True,
+                  "classification": {k: v for k, v in state.agent.store.row(rows, c.url, c.server, c.tool,
+                                                                            c.schema_digest).items()
+                                     if k in agent_capabilities.DEFAULTS}} for c in eligible]
+        tools += [{**row, "eligible": False} for row in refused]
+        return {"format_version": 1, "revision": revision, "rows": rows, "tools": tools}
+
+    def _agent_post(self, path: str, body: dict) -> None:
+        if body.get("format_version") != 1 or type(body.get("format_version")) is not int:
+            raise BodyError("format_version must be 1")
+        body = {k: v for k, v in body.items() if k != "format_version"}
+        manager = self.server.state.agent
+        if path == "conversation":
+            if body:
+                raise BodyError("starting a conversation takes no fields")
+            return self._send(200, manager.start_conversation())
+        if path == "conversation/close":
+            return self._send(200, manager.close_conversation(body.get("conversation")))
+        if path == "conversation/memory":
+            return self._send(200, manager.memory(body))
+        if path == "documents/update":
+            return self._send(200, manager.update_document(body))
+        if path == "run":
+            return self._agent_run(body)
+        if path == "stop":
+            if set(body) != {"run_id"}:
+                raise BodyError("stop takes run_id")
+            return self._send(200, manager.stop(body["run_id"]))
+        if path == "approve":
+            return self._send(200, manager.approve(body))
+        if path == "capabilities":
+            try:
+                result = manager.store.update(self.server.state, body)
+            except ValueError:
+                raise workshop.WorkshopError("invalid", 400) from None
+            return self._send(200, result)
+        return self._send(404, {"error": "not found"})
+
+    def _agent_upload(self) -> None:
+        """POST /api/agent/documents: the file's bytes, as on /api/attachments/extract (raw-body exception)."""
+        length = self._length(agent_documents.SOURCE_LIMIT)          # refused before the body is read
+        if length is None:
+            raise LengthRequired()
+        filename = decode_filename(self.headers.get("X-Filename"))
+        conversation = self.headers.get("X-Conversation")
+        flag = self.headers.get("X-Local-Only", "true")
+        if flag not in ("true", "false"):
+            raise BodyError('X-Local-Only must be "true" or "false"')
+        try:
+            data = self.rfile.read(length) if length else b""
+        except OSError:
+            raise _ReadTimeout() from None
+        if len(data) < length:
+            raise _ReadTimeout()
+        try:
+            result = self.server.state.agent.stage(conversation, filename, data, flag == "true")
+        except (attachments.AttachmentError, agent_loop.AgentError):
+            raise
+        except Exception as exc:  # noqa: BLE001 - any other reader failure is extraction_failed (interface 6)
+            raise attachments.AttachmentError("extraction_failed",
+                                              f"The reader failed ({type(exc).__name__}).") from None
+        self._send(200, result)
+
+    def _agent_run(self, body: dict) -> None:
+        """Refusals are real HTTP statuses before the run exists (4.9); then an NDJSON stream."""
+        state = self.server.state
+        delivery = AgentDelivery(self)
+        run = state.agent.prepare_run(body, delivery)
+        state.add_delivery(delivery)
+        try:
+            run.run()
+        finally:
+            state.remove_delivery(delivery)
 
     # --- model requests (techspec 0.1.3, 5.2, 8.6-8.8, 9.4) ----------------------------------------------
     def write_event(self, event: dict) -> None:

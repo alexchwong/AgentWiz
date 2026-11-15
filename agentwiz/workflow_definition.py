@@ -163,7 +163,7 @@ def open_snapshot(snapshot_id, snapshot, stack, location):
         metadata = {side: snapshot[side] for side in ('contracts', 'contract_pins')}
         metadata['contracts_digest'] = assets.contract_maps_digest(metadata['contracts'], metadata['contract_pins'])
         assets.validate_contract_maps(definition, metadata)
-        opened = stack.enter_context(assets.Capture(raw, key, assets.SnapshotContracts(metadata)))
+        opened = stack.enter_context(assets.Capture(raw, key, assets.SnapshotContracts(metadata), engine_check=False))
         if opened.parsed.problem or set(opened.parsed.paths) != set(raw):
             raise ValueError
         return opened

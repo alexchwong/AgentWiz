@@ -15,8 +15,8 @@ from typing import Any, Mapping
 
 import modelspell
 
-from . import (__version__, checks, executor, history, insertion, jsonio, model_call, model_step,
-               output_protocol, runs, script_step, templates, task_settings)
+from . import (__version__, agent_tools, checks, executor, history, insertion, jsonio, model_call, model_step,
+               output_protocol, python_step, runs, templates, task_settings)
 from .errors import ShuttingDown, report_internal
 from .state import NoSuchServer, RoleUnresolved
 from .task_settings import TaskSettingError
@@ -35,6 +35,13 @@ class FrozenSource:
     protected: bool = False
     dispatch: Any = None
     attempt_gate: Any = None
+    # 0.2.2 (5.5, 5.6), set only by an agent parent. `parent_guard()` raises outbound_policy.Refused when the
+    # parent's Stop, deadline, configuration or admission checks refuse; it runs at every child send gate.
+    # `before_tool(prepared)` runs after a Tool block's preparation and before its dispatch with the
+    # materialised request; it may wait for approval and returns the parent's send-gate check (or None),
+    # or raises outbound_policy.Refused.
+    parent_guard: Any = None
+    before_tool: Any = None
 
 
 # --- hooks tests replace ----------------------------------------------------------------------------------------
@@ -180,15 +187,15 @@ class _Slot:
         self._release()
 
 
-def _admit(state: Any, kind: str):
+def _admit(state: Any, kind: str, builtin: bool = False):
     """Reserve the step kind's slot with a non-blocking acquire (10.3). Returns (slot, reservation). Raises Busy
-    or ShuttingDown; nothing is taken then."""
-    if kind == "transform":
+    or ShuttingDown; nothing is taken then. Transforms and built-in utilities take no slot (6.8)."""
+    if kind == "transform" or builtin:
         return None, None
     if kind == "model":
         budget, name = state.budget, "model requests"
-    elif kind == "script":
-        budget, name = state.scripts, "script processes"
+    elif kind == "python":
+        budget, name = state.python, "Python runs"
     else:
         reservation = state.mcp_ops.reserve()                      # raises mcp_ops.Closed (a ShuttingDown)
         if reservation is None:
@@ -292,14 +299,34 @@ def _prepare_tool(state: Any, block: Any, values: Mapping, reservation: Any) -> 
     return _Preparation("prepared", prepared)
 
 
-def _prepare_script(block: Any, run: runs.Run) -> _Preparation:
+def _prepare_python(block: Any) -> _Preparation:
     step = block.step
     sha = block.files.get(step.script_file)
-    if sha is None:
-        return _rejected("steps[0].file", "the script file is not part of the block")
-    folder = run.folder if run.save_runs else None
-    return _Preparation("prepared", executor.PreparedScript(path=step.script_path, sha256=sha, file=step.script_file,
-                                                            timeout_s=step.timeout_s, run_folder=folder))
+    source = block.texts.get(step.script_file)
+    if sha is None or source is None:
+        return _rejected("steps[0].file", "the Python file is not part of the block")
+    if not python_step.engine_matches(step.engine or {}):
+        return _rejected("steps[0].engine", "engine_changed: test the block again and save it")
+    return _Preparation("prepared", executor.PreparedPython(source=source, file=step.script_file, sha256=sha))
+
+
+def _prepare_builtin(block: Any, values: Mapping) -> _Preparation:
+    step = block.step
+    try:
+        arguments, fills = templates.fill_arguments(step.arguments, values)
+    except templates.FillError as exc:
+        return _rejected("steps[0]." + exc.location, exc.message)
+    if not isinstance(arguments, dict):
+        return _rejected("steps[0].arguments", "the filled arguments are not an object")
+    schema = agent_tools.SCHEMAS[step.builtin]
+    check = checks.check_value(checks.Contract("json", False, "", schema, (), {"format": "json", "schema": schema}),
+                               arguments)
+    if check["overall"] != "pass":
+        return _Preparation("rejected", issues=[{"location": "steps[0].arguments" + issue["location"][1:],
+                                                 "message": issue["message"]} for issue in check["issues"]])
+    return _Preparation("prepared", executor.PreparedBuiltin(builtin=step.builtin, arguments=arguments,
+                                                             arguments_text=jsonio.encode_exact(arguments),
+                                                             fills=fills))
 
 
 # --- outcome (10.6) --------------------------------------------------------------------------------------------------------
@@ -342,7 +369,6 @@ class _Execution:
         self.slot: _Slot | None = None
         self.reservation: Any = None
         self.timer: Any = None
-        self.handle = script_step.Handle()
         self.preparation: _Preparation | None = None
         self.step: dict | None = None
         self.produced: dict = {}
@@ -358,7 +384,7 @@ def _contracts_view(block: Any) -> dict:
 def _create_run(ex: _Execution, executing: bool) -> runs.Run:
     state, block = ex.state, ex.block
     if executing:
-        ex.slot, ex.reservation = _admit(state, block.step.kind)
+        ex.slot, ex.reservation = _admit(state, block.step.kind, block.step.builtin is not None)
     try:
         run = state.store.new_block_run(
             save_runs=ex.frozen.save_runs if ex.frozen else state.save_runs_now(),
@@ -373,7 +399,7 @@ def _create_run(ex: _Execution, executing: bool) -> runs.Run:
 
 
 def _release_slots(ex: _Execution) -> None:
-    if ex.slot is not None and not ex.handle.retained:
+    if ex.slot is not None:
         ex.slot.release()
     if ex.reservation is not None:
         ex.reservation.release()
@@ -474,24 +500,9 @@ def _execute(ex: _Execution) -> None:
         from .workshop_assets import validate_generation
         root = ex.loaded.physical_root
         validate_generation(root, ex.loaded.workshop)
-    if kind == "script" and any(
-            ex.loaded.workshop.get(key) in ("llm_generated", "derived_from_llm")
-            for key in ("script_origin", "origin")):
-        ex.preparation = _rejected("source", "generated_script_disabled: model-written host Python cannot run")
-        return
-    if kind == "script":
-        from .draft_lineage import generated_fingerprint
-        source_hash = block.files.get(block.step.script_file)
-        if (state.workshop.drafts.generated(source_hash)
-                or generated_fingerprint(state.workspace.path / "blocks", source_hash)):
-            ex.preparation = _rejected("source", "generated_script_disabled: source matches a generated script")
-            return
     protected = (block.context_local_only or ex.loaded.workshop.get("protection_clear_pending")
                  or any(port.local_only for port in block.inputs)
                  or bool(ex.frozen and ex.frozen.protected))
-    if kind == "script" and protected:
-        ex.preparation = _rejected("source", "protected data cannot be sent to host Python")
-        return
     if ex.frozen is not None and kind == 'model':
         if ex.frozen.capture is None:
             ex.preparation = _rejected('steps[0].role', 'the captured role defaults are missing')
@@ -501,6 +512,8 @@ def _execute(ex: _Execution) -> None:
             def role_capture(self, role):
                 return ex.frozen.capture
         ex.preparation = _prepare_model(CapturedState(), block, values)
+    elif kind == "tool" and block.step.builtin is not None:
+        ex.preparation = _prepare_builtin(block, values)
     elif ex.frozen is not None and kind == 'tool':
         current = state.mcp_snapshot_for_block(block.step.server)
         if current != ex.frozen.snapshot:
@@ -517,7 +530,7 @@ def _execute(ex: _Execution) -> None:
     elif kind == "transform":
         ex.preparation = _Preparation("prepared")
     else:
-        ex.preparation = _prepare_script(block, run)
+        ex.preparation = _prepare_python(block)
     if ex.preparation.status == "prepared" and run.token.cancelled:
         ex.preparation = _Preparation("cancelled")
     if ex.preparation.status != "prepared":
@@ -525,7 +538,8 @@ def _execute(ex: _Execution) -> None:
     from . import outbound_policy
     dispatch = None
     repair_dispatch = None
-    if kind in ("model", "tool") and (protected or (ex.frozen and ex.frozen.dispatch)):
+    mcp = kind == "model" or (kind == "tool" and block.step.builtin is None)
+    if mcp and (protected or (ex.frozen and ex.frozen.dispatch)):
         try:
             dispatch = (ex.frozen.dispatch if ex.frozen and ex.frozen.dispatch else
                         outbound_policy.block_dispatch(state, block, ex.preparation.prepared.snapshot))
@@ -536,22 +550,32 @@ def _execute(ex: _Execution) -> None:
     if kind == "model" and not protected and any(port.local_only for port in block.outputs):
         repair_dispatch = lambda: outbound_policy.block_dispatch(state, block, ex.preparation.prepared.snapshot)
     sink = state.history if run.save_runs else None
-    script_env = None
-    if kind == "script":
-        script_env = script_step.Env(
-            make_timer=lambda seconds, callback: make_timer(seconds, callback),
-            registry=state.cleanups, writer=ex.writer, release_slot=ex.slot.release,
-            protect=lambda: state.store.protect_run(run), unprotect=lambda: state.store.unprotect_run(run),
-            on_started=lambda: ex.observer.operation_started("script"),
-            capture_owner=ex.frozen.owner if ex.frozen else ex.loaded,
-            no_bytecode=bool(ex.frozen or ex.loaded.workshop))
+    tool_authorize = None
+    if ex.frozen is not None and ex.frozen.before_tool is not None and kind == "tool" and block.step.builtin is None:
+        try:
+            tool_authorize = ex.frozen.before_tool(ex.preparation.prepared)
+        except outbound_policy.Refused as exc:
+            ex.preparation = _rejected("approval", str(exc))
+            return
+        if run.token.cancelled:
+            ex.preparation = _Preparation("cancelled")
+            return
+    parent_guard = ex.frozen.parent_guard if ex.frozen is not None else None
+    if parent_guard is not None and kind in ("python", "transform", "tool"):
+        try:
+            parent_guard()
+        except outbound_policy.Refused as exc:
+            ex.preparation = _rejected("parent", str(exc))
+            return
     ctx = executor.StepContext(
         run=run, block=block, values=values, prepared=ex.preparation.prepared,
         contracts=block.contracts["outputs"], store=state.store, sink=sink, ops=state.mcp_ops,
-        observer=ex.observer, client=state.mcp_client, key_for=(lambda kind, url: ex.frozen.snapshot.endpoint.api_key) if ex.frozen and kind == 'model' else state.key_for, script_env=script_env,
-        script_handle=ex.handle, tally=ex.tally, produced=ex.produced,
+        observer=ex.observer, client=state.mcp_client, key_for=(lambda kind, url: ex.frozen.snapshot.endpoint.api_key) if ex.frozen and kind == 'model' else state.key_for,
+        tally=ex.tally, produced=ex.produced,
         dispatch=dispatch, repair_dispatch=repair_dispatch,
-        attempt_gate=ex.frozen.attempt_gate if ex.frozen else None)
+        attempt_gate=ex.frozen.attempt_gate if ex.frozen else None,
+        parent_guard=parent_guard, tool_authorize=tool_authorize,
+        on_python_cleanup_failed=state.python_cleanup_failed)
     ex.step = executor.execute_step(ctx)
 
 

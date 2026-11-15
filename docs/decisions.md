@@ -7,6 +7,10 @@ Historical choices may have been superseded; do not restore retired behavior fro
 
 ## Specification lineage
 
+The 0.2.2 build followed *AgentWiz 0.2.2 — Technical Specification* (v4): Agentic Chat, built-in tools,
+restricted Python blocks through scriptSpell 0.3.0 and the modelSpell 0.4.0 tool API. It retired host
+Python (v3 script) blocks. Departures are recorded in the 0.2.2 handover.
+
 The owner-authorised contract overhaul specification v1.0 (5 November 2026) superseded
 contradictory contract recommendations in discussion v2 and plan v14. It retained the 0.2.0
 development version and made `jsonschema>=4.26,<5` required while keeping the modelSpell pin.

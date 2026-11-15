@@ -251,6 +251,12 @@ dialog.wide-dialog{max-width:96vw}
   <p class="note">Shared by every workspace. Tokens are kept in memory only, or read from the named environment variable.</p>
   <div id="servers-list"></div>
   <p id="servers-msg" class="note"></p>
+  <details id="agent-classify" data-test="agent-classify">
+    <summary>Agentic Chat: tool classifications</summary>
+    <p class="note">Every tool is disabled and unknown-effect until you classify it. "Cannot reach files on this computer" is your statement; AgentWiz cannot verify it, and a tool without it is never offered. Tools appear here once their list has been loaded.</p>
+    <ul class="list" id="agent-classify-list" data-test="agent-classify-list"></ul>
+    <p class="note" id="agent-classify-msg" data-test="agent-classify-msg"></p>
+  </details>
   <div class="row" style="justify-content:flex-end">
     <button type="button" id="add-server">Add</button>
     <button type="button" id="close-servers">Close</button>
@@ -751,7 +757,7 @@ function shortCredentialWarning() {
 
 function renderState() {
   $("version").textContent = state.agentwiz_version
-    ? `v${state.agentwiz_version} · modelSpell v${state.modelspell_version}` : "";
+    ? `v${state.agentwiz_version} · modelSpell v${state.modelspell_version}${state.scriptspell_version ? " · scriptSpell v" + state.scriptspell_version : ""}` : "";
   const ws = state.workspace || {};
   $("workspace").textContent = ws.name ? `workspace: ${ws.name}${ws.read_only ? " (read-only)" : ""}` : "";
   $("workspace").title = ws.path || "";
@@ -1544,6 +1550,7 @@ function makeRequestTab(frag, source) {
       contractHost.replaceChildren(contractPicker.el);
     },
     submit,
+    task,
     onState() {
       task.render();
       refreshDestination();
@@ -1560,6 +1567,231 @@ function makeRequestTab(frag, source) {
 
 makeRequestTab("chat", "chat");
 makeRequestTab("checked-request", "checked_request");
+
+// --- agentic Chat (0.2.2, 4.1): one live conversation, one run, AgentWiz decides what may run ----------------------
+function makeAgentPanel() {
+  const panel = $("panel-chat");
+  const ordinary = [...panel.children];
+  const toggle = h("input", { type: "checkbox", "data-test": "agent-switch", id: "agent-switch" });
+  const head = h("div", { class: "row" }, h("label", { class: "ws-radio", for: "agent-switch" }, toggle, " Agentic"));
+  panel.prepend(head);
+  const box = h("div", { "data-test": "agent-panel", hidden: true });
+  panel.append(box);
+  const destination = h("p", { class: "ws-destination", "data-test": "agent-destination" });
+  const note = h("p", { class: "note", "data-test": "agent-preflight-note" });
+  const preflight = h("p", { class: "note", "data-test": "agent-preflight", "data-state": "unknown" });
+  const conversationRow = h("div", { class: "row" });
+  const newConversation = h("button", { type: "button", "data-test": "agent-new-conversation", text: "New conversation" });
+  const memory = h("input", { type: "checkbox", "data-test": "agent-memory", checked: true });
+  const memoryCount = h("span", { class: "note", "data-test": "agent-memory-count" });
+  const clearMemory = h("button", { type: "button", "data-test": "agent-clear-memory", text: "Clear memory" });
+  conversationRow.append(newConversation, h("label", { class: "ws-radio" }, memory, " Remember this conversation"), memoryCount, clearMemory);
+  const upload = h("input", { type: "file", "data-test": "agent-upload", accept: ".txt,.md,.csv,.json" });
+  const uploadLocal = h("input", { type: "checkbox", "data-test": "agent-upload-local", checked: true });
+  const documents = h("ul", { class: "list", "data-test": "agent-documents" });
+  const capabilities = h("ul", { class: "list", "data-test": "agent-capabilities" });
+  const excluded = h("ul", { class: "list", "data-test": "agent-excluded" });
+  const limitInputs = {};
+  const limitsRow = h("div", { class: "row", "data-test": "agent-limits" });
+  for (const [name, label] of [["model_turns", "Model turns"], ["actions", "Actions"], ["seconds", "Run time (s)"]]) {
+    const input = h("input", { type: "number", min: "1", "data-test": "agent-limit-" + name.replace("_", "-"), style: "width:6em" });
+    limitInputs[name] = input;
+    limitsRow.append(h("label", { text: label + " " }, input));
+  }
+  const message = h("textarea", { rows: 4, "data-test": "agent-message", placeholder: "Ask the agent" });
+  const send = h("button", { class: "primary", "data-test": "agent-send", text: "Send" });
+  const stop = h("button", { "data-test": "agent-stop", text: "Stop", disabled: true });
+  const status = h("span", { class: "status", "data-test": "agent-status", "data-state": "idle" });
+  const approval = h("div", { class: "ws-hint", "data-test": "agent-approval", hidden: true });
+  const output = outPanel("agent", "output", "Answer");
+  const reasoning = outPanel("agent", "reasoning", "Reasoning stream", "reasoning");
+  const trace = h("ol", { class: "list", "data-test": "agent-trace" });
+  const traceCopy = copyControl("agent-copy-trace", () => trace.textContent, () => trace);
+  const drafts = h("ul", { class: "list", "data-test": "agent-drafts" });
+  put(box, destination, note, preflight, conversationRow,
+      h("h4", { text: "Documents and drafts" }), h("div", { class: "row" }, upload, h("label", { class: "ws-radio" }, uploadLocal, " Local only")), documents,
+      h("h4", { text: "Capabilities" }), capabilities, h("h4", { text: "Excluded for this model" }), excluded,
+      h("h4", { text: "Limits" }), limitsRow,
+      h("label", { text: "Message" }), message, h("div", { class: "row" }, send, stop, status), approval,
+      output.el, h("div", { class: "panelhead" }, h("label", { text: "Actions" }), traceCopy), trace,
+      h("h4", { text: "Drafts" }), drafts,
+      h("details", { class: "ws-troubleshooting" }, h("summary", { text: "Troubleshooting · reasoning" }), reasoning.el));
+  let conversation = null, inventory = null, ticks = new Set(), run = null, polling = null;
+  const display = (st, text, style = "") => { status.dataset.state = st; status.textContent = text; status.className = "status " + style; };
+  const taskBody = () => { const t = TABS.chat.task.requestTask(); return t.errors.length ? null : t.task; };
+  const limits = () => Object.fromEntries(Object.entries(limitInputs).map(([k, el]) => [k, Number(el.value)]));
+
+  function renderConversation(view) {
+    conversation = view.conversation;
+    documents.replaceChildren(); drafts.replaceChildren();
+    if (!conversation) { memoryCount.textContent = ""; return; }
+    for (const d of conversation.documents) {
+      const local = h("input", { type: "checkbox", "data-test": "agent-document-local", checked: d.local_only });
+      local.onchange = async () => {
+        try { const r = await api("/api/agent/documents/update", { format_version: 1, conversation: conversation.id, id: d.id, local_only: local.checked });
+          renderConversation(r); if (r.memory_cleared) display("idle", "Memory was cleared because a label was tightened.", "warn"); await refreshInventory(); }
+        catch (e) { local.checked = !local.checked; display("idle", e.message, "error"); }
+      };
+      const remove = h("button", { type: "button", "data-test": "agent-document-remove", text: "Remove" });
+      remove.onclick = async () => { try { renderConversation(await api("/api/agent/documents/update", { format_version: 1, conversation: conversation.id, id: d.id, remove: true })); await refreshInventory(); } catch (e) { display("idle", e.message, "error"); } };
+      const li = h("li", { "data-test": "agent-document", "data-id": d.id, "data-kind": d.kind, "data-local-only": String(d.local_only) },
+        h("span", { text: `${d.kind === "draft" ? "Draft" : "Document"} · ${d.name} · ${d.lines} lines ` }), h("label", { class: "ws-radio" }, local, " Local only"), remove);
+      if (d.kind === "draft") {
+        const link = h("a", { "data-test": "agent-draft-download", text: "Download", download: d.name,
+          href: `/api/agent/drafts/${d.id}?conversation=${encodeURIComponent(conversation.id)}&t=${encodeURIComponent(TOKEN)}` });
+        li.append(" ", link);
+        drafts.append(h("li", { "data-test": "agent-draft", "data-id": d.id }, h("span", { text: d.name + " " }), link.cloneNode(true)));
+      }
+      documents.append(li);
+    }
+    memory.checked = conversation.memory.on;
+    memoryCount.textContent = `${conversation.memory.entries} of ${conversation.memory.limit} remembered`;
+    memoryCount.dataset.entries = String(conversation.memory.entries);
+  }
+
+  function inventoryUrl() {
+    const q = new URLSearchParams({ revision: String(state.revision), capabilities: JSON.stringify([...ticks].map(name => {
+      const c = (inventory?.capabilities || []).find(x => x.name === name); return c && c.revision !== undefined ? { name, revision: c.revision } : { name }; })) });
+    const t = taskBody(); if (t) q.set("task", JSON.stringify(t));
+    return "/api/agent/inventory?" + q.toString();
+  }
+
+  async function refreshInventory() {
+    if (box.hidden) return;
+    try { inventory = await api(inventoryUrl()); } catch (e) { preflight.textContent = e.message; preflight.dataset.state = "error"; return; }
+    const d = inventory.destination;
+    if (d) { destination.textContent = `Model: ${d.kind} · ${d.url} · ${d.model}${d.provider ? " · " + d.provider : ""} · ${d.locality === "local" ? "local" : "remote"} · ${d.trusted_local ? "trusted local" : "not trusted for Local only data"}`;
+      destination.dataset.locality = d.locality; destination.dataset.trusted = String(d.trusted_local); }
+    note.textContent = inventory.preflight_note || "";
+    const p = inventory.preflight || {};
+    preflight.dataset.state = p.ok ? "ok" : "refused"; preflight.dataset.branch = p.branch || ""; preflight.dataset.code = p.code || "";
+    preflight.textContent = p.ok ? (p.branch === "text" ? "Preflight: ready, no tools offered (text-only turn)." : `Preflight: ready, ${p.offered.length} tools offered.`)
+      : `Preflight refused (${p.code}): ${p.message || ""}${p.remedy ? " Remedy: " + p.remedy + "." : ""}${p.remedies ? " Remedies: " + p.remedies.join(", ") + "." : ""}`;
+    capabilities.replaceChildren();
+    for (const c of inventory.capabilities || []) {
+      const tick = h("input", { type: "checkbox", "data-test": "agent-capability-tick", "data-name": c.name, checked: ticks.has(c.name), disabled: !!c.excluded });
+      tick.onchange = () => { if (tick.checked) ticks.add(c.name); else ticks.delete(c.name); refreshInventory(); };
+      capabilities.append(h("li", { "data-test": "agent-capability", "data-name": c.name, "data-kind": c.kind, "data-excluded": c.excluded || "" },
+        h("label", { class: "ws-radio" }, tick, ` ${c.name}${c.revision !== undefined ? " · revision " + c.revision : ""} · ${c.effects}${c.approval ? " · asks every call" : ""}`)));
+    }
+    excluded.replaceChildren(...(inventory.excluded || []).map(x => h("li", { "data-test": "agent-excluded-item", "data-name": x.name, "data-reason": x.reason, text: `${x.name}: ${x.reason}` })));
+    if (inventory.memory) renderConversation({ conversation: { ...(conversation || {}), id: conversation?.id, documents: inventory.documents || [], memory: inventory.memory } });
+    refreshControls();
+  }
+
+  function refreshControls() {
+    const busy = !!run && run.state === "running";
+    send.disabled = busy || !conversation || !inventory?.preflight?.ok;
+    stop.disabled = !busy;
+    newConversation.disabled = clearMemory.disabled = busy;
+  }
+
+  function renderRunView(v) {
+    trace.replaceChildren(...(v.trace || []).map(a => h("li", { "data-test": "agent-action", "data-capability": a.capability, "data-outcome": a.outcome, "data-label": a.label,
+      text: `${a.capability} · ${a.outcome}${a.code ? " (" + a.code + ")" : ""} · ${a.label}` })));
+    showApproval(v.pending_approval);
+    if (v.state === "ended") finish(v);
+  }
+
+  function showApproval(pending) {
+    approval.replaceChildren();
+    approval.hidden = !pending;
+    if (!pending) return;
+    approval.dataset.callId = pending.call_id;
+    const decide = (decision) => async () => { try { await api("/api/agent/approve", { format_version: 1, run_id: run.id, call_id: pending.call_id, decision }); approval.hidden = true; }
+      catch (e) { display("running", e.message, "error"); } };
+    approval.append(h("p", { text: `Approve this call to ${pending.destination.server}/${pending.destination.tool}? The server will receive exactly these arguments:` }),
+      h("pre", { "data-test": "agent-approval-arguments", text: pending.arguments_text }),
+      h("div", { class: "row" }, h("button", { class: "primary", "data-test": "agent-approve", text: "Approve", onclick: decide("approve") }),
+        h("button", { "data-test": "agent-deny", text: "Deny", onclick: decide("deny") })));
+  }
+
+  function finish(v) {
+    if (!run) return;
+    run.state = "ended";
+    if (polling) { clearTimeout(polling); polling = null; }
+    status.dataset.stopReason = v.stop_reason || "";
+    if (v.answer !== null && v.answer !== undefined) output.pre.textContent = v.answer;
+    else if (v.partial) output.pre.textContent = v.partial;
+    output.pre.dataset.partial = String(v.answer === null || v.answer === undefined);
+    display("done", `Ended: ${v.stop_reason}${v.restricted ? " · Local only" : ""}`, v.stop_reason === "answered" ? "" : "warn");
+    setTabRunning("chat", false);
+    api("/api/agent/conversation").then(renderConversation).catch(() => {});
+    refreshControls();
+  }
+
+  function onEvent(ev) {
+    if (!run) return;
+    if (ev.type === "started") { run.id = ev.run_id; display("running", "running…"); }
+    else if (ev.type === "text") output.pre.textContent += ev.text;
+    else if (ev.type === "reasoning") reasoning.pre.textContent += ev.text;
+    else if (ev.type === "action") {
+      if (ev.state === "awaiting_approval") showApproval(ev.approval);
+      else if (ev.state === "finished") { approval.hidden = true; trace.append(h("li", { "data-test": "agent-action", "data-capability": ev.capability, "data-outcome": ev.outcome, "data-label": ev.restricted ? "restricted" : "unrestricted", text: `${ev.capability} · ${ev.outcome}` })); output.pre.textContent = ""; }
+    } else if (ev.type === "final") finish(ev.view || ev);
+  }
+
+  function poll() {
+    if (!run || !run.id || run.state !== "running") return;
+    api("/api/agent/runs/" + run.id).then(v => { renderRunView(v); if (v.state === "running") polling = setTimeout(poll, 1000); })
+      .catch(() => { polling = setTimeout(poll, 2000); });
+  }
+
+  send.onclick = async () => {
+    const task = taskBody();
+    if (task === null) { display("idle", "Correct the marked task settings before sending.", "error"); return; }
+    run = { id: null, state: "running" }; output.pre.textContent = ""; reasoning.pre.textContent = ""; trace.replaceChildren(); delete status.dataset.stopReason;
+    setTabRunning("chat", true); display("running", "starting…"); refreshControls();
+    const body = { format_version: 1, conversation: conversation.id, revision: state.revision, task, message: message.value, limits: limits(),
+      capabilities: [...ticks].map(name => { const c = (inventory?.capabilities || []).find(x => x.name === name); return c && c.revision !== undefined ? { name, revision: c.revision } : { name }; }) };
+    let resp;
+    try { resp = await fetch("/api/agent/run", { method: "POST", headers: { "X-Session-Token": TOKEN, "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
+    catch (e) { display("unknown", "Connection lost; reattaching…", "warn"); reattach(); return; }
+    if (!resp.ok) { let j = {}; try { j = await resp.json(); } catch (e) { /* status only */ }
+      run = null; setTabRunning("chat", false); display("idle", `Refused (${j.code || resp.status}).${j.remedies ? " Remedies: " + j.remedies.join(", ") + "." : ""}`, "warn"); status.dataset.code = j.code || ""; refreshControls(); return; }
+    await readLines(resp, onEvent);
+    if (run && run.state === "running") { display("polling", "Stream lost; following the run by its ID…", "warn"); poll(); }
+  };
+  stop.onclick = async () => { if (run?.id) { display("stopping", "Stopping…", "warn"); try { await api("/api/agent/stop", { format_version: 1, run_id: run.id }); } catch (e) { /* the run reports its end */ } } };
+  newConversation.onclick = async () => { try { renderConversation(await api("/api/agent/conversation", { format_version: 1 })); ticks.clear(); await refreshInventory(); } catch (e) { display("idle", e.message, "error"); } };
+  memory.onchange = async () => { try { renderConversation(await api("/api/agent/conversation/memory", { format_version: 1, conversation: conversation.id, on: memory.checked })); await refreshInventory(); } catch (e) { memory.checked = !memory.checked; display("idle", e.message, "error"); } };
+  clearMemory.onclick = async () => { try { renderConversation(await api("/api/agent/conversation/memory", { format_version: 1, conversation: conversation.id, clear: true })); await refreshInventory(); } catch (e) { display("idle", e.message, "error"); } };
+  upload.onchange = async () => {
+    const file = upload.files[0]; if (!file || !conversation) return;
+    const r = await fetch("/api/agent/documents", { method: "POST", body: await file.arrayBuffer(), headers: { "X-Session-Token": TOKEN,
+      "X-Filename": encodeURIComponent(file.name), "X-Conversation": conversation.id, "X-Local-Only": uploadLocal.checked ? "true" : "false" } });
+    const j = await r.json().catch(() => ({}));
+    upload.value = "";
+    if (!r.ok) { display("idle", `Not staged (${j.code || r.status})${j.limit ? ": " + j.limit : ""}.`, "warn"); return; }
+    renderConversation(j); await refreshInventory();
+  };
+
+  async function reattach() {
+    const view = await api("/api/agent/conversation");
+    if (!view.conversation) { renderConversation(await api("/api/agent/conversation", { format_version: 1 })); }
+    else renderConversation(view);
+    if (view.active_run) { run = { id: view.active_run, state: "running" }; setTabRunning("chat", true); display("running", "Reattached to the running agent run."); showApproval(view.pending_approval); poll(); }
+    await refreshInventory();
+  }
+
+  toggle.onchange = async () => {
+    box.hidden = !toggle.checked;
+    // Off, Chat is exactly as before; on, the ordinary inputs give way to the panel. Task settings are shared.
+    for (const el of ordinary) if (el !== TABS.chat.task.el && !el.matches(".panel-intro")) el.hidden = toggle.checked;
+    if (toggle.checked) {
+      for (const [name, el] of Object.entries(limitInputs)) if (!el.value) el.value = String({ model_turns: 8, actions: 6, seconds: 300 }[name]);
+      try { await reattach(); } catch (e) { display("idle", e.message, "error"); }
+    }
+  };
+  for (const el of Object.values(limitInputs)) el.onchange = refreshInventory;
+  TABS.agent = { refresh: refreshInventory, reattach, toggle,
+    async tutorialPrepare(text) {
+      toggle.checked = true; await toggle.onchange();
+      ticks = new Set(["aw_calculate"]); message.value = text; output.pre.textContent = ""; trace.replaceChildren();
+      await refreshInventory();
+    } };
+}
+makeAgentPanel();
 
 // --- previews shared by Documents and MCP tools: Copy replaces Insert (Section 11.4) ------------------------------
 function sizeLine(ins) {
@@ -1948,6 +2180,36 @@ async function serversFailure(e) {
   else $("servers-msg").textContent = e.message;
 }
 
+async function fillClassifications() {
+  const list = $("agent-classify-list"), msg = $("agent-classify-msg");
+  list.replaceChildren(); msg.textContent = "";
+  let view;
+  try { view = await api("/api/agent/capabilities"); } catch (e) { msg.textContent = e.message; return; }
+  if (!view.tools.length) msg.textContent = "No tool list has been loaded yet.";
+  for (const t of view.tools) {
+    const c = t.classification;
+    const enabled = h("input", { type: "checkbox", "data-key": "enabled", checked: c.enabled });
+    const effects = h("select", { "data-key": "effects" }, ...["unknown", "read-only", "changes state"].map(v => new Option(v, v)));
+    effects.value = c.effects;
+    const files = h("input", { type: "checkbox", "data-key": "no_host_files", checked: c.no_host_files });
+    const local = h("input", { type: "checkbox", "data-key": "results_local_only", checked: c.results_local_only });
+    const save = h("button", { type: "button", "data-test": "agent-classify-save", text: "Save" });
+    save.onclick = async () => {
+      try {
+        const current = await api("/api/agent/capabilities");
+        await api("/api/agent/capabilities", { format_version: 1, expected_revision: current.revision, row: { url: t.url, server: t.server, tool: t.tool,
+          schema_digest: t.schema_digest, enabled: enabled.checked, effects: effects.value, no_host_files: files.checked, results_local_only: local.checked } });
+        await fillClassifications(); $("agent-classify-msg").textContent = "Saved."; TABS.agent?.refresh?.();
+      } catch (e) { $("agent-classify-msg").textContent = e.message; }
+    };
+    list.append(h("li", { "data-test": "agent-classify-row", "data-server": t.server, "data-tool": t.tool, "data-eligible": String(t.eligible), "data-reason": t.reason || "" },
+      h("span", { text: `${t.server} · ${t.tool} ` }),
+      h("label", { class: "ws-radio" }, enabled, " Enabled"), h("label", { text: " Effects " }, effects),
+      h("label", { class: "ws-radio" }, files, " Cannot reach files on this computer"),
+      h("label", { class: "ws-radio" }, local, " Results Local only"), save));
+  }
+}
+$("agent-classify").addEventListener("toggle", () => { if ($("agent-classify").open) fillClassifications(); });
 $("open-servers").onclick = () => { fillServers(); $("servers-dialog").showModal(); };
 $("close-servers").onclick = () => $("servers-dialog").close();
 $("add-server").onclick = () => $("servers-list").append(serverRow("", {}));
@@ -3080,7 +3342,7 @@ async function wsPlan(action,request){
   const plan=await wsApi("plans",{action,request});
   const d=plan.descriptor, disclosure=h("div");
   for(const c of d.candidates||[]){
-    const dest=c.destination||{},url=dest.base_url||dest.url;let locality=c.kind==="script"?"Local script":"Remote or unknown";
+    const dest=c.destination||{},url=dest.base_url||dest.url;let locality=["python","transform"].includes(c.kind)||c.destination?.builtin?"Local execution":"Remote or unknown";
     if(url){try{locality=["localhost","127.0.0.1","[::1]"].includes(new URL(url).hostname)?"Local endpoint":"Remote endpoint";}catch(e){}}
     disclosure.append(wsShowValue({source:c.block_revision_number?"Saved revision "+c.block_revision_number:"Unsaved draft",destination:c.destination||c.kind,connects_to:locality,effects:c.effects}));if(c.settings)disclosure.append(wsTyped(c.settings));
   }
@@ -3188,7 +3450,11 @@ async function wsNew(starter){
   const box=h("div",{class:"ws-create"}),name=wsField(box,"Block key"),starters=(await wsApi("starters")).starters;
   name.title="A stable identifier, not a display title: 1–64 letters, digits, dots, underscores or hyphens, starting with a letter or digit.";
   name.placeholder="summarise_notes";
-  const kind=wsChoice(box,"Start with",[...starters.map(s=>[s.id,s.id.replaceAll("_"," ")]),...["model","tool","script"].map(k=>["blank_"+k,"Blank "+k])]);
+  const startersView=await wsApi("starters"),LABEL={blank_model:"Blank",blank_tool:"Blank",blank_python:"Blank",call_tool:"Call an MCP tool",builtin_utility:"Built-in utility",describe_python:"Describe it",count_text:"Count text",select_fields:"Select or rename fields",format_report:"Format report",restore_placeholders:"Restore placeholders"};
+  // Start with, grouped by type (0.2.2, 11): LLM, Tool, Python, Transform.
+  const kind=h("select",{"data-test":"ws-choice-start-with","aria-label":"Start with"});
+  for(const g of startersView.groups||[]){const group=h("optgroup",{label:g.label,"data-group":g.id});for(const id of g.entries)group.append(new Option(LABEL[id]||id.replaceAll("_"," "),id));kind.append(group);}
+  box.append(h("label",{class:"ws-field"},"Start with",kind));
   const preview=h("p",{class:"ws-hint","data-test":"ws-create-preview"});box.append(preview);
   const modelBox=h("div"),toolBox=h("div");box.append(modelBox,toolBox);
   const role=wsRoleChoice(modelBox,"Model role","fast");
@@ -3218,18 +3484,20 @@ async function wsNew(starter){
     }catch(e){if(current===generation){discovery.dataset.state="error";discovery.textContent=wsErrorText(e);}}
   }
   server.onchange=discover;toolBox.append(wsButton("Refresh tools",async()=>{state=await api("/api/state");await discover();}));
-  const MODEL_STARTERS=["blank_model","write_text","summarise","extract_fields","choose_label","check_source"],TOOL_STARTERS=["call_tool","blank_tool"];
+  const MODEL_STARTERS=["blank_model","write_text","summarise","extract_fields","choose_label","check_source"],TOOL_STARTERS=["call_tool","blank_tool"],PYTHON_STARTERS=["blank_python","describe_python"];
   function updateKind(){
-    const k=kind.value,model=MODEL_STARTERS.includes(k),toolKind=TOOL_STARTERS.includes(k),version=starters.find(s=>s.id===k)?.version||1;
-    modelBox.hidden=!model;toolBox.hidden=!toolKind;labels.hidden=!(model||toolKind);
-    preview.dataset.kind=model?"model":toolKind?"tool":version===2?"transform":"script";
-    preview.textContent=model||toolKind?"Workflow-ready "+(model?"model":"tool")+" block: input text, output out."
-      :version===2?"Workflow-ready built-in transform. Runs locally.":"Python script blocks run standalone and can't join workflows.";
+    const k=kind.value,model=MODEL_STARTERS.includes(k),toolKind=TOOL_STARTERS.includes(k),python=PYTHON_STARTERS.includes(k);
+    modelBox.hidden=!(model||k==="describe_python");toolBox.hidden=!toolKind;labels.hidden=!(model||toolKind||python||k==="builtin_utility");
+    preview.dataset.kind=model?"model":toolKind||k==="builtin_utility"?"tool":python?"python":"transform";
+    preview.textContent=model||toolKind?"Workflow-ready "+(model?"model":"Tool")+" block: input text, output out."
+      :k==="builtin_utility"?"Tool block bound to a built-in utility. Runs locally."
+      :k==="describe_python"?"Describe the Python block; the model writes examples and source for you to review.":python?"Python block: runs locally in scriptSpell's restricted runner.":"Workflow-ready built-in transform. Runs locally.";
     if(!toolBox.hidden)discover();else ++generation;
   }
   if(typeof starter==="string"&&[...kind.options].some(o=>o.value===starter))kind.value=starter;
   kind.onchange=updateKind;updateKind();
   const error=h("p",{role:"alert","data-test":"ws-create-error"});box.append(error);
+  let describeKey=null;
   const choice=await wsDialog("Create a block",box,["Create draft","Create with assistance","Cancel"],async action=>{
     if(action==="Cancel")return true;
     error.textContent="";delete error.dataset.code;name.removeAttribute("aria-invalid");
@@ -3242,9 +3510,11 @@ async function wsNew(starter){
     if(!labels.hidden&&!chosenLabels()){
       error.dataset.code="labels_required";error.textContent="Choose how this block's ports are labelled.";labels.querySelector("input").focus();return false;
     }
+    if(kind.value==="describe_python"){describeKey={key:name.value,role:role.value,data_handling:chosenLabels()};return true;}
     try{await wsLoad({key:name.value,starter:kind.value,starter_version:starters.find(s=>s.id===kind.value)?.version||1,role:modelBox.hidden?null:role.value,server:toolBox.hidden?null:server.value,tool:toolBox.hidden?null:tool.value,...(labels.hidden?{}:{data_handling:chosenLabels()})},true);return true;}
     catch(e){error.dataset.code=e.code||"error";error.textContent=wsErrorText(e);return false;}
   });if(!["Create draft","Create with assistance"].includes(choice))return;
+  if(describeKey){await wsLoad({key:describeKey.key,starter:"blank_python",data_handling:describeKey.data_handling},true);ws.view="design";wsRender();await wsDescribePython(describeKey.role);return;}
   ws.examples=structuredClone(starters.find(s=>s.id===kind.value)?.examples||[]);ws.examplesDirty=ws.examples.length>0;ws.view="design";wsRender();if(choice==="Create with assistance")await wsAssist("create");
 }
 function wsRoleChoice(parent,label,preferred){
@@ -3427,7 +3697,8 @@ function wsDesign(){
     for(const field of d[side]||[])port(field.name,field.format,field.description,field.source,field.local_only);
     area.append(wsButton("Add "+side.slice(0,-1),()=>{port("","text","","");changed();refreshInserts();}));
   }
-  const behavior=wsField(instructions,d.kind==="script"?"Python source":d.kind==="tool"?"Tool name":"Instructions",d.behaviour,true);
+  const builtin=d.kind==="tool"&&!!d.builtin;
+  const behavior=wsField(instructions,d.kind==="python"?"Python source":d.kind==="tool"?"Tool name":"Instructions",d.behaviour,true);
   const system=wsField(instructions,"System instructions",d.system,true);
   const inserts=h("div",{class:"ws-inserts","data-test":"ws-inserts"}),missing=h("div",{"data-test":"ws-missing-references"});
   if(d.kind==="model"){
@@ -3458,12 +3729,16 @@ function wsDesign(){
     for(const field of [behavior,system])field.addEventListener("input",()=>refreshInserts());
     refreshInserts();
     variables.append(h("p",{class:"ws-hint",text:"Response: named JSON envelope — one top-level key per output."}));
-  }else if(d.kind==="script"){const details=h("details",{},h("summary",{text:"Inspect or edit Python source"}));instructions.append(details);details.append(behavior.parentElement);instructions.append(h("p",{text:p.script_warning}));}
-  else if(d.kind==="tool")instructions.append(behavior.parentElement);
+  }else if(d.kind==="python"){
+    behavior.dataset.test="ws-python-source";instructions.append(behavior.parentElement);
+    instructions.append(h("p",{class:"ws-hint","data-test":"ws-python-note",text:"Python block: transform(inputs) returns a dictionary with exactly the declared outputs. It runs in scriptSpell's restricted runner, a language-level restriction, not an OS sandbox. JSON numbers arrive as int or Decimal; returning a float fails the step."}));
+  }
+  else if(d.kind==="tool"&&!builtin)instructions.append(behavior.parentElement);
   instructions.append(purpose.parentElement);
   // Settings column: role, destination, sampling, protection, documentation, advanced.
-  const role=d.kind==="model"?wsChoice(misc,"Model role",[],d.binding):wsField(misc,d.kind==="tool"?"Server":"Role",d.binding);role.parentElement.hidden=["script","transform"].includes(d.kind);
-  if(["model","tool"].includes(d.kind))misc.append(wsDestinationLine(p.destination,p.destination_facts,async()=>{
+  const role=d.kind==="model"?wsChoice(misc,"Model role",[],d.binding):builtin?wsChoice(misc,"Built-in",[["current_datetime","Current date and time"],["calculate","Calculator"],["date_arithmetic","Date arithmetic"]],d.binding):wsField(misc,d.kind==="tool"?"Server":"Role",d.binding);role.parentElement.hidden=["python","transform"].includes(d.kind);
+  if(builtin)role.dataset.test="ws-builtin";
+  if(d.kind==="model"||(d.kind==="tool"&&!builtin))misc.append(wsDestinationLine(p.destination,p.destination_facts,async()=>{
     if(await wsGrantTrust(d.kind==="model"?{kind:p.destination.kind,url:p.destination.base_url,model:p.destination.model,provider:p.destination.provider||""}:{kind:"mcp",url:p.destination.url,server:p.destination.server,tool:p.destination.tool})){await wsFlush();await wsLoad(wsSourceOf(),ws.dirty);}}));
   let refreshModelDefaults=()=>{};
   if(d.kind==="model"){
@@ -3476,7 +3751,7 @@ function wsDesign(){
     refreshRoles();role.onchange=()=>refreshModelDefaults();
     const configure=wsButton("Configure roles",()=>{$("open-roles").click();$("roles-dialog").addEventListener("close",()=>{if(role.isConnected)refreshRoles();},{once:true});});configure.className="ws-role-config";role.parentElement.classList.add("ws-role-field");role.parentElement.append(configure);
   }
-  if(d.kind==="tool"){
+  if(d.kind==="tool"&&!builtin){
     misc.append(wsButton("Discover tools",async()=>{
       const discovered=await api("/api/mcp/tools",{server:role.value,revision:mcpInfo().revision}),box=h("div");
       const tool=wsChoice(box,"Discovered tool",discovered.tools.map(t=>[t.name,t.title||t.name]),behavior.value);
@@ -3555,7 +3830,6 @@ function wsDesign(){
   if(p.destination)more.append(wsShowValue(p.destination));if(p.setup_issues?.length)misc.append(wsShowValue(p.setup_issues));
   if(p.issues?.length)misc.prepend(h("div",{"data-test":"ws-validation","data-state":"invalid"},wsShowValue(p.issues)));
   more.append(wsButton("Refresh design fields",async()=>{await wsFlush();wsRender();}));
-  if(d.kind==="script"&&ws.draft.base_digest)more.append(wsButton("Update support files",wsSupport));
   if(p.classification==="starter"){
     const area=h("fieldset",{},h("legend",{text:"Starter parameters"}));instructions.prepend(area);
     const m=ws.draft.metadata,params=m.parameters;let read;
@@ -3577,12 +3851,46 @@ function wsDesign(){
       }
       params.mappings.forEach(mapping);area.append(wsButton("Add mapping",()=>mapping()));read=()=>({mappings:mappings.map(fn=>fn())});
     }
-    if(d.kind==="script")area.append(wsButton("Convert to built-in transform",async()=>{await wsFlush();await wsLoad({draft:ws.draft,edit:{kind:"convert_transform"}},true);}));
     area.append(wsButton("Apply parameters",async()=>{await wsFlush();await wsLoad({draft:ws.draft,edit:{kind:"starter_parameters",parameters:read()}},true);}));
-  }else if(d.kind==="script")instructions.append(h("p",{text:p.classification==="unsupported_starter_version"?"This starter version is unavailable. Captured source is preserved; parameter editing is disabled.":"Custom Python source; parameter controls are disabled."}));
+  }
   more.append(wsSource("Details · stable key",ws.draft.key));
 }
 
+
+// --- Python authoring: Describe it (0.2.2, 10.7) -----------------------------------------------------------------
+async function wsDescribePython(role){
+  const box=h("div",{"data-test":"ws-python-describe"});
+  const instruction=wsField(box,"Describe the Python block",ws.draft?.metadata?.description||"",true);instruction.dataset.test="ws-python-instruction";
+  const status=h("p",{class:"ws-hint","data-test":"ws-python-status","data-state":"idle"});
+  const examples=h("div",{"data-test":"ws-python-examples"}),results=h("div",{"data-test":"ws-python-results"});
+  const yaml=h("textarea",{rows:12,"data-test":"ws-python-yaml"}),yamlBox=h("details",{"data-test":"ws-python-edit-yaml"},h("summary",{text:"Edit as YAML"}),yaml);
+  const source=h("pre",{"data-test":"ws-python-generated-source"});
+  box.append(status,examples,yamlBox,results,source);
+  let flow=null;
+  const show=(v)=>{
+    flow=v.flow;status.textContent=`${v.requests} of ${v.request_limit} model requests sent.`;status.dataset.requests=String(v.requests);
+    examples.replaceChildren();
+    if(v.interface)examples.append(wsShowValue({ports:v.interface}));
+    for(const [i,ex] of (v.examples||[]).entries())examples.append(h("div",{"data-test":"ws-python-example","data-index":String(i)},wsShowValue(ex)));
+    if(v.examples_yaml!==null&&v.examples_yaml!==undefined)yaml.value=v.examples_yaml;
+    results.replaceChildren(...(v.results||[]).map(r=>h("div",{"data-test":"ws-python-result","data-status":r.status},wsShowValue(r))));
+    source.textContent=v.source||"";
+  };
+  const fail=(e)=>{status.dataset.state="error";status.dataset.code=e.code||"";status.textContent=wsErrorText(e)+(e.body?.issues?.length?" "+e.body.issues.map(i=>i.location+": "+i.message).join("; "):"");};
+  const step=async(path,body)=>{status.dataset.state="working";try{const v=await wsApi("python/"+path,{flow,...body});show(v);status.dataset.state=path;return v;}catch(e){fail(e);return null;}};
+  for(;;){
+    const choice=await wsDialog("Describe a Python block",box,flow?["Generate examples","Accept edited YAML","Generate and check","Apply","Close"]:["Generate examples","Close"]);
+    if(choice==="Close"||!choice)return;
+    if(!flow){try{show(await wsApi("python/start",{key:ws.draft.key,instruction:instruction.value,role,draft:ws.draft}));}catch(e){fail(e);continue;}}
+    if(choice==="Generate examples")await step("examples",{});
+    else if(choice==="Accept edited YAML")await step("accept",{text:yaml.value});
+    else if(choice==="Generate and check")await step("generate",{});
+    else if(choice==="Apply"){
+      try{const applied=await wsApi("python/apply",{flow});ws.examples=applied.examples;ws.examplesDirty=true;await wsLoad({draft:{...applied.draft,draft_ref:ws.draft.draft_ref}},true);ws.view="design";wsRender();return;}
+      catch(e){fail(e);}
+    }
+  }
+}
 // --- Standard description of the selected saved revision (block_metadata_refactor spec v2, section 5) ---------
 const WS_SECTIONS=[["use","Use"],["exclusions","Do not use for"],["effects","Effects"],["limitations","Limitations"],["missing_data","Missing data"],["failures","Failures"]];
 let wsDescribeGeneration=0;
@@ -3605,7 +3913,7 @@ function wsDescriptionPanel(){
     row((side==="inputs"?"Input ":"Output ")+name+(type?" ("+type+")":""),doc||meaning||"No meaning declared",doc?"documentation":"declared meaning");
   }
   const binding=ws.projection?.design?.binding;
-  row("Configured requirement",binding?(ws.projection.design.kind==="tool"?"MCP server "+binding:"Model role "+binding):ws.projection?.design?.kind==="script"?"Python on this computer":"None recorded","current configuration");
+  row("Configured requirement",binding?(ws.projection.design.kind==="tool"?(ws.projection.design.builtin?"Built-in "+binding:"MCP server "+binding):"Model role "+binding):ws.projection?.design?.kind==="python"?"Python block (scriptSpell)":"None recorded","current configuration");
   row("Declared effects",ws.draft.metadata?.effects||"unknown","executable metadata");
   if(saved.runIssues?.length)box.append(h("div",{"data-test":"ws-run-issues"},h("p",{text:"This revision cannot run until these dependencies are repaired. Its description is unaffected."}),wsShowValue(saved.runIssues)));
   const blocked=ws.dirty?"Save or discard the executable changes before describing this revision.":!sd.basis?"This revision has no usable description basis.":!sd.writable?"This description record cannot be replaced safely here.":"";
@@ -4103,6 +4411,8 @@ $("open-settings").before(settingsGroup);
 const settingsOverview=h("div",{"data-test":"settings-overview"},h("p",{class:"note"},summaryEl));
 const SETTINGS_INLINE={
   overview:()=>[h("h3",{text:"Overview"}),h("p",{text:$("workspace").textContent||""}),settingsOverview,
+    // A scriptSpell cleanup that could not be confirmed closes the Python budget for this process (0.2.2, 10.2).
+    state.python?.restart_required?h("p",{class:"err-text","data-test":"settings-python-restart",text:"Python blocks are disabled until AgentWiz is restarted: a Python worker's cleanup could not be confirmed."}):"",
     h("p",{"data-test":"settings-saving-state",text:"Save runs: "+(historyInfo().save_runs?"On":"Off")})],
   saving:()=>[h("h3",{text:"Saving & history"}),h("p",{text:"Save runs: "+(historyInfo().save_runs?"On":"Off")+". Turn it on or off in the header."}),
     h("p",{class:"note",text:$("save-runs-control").title}),h("p",{class:"note",text:DISCLOSURE})],

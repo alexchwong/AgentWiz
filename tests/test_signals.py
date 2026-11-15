@@ -1,9 +1,10 @@
 """The command line's signal policy and process shutdown: techspec 0.1.4, test #114 (R3; review v3 R4, review v4 R3).
 
-Runs `python -m agentwiz` as a subprocess against a temporary workspace folder, starts a waiting script block through
-its HTTP route, and sends signals. Nothing leaves the temporary folder."""
+Runs `python -m agentwiz` as a subprocess against a temporary workspace folder, starts a Python block through
+its HTTP route, and sends signals. A test-only hook installed in the child keeps a run-history write waiting, so a
+drain is still in progress when the second signal arrives (0.2.2: host scripts, which used to keep the drain
+waiting, are retired). Nothing leaves the temporary folder."""
 import json
-import os
 import signal
 import subprocess
 import sys
@@ -13,23 +14,31 @@ import urllib.request
 
 import pytest
 
-from conftest import group_gone, wait_until
-from test_blocks import script_block
+from conftest import python_block, wait_until
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals and process groups")
 
+# Installs the hook, then runs the real command line exactly as `python -m agentwiz` would.
+BOOT = ("import sys, threading\n"
+        "from agentwiz import history\n"
+        "if sys.argv[1] == 'hold-history':\n"
+        "    history.before_write = lambda: threading.Event().wait(120)\n"
+        "sys.argv = ['agentwiz', *sys.argv[2:]]\n"
+        "from agentwiz.__main__ import main\n"
+        "sys.exit(main())\n")
+
 
 class Running:
-    def __init__(self, tmp_path):
+    def __init__(self, tmp_path, hook="none"):
         self.tmp = tmp_path
         self.proc = subprocess.Popen(
-            [sys.executable, "-m", "agentwiz", "--no-browser", "--workspaces-dir", str(tmp_path / "workspaces"),
+            [sys.executable, "-c", BOOT, hook, "--no-browser", "--workspaces-dir", str(tmp_path / "workspaces"),
              "--profiles-dir", str(tmp_path / "profiles"), "--mcp-servers-dir", str(tmp_path / "mcp")],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(tmp_path))
         first = self.proc.stdout.readline().strip().removeprefix("[AgentWiz] ")
         assert first.startswith("http://127.0.0.1:"), first
         self.base, self.token = first.split("/?t=")[0], first.split("/?t=")[1]
-        self.block_dir = tmp_path / "workspaces" / "default" / "blocks" / "sc"
+        self.block_dir = tmp_path / "workspaces" / "default" / "blocks" / "py"
 
     def post(self, path, body, timeout=60):
         req = urllib.request.Request(self.base + path, data=json.dumps(body).encode(), method="POST",
@@ -40,16 +49,19 @@ class Running:
         req = urllib.request.Request(self.base + path, headers={"X-Session-Token": self.token})
         return json.loads(urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=10).read())
 
-    def start_script(self, code):
+    def start_python(self, code):
         (self.block_dir / "scripts").mkdir(parents=True, exist_ok=True)
-        (self.block_dir / "block.json").write_text(json.dumps(script_block("sc") | {"steps": [
-            {"id": "run", "kind": "script", "file": "scripts/go.py", "timeout_s": 600}]}))
+        (self.block_dir / "block.json").write_text(json.dumps(python_block("py")))
         (self.block_dir / "scripts" / "go.py").write_text(code)
-        revision = {r["name"]: r for r in self.get("/api/blocks")["blocks"]}["sc"]["revision"]
+        revision = {r["name"]: r for r in self.get("/api/blocks")["blocks"]}["py"]["revision"]
         self.events = []
-        resp = self.post("/api/blocks/run", {"name": "sc", "revision": revision, "inputs": {"a": "x"}})
-        threading.Thread(target=lambda: self.events.extend(
-            json.loads(line) for line in resp.read().splitlines() if line), daemon=True).start()
+        resp = self.post("/api/blocks/run", {"name": "py", "revision": revision, "inputs": {"text": "x"}})
+
+        def read():
+            for line in resp:
+                if line.strip():
+                    self.events.append(json.loads(line))
+        threading.Thread(target=read, daemon=True).start()
 
     def kill(self):
         if self.proc.poll() is None:
@@ -57,7 +69,8 @@ class Running:
         self.proc.wait(10)
 
 
-PID_SCRIPT = ("import os, sys, time, signal\n{trap}open({pid!r}, 'w').write(str(os.getpid()))\ntime.sleep(120)\n")
+LOOP = "def transform(inputs):\n    n = 0\n    while True:\n        n += 1\n"
+QUICK = "def transform(inputs):\n    return {'out': 1}\n"
 
 
 @pytest.fixture
@@ -67,20 +80,12 @@ def running(tmp_path):
     app.kill()
 
 
-def start_waiting(running, tmp_path, trap=""):
-    pidfile = tmp_path / "script.pid"
-    running.start_script(PID_SCRIPT.format(trap=trap, pid=str(pidfile)))
-    assert wait_until(pidfile.exists, 20)
-    time.sleep(0.2)
-    return int(pidfile.read_text())
-
-
 @pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM])
 def test_the_first_signal_drains_and_exits_zero(running, tmp_path, sig):
-    pgid = start_waiting(running, tmp_path)
+    running.start_python(LOOP)
+    assert wait_until(lambda: running.get("/api/state")["python"]["running"] == 1, 20)
     running.proc.send_signal(sig)
     assert running.proc.wait(30) == 0
-    assert group_gone(pgid)
     # shutdown interrupts delivery (10.10, step 2), so the page need not see the end; the stream just closes
     assert wait_until(lambda: any(e.get("type") == "started" for e in running.events), 5)
 
@@ -89,22 +94,23 @@ def test_the_first_signal_drains_and_exits_zero(running, tmp_path, sig):
                                                  (signal.SIGTERM, signal.SIGTERM, 143),
                                                  (signal.SIGTERM, signal.SIGINT, 130),
                                                  (signal.SIGINT, signal.SIGTERM, 143)])
-def test_a_second_signal_exits_at_once_and_writes_nothing(running, tmp_path, first, second, code):
-    # a script that ignores SIGTERM keeps the drain waiting for the 2 second escalation
-    pgid = start_waiting(running, tmp_path, trap="signal.signal(signal.SIGTERM, signal.SIG_IGN)\n")
-    running.proc.send_signal(first)
-    time.sleep(0.3)
-    assert running.proc.poll() is None                         # still draining
-    out_before = running.proc.stdout
-    running.proc.send_signal(second)
-    assert running.proc.wait(10) == code
-    rest = running.proc.stderr.read()
-    assert "Traceback" not in rest and "shutting" not in rest.lower()
+def test_a_second_signal_exits_at_once_and_writes_nothing(tmp_path, first, second, code):
+    app = Running(tmp_path, hook="hold-history")
     try:
-        os.killpg(pgid, signal.SIGKILL)                         # the forced exit leaves the group to the test
-    except ProcessLookupError:
-        pass
-    assert out_before is not None
+        state = app.get("/api/state")
+        app.post("/api/history/switch", {"save_runs": True, "revision": state["history"]["revision"]}).read()
+        app.start_python(QUICK)
+        # the run's result is committed and delivered; its history write is held, so the drain waits
+        assert wait_until(lambda: any(e.get("type") == "final" for e in app.events), 20)
+        app.proc.send_signal(first)
+        time.sleep(0.3)
+        assert app.proc.poll() is None                             # still draining
+        app.proc.send_signal(second)
+        assert app.proc.wait(10) == code
+        rest = app.proc.stderr.read()
+        assert "Traceback" not in rest and "shutting" not in rest.lower()
+    finally:
+        app.kill()
 
 
 def test_a_signal_while_idle_exits_zero(running):

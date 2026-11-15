@@ -1,0 +1,1380 @@
+"""Agentic Chat: the headless loop, run capture, limits, the deadline, turn classification and the trace
+(0.2.2, section 4), with the conversation manager that owns the one live conversation and the one agent run of
+this process (F-20, F-27).
+
+`AgentRun.run()` is headless and knows no HTTP: it reports to an observer whose failures are ignored, as block
+runs do. The model may ask AgentWiz to run one approved capability per turn; AgentWiz validates every request,
+decides what may run and where data may go, and returns a checked result. Nothing in a result, a document or a
+model turn can change the inventory, a classification, a trust grant, a label, a limit or an approval.
+
+Lock order: the manager's lock is a leaf; it is never held while a state, store or token lock is taken, nor
+during a model or tool call, a wait, a check or a file read. Decide under the lock, act after releasing it.
+Messages name rules and locations, never values.
+"""
+from __future__ import annotations
+
+import dataclasses
+import json
+import secrets
+import threading
+import time
+from collections import OrderedDict
+from pathlib import Path
+from typing import Any, Mapping
+
+import modelspell
+from modelspell import (Cancelled, ConfigError, ModelSpellError, ToolDefinition, ToolOutput,
+                        UnsupportedOperation, UnsupportedSetting)
+
+from . import (__version__, agent_capabilities as caps, agent_documents as docs, agent_tools, checks, jsonio,
+               model_call, outbound_policy, python_step, runner, runs)
+from .agent_tools import ToolError
+from .errors import report_internal
+from .task_settings import TaskSettingError, parse_task
+
+SYSTEM_PROMPT = (Path(__file__).parent / "prompts" / "agent_system.md")
+SYSTEM_PROMPT_ID = "agent_system"
+SYSTEM_PROMPT_VERSION = 1
+RECORD_VERSION = 1
+# User-editable limits (4.6, F-14): (default, maximum).
+LIMITS = {"model_turns": (8, 20), "actions": (6, 20), "seconds": (300, 1800)}
+# Constants (4.6).
+CORRECTION_LIMIT = 3
+CHILD_SEND_LIMIT = 10
+ARGUMENT_BYTES = 262_144
+RESULT_BYTES = 32_768
+REQUEST_BYTES = 1 << 20
+OUTPUT_BYTES = 1 << 20
+RUNS_KEPT = 20
+ROUTE_REMEDIES = {"lmstudio": "choose a reasoning level other than Off, or clear the setting the route does not send",
+                  "openrouter": "pin one provider in Model settings",
+                  "openai_compat": "clear the reasoning level"}
+PREFLIGHT_NOTE = ("Preflight shows that modelSpell accepts the request shape; it does not show that this server, "
+                  "model and chat template produce usable tool calls.")
+FEEDBACK = {
+    "unknown_capability": "no offered tool has that name; use one of the offered tools",
+    "malformed_arguments": "the arguments are not one JSON object within the size limit",
+    "schema_mismatch": "the arguments do not match the tool's schema",
+    "input_check_failed": "the arguments do not pass the block's input checks",
+    "one_call_per_turn": "ask for at most one tool call per turn; none of these calls was run",
+    "denied": "the user denied this call",
+    "no_result": "the call's outcome is unknown; it was not repeated",
+    "tool_failed": "the tool reported a failure",
+    "block_failed": "the block run failed",
+    "refused": "AgentWiz refused this call before anything was sent",
+    "configuration_changed": "the configuration changed since the run started; this call was not run",
+    "busy": "the execution slots are busy; nothing was sent",
+}
+
+
+class AgentError(Exception):
+    """A refusal before a run is created: a real HTTP status with a fixed code (4.9)."""
+
+    def __init__(self, code: str, status: int = 409, **extra: Any):
+        super().__init__(code)
+        self.code = code
+        self.status = status
+        self.extra = extra
+
+
+def _system_text() -> str:
+    return SYSTEM_PROMPT.read_text(encoding="utf-8")
+
+
+def _limits(raw: object) -> dict:
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict) or set(raw) - {*LIMITS, "tokens", "cost"}:
+        raise AgentError("invalid_limits", 400)
+    out = {}
+    for name, (default, maximum) in LIMITS.items():
+        value = raw.get(name, default)
+        if type(value) is not int or not 1 <= value <= maximum:
+            raise AgentError("invalid_limits", 400, limit=name)
+        out[name] = value
+    for name in ("tokens", "cost"):
+        value = raw.get(name)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0):
+            raise AgentError("invalid_limits", 400, limit=name)
+        out[name] = value
+    return out
+
+
+def _plain(value: Any) -> Any:
+    """modelSpell's frozen replay as plain JSON values, for measuring."""
+    if isinstance(value, Mapping):
+        return {str(k): _plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    return value
+
+
+def _size(value: Any) -> int:
+    return len(json.dumps(_plain(value), ensure_ascii=False, default=str).encode("utf-8"))
+
+
+def _envelope(value: Mapping) -> str:
+    return jsonio.encode_exact(dict(value))
+
+
+# --- the observer --------------------------------------------------------------------------------------------------
+class Observer:
+    """What a run reports to. Every method may fail; failures are ignored (delivery never affects the run)."""
+
+    def event(self, event: dict) -> None: ...
+
+
+class _Safe:
+    def __init__(self, observer: Observer | None):
+        self.observer = observer or Observer()
+
+    def event(self, event: dict) -> None:
+        try:
+            self.observer.event(event)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+class _ChildObserver(runner.Observer):
+    """A child block run's observer: learns its run ID, stops it if the parent was stopped first, and charges
+    reported usage to the parent's ceilings."""
+
+    def __init__(self, parent: "AgentRun", action: dict):
+        self.parent = parent
+        self.action = action
+
+    def started(self, event: dict) -> None:
+        run_id = event.get("run_id")
+        with self.parent.lock:
+            self.parent.child_run_id = run_id
+            stop = self.parent.token.cancelled
+        if stop and run_id:
+            try:
+                self.parent.state.store.stop_run(run_id, runs.USER_STOP)
+            except runs.NoSuchRunInMemory:
+                pass
+
+    def attempt_committed(self, record: dict) -> None:
+        self.parent.add_usage(record.get("result") if isinstance(record.get("result"), dict) else None)
+
+
+# --- capture (4.3) -------------------------------------------------------------------------------------------------
+@dataclasses.dataclass
+class Capture:
+    revision: int                       # the configuration revision of the request snapshot
+    snapshot: Any                       # model_call.RequestSnapshot, key included
+    task: Any
+    arguments: dict
+    trusted: Any                        # outbound_policy.Dispatch for a trusted local orchestrator, else None
+    capabilities: list
+    by_name: dict
+    definitions: list                   # modelspell.ToolDefinition
+    definition_bytes: int
+    classification_revision: str | None
+    allowed: list                       # document and draft IDs the run may use
+    excluded: list
+    memory: list
+    limits: dict
+    branch: str                         # "tools" | "text"
+    mcp_snapshots: dict                 # server -> mcp_client.Snapshot taken at capture
+    role_captures: dict                 # role -> state.RoleCapture with the key resolved
+
+
+def _trusted(state: Any, snapshot: Any, revision: int):
+    def unchanged() -> bool:
+        try:
+            live = state.snapshot(revision)
+        except Exception:  # noqa: BLE001 - StaleRevision
+            return False
+        return live == snapshot
+    try:
+        return outbound_policy.Dispatch.prepare(state, outbound_policy.model_identity(snapshot), unchanged)
+    except outbound_policy.Refused:
+        return None
+
+
+def plan(state: Any, conversation: Any, body: Mapping, *, for_send: bool) -> Capture:
+    """Filter the inventory and choose the branch. The panel's preview and Send use this one function, so the
+    preview never shows a refusal that Send would not make, or the reverse (4.2)."""
+    revision = body.get("revision")
+    if type(revision) is not int:
+        raise AgentError("invalid", 400)
+    snapshot = state.snapshot(revision)                          # 409 stale_revision through the handler
+    if snapshot.model.strip() == "":
+        raise AgentError("no_model", 409)
+    task = parse_task(body.get("task"))
+    arguments = model_call.task_arguments(task, snapshot.kind, snapshot.provider)   # TaskSettingError: 400
+    trusted = _trusted(state, snapshot, revision)
+    has_documents = bool(conversation.items) if conversation is not None else False
+    found = caps.inventory(state, conversation, trusted_local=trusted is not None, has_documents=has_documents)
+    by_name = {c.name: c for c in found["capabilities"]}
+    ticked = body.get("capabilities", [])
+    if not isinstance(ticked, list) or len(ticked) > 200:
+        raise AgentError("invalid", 400)
+    chosen = []
+    for entry in ticked:
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str) or set(entry) - {"name", "revision"}:
+            raise AgentError("invalid", 400)
+        capability = by_name.get(entry["name"])
+        if capability is None:
+            if for_send:
+                raise AgentError("capability_unavailable", 409, capability=entry["name"])
+            continue
+        if capability.revision is not None and entry.get("revision") != capability.revision:
+            raise AgentError("configuration_changed", 409, capability=entry["name"])
+        if capability.excluded_reason:
+            continue                                            # listed under exclusions, never offered
+        chosen.append(capability)
+    name = caps.collision(chosen)
+    if name is not None:
+        raise AgentError("capability_name_collision", 409, capability=name)
+    if len(chosen) > caps.CAPABILITY_LIMIT:
+        raise AgentError("capability_limit", 409, limit=caps.CAPABILITY_LIMIT)
+    definitions = [ToolDefinition(c.name, c.description, c.parameters) for c in chosen]
+    size = caps.definitions_size(chosen)
+    if size > caps.DEFINITION_BYTES:
+        raise AgentError("definition_limit", 409, limit=caps.DEFINITION_BYTES)
+    allowed, excluded = [], list(found["excluded"])
+    if conversation is not None:
+        for item in conversation.items_view():
+            if item["local_only"] and trusted is None:
+                excluded.append({"name": item["id"], "reason": "local_only_document"})
+            else:
+                allowed.append(item["id"])
+    memory = conversation.memory_entries() if conversation is not None else []
+    if conversation is not None:
+        view = conversation.memory_view()
+        if view["on"] and view["entries"] >= docs.MEMORY_LIMIT:
+            raise AgentError("memory_full", 409, remedies=["new_conversation", "clear_memory"])
+        if trusted is None and any(e.restricted for e in memory):
+            raise AgentError("memory_restricted", 409,
+                             remedies=["memory_off", "clear_memory", "trusted_local_model"])
+    branch = "tools" if chosen else "text"
+    try:
+        if branch == "tools":
+            modelspell.check_tool_request(snapshot.kind, tools=definitions, rate_limit_retries=0, **arguments)
+        else:
+            modelspell.check_completion(snapshot.endpoint, snapshot.model, rate_limit_retries=0, **arguments)
+    except (ConfigError, UnsupportedSetting, UnsupportedOperation) as exc:   # pre-send validation text only
+        raise AgentError("route_refused", 409, message=f"{type(exc).__name__}: {exc}",
+                         remedy=ROUTE_REMEDIES.get(snapshot.kind), branch=branch) from None
+    mcp_snapshots, role_captures = {}, {}
+    if for_send:
+        for capability in chosen:
+            if capability.kind == "mcp" and capability.server not in mcp_snapshots:
+                mcp_snapshots[capability.server] = state.mcp_snapshot_for_block(capability.server)
+            if capability.kind == "block":
+                step = capability.loaded.block.step
+                if step.kind == "model" and step.role not in role_captures:
+                    try:
+                        role = state.role_capture(step.role)
+                    except Exception:  # noqa: BLE001 - RoleUnresolved: refused when the block is called
+                        continue
+                    key = outbound_policy.credential(role.snapshot.endpoint)
+                    snap = dataclasses.replace(role.snapshot, endpoint=dataclasses.replace(
+                        role.snapshot.endpoint, api_key=key, api_key_env=None))
+                    role_captures[step.role] = dataclasses.replace(role, snapshot=snap)
+                if step.mcp and step.server not in mcp_snapshots:
+                    mcp_snapshots[step.server] = state.mcp_snapshot_for_block(step.server)
+        # Re-verify every revision captured above (4.3 step 3).
+        state.snapshot(revision)
+        if state.agent.store.revision() != found["classification_revision"]:
+            raise AgentError("configuration_changed", 409)
+        for capability in chosen:
+            if capability.kind == "block":
+                live = state.block_loaded(capability.key)
+                if live is None or live.revision != capability.revision:
+                    raise AgentError("configuration_changed", 409, capability=capability.name)
+    return Capture(revision, snapshot, task, arguments, trusted, chosen, {c.name: c for c in chosen}, definitions,
+                   size, found["classification_revision"], allowed, excluded, memory,
+                   _limits(body.get("limits")), branch, mcp_snapshots, role_captures)
+
+
+def preview(state: Any, conversation: Any, body: Mapping) -> dict:
+    """The panel's view before Send (4.1): destination, preflight, capabilities, exclusions and limits."""
+    snapshot = state.snapshot(body.get("revision")) if type(body.get("revision")) is int else None
+    out: dict = {"format_version": 1, "preflight_note": PREFLIGHT_NOTE,
+                 "limits": {name: {"default": d, "maximum": m} for name, (d, m) in LIMITS.items()},
+                 "constants": {"corrections": CORRECTION_LIMIT, "approval_wait_s": caps.APPROVAL_WAIT_S,
+                               "child_sends": CHILD_SEND_LIMIT, "capabilities": caps.CAPABILITY_LIMIT,
+                               "definition_bytes": caps.DEFINITION_BYTES, "argument_bytes": ARGUMENT_BYTES,
+                               "result_bytes": RESULT_BYTES, "request_bytes": REQUEST_BYTES,
+                               "output_bytes": OUTPUT_BYTES},
+                 "usage_note": "Token and cost ceilings act only after the backend reports usage; they cannot "
+                               "prevent a request already sent."}
+    if snapshot is not None:
+        trusted = _trusted(state, snapshot, body["revision"])
+        out["destination"] = {"kind": snapshot.kind, "url": snapshot.endpoint.base_url, "model": snapshot.model,
+                              "provider": snapshot.provider,
+                              "locality": outbound_policy.locality(snapshot.endpoint.base_url),
+                              "trusted_local": trusted is not None}
+        found = caps.inventory(state, conversation, trusted_local=trusted is not None,
+                               has_documents=bool(conversation and conversation.items))
+        out["capabilities"] = [c.view() for c in found["capabilities"]]
+        out["excluded"] = list(found["excluded"])
+        out["mcp_refused"] = found["mcp_refused"]
+        out["blocks_refused"] = found["blocks_refused"]
+        out["classification_revision"] = found["classification_revision"]
+        if conversation is not None:
+            for item in conversation.items_view():
+                if item["local_only"] and trusted is None:
+                    out["excluded"].append({"name": item["id"], "reason": "local_only_document"})
+        try:
+            captured = plan(state, conversation, body, for_send=False)
+        except AgentError as exc:
+            out["preflight"] = {"ok": False, "code": exc.code, **exc.extra}
+        except TaskSettingError as exc:
+            out["preflight"] = {"ok": False, "code": "task_setting", "message": f"TaskSettingError: {exc}"}
+        else:
+            out["preflight"] = {"ok": True, "branch": captured.branch,
+                                "offered": [c.name for c in captured.capabilities],
+                                "definition_bytes": captured.definition_bytes}
+    if conversation is not None:
+        out["documents"] = conversation.items_view()
+        out["memory"] = conversation.memory_view()
+    return out
+
+
+# --- the run ---------------------------------------------------------------------------------------------------------
+class _End(Exception):
+    """Ends the loop with a stop reason."""
+
+    def __init__(self, reason: str, detail: str | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.detail = detail
+
+
+class AgentRun:
+    def __init__(self, manager: "Manager", conversation: Any, capture: Capture, message: str, observer: Observer | None):
+        self.manager = manager
+        self.state = manager.state
+        self.conversation = conversation
+        self.capture = capture
+        self.message = message
+        self.observer = _Safe(observer)
+        self.lock = threading.Lock()
+        self.token = runs.CancelToken()
+        self.handle = modelspell.CancelHandle()
+        self.token.on_cancel(self.handle.cancel)
+        self.token.on_cancel(self._wake)
+        self.run_id = ""
+        self.store_run: Any = None
+        self.started = time.monotonic()
+        self.deadline = self.started + capture.limits["seconds"]
+        self.timer: Any = None
+        self.scope = docs.Scope(conversation, capture.allowed)
+        self.transcript: list = []
+        self.transcript_bytes = 0
+        self.turns = 0
+        self.actions = 0
+        self.corrections = 0
+        self.child_sends = 0
+        self.nested_exceeded = False
+        self.restricted = False
+        self.trace: list[dict] = []           # live, with payloads (in process memory only)
+        self.saved_trace: list[dict] = []     # identities, outcomes, sizes and digests
+        self.pending: caps.Approval | None = None
+        self.child_run_id: str | None = None
+        self.state_name = "running"
+        self.stop_reason: str | None = None
+        self.stop_detail: str | None = None
+        self.answer: str | None = None
+        self.partial = ""
+        self.reasoning = ""
+        self.drafts: list = []
+        self.usage = {"input_tokens": 0, "output_tokens": 0, "reported": 0, "unreported": 0}
+        self.cost = 0.0
+        self.cost_reported = False
+        self.sent_flags: list = []
+        self.output_exceeded = False
+        self.turn_output = 0
+        self.current_approval: caps.Approval | None = None
+        self.save_status = "not_requested"
+        self.save_detail: dict = {}
+        self.ended_at: str | None = None
+        self.started_at = runs.utc_now()
+
+    # --- control ------------------------------------------------------------------------------------------------
+    def cancel(self, reason: str) -> bool:
+        return self.token.cancel(reason)
+
+    def _wake(self) -> None:
+        with self.lock:
+            approval = self.pending
+        if approval is not None:
+            with approval.condition:
+                approval.condition.notify_all()
+
+    def _stop_code(self) -> str:
+        reason = self.token.reason
+        return {"time_limit": "time_limit", "shutdown": "interrupted", "output_limit": "output_limit"}.get(
+            reason or "", "stopped")
+
+    def _emit(self, event: dict) -> None:
+        self.observer.event({**event, "run_id": self.run_id})
+
+    def add_usage(self, result: dict | None) -> None:
+        usage = result.get("usage") if isinstance(result, dict) else None
+        with self.lock:
+            if isinstance(usage, dict) and isinstance(usage.get("input_tokens"), int) \
+                    and isinstance(usage.get("output_tokens"), int):
+                self.usage["input_tokens"] += usage["input_tokens"]
+                self.usage["output_tokens"] += usage["output_tokens"]
+                self.usage["reported"] += 1
+            else:
+                self.usage["unreported"] += 1
+            cost = result.get("cost") if isinstance(result, dict) else None
+            if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+                self.cost += cost
+                self.cost_reported = True
+
+    def _ceilings(self) -> None:
+        limits = self.capture.limits
+        with self.lock:
+            tokens = self.usage["input_tokens"] + self.usage["output_tokens"]
+            cost, reported = self.cost, self.cost_reported
+        if limits["tokens"] is not None and self.usage["reported"] and tokens >= limits["tokens"]:
+            raise _End("token_limit")
+        if limits["cost"] is not None and reported and cost >= limits["cost"]:
+            raise _End("cost_limit")
+
+    def _config_unchanged(self) -> bool:
+        try:
+            return self.state.snapshot(self.capture.revision) == self.capture.snapshot
+        except Exception:  # noqa: BLE001 - StaleRevision
+            return False
+
+    def parent_guard(self) -> None:
+        """The parent's Stop, deadline, configuration and admission checks, run at every child send gate (5.6)."""
+        if self.token.cancelled:
+            raise outbound_policy.Refused(self._stop_code())
+        if time.monotonic() >= self.deadline:
+            raise outbound_policy.Refused("time_limit")
+        if not self._config_unchanged():
+            raise outbound_policy.Refused("configuration_changed")
+        if self.state.store.closed:
+            raise outbound_policy.Refused("interrupted")
+
+    def child_gate(self) -> bool:
+        with self.lock:
+            self.child_sends += 1
+            if self.child_sends > CHILD_SEND_LIMIT:
+                self.nested_exceeded = True
+                return False
+            return True
+
+    def _still_running(self) -> bool:
+        return not self.token.cancelled and time.monotonic() < self.deadline
+
+    def _check_scan(self) -> None:
+        if not self._still_running():
+            raise ToolError("stopped")
+
+    # --- transcript ---------------------------------------------------------------------------------------------
+    def _append(self, entry: Any, size: int) -> None:
+        self.transcript.append(entry)
+        self.transcript_bytes += size
+
+    def _append_turn(self, turn: Any) -> None:
+        self._append(turn, _size(turn.replay))
+
+    def _append_output(self, call_id: str, content: str) -> None:
+        self._append(ToolOutput(call_id, content), len(content.encode("utf-8")) + len(call_id) + 32)
+
+    # --- the gate before every send (4.4 step 2, 8.3) ------------------------------------------------------------
+    def _gate_send(self) -> None:
+        if self.token.cancelled:
+            raise _End(self._stop_code())
+        if time.monotonic() >= self.deadline:
+            raise _End("time_limit")
+        if self.turns >= self.capture.limits["model_turns"]:
+            raise _End("turn_limit")
+        self._ceilings()
+        if not self._config_unchanged():
+            raise _End("configuration_changed")
+        if self.capture.definition_bytes + self.transcript_bytes > REQUEST_BYTES:
+            raise _End("request_limit")
+        if self.restricted:
+            # Restricted material only to a trusted local orchestrator whose grant still holds (8.3).
+            if self.capture.trusted is None:
+                raise _End("restricted_result")
+            try:
+                self.capture.trusted.check()
+            except outbound_policy.Refused:
+                raise _End("destination_refused") from None
+
+    def _on_text(self, text: str) -> None:
+        self.partial += text
+        self._count(text)
+        self._emit({"type": "text", "text": text})
+
+    def _on_reasoning(self, text: str) -> None:
+        self.reasoning += text
+        self._count(text)
+        self._emit({"type": "reasoning", "text": text})
+
+    def _count(self, text: str) -> None:
+        self.turn_output += len(text.encode("utf-8"))
+        if self.turn_output > OUTPUT_BYTES and not self.output_exceeded:
+            self.output_exceeded = True
+            self.token.cancel("output_limit")
+
+    def _send(self, tools: bool) -> Any:
+        self._gate_send()
+        budget = self.state.budget
+        if not budget.try_acquire():
+            raise _End("busy")
+        self.turns += 1
+        self.turn_output = 0
+        self.partial = ""
+        snap, arguments = self.capture.snapshot, self.capture.arguments
+        try:
+            if tools:
+                return modelspell.complete_with_tools(
+                    snap.endpoint, snap.model, self.transcript, tools=self.capture.definitions,
+                    on_text=self._on_text, on_reasoning=self._on_reasoning, cancel=self.handle,
+                    rate_limit_retries=0, **arguments)
+            return modelspell.complete(snap.endpoint, snap.model, self.transcript, on_text=self._on_text,
+                                       on_reasoning=self._on_reasoning, cancel=self.handle, rate_limit_retries=0,
+                                       **arguments)
+        except Cancelled as exc:
+            self.sent_flags.append(exc.sent)
+            raise _End(self._stop_code()) from None
+        except ModelSpellError as exc:
+            raise _End("model_error", model_call.describe_error(exc, snap.endpoint.base_url)) from None
+        finally:
+            budget.release()
+
+    # --- the loop (4.4) -----------------------------------------------------------------------------------------
+    def _initial(self) -> None:
+        self._append({"role": "system", "content": _system_text()}, 0)
+        self.transcript_bytes = len(self.transcript[0]["content"].encode("utf-8"))
+        for entry in self.capture.memory:
+            self._append({"role": "user", "content": entry.question}, len(entry.question.encode("utf-8")))
+            answer = entry.answer
+            if entry.drafts:
+                answer += "\nDrafts created: " + ", ".join(f"{i} ({n})" for i, n in entry.drafts)
+            self._append({"role": "assistant", "content": answer}, len(answer.encode("utf-8")))
+        self._append({"role": "user", "content": self.message}, len(self.message.encode("utf-8")))
+        # The initial label covers everything the first request holds (8.3).
+        if any(c.restricted_definition for c in self.capture.capabilities) or \
+                any(e.restricted for e in self.capture.memory):
+            self.restricted = True
+
+    def _text_branch(self) -> None:
+        result = self._send(tools=False)
+        self.add_usage(model_call.result_to_dict(result))
+        outcome = model_call.classify_outcome(result)
+        if outcome == "complete":
+            self.answer = result.text
+            raise _End("answered")
+        if outcome in ("truncated", "truncated_no_answer"):
+            self.partial = result.text
+            raise _End("incomplete_turn")
+        raise _End("empty_answer")
+
+    def _tool_branch(self) -> None:
+        while True:
+            turn = self._send(tools=True)
+            self.add_usage(model_call.result_to_dict(turn.result))
+            self._ceilings()
+            if not turn.clean:
+                self.partial = turn.result.text or self.partial
+                raise _End("incomplete_turn")                     # F-19: no append, no dispatch
+            calls = turn.tool_calls
+            if not calls:
+                if turn.result.text.strip() == "":
+                    raise _End("empty_answer")
+                self.answer = turn.result.text
+                raise _End("answered")
+            if len(calls) > 1:
+                self._append_turn(turn)
+                for call in calls:
+                    self._feedback(call, "one_call_per_turn")
+                self._correction()
+                continue
+            call = calls[0]
+            checked = self._validate(call)
+            if isinstance(checked, str):
+                self._append_turn(turn)
+                self._feedback(call, checked, getattr(self, "_locations", []))
+                self._correction()
+                continue
+            capability, arguments = checked
+            self._dispatch(turn, call, capability, arguments)
+
+    def _correction(self) -> None:
+        self.corrections += 1
+        if self.corrections > CORRECTION_LIMIT:
+            raise _End("correction_limit")
+
+    def _feedback(self, call: Any, code: str, locations: list | None = None) -> None:
+        error = {"code": code, "message": FEEDBACK.get(code, FEEDBACK["refused"])}
+        if locations:
+            error["locations"] = locations[:20]
+        content = _envelope({"ok": False, "error": error})
+        self._append_output(call.id, content)
+        self._record_action(call, None, outcome="feedback", code=code, arguments_text=call.arguments_json,
+                            result_text=content, restricted=False)
+
+    # --- validation (4.5) ---------------------------------------------------------------------------------------
+    def _validate(self, call: Any):
+        self._locations = []
+        capability = self.capture.by_name.get(call.name)
+        if capability is None:
+            return "unknown_capability"
+        if len(call.arguments_json.encode("utf-8")) > ARGUMENT_BYTES:
+            return "malformed_arguments"
+        try:
+            arguments = jsonio.decode_exact(call.arguments_json or "{}")
+        except (jsonio.JSONSyntax, jsonio.ExactLimit, ValueError):
+            return "malformed_arguments"
+        if not isinstance(arguments, dict):
+            return "malformed_arguments"
+        check = checks.check_value(caps.schema_contract(capability.parameters), arguments)
+        if check["overall"] != "pass":
+            self._locations = [{"location": i["location"], "rule": i["message"].split(".", 1)[-1]}
+                               for i in check.get("issues", [])]
+            return "schema_mismatch"
+        if capability.kind == "block":
+            texts = self._input_texts(capability, arguments)
+            inputs = runner.check_inputs(capability.loaded.block, texts)
+            if not inputs.passed:
+                self._locations = [{"location": i.get("location", "")} for i in inputs.issues]
+                return "input_check_failed"
+        if self.token.cancelled:
+            raise _End(self._stop_code())
+        if time.monotonic() >= self.deadline:
+            raise _End("time_limit")
+        if self.actions >= self.capture.limits["actions"]:
+            raise _End("action_limit")
+        if not self._config_unchanged():
+            raise _End("configuration_changed")
+        return capability, arguments
+
+    @staticmethod
+    def _input_texts(capability: caps.Capability, arguments: dict) -> dict:
+        block = capability.loaded.block
+        texts = {}
+        for declared in block.inputs:
+            value = arguments[declared.name]
+            fmt = block.contracts["inputs"][declared.name].parsed.format
+            texts[declared.name] = value if fmt == "text" else jsonio.encode_exact(value)
+        return texts
+
+    # --- dispatch (4.4 steps 6-7) --------------------------------------------------------------------------------
+    def _dispatch(self, turn: Any, call: Any, capability: caps.Capability, arguments: dict) -> None:
+        action = {"call_id": call.id, "capability": capability.name, "kind": capability.kind,
+                  "arguments_text": jsonio.encode_exact(arguments), "state": "proposed"}
+        self._emit({"type": "action", "state": "proposed", "call_id": call.id, "capability": capability.name,
+                    "arguments_text": action["arguments_text"]})
+        started = time.monotonic()
+        try:
+            if capability.kind == "builtin":
+                outcome = self._run_builtin(capability, arguments, call)
+            elif capability.kind == "mcp":
+                outcome = self._run_mcp(capability, arguments, call)
+            else:
+                outcome = self._run_block(capability, arguments, call)
+        except _End:
+            raise
+        envelope, restricted, status = outcome["envelope"], outcome["restricted"], outcome["status"]
+        if status in ("dispatched", "denied"):
+            self.actions += 1
+        content = _envelope(envelope)
+        if status == "dispatched" and envelope.get("ok") is True and len(content.encode("utf-8")) > RESULT_BYTES:
+            size = len(content.encode("utf-8"))
+            content = _envelope({"ok": True, "result_omitted": True, "reason": "result_too_large", "bytes": size})
+        effective = restricted or self.restricted
+        self._record_action(call, capability, outcome=outcome.get("outcome", status), code=outcome.get("code"),
+                            arguments_text=action["arguments_text"], result_text=content, restricted=effective,
+                            approval=outcome.get("approval"), elapsed=time.monotonic() - started)
+        self._emit({"type": "action", "state": "finished", "call_id": call.id, "capability": capability.name,
+                    "outcome": outcome.get("outcome", status), "restricted": effective, "result_text": content})
+        if outcome.get("end"):
+            raise _End(outcome["end"])
+        if restricted and not self.restricted:
+            # Promotion (8.3), before the result is added. A non-local orchestrator never receives it (F-29).
+            if self.capture.trusted is None:
+                raise _End("restricted_result")
+            self.restricted = True
+        self._append_turn(turn)
+        self._append_output(call.id, content)
+        if self.nested_exceeded:
+            raise _End("nested_request_limit")
+
+    def _record_action(self, call: Any, capability: caps.Capability | None, *, outcome: str, code: str | None,
+                       arguments_text: str, result_text: str, restricted: bool, approval: dict | None = None,
+                       elapsed: float = 0.0) -> None:
+        saved = {"call_id": call.id, "capability": call.name if capability is None else capability.name,
+                 "identity": capability.identity if capability else None,
+                 "effects": capability.effects if capability else None,
+                 "approval": approval, "outcome": outcome, "code": code,
+                 "arguments": {"bytes": len(arguments_text.encode("utf-8")), "sha256": caps.sha256(arguments_text)},
+                 "result": {"bytes": len(result_text.encode("utf-8")), "sha256": caps.sha256(result_text)},
+                 "label": "restricted" if restricted else "unrestricted", "elapsed_s": round(elapsed, 3)}
+        live = {**saved, "arguments_text": arguments_text, "result_text": result_text}
+        with self.lock:
+            self.saved_trace.append(saved)
+            self.trace.append(live)
+
+    @staticmethod
+    def _outcome(envelope: dict, *, restricted: bool = False, status: str = "dispatched", **extra: Any) -> dict:
+        return {"envelope": envelope, "restricted": restricted, "status": status, **extra}
+
+    def _refusal(self, code: str) -> dict:
+        return self._outcome({"ok": False, "error": {"code": code, "message": FEEDBACK.get(code, FEEDBACK["refused"])}},
+                             status="refused", outcome="refused", code=code)
+
+    # --- built-in tools ---------------------------------------------------------------------------------------
+    def _run_builtin(self, capability: caps.Capability, arguments: dict, call: Any) -> dict:
+        self._emit({"type": "action", "state": "started", "call_id": call.id, "capability": capability.name})
+        tool = capability.builtin
+        budget = RESULT_BYTES - 64
+        inspected: list = []
+        try:
+            if tool == "list_documents":
+                result, inspected = docs.list_documents(self.scope)
+            elif tool == "search_documents":
+                result, inspected = docs.search_documents(self.scope, arguments, budget, self._check_scan)
+            elif tool == "read_document":
+                result, inspected = docs.read_document(self.scope, arguments, budget)
+            elif tool == "create_draft":
+                item = self.conversation.create_draft(self.run_id, arguments["name"], arguments["format"],
+                                                      arguments["content"], self.restricted, self._still_running)
+                self.scope.add(item.id)
+                with self.lock:
+                    self.drafts.append((item.id, item.name))
+                result = {"draft_id": item.id, "lines": item.lines, "characters": item.characters}
+            else:
+                result = agent_tools.run_utility(tool, arguments)
+        except ToolError as exc:
+            if exc.code == "stopped":
+                raise _End(self._stop_code() if self.token.cancelled else "time_limit") from None
+            return self._outcome({"ok": False, "error": exc.view()}, outcome="error", code=exc.code,
+                                 restricted=any(i.local_only for i in inspected))
+        except docs.StagingError as exc:
+            return self._outcome({"ok": False, "error": {"code": exc.code, "message": "staging is unavailable"}},
+                                 outcome="error", code=exc.code)
+        return self._outcome({"ok": True, "result": result}, outcome="completed",
+                             restricted=any(i.local_only for i in inspected))
+
+    # --- MCP, direct and wrapped (5.5) -------------------------------------------------------------------------
+    def _approval(self, call: Any, capability: caps.Capability, destination: dict, arguments_text: str,
+                  digest: str) -> dict:
+        """Wait for the user's decision outside every lock (5.4). Returns the approval view for the trace, or
+        raises outbound_policy.Refused('denied' | 'approval_expired' | <stop>)."""
+        expires = min(time.monotonic() + caps.APPROVAL_WAIT_S, self.deadline)
+        approval = caps.Approval(self.run_id, call.id, capability.name, destination, digest,
+                                 self.capture.classification_revision, caps.sha256(arguments_text), arguments_text,
+                                 expires)
+        with self.lock:
+            self.pending = approval
+        self._emit({"type": "action", "state": "awaiting_approval", "call_id": call.id,
+                    "capability": capability.name, "approval": approval.view()})
+        with approval.condition:
+            while approval.decision is None and not self.token.cancelled:
+                remaining = approval.expires - time.monotonic()
+                if remaining <= 0:
+                    approval.decision = "expired"
+                    break
+                approval.condition.wait(remaining)
+            if approval.decision is None:
+                approval.decision = "void"
+        with self.lock:
+            self.pending = None
+        self.current_approval = approval
+        view = {"decision": approval.decision, "decided_at": approval.decided_at}
+        if approval.decision == "deny":
+            raise outbound_policy.Refused("denied")
+        if approval.decision == "expired":
+            raise outbound_policy.Refused("time_limit" if time.monotonic() >= self.deadline else "approval_expired")
+        if approval.decision == "void":
+            raise outbound_policy.Refused(self._stop_code())
+        return view
+
+    def _mcp_guard(self, call: Any, capability: caps.Capability, snapshot: Any, arguments: Any,
+                   restricted: bool) -> tuple[Any, dict | None]:
+        """Steps 2-4 of 5.5 for the materialised arguments. Returns (the send-gate check, approval view)."""
+        found = self.state.mcp_client.observed_schema(snapshot.identity, capability.tool)
+        if found is None or found[0] != capability.schema_digest:
+            raise outbound_policy.Refused("configuration_changed")
+        check = checks.check_value(caps.schema_contract(found[1]), arguments)
+        if check["overall"] != "pass":
+            raise outbound_policy.Refused("schema_mismatch")
+        arguments_text = jsonio.encode_exact(arguments)
+        destination = {"kind": "mcp", "url": snapshot.url, "server": capability.server, "tool": capability.tool}
+        grant = None
+        if restricted:
+            # An MCP send with restricted arguments needs that tool's own exact grant (8.3).
+            def unchanged() -> bool:
+                try:
+                    return self.state.mcp_snapshot_for_block(capability.server) == snapshot
+                except Exception:  # noqa: BLE001
+                    return False
+            grant = outbound_policy.Dispatch.prepare(self.state, caps.restricted_arguments_destination(
+                snapshot, capability.tool), unchanged)
+        approval_view = None
+        approval = None
+        if capability.approval:
+            approval_view = self._approval(call, capability, destination, arguments_text, capability.schema_digest)
+            approval = self.current_approval
+
+        def authorize() -> None:
+            # Re-verified at the MCP send gate (5.5 step 5).
+            self.parent_guard()
+            revision, rows = self.state.agent.store.read()
+            if revision != self.capture.classification_revision:
+                raise outbound_policy.Refused("configuration_changed")
+            row = self.state.agent.store.row(rows, snapshot.url, capability.server, capability.tool,
+                                             capability.schema_digest)
+            if not row["enabled"] or not row["no_host_files"]:
+                raise outbound_policy.Refused("configuration_changed")
+            current = self.state.mcp_client.observed_schema(snapshot.identity, capability.tool)
+            if current is None or current[0] != capability.schema_digest:
+                raise outbound_policy.Refused("configuration_changed")
+            if approval is not None:
+                if not approval.valid_for(arguments_text, capability.schema_digest,
+                                          self.capture.classification_revision):
+                    raise outbound_policy.Refused("approval_invalid")
+                approval.used = True
+            if grant is not None:
+                grant.check()
+        return authorize, approval_view
+
+    def _run_mcp(self, capability: caps.Capability, arguments: dict, call: Any) -> dict:
+        from . import mcp_ops
+        snapshot = self.capture.mcp_snapshots.get(capability.server)
+        try:
+            live = self.state.mcp_snapshot_for_block(capability.server)
+        except Exception:  # noqa: BLE001
+            live = None
+        if snapshot is None or live != snapshot:
+            return self._refusal("configuration_changed")
+        try:
+            authorize, approval = self._mcp_guard(call, capability, snapshot, arguments, self.restricted)
+        except outbound_policy.Refused as exc:
+            code = str(exc)
+            if code == "denied":
+                view = {"decision": "deny", "decided_at": self.current_approval.decided_at
+                        if self.current_approval is not None else None}
+                return self._outcome({"ok": False, "error": {"code": "denied", "message": FEEDBACK["denied"]}},
+                                     status="denied", outcome="denied", code="denied", approval=view)
+            if code in ("approval_expired", "time_limit", "stopped", "interrupted"):
+                raise _End(code) from None
+            return self._refusal(code)
+        reservation = self.state.mcp_ops.reserve()
+        if reservation is None:
+            return self._refusal("busy")
+        self._emit({"type": "action", "state": "started", "call_id": call.id, "capability": capability.name})
+        client, tool = self.state.mcp_client, capability.tool
+
+        def work(operation):
+            operation.authorize = authorize
+            operation.allow_call_retry = False                  # never a resend after a stale-session reply
+            return client.call(operation, snapshot, tool, arguments)
+
+        try:
+            op = self.state.mcp_ops.start("call", snapshot, work, reservation=reservation)
+        except mcp_ops.Closed:
+            reservation.release()
+            raise _End("interrupted") from None
+        self.token.on_cancel(lambda: op.abandon("stopped"))
+        remaining = max(0.0, self.deadline - time.monotonic())
+        deadline_timer = runner.make_timer(remaining, lambda: op.abandon("deadline"))
+        try:
+            committed = _wait_committed(op)
+        finally:
+            deadline_timer.cancel()
+        result_restricted = capability.results_local_only or self.restricted
+        outcome = committed["outcome"]
+        if outcome == "ok":
+            value = committed["value"].result
+            content = value.get("content") if isinstance(value.get("content"), list) else []
+            result = {"text": "\n\n".join(i["text"] for i in content if i.get("type") == "text")}
+            if "structuredContent" in value:
+                result["structured"] = value["structuredContent"]
+            return self._outcome({"ok": True, "result": result}, restricted=result_restricted, outcome="completed",
+                                 approval=approval)
+        if outcome == "tool_error":
+            return self._outcome({"ok": False, "dispatched": True,
+                                  "error": {"code": "tool_failed", "message": FEEDBACK["tool_failed"]}},
+                                 restricted=result_restricted, outcome="tool_failed", approval=approval)
+        if outcome == "rejected" and not op.ctx.call_gate_passed:
+            code = committed.get("reason") or "refused"
+            return self._refusal(code if code.startswith(("destination_", "configuration", "approval")) else "refused")
+        if outcome == "rejected":
+            return self._outcome({"ok": False, "dispatched": True,
+                                  "error": {"code": "tool_failed", "message": FEEDBACK["tool_failed"]}},
+                                 restricted=result_restricted, outcome="tool_failed", approval=approval)
+        return self._uncertain(capability, approval)
+
+    def _uncertain(self, capability: caps.Capability, approval: dict | None) -> dict:
+        """The request may have been received: never resent (4.7, F-17)."""
+        if self.token.cancelled:
+            raise _End(self._stop_code())
+        if capability.effects == "read-only":
+            return self._outcome({"ok": False, "error": {"code": "no_result", "message": FEEDBACK["no_result"]}},
+                                 outcome="unknown", code="no_result", approval=approval)
+        return self._outcome({}, outcome="unknown", code="unknown_effect", end="unknown_effect", approval=approval)
+
+    # --- child blocks (5.6) ----------------------------------------------------------------------------------------
+    def _run_block(self, capability: caps.Capability, arguments: dict, call: Any) -> dict:
+        loaded = capability.loaded
+        block = loaded.block
+        live = self.state.block_loaded(capability.key)
+        if live is None or live.revision != capability.revision:
+            return self._refusal("configuration_changed")
+        step = block.step
+        snapshot, role = None, None
+        if step.kind == "model":
+            role = self.capture.role_captures.get(step.role)
+            if role is None:
+                return self._refusal("refused")
+            snapshot = role.snapshot
+        elif step.mcp:
+            snapshot = self.capture.mcp_snapshots.get(step.server)
+            if snapshot is None:
+                return self._refusal("configuration_changed")
+        decision: dict = {}
+        before_tool = None
+        if step.mcp and capability.wrapped is not None:
+            wrapped = capability.wrapped
+
+            def before_tool(prepared: Any):
+                # Approval for the request the MCP server will actually receive: the filled template (B4).
+                try:
+                    authorize, view = self._mcp_guard(call, wrapped, prepared.snapshot, prepared.arguments,
+                                                      self.restricted)
+                except outbound_policy.Refused as exc:
+                    decision["refused"] = str(exc)
+                    raise
+                decision["approval"] = view
+                return authorize
+        observer = _ChildObserver(self, {})
+        frozen = runner.FrozenSource(snapshot, False, {"agent_run": self.run_id, "call_id": call.id},
+                                     capture=role, protected=self.restricted, dispatch=None,
+                                     attempt_gate=self.child_gate, parent_guard=self.parent_guard,
+                                     before_tool=before_tool)
+
+        def stop_child() -> None:
+            with self.lock:
+                child = self.child_run_id
+            if child:
+                try:
+                    self.state.store.stop_run(child, runs.USER_STOP)
+                except runs.NoSuchRunInMemory:
+                    pass
+        with self.lock:
+            self.child_run_id = None
+        self.token.on_cancel(stop_child)                     # registered before the child exists (4.7)
+        self._emit({"type": "action", "state": "started", "call_id": call.id, "capability": capability.name})
+        try:
+            finished = runner.run_block(self.state, loaded, self._input_texts(capability, arguments), observer,
+                                        frozen=frozen)
+        except runner.Busy:
+            return self._refusal("busy")
+        except Exception as exc:  # noqa: BLE001 - ShuttingDown and other admission refusals
+            if self.state.store.closed:
+                raise _End("interrupted") from None
+            report_internal("agent child block", exc)
+            return self._refusal("refused")
+        result = finished.result
+        approval = decision.get("approval")
+        refused = decision.get("refused")
+        if refused == "denied":
+            return self._outcome({"ok": False, "error": {"code": "denied", "message": FEEDBACK["denied"]}},
+                                 status="denied", outcome="denied", code="denied",
+                                 approval={"decision": "deny"})
+        if refused in ("approval_expired", "time_limit", "stopped", "interrupted"):
+            raise _End(refused)
+        restricted = bool(result.get("protected") or self.restricted
+                          or any(port.local_only for port in block.outputs))
+        outcome = result["outcome"]
+        if self.nested_exceeded and outcome != "complete":
+            raise _End("nested_request_limit")
+        if outcome == "complete":
+            values = {name: (view["text"] if view["format"] == "text" else jsonio.decode_exact(view["text"]))
+                      for name, view in result["outputs"].items()}
+            return self._outcome({"ok": True, "result": values}, restricted=restricted, outcome="completed",
+                                 approval=approval)
+        if outcome in ("stopped", "budget_exceeded") and self.token.cancelled:
+            raise _End(self._stop_code())
+        if outcome == "rejected" or refused:
+            return self._refusal(refused if refused and refused.startswith("destination_") else "refused")
+        if outcome == "unknown":
+            target = capability.wrapped or capability
+            return self._uncertain(target, approval)
+        steps = result.get("steps") or []
+        sent = any(step_.get("attempts") or step_.get("operation") for step_ in steps)
+        failure = steps[0].get("failure") if steps else None
+        if not sent or (isinstance(failure, str) and failure.startswith("destination_")):
+            return self._refusal(failure if isinstance(failure, str) and failure.startswith("destination_")
+                                 else "refused")
+        return self._outcome({"ok": False, "dispatched": True,
+                              "error": {"code": "block_failed", "message": FEEDBACK["block_failed"]}},
+                             restricted=restricted, outcome="block_failed", approval=approval)
+
+    # --- running and finishing ---------------------------------------------------------------------------------
+    def run(self) -> dict:
+        state = self.state
+        writer = state.register_writer("agent run")
+        try:
+            self.store_run = state.store.new_agent_run(save_runs=state.save_runs_now(), token=self.token,
+                                                 handle=self.handle)
+        except BaseException:
+            writer.release()
+            raise
+        self.run_id = self.store_run.run_id
+        self.manager.attach(self)
+        try:
+            if self.store_run.save_runs:
+                state.history.start_run(self.store_run)
+            self.timer = runner.make_timer(max(0.0, self.deadline - time.monotonic()),
+                                           lambda: self.token.cancel("time_limit"))
+            self._emit({"type": "started", "branch": self.capture.branch,
+                        "offered": [c.name for c in self.capture.capabilities],
+                        "destination": {"kind": self.capture.snapshot.kind,
+                                        "url": self.capture.snapshot.endpoint.base_url,
+                                        "model": self.capture.snapshot.model}})
+            try:
+                self._initial()
+                if self.capture.branch == "text":
+                    self._text_branch()
+                else:
+                    self._tool_branch()
+            except _End as end:
+                self.stop_reason, self.stop_detail = end.reason, end.detail
+            except BaseException as exc:  # noqa: BLE001 - committed as internal_error
+                self.stop_reason = "internal_error"
+                if isinstance(exc, Exception):
+                    report_internal("agent run", exc)
+                else:
+                    raise
+            return self._finalise()
+        finally:
+            if self.timer is not None:
+                self.timer.cancel()
+            self.manager.detach(self)
+            writer.release()
+
+    def record(self) -> dict:
+        snap = self.capture.snapshot
+        label = "restricted" if self.restricted else "unrestricted"
+        return {"record_version": RECORD_VERSION, "run_id": self.run_id, "source": "agent",
+                "started_at": self.started_at, "ended_at": self.ended_at, "outcome": self.stop_reason,
+                "stop_reason": self.stop_reason, "stop_detail": self.stop_detail,
+                "destination": {"kind": snap.kind, "url": snap.endpoint.base_url, "model": snap.model,
+                                "provider": snap.provider, "profile": snap.profile_name},
+                "task": dict(self.capture.task.request_shape()), "limits": dict(self.capture.limits),
+                "branch": self.capture.branch,
+                "system_prompt": {"id": SYSTEM_PROMPT_ID, "version": SYSTEM_PROMPT_VERSION},
+                "capabilities": [{"name": c.name, "identity": c.identity, "effects": c.effects}
+                                 for c in self.capture.capabilities],
+                "message": self.message, "answer": self.answer,
+                "trace": list(self.saved_trace),
+                "counters": {"model_turns": self.turns, "actions": self.actions, "corrections": self.corrections,
+                             "child_sends": self.child_sends},
+                "cancelled_sent": list(self.sent_flags), "usage": dict(self.usage),
+                "cost": self.cost if self.cost_reported else None,
+                "label": label, "local_only": self.restricted,
+                "drafts": [{"id": i, "name": n} for i, n in self.drafts],
+                "agentwiz_version": __version__, "modelspell_version": modelspell.__version__,
+                "scriptspell_version": python_step.version()}
+
+    def _finalise(self) -> dict:
+        state = self.state
+        self.ended_at = runs.utc_now()
+        if self.stop_reason == "answered" and self.answer is not None:
+            self.conversation.add_memory(docs.MemoryEntry(self.message, self.answer, list(self.drafts),
+                                                          self.restricted))
+        record = self.record()
+        status = state.store.end_agent_run(self.store_run, bool(self.store_run.save_runs))
+        with self.lock:
+            self.state_name = "ended"
+            self.save_status = status
+        self._emit({"type": "final", "stop_reason": self.stop_reason, "answer": self.answer,
+                    "partial": self.partial if self.answer is None else None, "restricted": self.restricted,
+                    "save_status": status, "view": self.view()})
+        if status == "pending":
+            try:
+                saved = state.history.write_result(self.store_run, record)
+            except Exception as exc:  # noqa: BLE001 - settle exactly once
+                report_internal("history", exc)
+                saved = {"save_status": "failed", "reason": "the record could not be written (internal error)"}
+            detail = {k: v for k, v in saved.items() if k != "save_status"}
+            state.store.settle_result_save(self.store_run, saved["save_status"], **detail)
+            with self.lock:
+                self.save_status, self.save_detail = saved["save_status"], detail
+            self._emit({"type": "save", "save_status": saved["save_status"], **detail})
+        return record
+
+    def view(self) -> dict:
+        with self.lock:
+            pending = self.pending.view() if self.pending is not None else None
+            return {"run_id": self.run_id, "state": self.state_name, "stop_reason": self.stop_reason,
+                    "stop_detail": self.stop_detail, "answer": self.answer,
+                    "partial": self.partial if self.answer is None else None,
+                    "restricted": self.restricted, "branch": self.capture.branch,
+                    "pending_approval": pending, "trace": [dict(t) for t in self.trace],
+                    "counters": {"model_turns": self.turns, "actions": self.actions,
+                                 "corrections": self.corrections, "child_sends": self.child_sends},
+                    "drafts": [{"id": i, "name": n} for i, n in self.drafts],
+                    "usage": dict(self.usage), "cost": self.cost if self.cost_reported else None,
+                    "save_status": self.save_status, **self.save_detail}
+
+    def decide(self, call_id: str, decision: str) -> str:
+        with self.lock:
+            approval = self.pending
+        if approval is None or approval.call_id != call_id:
+            return "not_pending"
+        with approval.condition:
+            if approval.decision is not None or time.monotonic() >= approval.expires:
+                return "not_pending"
+            approval.decision = "approve" if decision == "approve" else "deny"
+            approval.decided_at = runs.utc_now()
+            approval.condition.notify_all()
+        return "recorded"
+
+
+def _wait_committed(op: Any) -> dict:
+    while True:
+        kind, value = op.wait(op.time_left())
+        if kind == "final":
+            return value
+        if kind == "timeout":
+            op.abandon("deadline")
+            kind, value = op.wait(30.0)
+            while kind == "progress":
+                kind, value = op.wait(30.0)
+            if kind == "final":
+                return value
+            raise RuntimeError("an MCP operation did not commit after its deadline")
+
+
+# --- the manager ---------------------------------------------------------------------------------------------------------
+class Manager:
+    """The process's one live conversation and its runs (F-20, F-27)."""
+
+    def __init__(self, state: Any):
+        self.state = state
+        self.store = caps.Store(state.workspace.path)
+        self.lock = threading.Lock()
+        self.conversation: docs.Conversation | None = None
+        self.active: AgentRun | None = None
+        self.runs: "OrderedDict[str, AgentRun]" = OrderedDict()
+        self.closed = False
+        if not state.workspace.read_only:
+            try:
+                docs.sweep(state.workspace.path)
+            except OSError:
+                pass
+
+    # --- conversation ----------------------------------------------------------------------------------------
+    def _require(self, conversation_id: object) -> docs.Conversation:
+        with self.lock:
+            conversation = self.conversation
+        if conversation is None or conversation.id != conversation_id:
+            raise AgentError("no_such_conversation", 404)
+        return conversation
+
+    def _idle(self) -> None:
+        with self.lock:
+            if self.active is not None:
+                raise AgentError("run_active", 409)
+
+    def start_conversation(self) -> dict:
+        if self.state.workspace.read_only:
+            raise AgentError("read_only", 409)
+        with self.lock:
+            if self.closed:
+                raise AgentError("shutting_down", 503)
+            if self.active is not None:
+                raise AgentError("run_active", 409)
+            previous, self.conversation = self.conversation, None
+            self.runs.clear()
+        if previous is not None:
+            previous.close()
+        ident = "conv_" + secrets.token_hex(4)
+        try:
+            conversation = docs.Conversation(self.state.workspace.path, ident)
+        except (OSError, docs.StagingError):
+            raise AgentError("staging_unavailable", 409) from None
+        with self.lock:
+            self.conversation = conversation
+        return self.view()
+
+    def close_conversation(self, conversation_id: object) -> dict:
+        conversation = self._require(conversation_id)
+        with self.lock:
+            if self.active is not None:
+                raise AgentError("run_active", 409)
+            if self.conversation is conversation:
+                self.conversation = None
+            self.runs.clear()
+        left = conversation.close()
+        return {"closed": conversation.id, "left": left}
+
+    def view(self) -> dict:
+        with self.lock:
+            conversation, active = self.conversation, self.active
+        out: dict = {"format_version": 1, "conversation": None, "active_run": None, "pending_approval": None}
+        if conversation is not None:
+            out["conversation"] = {"id": conversation.id, "documents": conversation.items_view(),
+                                   "memory": conversation.memory_view()}
+        if active is not None:
+            view = active.view()
+            out["active_run"] = active.run_id
+            out["pending_approval"] = view["pending_approval"]
+        return out
+
+    def memory(self, body: Mapping) -> dict:
+        conversation = self._require(body.get("conversation"))
+        if set(body) - {"conversation", "on", "clear"}:
+            raise AgentError("invalid", 400)
+        on, clear = body.get("on"), body.get("clear", False)
+        if (on is not None and type(on) is not bool) or type(clear) is not bool:
+            raise AgentError("invalid", 400)
+        self._idle()
+        with conversation.lock:
+            if on is not None:
+                conversation.memory_on = on
+            if clear:
+                conversation.memory = []
+                conversation.memory_cleared_reason = "cleared"
+        return self.view()
+
+    def stage(self, conversation_id: object, filename: str, data: bytes, local_only: bool) -> dict:
+        from . import attachments
+        conversation = self._require(conversation_id)
+        self._idle()
+        document = attachments.extract(data, filename=filename)
+        attachments.check_document(document)
+        rendered = attachments.render(document)
+        try:
+            item = conversation.stage(filename, document["format"], rendered["text"], local_only)
+        except docs.StagingError as exc:
+            raise AgentError(exc.code, exc.status, **({"limit": exc.limit} if exc.limit else {})) from None
+        return {"document": {"id": item.id, "name": item.name, "kind": item.kind, "format": item.format,
+                             "lines": item.lines, "characters": item.characters, "local_only": item.local_only},
+                **self.view()}
+
+    def update_document(self, body: Mapping) -> dict:
+        conversation = self._require(body.get("conversation"))
+        ident = body.get("id")
+        if set(body) - {"conversation", "id", "local_only", "remove"} or not isinstance(ident, str):
+            raise AgentError("invalid", 400)
+        self._idle()
+        try:
+            if body.get("remove") is True:
+                conversation.remove(ident)
+                return self.view()
+            local_only = body.get("local_only")
+            if type(local_only) is not bool:
+                raise AgentError("invalid", 400)
+            cleared = conversation.set_label(ident, local_only)
+        except docs.StagingError as exc:
+            raise AgentError(exc.code, exc.status) from None
+        return {**self.view(), "memory_cleared": cleared}
+
+    def draft_bytes(self, draft_id: str, conversation_id: object) -> tuple[str, bytes]:
+        """A draft of the live conversation; a named conversation must be the live one."""
+        if conversation_id is None:
+            with self.lock:
+                conversation = self.conversation
+            if conversation is None:
+                raise AgentError("no_such_conversation", 404)
+        else:
+            conversation = self._require(conversation_id)
+        item = conversation.item(draft_id)
+        if item is None or item.kind != "draft":
+            raise AgentError("unknown_document", 404)
+        try:
+            return item.name, conversation.read_text(item.id).encode("utf-8")
+        except (OSError, docs.StagingError):
+            raise AgentError("staging_unavailable", 409) from None
+
+    # --- runs ----------------------------------------------------------------------------------------------------
+    def inventory(self, body: Mapping) -> dict:
+        with self.lock:
+            conversation = self.conversation
+        return preview(self.state, conversation, body)
+
+    def prepare_run(self, body: Mapping, observer: Observer | None) -> AgentRun:
+        if set(body) - {"conversation", "revision", "task", "message", "capabilities", "limits"}:
+            raise AgentError("invalid", 400)
+        conversation = self._require(body.get("conversation"))
+        message = body.get("message")
+        if not isinstance(message, str) or not message.strip():
+            raise AgentError("message_required", 400)
+        with self.lock:
+            if self.closed:
+                raise AgentError("shutting_down", 503)
+            if self.active is not None:
+                raise AgentError("run_active", 409)
+        capture = plan(self.state, conversation, body, for_send=True)
+        return AgentRun(self, conversation, capture, message, observer)
+
+    def attach(self, run: AgentRun) -> None:
+        with self.lock:
+            if self.active is not None:
+                raise AgentError("run_active", 409)
+            self.active = run
+            run.conversation.active_run = run
+            self.runs[run.run_id] = run
+            while len(self.runs) > RUNS_KEPT:
+                self.runs.popitem(last=False)
+
+    def detach(self, run: AgentRun) -> None:
+        with self.lock:
+            if self.active is run:
+                self.active = None
+            run.conversation.active_run = None
+
+    def _run(self, run_id: object) -> AgentRun:
+        if not runs.valid_run_id(run_id):
+            raise AgentError("invalid", 400)
+        with self.lock:
+            run = self.runs.get(run_id)
+            conversation = self.conversation
+        if run is None or conversation is None or run.conversation is not conversation:
+            raise AgentError("no_such_run", 404)
+        return run
+
+    def run_view(self, run_id: object) -> dict:
+        return self._run(run_id).view()
+
+    def stop(self, run_id: object) -> dict:
+        run = self._run(run_id)
+        with run.lock:
+            ended = run.state_name != "running"
+        if ended:
+            return {"status": "already_finished"}
+        run.cancel(runs.USER_STOP)
+        return {"status": "stopping"}
+
+    def approve(self, body: Mapping) -> dict:
+        if set(body) != {"run_id", "call_id", "decision"} or body.get("decision") not in ("approve", "deny") \
+                or not isinstance(body.get("call_id"), str):
+            raise AgentError("invalid", 400)
+        run = self._run(body["run_id"])
+        status = run.decide(body["call_id"], body["decision"])
+        if status != "recorded":
+            raise AgentError("not_pending", 409)
+        return {"status": status}
+
+    # --- shutdown (7.5) ----------------------------------------------------------------------------------------
+    def cancel_all(self) -> None:
+        with self.lock:
+            self.closed = True
+            active = self.active
+        if active is not None:
+            active.cancel("shutdown")
+
+    def close_all(self) -> None:
+        with self.lock:
+            conversation, self.conversation = self.conversation, None
+            self.runs.clear()
+        if conversation is not None:
+            conversation.close()

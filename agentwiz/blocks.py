@@ -3,7 +3,7 @@
     <workspace>/blocks/<name>/
         block.json
         prompts/<file>.md
-        scripts/<file>.py
+        scripts/<file>.py                 (a v4 python step's source)
 
 Workshop publishes versioned assets. This loader reads executable definitions and managed heads. `block.json` is read with the exact reader, so inline contracts keep their numbers digit for
 digit. Every key not listed in Section 8.2 is refused with its location, so a mistyped key never silently does
@@ -53,6 +53,7 @@ DEFAULT_MAX_SECONDS = 1800
 DEFAULT_MAX_REPAIRS = 2
 DEFAULT_TIMEOUT_S = 60
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
+BUILTIN_TOOLS = ("current_datetime", "calculate", "date_arithmetic")   # bindable to a v4 tool step (0.2.2, 6.8)
 TASK_KEYS = ("reasoning", "temperature", "max_tokens", "advanced")
 
 _revisions = itertools.count(1)
@@ -97,7 +98,7 @@ class Declared:
 @dataclass(frozen=True)
 class Step:
     id: str
-    kind: str                             # "model" | "tool" | "script"
+    kind: str                             # "model" | "tool" | "transform" | "python" | "script" (retired, never usable)
     raw: Mapping                          # the step object, exact-parsed
     output: str | None = None             # tool: the declared output the step fills
     role: str | None = None               # model
@@ -111,8 +112,20 @@ class Step:
     tool: str | None = None               # tool
     arguments: object = None              # tool: the arguments template
     timeout_s: int | None = None          # script
-    script_file: str | None = None        # script: the reference, relative to the block folder
-    script_path: Path | None = None       # script: absolute
+    script_file: str | None = None        # script or python: the reference, relative to the block folder
+    script_path: Path | None = None       # script or python: absolute
+    builtin: str | None = None            # tool: a built-in utility in place of server and tool (0.2.2, 6.8)
+    engine: Mapping | None = None         # python: {"name", "profile", "codec"} written at save (0.2.2, 10.1)
+
+    @property
+    def mcp(self) -> bool:
+        """An MCP-bound tool step: the only tool steps with a destination."""
+        return self.kind == "tool" and self.builtin is None
+
+    @property
+    def local(self) -> bool:
+        """Local execution (0.2.2, 10.5): no destination, trust grant, credential or MCP observation."""
+        return self.kind in ("transform", "python") or (self.kind == "tool" and self.builtin is not None)
 
 
 @dataclass(frozen=True)
@@ -286,8 +299,9 @@ class _Issues:
 _TOP_KEYS = ("format_version", "name", "description", "inputs", "outputs", "steps", "budget")
 _STEP_KEYS = {
     "model": ("id", "kind", "role", "system", "prompt", "response_mode", "task", "task_resets", "repair"),
-    "tool": ("id", "kind", "server", "tool", "arguments", "output"),
+    "tool": ("id", "kind", "server", "tool", "builtin", "arguments", "output"),
     "script": ("id", "kind", "file", "timeout_s"),
+    "python": ("id", "kind", "file", "engine"),
     "transform": ("id", "kind", "operation", "operation_version", "parameters", "output"),
 }
 _DECLARATION_KEYS = ("contract", "description")
@@ -343,8 +357,9 @@ class _Parse:
     """The working state of one load."""
 
     def __init__(self, folder: Path, name: str, contract_store: ContractStore, *, internal_contracts=False,
-                 validators=None):
+                 validators=None, engine_check=True):
         self.version = FORMAT_VERSION
+        self.engine_check = engine_check
         self.folder = folder
         self.name = name
         self.contract_store = contract_store
@@ -519,17 +534,17 @@ def _parse_step(p: _Parse, steps: object, outputs: tuple[Declared, ...]) -> Step
         issues.add(f"{where}.id", "must be an identifier (letters, digits and _, not starting with a digit)")
         sid = None
     if "kind" not in raw:
-        issues.add(f"{where}.kind", 'is required: "model", "tool" or "script"')
+        issues.add(f"{where}.kind", 'is required: "model", "tool", "transform" or "python"')
         return None
     if kind == "block":
         issues.add(f"{where}.kind", "connect separate blocks in a workflow")
         return None
     if not isinstance(kind, str) or kind not in _STEP_KEYS:
-        issues.add(f"{where}.kind", 'must be "model", "tool" or "script"')
+        issues.add(f"{where}.kind", 'must be "model", "tool", "transform" or "python"')
         return None
     if (kind == "script" and p.version == WORKFLOW_FORMAT_VERSION
-            or kind == "transform" and p.version != WORKFLOW_FORMAT_VERSION):
-        issues.add(f"{where}.kind", "host scripts require v3 and transforms require v4")
+            or kind in ("transform", "python") and p.version != WORKFLOW_FORMAT_VERSION):
+        issues.add(f"{where}.kind", "host scripts require v3; transforms and Python blocks require v4")
         return None
     for key in raw:
         if key in _STEP_KEYS[kind]:
@@ -561,6 +576,28 @@ def _parse_step(p: _Parse, steps: object, outputs: tuple[Declared, ...]) -> Step
         if len(p.declared_outputs) != 1:
             issues.add("outputs", "a tool block declares exactly one output, the one its step names")
         server, tool = raw.get("server"), raw.get("tool")
+        builtin = raw.get("builtin")
+        if "builtin" in raw:
+            if p.version != WORKFLOW_FORMAT_VERSION:
+                issues.add(f"{where}.builtin", "a built-in utility binding requires v4")
+            elif not isinstance(builtin, str) or builtin not in BUILTIN_TOOLS:
+                issues.add(f"{where}.builtin", "must be " + ", ".join(f'"{name}"' for name in BUILTIN_TOOLS))
+            for key in ("server", "tool"):
+                if key in raw:
+                    issues.add(f"{where}.{key}", "is not used with builtin: the step binds a built-in utility")
+            arguments = raw.get("arguments", {})
+            if not isinstance(arguments, Mapping):
+                issues.add(f"{where}.arguments", "must be a JSON object")
+                arguments = {}
+            try:
+                found = templates.scan_arguments(arguments)
+            except templates.TemplateError as exc:
+                issues.add(f"{where}.{exc.location}", exc.message)
+            else:
+                for loc, placeholder in found:
+                    p.check_placeholders([placeholder], f"{where}.{loc}")
+            return Step(step_id, "tool", raw, output=output, arguments=arguments,
+                        builtin=builtin if isinstance(builtin, str) and builtin in BUILTIN_TOOLS else None)
         if "server" not in raw:
             issues.add(f"{where}.server", "is required: a server in the MCP library")
         elif not valid_name(server):
@@ -593,7 +630,11 @@ def _parse_step(p: _Parse, steps: object, outputs: tuple[Declared, ...]) -> Step
         except (templates.TemplateError, ValueError) as exc:
             issues.add(f"{where}.parameters", str(exc))
         return Step(step_id, kind, raw, output=output)
-    # script
+    if kind == "python":
+        return _parse_python(p, raw, where, step_id)
+    # script: host Python is retired (0.2.2, 10.6). The step is still read so every issue is listed.
+    issues.add(f"{where}.kind", "host_script_retired: host Python blocks no longer run; rebuild this block as a "
+               "Python block (format_version 4)", "unusable")
     ref = raw.get("file")
     path: Path | None = None
     if "file" not in raw:
@@ -611,6 +652,39 @@ def _parse_step(p: _Parse, steps: object, outputs: tuple[Declared, ...]) -> Step
         timeout = DEFAULT_TIMEOUT_S
     return Step(step_id, "script", raw, timeout_s=timeout, script_file=ref if isinstance(ref, str) else None,
                 script_path=path)
+
+
+def _parse_python(p: _Parse, raw: Mapping, where: str, step_id: str) -> Step:
+    """A restricted-runner Python step (0.2.2, 10.1): `file` under scripts/ and the `engine` written at save."""
+    issues = p.issues
+    ref = raw.get("file")
+    path: Path | None = None
+    if "file" not in raw:
+        issues.add(f"{where}.file", "is required: a path under scripts/ ending in .py")
+    else:
+        problem = _reference_issue(ref, "scripts/", ".py")
+        if problem:
+            issues.add(f"{where}.file", problem)
+        else:
+            p.referenced(ref, f"{where}.file", keep_text=True, as_text=True)
+            path = Path(os.path.abspath(p.folder / ref))
+    engine = raw.get("engine")
+    if "engine" not in raw:
+        issues.add(f"{where}.engine", "is required: written from scriptspell.profile() when the block is saved")
+        engine = None
+    elif (not isinstance(engine, Mapping) or set(engine) != {"name", "profile", "codec"}
+            or engine.get("name") != "scriptspell" or not isinstance(engine.get("profile"), str)
+            or not _is_int(engine.get("codec"))):
+        issues.add(f"{where}.engine", 'must be {"name": "scriptspell", "profile": <text>, "codec": <integer>}')
+        engine = None
+    else:
+        from . import python_step
+        if p.engine_check and not python_step.engine_matches(engine):
+            issues.add(f"{where}.engine", "engine_changed: the installed scriptSpell profile or codec differs; "
+                       "test the block again and save it", "unusable")
+        engine = {"name": engine["name"], "profile": engine["profile"], "codec": engine["codec"]}
+    return Step(step_id, "python", raw, script_file=ref if isinstance(ref, str) else None, script_path=path,
+                engine=engine)
 
 
 def _task_resets(value: object, where: str, issues: _Issues) -> list[str]:
@@ -757,16 +831,19 @@ def _folder_problem(folder: Path, name: str, reason: str) -> _Parsed:
 
 
 def parse_block(folder: Path, name: str, contract_store: ContractStore, *, internal_contracts=False,
-                validators=None) -> _Parsed:
+                validators=None, engine_check=True) -> _Parsed:
     """Load one block folder. Returns the block, or the problem that makes it unusable.
 
     `contract_store` is anything with `resolve(name, revision, digest)`: the live store's coherent snapshot,
     or the private snapshot resolver of a historical preview. `internal_contracts` and `validators` are
-    keyword-only and set only by server code constructing its own assistance or synthesis capture."""
+    keyword-only and set only by server code constructing its own assistance or synthesis capture.
+    `engine_check=False` (a saved workflow's capture only) leaves a changed Python engine to readiness, which
+    reports it as `engine_changed` before anything runs (0.2.2, 10.5)."""
     folder = Path(folder)
     result = read_file(folder, FILE, BLOCK_FILE_LIMIT)
     file_name = str(folder / FILE)
-    p = _Parse(folder, name, contract_store, internal_contracts=internal_contracts, validators=validators)
+    p = _Parse(folder, name, contract_store, internal_contracts=internal_contracts, validators=validators,
+               engine_check=engine_check)
     p.fingerprints[FILE] = result.fingerprint
     if result.data is None:
         p.views.append(FileView(FILE, None, None, result.reason))
@@ -1058,10 +1135,14 @@ def _step_view(step: Step) -> dict:
     if step.kind == "model":
         out.update(role=step.role, max_repairs=step.max_repairs, response_mode=step.response_mode,
                    task_resets=list(step.task_resets))
+    elif step.kind == "tool" and step.builtin is not None:
+        out.update(builtin=step.builtin)
     elif step.kind == "tool":
         out.update(server=step.server, tool=step.tool)
     elif step.kind == "transform":
         out.update(operation=step.raw["operation"], operation_version=step.raw["operation_version"])
+    elif step.kind == "python":
+        out.update(file=step.script_file, engine=dict(step.engine or {}))
     else:
         out.update(file=step.script_file, timeout_s=step.timeout_s)
     return out

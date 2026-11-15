@@ -140,15 +140,16 @@ hints; do not use 3.11-only modules/APIs (`tomllib`, `datetime.UTC`, exception g
 - Preserve the exact permitted lock nestings, limits, cancellation gates and shutdown/cleanup
   ownership in the concurrency reference. Never reverse a lock chain. No step lock while taking
   state/store/token/operation locks; decide Stop under the lock, act after releasing it. Do not
-  hold locks during checks, model/tool calls, script execution, page/history writes or shutdown waits.
+  hold locks during checks, model/tool calls, Python execution, page/history writes or shutdown waits.
 - Keep non-blocking bounded admission and all resource limits. Abandoned workers and retained
   cleanup owners keep their slots until they exit. Validate block inputs before admission.
 - Commit/finalize each attempt, operation and block run exactly once; committed records are
   immutable. Delivery is an observer, not run ownership. Keep save-after-final handling,
   attempt-correlated asynchronous updates, cancellation publication/dispatch and repair ordering.
-- Supervise script pipes with a single close owner and bounded waits; never close a recorded raw
-  descriptor number. Preserve process-group escalation, retained cleanup ownership and writer
-  registrations until cleanup is confirmed. Scripts are not sandboxed; preserve that warning.
+- Run Python steps only through scriptSpell's public `run`; keep the four-run budget and the
+  restart-required latch when cleanup cannot be confirmed. Restricted Python is not an OS sandbox;
+  preserve that warning. Agentic Chat decides capabilities, validation, approval and labels in
+  AgentWiz, never from model output.
 - Keep credentials in process memory, never profiles/records; preserve history redaction and
   permissions. Validate security-sensitive inputs at controlled boundaries. Insert server strings
   into the page with `textContent` or `new Option`, never markup.
