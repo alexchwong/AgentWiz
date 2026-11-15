@@ -694,6 +694,8 @@ class Handler(BaseHTTPRequestHandler):
             self._reply_safely(500, {"error": str(exc), "code": "write_failed"})
         except ModelSpellError as exc:
             self._reply_safely(400, {"error": describe_error(exc, self._base_url)})
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
         except Exception as exc:  # noqa: BLE001 - deliberately broad: messages may carry keys
             report_internal(route, exc)
             self._reply_safely(500, {"error": f"InternalError: {type(exc).__name__}", "code": "internal"})

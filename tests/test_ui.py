@@ -1,14 +1,17 @@
 """AgentWiz server through HTTP: techspec 13.3 tests #1-#12 (0.1.1: #1 and #5 extended). The page's
 JavaScript is exercised through the UI (README, "Trying it out"), not here."""
 import json
+from http.client import RemoteDisconnected
 import socket
 import threading
 import urllib.request
 
 import modelspell
+import pytest
 
 import agentwiz
 from agentwiz import model_call
+from agentwiz.ui.server import Handler
 from conftest import (DONE, KEY, Reply, answer, base, complete, configure, delta, failure_of, final_of, get_state,
                       iter_events, read_until, record_of, request, sse_event, status_of, wait_until)
 
@@ -131,6 +134,31 @@ def test_failures_never_reveal_keys(ui, make_server, monkeypatch, capfd):
     captured = capfd.readouterr()
     assert not any(b"SENTINEL" in body for body in ui.transcript)
     assert "SENTINEL" not in captured.out + captured.err
+
+
+@pytest.mark.parametrize("error", [BrokenPipeError, ConnectionResetError, OSError])
+def test_response_disconnects_do_not_retry_or_hide_other_errors(ui, monkeypatch, capfd, error):
+    """A lost response is not an internal error; unrelated OS failures still receive a 500."""
+    statuses = []
+    real_send = Handler._send
+
+    def fail_once(self, status, payload, *args, **kwargs):
+        statuses.append(status)
+        if len(statuses) == 1:
+            raise error()
+        return real_send(self, status, payload, *args, **kwargs)
+
+    monkeypatch.setattr(Handler, "_send", fail_once)
+    if error is OSError:
+        fail = failure_of(lambda: get_state(ui))
+        assert fail.status == 500 and fail.body["code"] == "internal"
+        assert statuses == [200, 500]
+        assert "OSError" in capfd.readouterr().err
+    else:
+        with pytest.raises(RemoteDisconnected):
+            get_state(ui)
+        assert statuses == [200]
+        assert capfd.readouterr().err == ""
 
 
 # 4 ---------------------------------------------------------------------------------------------
