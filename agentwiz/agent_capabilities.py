@@ -188,11 +188,12 @@ def schema_contract(schema: Any) -> checks.Contract:
 def builtin_capabilities(has_documents: bool) -> list[Capability]:
     out = []
     for tool in (*agent_tools.DOCUMENT_TOOLS, *agent_tools.UTILITY_TOOLS):
-        if tool in ("list_documents", "search_documents", "read_document") and not has_documents:
+        # The read tools and the four addendum document tools need staged items; create_draft does not.
+        if tool in agent_tools.DOCUMENT_TOOLS and tool != "create_draft" and not has_documents:
             continue
         out.append(Capability(agent_tools.capability_name(tool), "builtin", {"builtin": tool},
-                              agent_tools.DESCRIPTIONS[tool], agent_tools.SCHEMAS[tool], "read-only"
-                              if tool != "create_draft" else "changes state", False, builtin=tool))
+                              agent_tools.DESCRIPTIONS[tool], agent_tools.SCHEMAS[tool],
+                              agent_tools.EFFECTS.get(tool, "read-only"), False, builtin=tool))
     return out
 
 

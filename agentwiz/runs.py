@@ -328,6 +328,12 @@ class AttemptStore:
             self._runs[run.run_id] = run
         return run
 
+    def discard_agent_run(self, run: Run) -> None:
+        """Remove an agent run that never started (its `attach` was refused): no record, nothing to save."""
+        with self._lock:
+            if not run.committed:
+                self._runs.pop(run.run_id, None)
+
     def end_agent_run(self, run: Run, saving: bool) -> str:
         """The agent run's commit: from now on nothing changes its record. 'pending' or 'not_requested'."""
         with self._lock:

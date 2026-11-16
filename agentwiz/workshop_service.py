@@ -10,7 +10,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import blocks, checks, contract_schema, history, jsonio, model_step, runner, runs, task_settings as ts, templates
+from . import agent_tools, blocks, checks, contract_schema, history, jsonio, model_step, runner, runs, task_settings as ts, templates
 from . import workshop_editor as editor
 from .state import RoleUnresolved
 from . import draft_lineage, outbound_policy, python_step
@@ -415,6 +415,12 @@ class Service:
             'purpose': definition.get('description', ''), 'kind': step.get('kind'),
             'binding': step.get('role', step.get('server', step.get('builtin', ''))), 'system': asset_text(step.get('system', {})),
             'builtin': step.get('builtin'),
+            'builtin_description': (agent_tools.REGISTRY[step['builtin']].description
+                                    if step.get('builtin') in agent_tools.REGISTRY else None),
+            'builtin_choices': ([[name, name.replace('_', ' ')] for name in agent_tools.UTILITY_TOOLS]
+                                if 'builtin' in step else []),
+            # "From library <key> v<n>" for a block whose first revision carries the library provenance.
+            'library_source': self.state.block_library.provenance(draft['key']),
             'behaviour': asset_text(step.get('prompt', {})) if step.get('kind') == 'model' else
                 captured.files.get(step.get('file'), b'').decode() if step.get('kind') == 'python' else step.get('tool', ''),
             'arguments': jsonio.encode_exact(step.get('arguments', {})), 'budget': jsonio.encode_exact(definition.get('budget', {})), 'settings': jsonio.encode_exact(step.get('task', {})),
@@ -696,13 +702,23 @@ class Service:
             write_atomic_bytes(root, key + '.json', jsonio.encode_file_exact(
                 {'format_version': 1, 'revision': secrets.token_hex(16), 'examples': examples}))
 
-    def save_examples(self, key, body):
+    def only_revision(self, key, ident):
+        """The sole-revision guard (starter blocks addendum, 5.2): inside the caller's reservation, the block's
+        current revision is `ident` and it is the block's only revision; otherwise nothing is written."""
+        h = head(self.assets.root(key)) if self.assets.root(key).exists() else None
+        if h is None or h['current'] != ident or h['retained'] != [ident]:
+            fail('edited', 409)
+
+    def save_examples(self, key, body, *, only_revision=None):
+        """`only_revision` is internal (the library installer); no HTTP body can set it."""
         key_name(key)
         if self.state.workspace.read_only:
             fail('read_only', 409)
         writer = self.state.register_writer('Workshop examples')
         try:
             with self.assets.reserve(key, 'examples'):
+                if only_revision is not None:
+                    self.only_revision(key, only_revision)
                 previous = self.collection(key)
                 if previous['revision'] != body.get('expected_revision'):
                     fail('stale', 409)
@@ -1146,7 +1162,9 @@ class Service:
             error.plan = self.public_plan(plan)
             raise error
 
-    def save(self, body):
+    def save(self, body, *, provenance=None):
+        """`provenance` is internal (the library installer): the immutable `metadata.library` record of an imported
+        first revision. Every other save drops `metadata.library`, so an edited block never claims to be it."""
         plan, captures = self.prepare('save', body)
         try:
             self.check_plan(plan, body)
@@ -1158,6 +1176,9 @@ class Service:
             # A new generation starts without standard prose and never inherits one (spec v2 section 3).
             metadata.pop('description_sections', None)
             metadata.pop('description_basis', None)
+            metadata.pop('library', None)
+            if provenance is not None:
+                metadata['library'] = dict(provenance)
             if 'source_review' in plan['descriptor']:
                 metadata['source_review'] = plan['descriptor']['source_review']
             from .workshop_assets import captured_maps, contract_maps_digest
@@ -1766,8 +1787,9 @@ class Service:
                 'outcome': outcome, 'plan': self.describe_public(batch['plan']), 'rows': rows,
                 'proposal': proposal, 'saving': False}
 
-    def save_description(self, key, ident, body):
-        """PUT .../revisions/<id>/description: an accepted proposal or a manual edit. Writes only the sidecar."""
+    def save_description(self, key, ident, body, *, only_revision=None):
+        """PUT .../revisions/<id>/description: an accepted proposal or a manual edit. Writes only the sidecar.
+        `only_revision` is internal (the library installer); no HTTP body can set it."""
         from . import workshop_descriptions as descriptions
         kind = descriptions.check_write_body(body)
         key_name(key)
@@ -1783,6 +1805,8 @@ class Service:
         writer = self.state.register_writer('Workshop description')
         try:
             with self.assets.reserve(key):
+                if only_revision is not None:
+                    self.only_revision(key, only_revision)
                 saved = self.assets.saved(key, ident)                  # recheck retention: 404 when pruned
                 root = self.assets.root(key)
                 with self.assets.snapshot(saved) as captured:

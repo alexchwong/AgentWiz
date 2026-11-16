@@ -85,8 +85,8 @@ They are release tooling under the owner's exception to T2, not tests:
 | Check | Passes when |
 | --- | --- |
 | RC1 | `NEWS.md` has exactly one line `## <version>`; its section has at least one `- ` bullet, each opening bullet line of at most 20 words. Review the entire bullet, including continuation lines, against the policy. |
-| RC2 | The wheel is `agentwiz-<version>-py3-none-any.whl`; every member is under `agentwiz/` or `agentwiz-<version>.dist-info/`; `agentwiz/ui/index.html` and `agentwiz/model-servers.ini.template` are present; the `.dist-info` members are exactly `METADATA`, `WHEEL`, `RECORD`, `entry_points.txt`, `licenses/LICENSE`. |
-| RC3 | `METADATA` has `Name: AgentWiz`, `Version: <version>`, `License-Expression: MIT`, the required `jsonschema>=4.26,<5`, and exactly two other runtime dependencies: the modelSpell and scriptSpell direct URLs, identical to the pinned release-wheel URLs and sha256 in `pyproject.toml`. |
+| RC2 | The wheel is `agentwiz-<version>-py3-none-any.whl`; every member is under `agentwiz/` or `agentwiz-<version>.dist-info/`; `agentwiz/ui/index.html`, `agentwiz/model-servers.ini.template`, `agentwiz/pdf_reader.py`, `agentwiz/pdf_worker.py`, `agentwiz/tutorial_support/pdf_fixtures.py`, `agentwiz/library/index.json` and every file of each library entry it lists are present; the `.dist-info` members are exactly `METADATA`, `WHEEL`, `RECORD`, `entry_points.txt`, `licenses/LICENSE`. |
+| RC3 | `METADATA` has `Name: AgentWiz`, `Version: <version>`, `License-Expression: MIT`, the required `jsonschema>=4.26,<5` and `pypdfium2>=5.13,<6`, and exactly two other runtime dependencies: the modelSpell and scriptSpell direct URLs, identical to the pinned release-wheel URLs and sha256 in `pyproject.toml`. |
 
 Each prints `RCn ok` or `RCn FAILED: <reason>`; all three run; on any failure nothing is copied to
 `--output-dir` and the script exits non-zero. Whether NEWS bullets are user-visible stays a human
@@ -101,7 +101,7 @@ judgement.
 2. Confirm the offline CI matrix passes on Ubuntu and macOS, Python 3.10 and 3.13. A Linux-only
    local pass does not verify macOS. Optional subjective review/live checks are not gates.
 3. Run `python scripts/build_release.py --smoke` on the intended committed tree; require
-   RC1–RC3 and the installed-wheel smoke S1–S22 to pass. Run the installed-wheel page/tutorial
+   RC1–RC3 and the installed-wheel smoke S1–S25 to pass. Run the installed-wheel page/tutorial
    checks below as well; source-checkout browser results do not establish packaged UI behavior.
 4. Merge `devel` into `main` when authorized. The release workflow reruns tests and checks
    before publishing; inspect its result.
@@ -130,6 +130,36 @@ Release 0.2.2 makes S13 a standalone Python block run and adds S18–S22 against
 `agent-docs`, `agent-python` and a non-streaming `author` model): S18 a two-step agentic run, S19 search, read and
 a downloaded draft over a staged document, S20 the S13 Python run, S21 Python Describe it (examples, then Generate and
 check), and S22 an agentic run that calls a saved Python block.
+
+The 0.2.2 starter blocks addendum adds S23–S25. S23 adds `csv_to_rows`, `sort_and_dedupe_rows` and
+`rows_to_table` through the library installer (plan, then add with the plan's confirmations) and runs them as a
+workflow. S24 extracts the packaged PDF fixtures (`agentwiz.tutorial_support.pdf_fixtures`) on both upload routes,
+including the partial-coverage fixture, through the installed PDF worker. S25 is a scripted agent run
+(`agent-draft`) that copies a passage to a draft with `copy_to_draft`, then revises it with `revise_draft`.
+RC2 also requires the PDF reader and worker and every library entry listed by `agentwiz/library/index.json`; RC3
+requires `pypdfium2>=5.13,<6`, which the smoke's dependency preload and the offline wheelhouse must include.
+
+### Owner sign-off before merging to `main` (starter blocks addendum, Section 7)
+
+The release workflow publishes on an eligible `main` push, so these are owner sign-offs before the merge, not
+automatic release conditions:
+
+1. **Model-block qualification.** Run `scripts/library_eval.py --profile <LM Studio profile>` on the target (LM
+   Studio, the `fast` role's settings) and record the report: the model file, quantisation, context length, LM
+   Studio version, reasoning setting, temperature and token budget. Round 1 is one trial of the dev set; the full
+   qualification (3 trials of 10 cases, `--trials 3 --set all`) runs only for ready blocks. The bar per block: at
+   least 29/30 contract executions and 24/30 correct, every critical case correct on all three trials, the hard
+   invariants in every run, and the rubric cases passing the owner's review. A block still below the bar after
+   three revision rounds is removed from `index.json` (with its cases, tutorial and README references) and named in
+   the handover; it never ships with a warning.
+2. **Agent selection.** Run `scripts/agent_eval.py --cohorts tests/agent_eval/cohorts.json` against a disposable
+   workspace and record the three rates. The README claims library support in Chat only after the five-scenario
+   gate passes on the target orchestrator; otherwise it describes the blocks for Workshop and workflows only and
+   reports Chat as untested.
+3. **PDF wheel matrix.** Confirm `pypdfium2` wheels install and run on Linux x86-64 and arm64, macOS arm64 and
+   x86-64, WSL2 and each supported Python, and that its licence notices are present in the installed wheel. A
+   target without a usable wheel moves PDF to an `agentwiz[pdf]` extra there.
+4. **PDF on macOS.** Accept, or decline, PDF on macOS without memory containment (Section 9, item 1).
 
 For an uncommitted candidate, transfer the tracked working-tree changes (including deletions)
 to a throwaway clone and commit only there, then run the normal release command in that clone.

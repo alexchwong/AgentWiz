@@ -13,6 +13,13 @@
 - Tool blocks can bind a built-in utility: date and time, calculator or date arithmetic.
 - Starters are grouped by type: LLM, Tool, Python and Transform.
 - Host Python (v3 script) blocks are retired and load as unusable.
+- Block library: thirty ready-made model, Tool and Transform blocks, added from Workshop after reviewing port labels.
+- Eleven new local utilities: find and replace, sections, outlines, diffs, CSV tables, statistics and identifier checks.
+- Agentic Chat can copy into drafts, revise drafts, compare documents and read CSV or TSV tables.
+- PDF text extraction runs in a short-lived worker process, reports page coverage, and needs pypdfium2.
+- Attachments also accept .tsv, .log, .yaml and .yml files.
+- A de-identification workflow checks the identifier map locally before its Release Gate.
+- A tutorial topic adds library blocks, tests one and runs one from agentic Chat.
 - Pins modelSpell 0.4.0 and scriptSpell 0.3.0.
 
 ## 0.2.1

@@ -1,0 +1,109 @@
+{
+  "title": "De-identify a text",
+  "group": "llm",
+  "summary": "Replace identifiers with [KIND_N] placeholders and return the map.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "deidentify_text-1",
+      "version": 1,
+      "label": "person, contact, date, place",
+      "inputs": {
+        "text": "Alice Smith (alice@example.org) approved [DRAFT] on 3 March in Perth."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "text",
+            "operation": "excludes",
+            "values": [
+              "Alice",
+              "alice@example.org",
+              "Perth"
+            ],
+            "case": "insensitive"
+          },
+          {
+            "output": "text",
+            "operation": "includes",
+            "values": [
+              "[DRAFT]"
+            ],
+            "case": "sensitive"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "deidentify_text-2",
+      "version": 1,
+      "label": "repeated name",
+      "inputs": {
+        "text": "Bob called. Bob left."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "text",
+            "operation": "excludes",
+            "values": [
+              "Bob"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "deidentify_text-3",
+      "version": 1,
+      "label": "nothing to replace",
+      "inputs": {
+        "text": "The weather was fine."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "identifier_map",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "required_context": 32768,
+  "max_tokens": 12288,
+  "description": {
+    "sections": {
+      "use": "Replace names, organisations, places, dates, contact details and ID numbers with [KIND_N] placeholders before text is sent elsewhere, keeping the map so the originals can be restored. Use it in the shipped workflow: check_identifier_map, a Release Gate, the remote block, then restore_identifiers.",
+      "exclusions": "In agentic Chat it is a local redaction aid only; for Gate approval use a saved workflow.",
+      "effects": "Every port is Local only: the text and the map stay on this machine and its model must be local (or trusted local). It returns a value for review.",
+      "limitations": "Needs a model context of at least 32,768 tokens (prompt, input, one repair and 12,288 output tokens). Results are model output: review them. Text up to 40,000 characters; up to 500 map entries. The model can miss identifiers or choose wrong ones; a Release Gate review is still required.",
+      "missing_data": "A text with no identifiers is returned unchanged with an empty map. Bracket tokens already in the text, such as [DRAFT], are left as they are.",
+      "failures": "If the reply does not meet the output contract after two repairs, the step fails with located issues. A context or token limit is reported as such; shorten the input or use a larger context."
+    },
+    "port_summaries": {
+      "inputs": {
+        "text": "The text to de-identify."
+      },
+      "outputs": {
+        "text": "The text with placeholders.",
+        "identifier_map": "The map: placeholder, original and kind."
+      }
+    }
+  }
+}

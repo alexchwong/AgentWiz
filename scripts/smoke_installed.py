@@ -1,7 +1,7 @@
 # Adapted from modelSpell scripts/smoke_installed.py at commit 1759c6e3c28a637731434a73c46088048583e358
 # (MIT, Copyright (c) 2026 Alex Wong), per AgentWiz techspec 11.2 (0.1.0), 11.1 (0.1.1), 13.1 (0.1.2), 16.1 (0.1.3)
 # and 18.1 (0.1.4).
-"""Smoke check against the installed AgentWiz wheel (steps S1-S22). Run with the environment's
+"""Smoke check against the installed AgentWiz wheel (steps S1-S25). Run with the environment's
 `python -I` from a scratch directory. Every step checks behaviour; none reads a file's contents.
 The launch's default workspace (./workspaces/default) is validated by AgentWiz itself and checked
 through /api/state."""
@@ -84,6 +84,14 @@ def agent_turn(body):
         steps = [("aw_search_documents", {"query": "B17"}),
                  ("aw_read_document", {"document_id": hit["document_id"] if hit else "", "start_line": 1}),
                  ("aw_create_draft", {"name": "summary", "format": "md", "content": "# B17 holds part 007"})]
+    elif model == "agent-draft":
+        source = results[0]["result"]["documents"][0]["id"] if results else ""
+        copied = results[1]["result"]["draft_id"] if len(results) > 1 else ""
+        steps = [("aw_list_documents", {}),
+                 ("aw_copy_to_draft", {"source_id": source, "start_line": 2, "end_line": 2, "name": "excerpt",
+                                       "format": "txt"}),
+                 ("aw_revise_draft", {"source_id": copied, "edits": [{"find": "Tom", "replace": "Thomas",
+                                                                      "expected_count": 1}]})]
     else:
         steps = [(next(t for t in tools if t.startswith("block_")), {"text": "one two three"})]
     if len(results) < len(steps):
@@ -534,6 +542,84 @@ try:
     tool_results = [json.loads(m['content']) for m in received[-1]['messages'] if m.get('role') == 'tool']
     check(events[-1]['stop_reason'] == 'answered' and tool_results[-1]['result'] == {'x': 'one two three', 'y': 3},
           f'agent Python block: {events}')
+
+    # S23 (0.2.2): add three library Tool blocks through the installer and run them as a workflow
+    library = json.loads(api('/api/library').read())
+    check(len(library['entries']) == 30 and {e['status'] for e in library['entries']} == {'available'},
+          'installed library listing')
+    planned = json.loads(api('/api/library/plan', {'format_version': 1, 'entries': [
+        {'key': k} for k in ('csv_to_rows', 'sort_and_dedupe_rows', 'rows_to_table')]}).read())['entries']
+    check([p['outcome'] for p in planned] == ['planned'] * 3, f'library plan: {planned}')
+    added = json.loads(api('/api/library/add', {'format_version': 1, 'entries': [
+        {'key': p['key'], 'as': p['as'], 'expected_plan': p['expected_plan'],
+         'confirmations': p['required_confirmations'], 'binding': p['binding']} for p in planned]}).read())['entries']
+    check([a['outcome'] for a in added] == ['added'] * 3, f'library add: {added}')
+    revision_of = {a['as']: a['revision'] for a in added}
+
+    def node(name, path):
+        return {'kind': 'node', 'node': name, 'port': 'out', 'path': path}
+    workflow = 'installed_orders'
+    definition = {'name': workflow, 'purpose': 'Sorted orders',
+                  'inputs': {'csv': {'contract': {'format': 'text'}, 'local_only': False}},
+                  'constants': {'sort_keys': {'value': ['Order ID'], 'local_only': False}},
+                  'nodes': {'parse': {'bindings': {'csv': {'kind': 'input', 'port': 'csv'}}},
+                            'sort': {'bindings': {'columns': node('parse', ['columns']), 'rows': node('parse', ['rows']),
+                                                  'by': {'kind': 'constant', 'name': 'sort_keys'}}},
+                            'table': {'bindings': {'columns': node('sort', ['columns']), 'rows': node('sort', ['rows'])}}},
+                  'outputs': {'markdown': {'contract': {'format': 'json'}, 'local_only': False,
+                                           'binding': {'kind': 'node', 'node': 'table', 'port': 'out'}}}}
+    keys = {'parse': 'csv_to_rows', 'sort': 'sort_and_dedupe_rows', 'table': 'rows_to_table'}
+    save = {'name': workflow, 'file_token': None, 'definition_text': json.dumps(definition),
+            'selections': {n: {'key': k, 'revision': revision_of[k]} for n, k in keys.items()}}
+    plan = workshop('plans', {'action': 'workflow_save', 'request': save})
+    workshop(f'workflows/{workflow}/save', {'request': save, 'expected_plan': plan['expected_plan'],
+                                           'confirmations': plan['required_confirmations']})
+    request = {'name': workflow, 'inputs': {'csv': 'Order ID,Customer\n010,Ng\n007,"Smith, J"\n010,Ng\n'}}
+    plan = workshop('plans', {'action': 'workflow_run', 'request': request})
+    check(plan['descriptor']['order'] == ['parse', 'sort', 'table'], f'library workflow preflight: {plan["descriptor"]}')
+    job = workshop(f'workflows/{workflow}/run', {'request': request, 'expected_plan': plan['expected_plan'],
+                    'ticket': workshop('tickets', {})['ticket'], 'confirmations': plan['required_confirmations']})
+    deadline = time.monotonic() + 15
+    result = workshop('workflow-jobs/' + job['operation_id'])
+    while result['outcome'] == 'running' and time.monotonic() < deadline:
+        time.sleep(.02)
+        result = workshop('workflow-jobs/' + job['operation_id'])
+    check(result['outcome'] == 'complete' and json.loads(result['outputs']['markdown']['text'])['markdown'] ==
+          '| Order ID | Customer |\n| --- | --- |\n| 007 | Smith, J |\n| 010 | Ng |\n', f'library workflow: {result}')
+
+    # S24 (0.2.2): the packaged PDF fixtures extract on both upload routes through the worker, with coverage
+    from agentwiz.tutorial_support import pdf_fixtures
+    for name, pages_with_text in (('text', 1), ('partial', 2)):
+        data = pdf_fixtures.FIXTURES[name]()
+        upload = urllib.request.Request(root + '/api/attachments/extract', method='POST', data=data, headers={
+            'X-Session-Token': token, 'Content-Type': 'application/octet-stream', 'X-Filename': name + '.pdf',
+            'Content-Length': str(len(data))})
+        extracted = json.loads(urllib.request.urlopen(upload, timeout=60).read())
+        check(extracted['format'] == 'pdf' and extracted['coverage']['pages_with_text'] == pages_with_text,
+              f'PDF on the Chat route ({name}): {extracted.get("coverage")}')
+        staged = urllib.request.Request(root + '/api/agent/documents', data=data, method='POST', headers={
+            'X-Session-Token': token, 'X-Filename': name + '.pdf', 'X-Conversation': conversation,
+            'X-Local-Only': 'false', 'Content-Length': str(len(data))})
+        document = json.loads(urllib.request.urlopen(staged, timeout=60).read())['document']
+        check(document['format'] == 'pdf' and document['coverage']['pages_with_text'] == pages_with_text,
+              f'PDF on the agent route ({name}): {document.get("coverage")}')
+    check(extracted['coverage']['warnings'] == [{'code': 'no_text_layer', 'page': 2}], 'partial coverage warning')
+
+    # S25 (0.2.2): one scripted agent run that copies a passage to a draft, then revises that draft
+    conversation = agent('conversation', {})['conversation']['id']
+    data = b"Actions\nTom will review Hull's routes by 15 April.\n"
+    staged = urllib.request.Request(root + '/api/agent/documents', data=data, method='POST', headers={
+        'X-Session-Token': token, 'X-Filename': 'ops.txt', 'X-Conversation': conversation, 'X-Local-Only': 'false',
+        'Content-Length': str(len(data))})
+    urllib.request.urlopen(staged, timeout=30).read()
+    events = agent_run('agent-draft', 'copy and revise', [{'name': n} for n in
+                       ('aw_list_documents', 'aw_copy_to_draft', 'aw_revise_draft')])
+    final = events[-1]
+    check(final['stop_reason'] == 'answered' and [t['outcome'] for t in final['view']['trace']] == ['completed'] * 3
+          and len(final['view']['drafts']) == 2, f'agent copy and revise: {events}')
+    revised = final['view']['drafts'][-1]['id']
+    check(api('/api/agent/drafts/' + revised).read().rstrip(b'\n')
+          == b"Thomas will review Hull's routes by 15 April.", 'revised draft download')
 
     # S8: a second AgentWiz on the same workspace is refused with exit status 3
     second = subprocess.run([str(exe), "--no-browser"], capture_output=True, text=True, timeout=15)

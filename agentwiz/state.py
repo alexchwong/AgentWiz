@@ -31,13 +31,13 @@ from types import MappingProxyType
 import modelspell
 from modelspell import Endpoint
 
-from . import workshop, blocks, checks, contracts, history, mcp_client, mcp_ops, roles, runs, writers
+from . import workshop, blocks, checks, contracts, history, mcp_client, mcp_ops, pdf_reader, roles, runs, writers
 from . import mcp_library as ml
 from . import profiles as pf
 from . import task_settings as ts
 from . import workspace as wsmod
 from .model_call import ModelSettings, RequestSnapshot, SettingsError, settings_from_body, validate_key
-from .errors import report_internal
+from .errors import SettingsHeld, report_internal
 from .workspace import Problem, Workspace
 
 
@@ -212,6 +212,9 @@ class ProcessState:
         self.budget = RequestBudget(request_limit)
         self.workspace = workspace
         self._lock = threading.Lock()
+        # Settings holds (starter blocks addendum, 5.2): counted under their own leaf lock, taken after _lock.
+        self._hold_lock = threading.Lock()
+        self._holds = 0
         self.servers = MappingProxyType(dict(servers))
         self.config_path = config_path
         self._settings = ModelSettings()
@@ -276,6 +279,7 @@ class ProcessState:
             self.mcp_library.ensure()
             self.mcp_client = mcp_client.MCPClient()
             self.mcp_ops = mcp_ops.Ops(self.mcp_client)
+            self.pdf = pdf_reader.Admission()             # PDF extraction slots (addendum 4.2)
             self._mcp_revision = 1
             self._mcp_tokens: dict[str, str] = {}
             self._mcp_signature = None
@@ -284,6 +288,8 @@ class ProcessState:
                 self._refresh_mcp_locked(initial=True)
             from .workshop_service import Service
             self.workshop = Service(self)
+            from .library_install import Installer
+            self.block_library = Installer(self)        # the starter block library (addendum 5)
         from .agent_loop import Manager
         self.agent = Manager(self)                             # agentic Chat (0.2.2, 4, 7); outside the lock
 
@@ -522,8 +528,28 @@ class ProcessState:
         except OSError as exc:
             raise WriteFailed(str(folder / file), exc.strerror or type(exc).__name__) from None
 
+    # --- settings holds (starter blocks addendum, 5.2) ----------------------------------------------
+    @contextlib.contextmanager
+    def settings_hold(self):
+        """While held, every change to profiles, the role map or role definitions is refused with 503 `busy`.
+        Not a lock: nothing waits on it; it lasts for one local file publication. A change that passed its
+        check before the hold was taken completes under `_lock` before the holder's planning can read."""
+        with self._hold_lock:
+            self._holds += 1
+        try:
+            yield
+        finally:
+            with self._hold_lock:
+                self._holds -= 1
+
+    def _refuse_if_held_locked(self) -> None:
+        with self._hold_lock:
+            if self._holds:
+                raise SettingsHeld()
+
     def _profile_operation(self, revision, validate, plan, export_body=None):
         with self._lock:
+            self._refuse_if_held_locked()
             with self.library.locked():
                 self._refresh_defaults_locked()
                 if revision != self._revision:
@@ -647,6 +673,7 @@ class ProcessState:
         """Save the role map under the state lock (7.3). The writer-barrier registration the route makes before
         taking this lock arrives with the barrier (Phase B)."""
         with self._lock:
+            self._refuse_if_held_locked()
             if revision != self._roles_revision:
                 raise StaleRevision(self._roles_revision)
             if self._roles_read_only_locked():
@@ -710,6 +737,23 @@ class ProcessState:
                                        profile_name=profile, profile_modified=False)
             defaults = copy.deepcopy(dict((self._role_definitions.get(role) or {}).get("task_defaults") or {}))
             return RoleCapture(role, profile, snapshot, defaults, self._roles_revision)
+
+    def role_destination(self, role: str) -> dict:
+        """The credential-free destination `role` resolves to now (starter blocks addendum, 5.2): the profile name
+        and the fields `destination_config()` reports for a role, or {"unresolved": reason}. No key is read."""
+        with self._lock:
+            failure = self._role_failure_locked(role)
+            if failure is not None:
+                return {"unresolved": failure.reason}
+            profile = self._roles[role]
+            settings = self._profiles[profile]
+            return {"profile": profile, "kind": settings.kind,
+                    "url": self._configured_settings(settings).base_url, "model": settings.model,
+                    "provider": (settings.provider or "") if settings.kind == "openrouter" else ""}
+
+    def defined_roles(self) -> list[str]:
+        with self._lock:
+            return sorted(self._roles.keys() | self._role_definitions.keys())
 
     def destination_config(self) -> dict:
         """Configured destinations from settings and URL interpretation only (core v3 §3.2): no Endpoint,
@@ -1081,14 +1125,16 @@ class ProcessState:
             self.writers.close()                      # 1. close admission, one gate at a time
             self.store.close()
             self.mcp_ops.close()
+            self.pdf.close()                          #    PDF admission: waiters refused, records cancelled
             self.python.close()
             self._interrupt_deliveries()              # 2. delivery never delays anything
             self.agent.cancel_all()                   #    an agent run ends as interrupted
             self.store.stop_all()                     # 3. cancel admitted work through the token path
             self.mcp_ops.cancel_all()                 #    and abandon every registered MCP operation
+            self.pdf.cancel_all()                     #    kill every PDF worker, interrupt every PDF body read
             end = time.monotonic() + grace_s          # 4. grace
             while time.monotonic() < end:
-                if not self.store.active_block_runs() and self.store.running_count() == 0:
+                if not self.store.active_block_runs() and self.store.running_count() == 0 and not self.pdf.busy():
                     break
                 time.sleep(POLL_S / 5)
         elif not wait:

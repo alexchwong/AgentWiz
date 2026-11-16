@@ -12,8 +12,13 @@ AgentWiz 0.2.2 includes:
 - **Agentic Chat:** a switch in Chat that lets the model ask AgentWiz to run one approved capability per turn.
   AgentWiz decides what may run, validates every request, asks before any call that may change state, and
   decides where data may go.
-- **Built-in tools:** list, search and read staged documents, create a downloadable draft, the current date and
-  time, a calculator and date arithmetic.
+- **Built-in tools:** list, search and read staged documents, create, copy into and revise downloadable drafts,
+  compare documents, read CSV tables, and fourteen local utilities (date and time, calculator, date arithmetic, find
+  and replace, Markdown sections and outlines, text diff and combine, CSV parse, sort and table rendering, column
+  statistics, identifier scanning and identifier-map checks).
+- **Block library:** thirty ready-made model, Tool and Transform blocks, added from Workshop after reviewing each
+  port's Local only label.
+- **PDF:** text extraction from PDF files in a short-lived worker process, with page coverage.
 - **Python blocks:** restricted Python that runs locally in scriptSpell's runner, standalone, in fixed workflows
   and from agentic Chat; **Describe it** drafts examples and source for you to review.
 - **Workshop:** create, understand, save, test and compare one model, tool, Python or transform block at a time.
@@ -185,7 +190,8 @@ During a run the panel streams the model's text and reasoning, lists each propos
 for approval when one is needed, and ends with the answer, the stop reason and the trace. **Stop** is available
 throughout. A reload reattaches to the running conversation, its run and any pending approval.
 
-**What can be offered.** The seven built-in tools; MCP tools you have classified; and saved workflow-ready (v4)
+**What can be offered.** The built-in tools (eight document tools and fourteen utilities, below); MCP tools you have
+classified; and saved workflow-ready (v4)
 model, tool, transform and Python blocks. Every MCP tool is disabled and unknown-effect until you classify it in
 Settings → MCP servers → **Agentic Chat: tool classifications**: **Enabled**, **Effects** (read-only, changes state
 or unknown), **Cannot reach files on this computer** (your statement; AgentWiz cannot verify it, and a tool
@@ -198,11 +204,15 @@ an MCP tool classified as changing state or unknown asks first, showing exactly 
 receive (for a Tool block, after its template is filled). A denial is final for that call and counts as an
 action; an approval is single-use and expires after 120 seconds or at the run's deadline.
 
-**Documents and drafts.** Choose a `.txt`, `.md`, `.csv` or `.json` file in the panel: it is read as on the
-Documents tab and staged under `<workspace>/agent_documents/`. The model reaches it only by its ID, through
-search (literal, case-insensitive, in document order) and read (by the document's own line numbers; long lines
-by column). **Create draft** writes a new Markdown or text draft that you can download; it never changes a
-document. Up to 20 documents and drafts (10 drafts) and 64 MiB per conversation. Staged files are removed when the
+**Documents and drafts.** Choose a `.txt`, `.md`, `.csv`, `.tsv`, `.json`, `.log`, `.yaml`, `.yml` or `.pdf` file in
+the panel: it is read as on the Documents tab and staged under `<workspace>/agent_documents/`. A PDF shows its
+coverage (pages read, pages with text, and any page without a text layer). The model reaches a document only by its
+ID, through search (literal, case-insensitive, in document order) and read (by the document's own line numbers; long
+lines by column). **Create draft** writes a new Markdown or text draft that you can download. **Copy to draft**
+copies a line range of a document or draft into a new draft (or appends it to one), **Revise draft** applies exact
+find-and-replace edits to a draft as a new draft, **Compare documents** gives a line diff of two items, and **Read
+table** reads a staged CSV or TSV by rows. None of them ever changes a document; reading restricted material for a
+draft restricts the draft. Up to 20 documents and drafts (10 drafts) and 64 MiB per conversation. Staged files are removed when the
 conversation closes, the workspace changes and AgentWiz exits.
 
 **Privacy.** A document marked Local only, and anything derived from it, is restricted. For a model that is not
@@ -245,8 +255,8 @@ a label. A label declares only that port; restrictions can still come from conne
 protected design. **Start with** groups starters by type: **LLM** (the five model starters and Blank), **Tool**
 (Call an MCP tool, Built-in utility, Blank), **Python** (Describe it, Blank) and **Transform** (Count text, Select or
 rename fields, Format report, Restore placeholders). Every block they create is workflow-ready. A Tool block shows its
-binding as **Built-in** (current date and time, calculator or date arithmetic: local, read-only, no approval) or the
-MCP server name.
+binding as **Built-in** (one of the fourteen utilities listed under [Block library](#block-library): local,
+read-only, no approval) or the MCP server name. **Add from library** adds ready-made blocks; see below.
 Creation errors keep the dialog and entered values available for correction. **Create draft** opens
 Design without calling a model; **Create with assistance** first creates the same draft, then opens the
 separate assistance request/review workflow. Neither button saves a revision automatically.
@@ -424,6 +434,66 @@ review it again. An unreadable, linked or newer-format sidecar shows **Descripti
 and is protected from writes. An invalid or mismatched v1 sidecar can be replaced if AgentWiz
 can read its freshness token. The sidecar is independent of execution. Pruning a revision also
 removes its description.
+
+## Block library
+
+**Add from library** in Workshop lists thirty ready-made blocks in three groups. Each is an ordinary block of yours
+once added: it has revisions, examples and a standard description, and you can edit, test, compare and wire it like
+any other. A library block never updates itself; a newer library version is added under a new key.
+
+- **Model blocks** (role `fast` by default): Summarise a document, Extract action items, Extract entities, Classify a
+  text, Answer from a source (with verbatim quotes, or "Not found in the source."), Rewrite for an audience,
+  Proofread, De-identify a text, Translate a text, Draft a reply, Minutes from a transcript, Compare documents by
+  meaning, Check against a checklist and Table from text.
+- **Tool blocks** (built-in utilities: local, read-only, no model): Find and replace, Extract a Markdown section,
+  Document outline, Compare two texts, Combine two texts, CSV to rows, Rows to Markdown table, Sort and remove
+  duplicates, Column statistics, Scan for identifiers, Check an identifier map, Current date and time, Calculate, Add
+  to a date and Days between dates.
+- **Transform blocks**: Restore identifiers.
+
+**Adding.** Tick entries, optionally rename them (**Add as**), and for a model block choose its role. **Review**
+shows each port's Local only label, the role and the destination that role resolves to now; **Add** requires that
+you have reviewed the labels. If a role, a profile's endpoint or a provider pin changes after the review, Add asks
+again and writes nothing. A key already in use is refused, case-insensitively. Each entry's status is one of
+**Available**, **Installed**, **Key in use** or **Incomplete**; an addition interrupted after the block was saved
+offers **Finish adding**, which writes the missing examples and description unless you have edited the block since,
+in which case it reports what was written. Examples or a description you save yourself meanwhile are kept as you
+wrote them. Saving an added block yourself makes it an ordinary revision without the library record.
+
+**The utilities** behind the Tool blocks are also built-in tools in agentic Chat and Tool-step bindings:
+`current_datetime`, `calculate`, `date_arithmetic`, `find_replace`, `extract_section`, `outline`, `compare_texts`,
+`combine_texts`, `parse_csv`, `rows_to_table`, `sort_dedupe_rows`, `column_stats`, `scan_identifiers` and
+`check_identifier_map`. Each takes at most 1 MiB of arguments, works out its output size before producing it, and
+refuses with `too_large` rather than truncating; only `outline` and `scan_identifiers` stop at a cap and say so.
+Table values stay verbatim strings, so IDs such as `007` keep their leading zeros.
+
+**Wiring examples.** A CSV to a sorted Markdown table: `csv_to_rows` → `sort_and_dedupe_rows` → `rows_to_table`,
+binding each node's `columns` and `rows` by path from the previous node's `out`, and `sort.by` to a constant such
+as `["Order ID"]`:
+
+```json
+"sort.columns": {"kind": "node", "node": "parse", "port": "out", "path": ["columns"]},
+"sort.rows":    {"kind": "node", "node": "parse", "port": "out", "path": ["rows"]},
+"sort.by":      {"kind": "constant", "name": "sort_keys"},
+"table.columns":{"kind": "node", "node": "sort",  "port": "out", "path": ["columns"]},
+"table.rows":   {"kind": "node", "node": "sort",  "port": "out", "path": ["rows"]}
+```
+
+Model rows to a table: bind `table_from_text.rows` to `rows_to_table.rows`, and bind the same constant or input that
+fed `table_from_text.columns` to `rows_to_table.columns`.
+
+**De-identification.** `deidentify_text` (on a trusted local model) → `check_identifier_map` → a Release Gate →
+the remote step → `restore_identifiers`. The map check runs locally before the Gate: a malformed placeholder, one
+placeholder for two originals, one original under two placeholders, or a placeholder that collides with a token
+already in the source fails the workflow before anything is sent. Tokens the remote reply adds or keeps that the map
+does not know stay as they are and are listed. The Gate review is still yours: neither the model nor the scan can
+show that no identifier was missed.
+
+**Quality.** The model blocks' prompts and cases are written for, and evaluated on, LM Studio with the `fast` role;
+a block that does not meet the bar is not shipped. Evaluation on another model is not implied. In agentic Chat the
+library blocks are offered like any saved block, but their use from Chat is **untested**: the end-to-end Chat gate
+(`scripts/agent_eval.py --cohorts`) has not yet been run on a target orchestrator. Use them from Workshop and
+workflows.
 
 ## Workflows
 
@@ -656,8 +726,9 @@ it sends what the panel shows.
 
 ## Attachments
 
-**Attach file…** on the **Documents** tab reads `.txt`, `.md`, `.csv` and `.json` files, chosen by the
-extension in any letter case. Files must be UTF-8 (with or without a byte-order mark) or UTF-16 with
+**Attach file…** on the **Documents** tab reads `.txt`, `.md`, `.csv`, `.tsv`, `.json`, `.log`, `.yaml`, `.yml` and
+`.pdf` files, chosen by the extension in any letter case. Text files are read as below; PDF is described at the end
+of this section. Files must be UTF-8 (with or without a byte-order mark) or UTF-16 with
 a byte-order mark; anything else, including Latin-1 and UTF-32, is refused with a message asking for
 a UTF-8 copy. Line endings become `\n`. The file is kept as it is: CSV is not turned into a table
 and JSON is not reformatted.
@@ -675,7 +746,20 @@ sent until you press **Send**.
   display and the provenance line.
 - Earlier versions had **Insert into Input**, **Insert into System prompt** and an **Insertions**
   list. They are gone; copy and paste instead.
-- PDF and Word files need docSpell, which arrives in a later release.
+- **PDF.** A `.pdf` is read on both routes (Documents and agentic Chat) by a short-lived worker process
+  (`python -I -m agentwiz.pdf_worker`) using pypdfium2. Text comes page by page in PDFium's order, under
+  `--- page N ---` markers, without structure: tables read as runs of text, and scanned pages are reported and
+  skipped (no OCR). Limits: 16 MiB per file, 300 pages, 16 MiB of text and 30 seconds. At most two PDFs are
+  read at once (one on macOS), four more may wait up to 10 seconds, and further uploads are refused as busy. The
+  preview reports coverage: pages read, pages with text, and warnings such as a page without a text layer. A PDF
+  with no text at all, an encrypted PDF and a damaged one are refused with a reason.
+- **The worker boundary.** A PDFium crash or hang costs one upload, not AgentWiz and the keys and conversation it
+  holds. On Linux and WSL2 the worker also runs under a 128 MiB address-space limit, so a runaway allocation costs
+  one upload. **macOS does not enforce that limit**: there a runaway allocation is bounded only by the 30-second
+  deadline, with one worker at a time. The worker is not a sandbox on any platform: it runs with your user's
+  permissions. It receives no credentials (its environment is a fixed minimal one).
+- The text formats are `.txt`, `.md`, `.csv`, `.tsv`, `.json`, `.log`, `.yaml` and `.yml`. Word and other formats
+  need docSpell, which arrives in a later release.
 
 ## MCP tools
 
@@ -1147,8 +1231,9 @@ A Python step (`"kind": "python"`, block format 4) names its source file under `
 - Restricted Python is a language-level restriction, not an OS sandbox. A Python step has no destination and can
   run on Local only data; its outputs are restricted whenever an input is.
 - Python steps run on Linux, WSL2 and macOS. Native Windows is not supported.
-- A v4 Tool step may carry `"builtin": "current_datetime" | "calculate" | "date_arithmetic"` in place of `server`
-  and `tool`; such a step runs locally, takes no MCP slot and needs no classification or approval.
+- A v4 Tool step may carry `"builtin": "<utility>"` (any of the fourteen utilities listed under
+  [Block library](#block-library)) in place of `server` and `tool`; such a step runs locally, takes no MCP slot and
+  needs no classification or approval.
 
 ## Runs and budgets
 
@@ -1383,7 +1468,19 @@ Stopping the original AgentWiz process also closes its tutorial.
   never resolves holds its slot until the resolver gives up.
 - **Unknown tool outcomes.** A lost connection, a server failure, a deadline or Stop after a call
   was sent leaves its outcome unknown; AgentWiz never resends it.
-- **Documents** are the four text formats, kept whole; the token count is an estimate.
+- **Documents** are the eight text formats, kept whole, and PDF text without structure; the token count is an
+  estimate. The PDF worker is not a sandbox, and on macOS it does not contain a runaway allocation. A workspace
+  switch waits for, and does not cancel, a PDF upload in progress. A non-PDF upload cannot be interrupted by
+  shutdown; its body read is bounded at 60 seconds.
+- **Block library.** A model block tested on one model is not evidence for another; each library block's
+  description says which model and context it was tested with. `deidentify_text` and `scan_for_identifiers` reduce
+  the work of a Release Gate review and replace none of it; `check_identifier_map` stops an unusable map before the
+  Gate only in a workflow that places it, and cannot tell whether an identifier was missed. The installer holds no
+  lock across its three writes: examples or a description you save in between are kept, and an edit to the block in
+  between stops the installation, which reports what was written. The Add review binds the destination at
+  installation only; a later change to the role changes where the block sends. Workflows have no iteration, so
+  `csv_to_rows` output cannot be processed row by row by a model block in a workflow. Table width and header
+  uniqueness are checked by the blocks that consume a table, not by contracts.
 - **Workspaces.** One AgentWiz process owns one workspace at a time; the Workspaces dialog can switch
   within the launch folder. The default folders are relative to where AgentWiz is launched. Shared,
   network and cloud-synced folders are unsupported and not detected. Clone excludes saved runs and

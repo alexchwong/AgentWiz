@@ -1,0 +1,300 @@
+{
+  "format_version": 1,
+  "key": "extract_action_items",
+  "required_context": 32768,
+  "cases": [
+    {
+      "id": "extract_action_items-1",
+      "set": "dev",
+      "label": "meeting notes",
+      "inputs": {
+        "text": "Notes from Tuesday.\nPriya will send the revised budget to finance by Friday 14 June.\nWe agreed to move the launch to 2 July.\nSomeone should look at the vendor contract at some point.\nTom: I'll book the room.\nMaybe we could try a new logo."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "items",
+            "path": [
+              0,
+              "owner"
+            ],
+            "operation": "equals",
+            "value_text": "\"Priya\""
+          },
+          {
+            "output": "items",
+            "path": [
+              0,
+              "due"
+            ],
+            "operation": "equals",
+            "value_text": "\"Friday 14 June\""
+          },
+          {
+            "output": "items",
+            "path": [
+              3
+            ],
+            "operation": "absent"
+          }
+        ]
+      },
+      "critical": false,
+      "stub": {
+        "items": [
+          {
+            "task": "Send the revised budget to finance",
+            "owner": "Priya",
+            "due": "Friday 14 June"
+          },
+          {
+            "task": "Book the room",
+            "owner": "Tom",
+            "due": null
+          },
+          {
+            "task": "Look at the vendor contract",
+            "owner": null,
+            "due": null
+          }
+        ]
+      },
+      "shipped": true
+    },
+    {
+      "id": "extract_action_items-2",
+      "set": "dev",
+      "label": "no owner",
+      "inputs": {
+        "text": "The report must be filed by 30 June."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "items",
+            "path": [
+              0,
+              "owner"
+            ],
+            "operation": "equals",
+            "value_text": "null"
+          },
+          {
+            "output": "items",
+            "path": [
+              0,
+              "due"
+            ],
+            "operation": "equals",
+            "value_text": "\"30 June\""
+          }
+        ]
+      },
+      "critical": false,
+      "stub": {
+        "items": [
+          {
+            "task": "File the report",
+            "owner": null,
+            "due": "30 June"
+          }
+        ]
+      },
+      "shipped": true
+    },
+    {
+      "id": "extract_action_items-3",
+      "set": "dev",
+      "label": "no actions",
+      "inputs": {
+        "text": "We discussed the weather and the football."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "items",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "critical": false,
+      "stub": {
+        "items": []
+      },
+      "shipped": true
+    },
+    {
+      "id": "extract_action_items-4",
+      "set": "dev",
+      "label": "suggestions only",
+      "inputs": {
+        "text": "Maybe we could repaint. It might be nice to have plants."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "items",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "critical": true
+    },
+    {
+      "id": "extract_action_items-5",
+      "set": "dev",
+      "label": "near the maximum",
+      "inputs": {
+        "text": "## Section 1\n\nThe committee reviewed item 1 of the programme. The cost of item 1 was recorded in the ledger and the review noted no change to the schedule for item 1. Staff confirmed the inventory count for item 1 matched the previous quarter.\n\n## Section 2\n\nThe committee reviewed item 2 of the programme. The cost of item 2 was recorded in the ledger and the review noted no change to the schedule for item 2. Staff confirmed the inventory count for item 2 matched the previous quarter.\n\n## Section 3\n\nThe committee reviewed item 3 of the programme. The cost of item 3 was recorded in the ledger and the review noted no change to the schedule for item 3. Staff confirmed the inventory count for item 3 matched the previous quarter.\n\n## Section 4\n\nThe committee reviewed item 4 of the programme. The cost of item 4 was recorded in the ledger and the review noted no change to the schedule for item 4. Staff confirmed the inventory count for item 4 matched the previous quarter.\n\n## Section 5\n\nThe committee reviewed item 5 of the programme. The cost of item 5 was recorded in the ledger and the review noted no change to the schedule for item 5. Staff confirmed the inventory count for item 5 matched the previous quarter.\n\n## Section 6\n\nThe committee reviewed item 6 of the programme. The cost of item 6 was recorded in the ledger and the review noted no change to the schedule for item 6. Staff confirmed the inventory count for item 6 matched the previous quarter.\n\n## Section 7\n\nThe committee reviewed item 7 of the programme. The cost of item 7 was recorded in the ledger and the review noted no change to the schedule for item 7. Staff confirmed the inventory count for item 7 matched the previous quarter.\n\n## Section 8\n\nThe committee reviewed item 8 of the programme. The cost of item 8 was recorded in the ledger and the review noted no change to the schedule for item 8. Staff confirmed the inventory count for item 8 matched the previous quarter.\n\n## Section 9\n\nThe committee reviewed item 9 of the programme. The cost of item 9 was recorded in the ledger and the review noted no change to the schedule for item 9. Staff confirmed the inventory count for item 9 matched the previous quarter.\n\n## Section 10\n\nThe committee reviewed item 10 of the programme. The cost of item 10 was recorded in the ledger and the review noted no change to the schedule for item 10. Staff confirmed the inventory count for item 10 matched the previous quarter.\n\n## Section 11\n\nThe committee reviewed item 11 of the programme. The cost of item 11 was recorded in the ledger and the review noted no change to the schedule for item 11. Staff confirmed the inventory count for item 11 matched the previous quarter.\n\n## Section 12\n\nThe committee reviewed item 12 of the programme. The cost of item 12 was recorded in the ledger and the review noted no change to the schedule for item 12. Staff confirmed the inventory count for item 12 matched the previous quarter.\n\n## Section 13\n\nThe committee reviewed item 13 of the programme. The cost of item 13 was recorded in the ledger and the review noted no change to the schedule for item 13. Staff confirmed the inventory count for item 13 matched the previous quarter.\n\n## Section 14\n\nThe committee reviewed item 14 of the programme. The cost of item 14 was recorded in the ledger and the review noted no change to the schedule for item 14. Staff confirmed the inventory count for item 14 matched the previous quarter.\n\n## Section 15\n\nThe committee reviewed item 15 of the programme. The cost of item 15 was recorded in the ledger and the review noted no change to the schedule for item 15. Staff confirmed the inventory count for item 15 matched the previous quarter.\n\n## Section 16\n\nThe committee reviewed item 16 of the programme. The cost of item 16 was recorded in the ledger and the review noted no change to the schedule for item 16. Staff confirmed the inventory count for item 16 matched the previous quarter.\n\n## Section 17\n\nThe committee reviewed item 17 of the programme. The cost of item 17 was recorded in the ledger and the review noted no change to the schedule for item 17. Staff confirmed the inventory count for item 17 matched the previous quarter.\n\n## Section 18\n\nThe committee reviewed item 18 of the programme. The cost of item 18 was recorded in the ledger and the review noted no change to the schedule for item 18. Staff confirmed the inventory count for item 18 matched the previous quarter.\n\n## Section 19\n\nThe committee reviewed item 19 of the programme. The cost of item 19 was recorded in the ledger and the review noted no change to the schedule for item 19. Staff confirmed the inventory count for item 19 matched the previous quarter.\n\n## Section 20\n\nThe committee reviewed item 20 of the programme. The cost of item 20 was recorded in the ledger and the review noted no change to the schedule for item 20. Staff confirmed the inventory count for item 20 matched the previous quarter.\n\n## Section 21\n\nThe committee reviewed item 21 of the programme. The cost of item 21 was recorded in the ledger and the review noted no change to the schedule for item 21. Staff confirmed the inventory count for item 21 matched the previous quarter.\n\n## Section 22\n\nThe committee reviewed item 22 of the programme. The cost of item 22 was recorded in the ledger and the review noted no change to the schedule for item 22. Staff confirmed the inventory count for item 22 matched the previous quarter.\n\n## Section 23\n\nThe committee reviewed item 23 of the programme. The cost of item 23 was recorded in the ledger and the review noted no change to the schedule for item 23. Staff confirmed the inventory count for item 23 matched the previous quarter.\n\n## Section 24\n\nThe committee reviewed item 24 of the programme. The cost of item 24 was recorded in the ledger and the review noted no change to the schedule for item 24. Staff confirmed the inventory count for item 24 matched the previous quarter.\n\n## Section 25\n\nThe committee reviewed item 25 of the programme. The cost of item 25 was recorded in the ledger and the review noted no change to the schedule for item 25. Staff confirmed the inventory count for item 25 matched the previous quarter.\n\n## Section 26\n\nThe committee reviewed item 26 of the programme. The cost of item 26 was recorded in the ledger and the review noted no change to the schedule for item 26. Staff confirmed the inventory count for item 26 matched the previous quarter.\n\n## Section 27\n\nThe committee reviewed item 27 of the programme. The cost of item 27 was recorded in the ledger and the review noted no change to the schedule for item 27. Staff confirmed the inventory count for item 27 matched the previous quarter.\n\n## Section 28\n\nThe committee reviewed item 28 of the programme. The cost of item 28 was recorded in the ledger and the review noted no change to the schedule for item 28. Staff confirmed the inventory count for item 28 matched the previous quarter.\n\n## Section 29\n\nThe committee reviewed item 29 of the programme. The cost of item 29 was recorded in the ledger and the review noted no change to the schedule for item 29. Staff confirmed the inventory count for item 29 matched the previous quarter.\n\n## Section 30\n\nThe committee reviewed item 30 of the programme. The cost of item 30 was recorded in the ledger and the review noted no change to the schedule for item 30. Staff confirmed the inventory count for item 30 matched the previous quarter.\n\n## Section 31\n\nThe committee reviewed item 31 of the programme. The cost of item 31 was recorded in the ledger and the review noted no change to the schedule for item 31. Staff confirmed the inventory count for item 31 matched the previous quarter.\n\n## Section 32\n\nThe committee reviewed item 32 of the programme. The cost of item 32 was recorded in the ledger and the review noted no change to the schedule for item 32. Staff confirmed the inventory count for item 32 matched the previous quarter.\n\n## Section 33\n\nThe committee reviewed item 33 of the programme. The cost of item 33 was recorded in the ledger and the review noted no change to the schedule for item 33. Staff confirmed the inventory count for item 33 matched the previous quarter.\n\n## Section 34\n\nThe committee reviewed item 34 of the programme. The cost of item 34 was recorded in the ledger and the review noted no change to the schedule for item 34. Staff confirmed the inventory count for item 34 matched the previous quarter.\n\n## Section 35\n\nThe committee reviewed item 35 of the programme. The cost of item 35 was recorded in the ledger and the review noted no change to the schedule for item 35. Staff confirmed the inventory count for item 35 matched the previous quarter.\n\n## Section 36\n\nThe committee reviewed item 36 of the programme. The cost of item 36 was recorded in the ledger and the review noted no change to the schedule for item 36. Staff confirmed the inventory count for item 36 matched the previous quarter.\n\n## Section 37\n\nThe committee reviewed item 37 of the programme. The cost of item 37 was recorded in the ledger and the review noted no change to the schedule for item 37. Staff confirmed the inventory count for item 37 matched the previous quarter.\n\n## Section 38\n\nThe committee reviewed item 38 of the programme. The cost of item 38 was recorded in the ledger and the review noted no change to the schedule for item 38. Staff confirmed the inventory count for item 38 matched the previous quarter.\n\n## Section 39\n\nThe committee reviewed item 39 of the programme. The cost of item 39 was recorded in the ledger and the review noted no change to the schedule for item 39. Staff confirmed the inventory count for item 39 matched the previous quarter.\n\n## Section 40\n\nThe committee reviewed item 40 of the programme. The cost of item 40 was recorded in the ledger and the review noted no change to the schedule for item 40. Staff confirmed the inventory count for item 40 matched the previous quarter.\n\n## Section 41\n\nThe committee reviewed item 41 of the programme. The cost of item 41 was recorded in the ledger and the review noted no change to the schedule for item 41. Staff confirmed the inventory count for item 41 matched the previous quarter.\n\n## Section 42\n\nThe committee reviewed item 42 of the programme. The cost of item 42 was recorded in the ledger and the review noted no change to the schedule for item 42. Staff confirmed the inventory count for item 42 matched the previous quarter.\n\n## Section 43\n\nThe committee reviewed item 43 of the programme. The cost of item 43 was recorded in the ledger and the review noted no change to the schedule for item 43. Staff confirmed the inventory count for item 43 matched the previous quarter.\n\n## Section 44\n\nThe committee reviewed item 44 of the programme. The cost of item 44 was recorded in the ledger and the review noted no change to the schedule for item 44. Staff confirmed the inventory count for item 44 matched the previous quarter.\n\n## Section 45\n\nThe committee reviewed item 45 of the programme. The cost of item 45 was recorded in the ledger and the review noted no change to the schedule for item 45. Staff confirmed the inventory count for item 45 matched the previous quarter.\n\n## Section 46\n\nThe committee reviewed item 46 of the programme. The cost of item 46 was recorded in the ledger and the review noted no change to the schedule for item 46. Staff confirmed the inventory count for item 46 matched the previous quarter.\n\n## Section 47\n\nThe committee reviewed item 47 of the programme. The cost of item 47 was recorded in the ledger and the review noted no change to the schedule for item 47. Staff confirmed the inventory count for item 47 matched the previous quarter.\n\n## Section 48\n\nThe committee reviewed item 48 of the programme. The cost of item 48 was recorded in the ledger and the review noted no change to the schedule for item 48. Staff confirmed the inventory count for item 48 matched the previous quarter.\n\n## Section 49\n\nThe committee reviewed item 49 of the programme. The cost of item 49 was recorded in the ledger and the review noted no change to the schedule for item 49. Staff confirmed the inventory count for item 49 matched the previous quarter.\n\n## Section 50\n\nThe committee reviewed item 50 of the programme. The cost of item 50 was recorded in the ledger and the review noted no change to the schedule for item 50. Staff confirmed the inventory count for item 50 matched the previous quarter.\n\n## Section 51\n\nThe committee reviewed item 51 of the programme. The cost of item 51 was recorded in the ledger and the review noted no change to the schedule for item 51. Staff confirmed the inventory count for item 51 matched the previous quarter.\n\n## Section 52\n\nThe committee reviewed item 52 of the programme. The cost of item 52 was recorded in the ledger and the review noted no change to the schedule for item 52. Staff confirmed the inventory count for item 52 matched the previous quarter.\n\n## Section 53\n\nThe committee reviewed item 53 of the programme. The cost of item 53 was recorded in the ledger and the review noted no change to the schedule for item 53. Staff confirmed the inventory count for item 53 matched the previous quarter.\n\n## Section 54\n\nThe committee reviewed item 54 of the programme. The cost of item 54 was recorded in the ledger and the review noted no change to the schedule for item 54. Staff confirmed the inventory count for item 54 matched the previous quarter.\n\n## Section 55\n\nThe committee reviewed item 55 of the programme. The cost of item 55 was recorded in the ledger and the review noted no change to the schedule for item 55. Staff confirmed the inventory count for item 55 matched the previous quarter.\n\n## Section 56\n\nThe committee reviewed item 56 of the programme. The cost of item 56 was recorded in the ledger and the review noted no change to the schedule for item 56. Staff confirmed the inventory count for item 56 matched the previous quarter.\n\n## Section 57\n\nThe committee reviewed item 57 of the programme. The cost of item 57 was recorded in the ledger and the review noted no change to the schedule for item 57. Staff confirmed the inventory count for item 57 matched the previous quarter.\n\n## Section 58\n\nThe committee reviewed item 58 of the programme. The cost of item 58 was recorded in the ledger and the review noted no change to the schedule for item 58. Staff confirmed the inventory count for item 58 matched the previous quarter.\n\n## Section 59\n\nThe committee reviewed item 59 of the programme. The cost of item 59 was recorded in the ledger and the review noted no change to the schedule for item 59. Staff confirmed the inventory count for item 59 matched the previous quarter.\n\n## Section 60\n\nThe committee reviewed item 60 of the programme. The cost of item 60 was recorded in the ledger and the review noted no change to the schedule for item 60. Staff confirmed the inventory count for item 60 matched the previous quarter.\n\n## Section 61\n\nThe committee reviewed item 61 of the programme. The cost of item 61 was recorded in the ledger and the review noted no change to the schedule for item 61. Staff confirmed the inventory count for item 61 matched the previous quarter.\n\n## Section 62\n\nThe committee reviewed item 62 of the programme. The cost of item 62 was recorded in the ledger and the review noted no change to the schedule for item 62. Staff confirmed the inventory count for item 62 matched the previous quarter.\n\n## Section 63\n\nThe committee reviewed item 63 of the programme. The cost of item 63 was recorded in the ledger and the review noted no change to the schedule for item 63. Staff confirmed the inventory count for item 63 matched the previous quarter.\n\n## Section 64\n\nThe committee reviewed item 64 of the programme. The cost of item 64 was recorded in the ledger and the review noted no change to the schedule for item 64. Staff confirmed the inventory count for item 64 matched the previous quarter.\n\n## Section 65\n\nThe committee reviewed item 65 of the programme. The cost of item 65 was recorded in the ledger and the review noted no change to the schedule for item 65. Staff confirmed the inventory count for item 65 matched the previous quarter.\n\n## Section 66\n\nThe committee reviewed item 66 of the programme. The cost of item 66 was recorded in the ledger and the review noted no change to the schedule for item 66. Staff confirmed the inventory count for item 66 matched the previous quarter.\n\n## Section 67\n\nThe committee reviewed item 67 of the programme. The cost of item 67 was recorded in the ledger and the review noted no change to the schedule for item 67. Staff confirmed the inventory count for item 67 matched the previous quarter.\n\n## Section 68\n\nThe committee reviewed item 68 of the programme. The cost of item 68 was recorded in the ledger and the review noted no change to the schedule for item 68. Staff confirmed the inventory count for item 68 matched the previous quarter.\n\n## Section 69\n\nThe committee reviewed item 69 of the programme. The cost of item 69 was recorded in the ledger and the review noted no change to the schedule for item 69. Staff confirmed the inventory count for item 69 matched the previous quarter.\n\n## Section 70\n\nThe committee reviewed item 70 of the programme. The cost of item 70 was recorded in the ledger and the review noted no change to the schedule for item 70. Staff confirmed the inventory count for item 70 matched the previous quarter.\n\n## Section 71\n\nThe committee reviewed item 71 of the programme. The cost of item 71 was recorded in the ledger and the review noted no change to the schedule for item 71. Staff confirmed the inventory count for item 71 matched the previous quarter.\n\n## Section 72\n\nThe committee reviewed item 72 of the programme. The cost of item 72 was recorded in the ledger and the review noted no change to the schedule for item 72. Staff confirmed the inventory count for item 72 matched the previous quarter.\n\n## Section 73\n\nThe committee reviewed item 73 of the programme. The cost of item 73 was recorded in the ledger and the review noted no change to the schedule for item 73. Staff confirmed the inventory count for item 73 matched the previous quarter.\n\n## Section 74\n\nThe committee reviewed item 74 of the programme. The cost of item 74 was recorded in the ledger and the review noted no change to the schedule for item 74. Staff confirmed the inventory count for item 74 matched the previous quarter.\n\n## Section 75\n\nThe committee reviewed item 75 of the programme. The cost of item 75 was recorded in the ledger and the review noted no change to the schedule for item 75. Staff confirmed the inventory count for item 75 matched the previous quarter.\n\n## Section 76\n\nThe committee reviewed item 76 of the programme. The cost of item 76 was recorded in the ledger and the review noted no change to the schedule for item 76. Staff confirmed the inventory count for item 76 matched the previous quarter.\n\n## Section 77\n\nThe committee reviewed item 77 of the programme. The cost of item 77 was recorded in the ledger and the review noted no change to the schedule for item 77. Staff confirmed the inventory count for item 77 matched the previous quarter.\n\n## Section 78\n\nThe committee reviewed item 78 of the programme. The cost of item 78 was recorded in the ledger and the review noted no change to the schedule for item 78. Staff confirmed the inventory count for item 78 matched the previous quarter.\n\n## Section 79\n\nThe committee reviewed item 79 of the programme. The cost of item 79 was recorded in the ledger and the review noted no change to the schedule for item 79. Staff confirmed the inventory count for item 79 matched the previous quarter.\n\n## Section 80\n\nThe committee reviewed item 80 of the programme. The cost of item 80 was recorded in the ledger and the review noted no change to the schedule for item 80. Staff confirmed the inventory count for item 80 matched the previous quarter.\n\n## Section 81\n\nThe committee reviewed item 81 of the programme. The cost of item 81 was recorded in the ledger and the review noted no change to the schedule for item 81. Staff confirmed the inventory count for item 81 matched the previous quarter.\n\n## Section 82\n\nThe committee reviewed item 82 of the programme. The cost of item 82 was recorded in the ledger and the review noted no change to the schedule for item 82. Staff confirmed the inventory count for item 82 matched the previous quarter.\n\n## Section 83\n\nThe committee reviewed item 83 of the programme. The cost of item 83 was recorded in the ledger and the review noted no change to the schedule for item 83. Staff confirmed the inventory count for item 83 matched the previous quarter.\n\n## Section 84\n\nThe committee reviewed item 84 of the programme. The cost of item 84 was recorded in the ledger and the review noted no change to the schedule for item 84. Staff confirmed the inventory count for item 84 matched the previous quarter.\n\n## Section 85\n\nThe committee reviewed item 85 of the programme. The cost of item 85 was recorded in the ledger and the review noted no change to the schedule for item 85. Staff confirmed the inventory count for item 85 matched the previous quarter.\n\n## Section 86\n\nThe committee reviewed item 86 of the programme. The cost of item 86 was recorded in the ledger and the review noted no change to the schedule for item 86. Staff confirmed the inventory count for item 86 matched the previous quarter.\n\n## Section 87\n\nThe committee reviewed item 87 of the programme. The cost of item 87 was recorded in the ledger and the review noted no change to the schedule for item 87. Staff confirmed the inventory count for item 87 matched the previous quarter.\n\n## Section 88\n\nThe committee reviewed item 88 of the programme. The cost of item 88 was recorded in the ledger and the review noted no change to the schedule for item 88. Staff confirmed the inventory count for item 88 matched the previous quarter.\n\n## Section 89\n\nThe committee reviewed item 89 of the programme. The cost of item 89 was recorded in the ledger and the review noted no change to the schedule for item 89. Staff confirmed the inventory count for item 89 matched the previous quarter.\n\n## Section 90\n\nThe committee reviewed item 90 of the programme. The cost of item 90 was recorded in the ledger and the review noted no change to the schedule for item 90. Staff confirmed the inventory count for item 90 matched the previous quarter.\n\n## Section 91\n\nThe committee reviewed item 91 of the programme. The cost of item 91 was recorded in the ledger and the review noted no change to the schedule for item 91. Staff confirmed the inventory count for item 91 matched the previous quarter.\n\n## Section 92\n\nThe committee reviewed item 92 of the programme. The cost of item 92 was recorded in the ledger and the review noted no change to the schedule for item 92. Staff confirmed the inventory count for item 92 matched the previous quarter.\n\n## Section 93\n\nThe committee reviewed item 93 of the programme. The cost of item 93 was recorded in the ledger and the review noted no change to the schedule for item 93. Staff confirmed the inventory count for item 93 matched the previous quarter.\n\n## Section 94\n\nThe committee reviewed item 94 of the programme. The cost of item 94 was recorded in the ledger and the review noted no change to the schedule for item 94. Staff confirmed the inventory count for item 94 matched the previous quarter.\n\n## Section 95\n\nThe committee reviewed item 95 of the programme. The cost of item 95 was recorded in the ledger and the review noted no change to the schedule for item 95. Staff confirmed the inventory count for item 95 matched the previous quarter.\n\n## Section 96\n\nThe committee reviewed item 96 of the programme. The cost of item 96 was recorded in the ledger and the review noted no change to the schedule for item 96. Staff confirmed the inventory count for item 96 matched the previous quarter.\n\n## Section 97\n\nThe committee reviewed item 97 of the programme. The cost of item 97 was recorded in the ledger and the review noted no change to the schedule for item 97. Staff confirmed the inventory count for item 97 matched the previous quarter.\n\n## Section 98\n\nThe committee reviewed item 98 of the programme. The cost of item 98 was recorded in the ledger and the review noted no change to the schedule for item 98. Staff confirmed the inventory count for item 98 matched the previous quarter.\n\n## Section 99\n\nThe committee reviewed item 99 of the programme. The cost of item 99 was recorded in the ledger and the review noted no change to the schedule for item 99. Staff confirmed the inventory count for item 99 matched the previous quarter.\n\n## Section 100\n\nThe committee reviewed item 100 of the programme. The cost of item 100 was recorded in the ledger and the review noted no change to the schedule for item 100. Staff confirmed the inventory count for item 100 matched the previous quarter.\n\n## Section 101\n\nThe committee reviewed item 101 of the programme. The cost of item 101 was recorded in the ledger and the review noted no change to the schedule for item 101. Staff confirmed the inventory count for item 101 matched the previous quarter.\n\n## Section 102\n\nThe committee reviewed item 102 of the programme. The cost of item 102 was recorded in the ledger and the review noted no change to the schedule for item 102. Staff confirmed the inventory count for item 102 matched the previous quarter.\n\n## Section 103\n\nThe committee reviewed item 103 of the programme. The cost of item 103 was recorded in the ledger and the review noted no change to the schedule for item 103. Staff confirmed the inventory count for item 103 matched the previous quarter.\n\n## Section 104\n\nThe committee reviewed item 104 of the programme. The cost of item 104 was recorded in the ledger and the review noted no change to the schedule for item 104. Staff confirmed the inventory count for item 104 matched the previous quarter.\n\n## Section 105\n\nThe committee reviewed item 105 of the programme. The cost of item 105 was recorded in the ledger and the review noted no change to the schedule for item 105. Staff confirmed the inventory count for item 105 matched the previous quarter.\n\n## Section 106\n\nThe committee reviewed item 106 of the programme. The cost of item 106 was recorded in the ledger and the review noted no change to the schedule for item 106. Staff confirmed the inventory count for item 106 matched the previous quarter.\n\n## Section 107\n\nThe committee reviewed item 107 of the programme. The cost of item 107 was recorded in the ledger and the review noted no change to the schedule for item 107. Staff confirmed the inventory count for item 107 matched the previous quarter.\n\n## Section 108\n\nThe committee reviewed item 108 of the programme. The cost of item 108 was recorded in the ledger and the review noted no change to the schedule for item 108. Staff confirmed the inventory count for item 108 matched the previous quarter.\n\n## Section 109\n\nThe committee reviewed item 109 of the programme. The cost of item 109 was recorded in the ledger and the review noted no change to the schedule for item 109. Staff confirmed the inventory count for item 109 matched the previous quarter.\n\n## Section 110\n\nThe committee reviewed item 110 of the programme. The cost of item 110 was recorded in the ledger and the review noted no change to the schedule for item 110. Staff confirmed the inventory count for item 110 matched the previous quarter.\n\n## Section 111\n\nThe committee reviewed item 111 of the programme. The cost of item 111 was recorded in the ledger and the review noted no change to the schedule for item 111. Staff confirmed the inventory count for item 111 matched the previous quarter.\n\n## Section 112\n\nThe committee reviewed item 112 of the programme. The cost of item 112 was recorded in the ledger and the review noted no change to the schedule for item 112. Staff confirmed the inventory count for item 112 matched the previous quarter.\n\n## Section 113\n\nThe committee reviewed item 113 of the programme. The cost of item 113 was recorded in the ledger and the review noted no change to the schedule for item 113. Staff confirmed the inventory count for item 113 matched the previous quarter.\n\n## Section 114\n\nThe committee reviewed item 114 of the programme. The cost of item 114 was recorded in the ledger and the review noted no change to the schedule for item 114. Staff confirmed the inventory count for item 114 matched the previous quarter.\n\n## Section 115\n\nThe committee reviewed item 115 of the programme. The cost of item 115 was recorded in the ledger and the review noted no change to the schedule for item 115. Staff confirmed the inventory count for item 115 matched the previous quarter.\n\n## Section 116\n\nThe committee reviewed item 116 of the programme. The cost of item 116 was recorded in the ledger and the review noted no change to the schedule for item 116. Staff confirmed the inventory count for item 116 matched the previous quarter.\n\n## Section 117\n\nThe committee reviewed item 117 of the programme. The cost of item 117 was recorded in the ledger and the review noted no change to the schedule for item 117. Staff confirmed the inventory count for item 117 matched the previous quarter.\n\n## Section 118\n\nThe committee reviewed item 118 of the programme. The cost of item 118 was recorded in the ledger and the review noted no change to the schedule for item 118. Staff confirmed the inventory count for item 118 matched the previous quarter.\n\n## Section 119\n\nThe committee reviewed item 119 of the programme. The cost of item 119 was recorded in the ledger and the review noted no change to the schedule for item 119. Staff confirmed the inventory count for item 119 matched the previous quarter.\n\n## Section 120\n\nThe committee reviewed item 120 of the programme. The cost of item 120 was recorded in the ledger and the review noted no change to the schedule for item 120. Staff confirmed the inventory count for item 120 matched the previous quarter.\n\n## Section 121\n\nThe committee reviewed item 121 of the programme. The cost of item 121 was recorded in the ledger and the review noted no change to the schedule for item 121. Staff confirmed the inventory count for item 121 matched the previous quarter.\n\n## Section 122\n\nThe committee reviewed item 122 of the programme. The cost of item 122 was recorded in the ledger and the review noted no change to the schedule for item 122. Staff confirmed the inventory count for item 122 matched the previous quarter.\n\n## Section 123\n\nThe committee reviewed item 123 of the programme. The cost of item 123 was recorded in the ledger and the review noted no change to the schedule for item 123. Staff confirmed the inventory count for item 123 matched the previous quarter.\n\n## Section 124\n\nThe committee reviewed item 124 of the programme. The cost of item 124 was recorded in the ledger and the review noted no change to the schedule for item 124. Staff confirmed the inventory count for item 124 matched the previous quarter.\n\n## Section 125\n\nThe committee reviewed item 125 of the programme. The cost of item 125 was recorded in the ledger and the review noted no change to the schedule for item 125. Staff confirmed the inventory count for item 125 matched the previous quarter.\n\n## Section 126\n\nThe committee reviewed item 126 of the programme. The cost of item 126 was recorded in the ledger and the review noted no change to the schedule for item 126. Staff confirmed the inventory count for item 126 matched the previous quarter.\n\n## Section 127\n\nThe committee reviewed item 127 of the programme. The cost of item 127 was recorded in the ledger and the review noted no change to the schedule for item 127. Staff confirmed the inventory count for item 127 matched the previous quarter.\n\n## Section 128\n\nThe committee reviewed item 128 of the programme. The cost of item 128 was recorded in the ledger and the review noted no change to the schedule for item 128. Staff confirmed the inventory count for item 128 matched the previous quarter.\n\n## Section 129\n\nThe committee reviewed item 129 of the programme. The cost of item 129 was recorded in the ledger and the review noted no change to the schedule for item 129. Staff confirmed the inventory count for item 129 matched the previous quarter.\n\n## Section 130\n\nThe committee reviewed item 130 of the programme. The cost of item 130 was recorded in the ledger and the review noted no change to the schedule for item 130. Staff confirmed the inventory count for item 130 matched the previous quarter.\n\n## Section 131\n\nThe committee reviewed item 131 of the programme. The cost of item 131 was recorded in the ledger and the review noted no change to the schedule for item 131. Staff confirmed the inventory count for item 131 matched the previous quarter.\n\n## Section 132\n\nThe committee reviewed item 132 of the programme. The cost of item 132 was recorded in the ledger and the review noted no change to the schedule for item 132. Staff confirmed the inventory count for item 132 matched the previous quarter.\n\n## Section 133\n\nThe committee reviewed item 133 of the programme. The cost of item 133 was recorded in the ledger and the review noted no change to the schedule for item 133. Staff confirmed the inventory count for item 133 matched the previous quarter.\n\n## Section 134\n\nThe committee reviewed item 134 of the programme. The cost of item 134 was recorded in the ledger and the review noted no change to the schedule for item 134. Staff confirmed the inventory count for item 134 matched the previous quarter.\n\n## Section 135\n\nThe committee reviewed item 135 of the programme. The cost of item 135 was recorded in the ledger and the review noted no change to the schedule for item 135. Staff confirmed the inventory count for item 135 matched the previous quarter.\n\n## Section 136\n\nThe committee reviewed item 136 of the programme. The cost of item 136 was recorded in the ledger and the review noted no change to the schedule for item 136. Staff confirmed the inventory count for item 136 matched the previous quarter.\n\n## Section 137\n\nThe committee reviewed item 137 of the programme. The cost of item 137 was recorded in the ledger and the review noted no change to the schedule for item 137. Staff confirmed the inventory count for item 137 matched the previous quarter.\n\n## Section 138\n\nThe committee reviewed item 138 of the programme. The cost of item 138 was recorded in the ledger and the review noted no change to the schedule for item 138. Staff confirmed the inventory count for item 138 matched the previous quarter.\n\n## Section 139\n\nThe committee reviewed item 139 of the programme. The cost of item 139 was recorded in the ledger and the review noted no change to the schedule for item 139. Staff confirmed the inventory count for item 139 matched the previous quarter.\n\n## Section 140\n\nThe committee reviewed item 140 of the programme. The cost of item 140 was recorded in the ledger and the review noted no change to the schedule for item 140. Staff confirmed the inventory count for item 140 matched the previous quarter.\n\n## Section 141\n\nThe committee reviewed item 141 of the programme. The cost of item 141 was recorded in the ledger and the review noted no change to the schedule for item 141. Staff confirmed the inventory count for item 141 matched the previous quarter.\n\n## Section 142\n\nThe committee reviewed item 142 of the programme. The cost of item 142 was recorded in the ledger and the review noted no change to the schedule for item 142. Staff confirmed the inventory count for item 142 matched the previous quarter.\n\n## Section 143\n\nThe committee reviewed item 143 of the programme. The cost of item 143 was recorded in the ledger and the review noted no change to the schedule for item 143. Staff confirmed the inventory count for item 143 matched the previous quarter.\n\n## Section 144\n\nThe committee reviewed item 144 of the programme. The cost of item 144 was recorded in the ledger and the review noted no change to the schedule for item 144. Staff confirmed the inventory count for item 144 matched the previous quarter.\n\n## Section 145\n\nThe committee reviewed item 145 of the programme. The cost of item 145 was recorded in the ledger and the review noted no change to the schedule for item 145. Staff confirmed the inventory count for item 145 matched the previous quarter.\n\n## Section 146\n\nThe committee reviewed item 146 of the programme. The cost of item 146 was recorded in the ledger and the review noted no change to the schedule for item 146. Staff confirmed the inventory count for item 146 matched the previous quarter.\n\n## Section 147\n\nThe committee reviewed item 147 of the programme. The cost of item 147 was recorded in the ledger and the review noted no change to the schedule for item 147. Staff confirmed the inventory count for item 147 matched the previous quarter.\n\n## Section 148\n\nThe committee reviewed item 148 of the programme. The cost of item 148 was recorded in the ledger and the review noted no change to the schedule for item 148. Staff confirmed the inventory count for item 148 matched the previous quarter.\n\n## Section 149\n\nThe committee reviewed item 149 of the programme. The cost of item 149 was recorded in the ledger and the review noted no change to the schedule for item 149. Staff confirmed the inventory count for item 149 matched the previous quarter.\n\n## Section 150\n\nThe committee reviewed item 150 of the programme. The cost of item 150 was recorded in the ledger and the review noted no change to the schedule for item 150. Staff confirmed the inventory count for item 150 matched the previous quarter.\n\n## Section 151\n\nThe committee reviewed item 151 of the programme. The cost of item 151 was recorded in the ledger and the review noted no change to the schedule for item 151. Staff confirmed the inventory count for item 151 matched the previous quarter.\n\n## Section 152\n\nThe committee reviewed item 152 of the programme. The cost of item 152 was recorded in the ledger and the review noted no change to the schedule for item 152. Staff confirmed the inventory count for item 152 matched the previous quarter.\n\n## Section 153\n\nThe committee reviewed item 153 of the programme. The cost of item 153 was recorded in the ledger and the review noted no change to the schedule for item 153. Staff confirmed the inventory count for item 153 matched the previous quarter.\n\n## Section 154\n\nThe committee reviewed item 154 of the programme. The cost of item 154 was recorded in the ledger and the review noted no change to the schedule for item 154. Staff confirmed the inventory count for item 154 m\nAction: Dana will archive the ledger by 1 May."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "items",
+            "path": [
+              0
+            ],
+            "operation": "present"
+          }
+        ]
+      },
+      "critical": false
+    },
+    {
+      "id": "extract_action_items-6",
+      "set": "dev",
+      "label": "relative date",
+      "inputs": {
+        "text": "Sam to call the supplier next Tuesday."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "items",
+            "path": [
+              0,
+              "owner"
+            ],
+            "operation": "equals",
+            "value_text": "\"Sam\""
+          },
+          {
+            "output": "items",
+            "path": [
+              0,
+              "due"
+            ],
+            "operation": "equals",
+            "value_text": "\"next Tuesday\""
+          }
+        ]
+      },
+      "critical": false
+    },
+    {
+      "id": "extract_action_items-7",
+      "set": "dev",
+      "label": "empty",
+      "inputs": {
+        "text": ""
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "items",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "critical": true
+    },
+    {
+      "id": "extract_action_items-8",
+      "set": "heldout",
+      "label": "two owners",
+      "inputs": {
+        "text": "Ana will draft the plan. Ben will review it by 3 March."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "items",
+            "path": [
+              0,
+              "owner"
+            ],
+            "operation": "equals",
+            "value_text": "\"Ana\""
+          },
+          {
+            "output": "items",
+            "path": [
+              1,
+              "due"
+            ],
+            "operation": "equals",
+            "value_text": "\"3 March\""
+          }
+        ]
+      },
+      "critical": false
+    },
+    {
+      "id": "extract_action_items-9",
+      "set": "heldout",
+      "label": "passive request",
+      "inputs": {
+        "text": "The invoices need to be checked before the audit."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "items",
+            "path": [
+              0,
+              "owner"
+            ],
+            "operation": "equals",
+            "value_text": "null"
+          }
+        ]
+      },
+      "critical": false
+    },
+    {
+      "id": "extract_action_items-10",
+      "set": "heldout",
+      "label": "no actions",
+      "inputs": {
+        "text": "Attendance was good and everyone enjoyed lunch."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "items",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "critical": true
+    }
+  ]
+}

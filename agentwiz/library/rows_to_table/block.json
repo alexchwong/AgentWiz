@@ -1,0 +1,74 @@
+{
+  "format_version": 4,
+  "name": "rows_to_table",
+  "description": "Render columns and rows as a Markdown table.",
+  "inputs": {
+    "columns": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      "local_only": false
+    },
+    "rows": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "string",
+              "maxLength": 10000
+            }
+          }
+        }
+      },
+      "local_only": false
+    }
+  },
+  "outputs": {
+    "out": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "markdown": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "markdown"
+          ]
+        }
+      },
+      "local_only": false
+    }
+  },
+  "steps": [
+    {
+      "id": "run",
+      "kind": "tool",
+      "builtin": "rows_to_table",
+      "output": "out",
+      "arguments": {
+        "columns": "{{inputs.columns}}",
+        "rows": "{{inputs.rows}}"
+      }
+    }
+  ]
+}

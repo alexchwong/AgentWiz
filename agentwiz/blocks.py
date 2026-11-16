@@ -32,7 +32,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping
 
-from . import checks, jsonio, templates, tool_forms, transforms
+from . import agent_tools, checks, jsonio, templates, tool_forms, transforms
 from .contracts import DIGEST_RE, ContractStore
 from .model_step import ContractCopy
 from .task_settings import OVERRIDABLE, TaskSettingError, TaskSettings, parse_task
@@ -53,7 +53,7 @@ DEFAULT_MAX_SECONDS = 1800
 DEFAULT_MAX_REPAIRS = 2
 DEFAULT_TIMEOUT_S = 60
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
-BUILTIN_TOOLS = ("current_datetime", "calculate", "date_arithmetic")   # bindable to a v4 tool step (0.2.2, 6.8)
+BUILTIN_TOOLS = agent_tools.UTILITY_TOOLS     # bindable to a v4 tool step (0.2.2, 6.8); from the registry
 TASK_KEYS = ("reasoning", "temperature", "max_tokens", "advanced")
 
 _revisions = itertools.count(1)

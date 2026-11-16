@@ -1,0 +1,4 @@
+Transcript:
+<<<
+{{inputs.transcript}}
+>>>

@@ -1,0 +1,77 @@
+{
+  "title": "Scan for identifiers",
+  "group": "tool",
+  "summary": "Find URLs, emails, IPs, dates, phone and long numbers.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "scan_for_identifiers-1",
+      "version": 1,
+      "label": "several kinds",
+      "inputs": {
+        "text": "Contact jane@example.org or +61 2 9999 8888 by 2024-03-05.\nSee https://example.org/a."
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"findings\":[{\"kind\":\"email\",\"value\":\"jane@example.org\",\"line\":1,\"column\":9},{\"kind\":\"phone\",\"value\":\"+61 2 9999 8888\",\"line\":1,\"column\":29},{\"kind\":\"date\",\"value\":\"2024-03-05\",\"line\":1,\"column\":48},{\"kind\":\"url\",\"value\":\"https://example.org/a\",\"line\":2,\"column\":5}],\"counts\":{\"url\":1,\"email\":1,\"ip_address\":0,\"date\":1,\"phone\":1,\"long_number\":0},\"truncated\":false}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "scan_for_identifiers-2",
+      "version": 1,
+      "label": "long numbers",
+      "inputs": {
+        "text": "MRN 12345678, card 1234 5678 9012"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"findings\":[{\"kind\":\"long_number\",\"value\":\"12345678\",\"line\":1,\"column\":5},{\"kind\":\"long_number\",\"value\":\"1234 5678 9012\",\"line\":1,\"column\":20}],\"counts\":{\"url\":0,\"email\":0,\"ip_address\":0,\"date\":0,\"phone\":0,\"long_number\":2},\"truncated\":false}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "scan_for_identifiers-3",
+      "version": 1,
+      "label": "nothing found",
+      "inputs": {
+        "text": "Alice met Bob."
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"findings\":[],\"counts\":{\"url\":0,\"email\":0,\"ip_address\":0,\"date\":0,\"phone\":0,\"long_number\":0},\"truncated\":false}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "description": {
+    "sections": {
+      "use": "Check a text for identifier-like patterns before it is shared: URLs, email addresses, IPv4 addresses, dates, phone numbers and long digit runs, with line and column.",
+      "exclusions": "It finds patterns, not names, places or organisations, and not IPv6 addresses. An empty result is not proof that a text is de-identified.",
+      "limitations": "Text up to 1 MiB. Counts are exact totals; the findings list stops at 1,000 and truncated says so. Dates are ISO, d/m/y or m/d/y, and English month names.",
+      "missing_data": "A text without matches gives an empty list and zero counts.",
+      "effects": "Runs locally inside AgentWiz with no network access, files or model; it only returns a value. It has no destination, so it can run on Local only data; its output is restricted whenever an input is.",
+      "failures": "A refusal names a fixed code and, where it applies, a 1-based position (record, row or entry); the message never repeats your text. Check the input against the limits above and run again."
+    },
+    "port_summaries": {
+      "inputs": {
+        "text": "The text to scan."
+      },
+      "outputs": {
+        "out": "The findings (kind, value, line, column), exact counts per kind and truncated."
+      }
+    }
+  }
+}

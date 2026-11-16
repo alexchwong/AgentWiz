@@ -1,0 +1,81 @@
+{
+  "title": "Days between dates",
+  "group": "tool",
+  "summary": "Signed number of days from one ISO date to another.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "days_between_dates-1",
+      "version": 1,
+      "label": "forwards",
+      "inputs": {
+        "from": "2024-01-01",
+        "to": "2024-03-01"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"days\":60}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "days_between_dates-2",
+      "version": 1,
+      "label": "backwards",
+      "inputs": {
+        "from": "2024-03-01",
+        "to": "2024-01-01"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"days\":-60}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "days_between_dates-3",
+      "version": 1,
+      "label": "same day",
+      "inputs": {
+        "from": "2024-05-05",
+        "to": "2024-05-05"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"days\":0}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "description": {
+    "sections": {
+      "use": "Count the days from one ISO date to another, for example days until a deadline.",
+      "exclusions": "Calendar days only; no business days or times.",
+      "limitations": "Dates are YYYY-MM-DD, years 1 to 9999. The result is negative when to is before from.",
+      "missing_data": "Both dates are required.",
+      "effects": "Runs locally inside AgentWiz with no network access, files or model; it only returns a value. It has no destination, so it can run on Local only data; its output is restricted whenever an input is.",
+      "failures": "A refusal names a fixed code and, where it applies, a 1-based position (record, row or entry); the message never repeats your text. Check the input against the limits above and run again."
+    },
+    "port_summaries": {
+      "inputs": {
+        "from": "The start date, YYYY-MM-DD.",
+        "to": "The end date, YYYY-MM-DD."
+      },
+      "outputs": {
+        "out": "The signed number of days."
+      }
+    }
+  }
+}

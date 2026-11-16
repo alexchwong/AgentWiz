@@ -1,0 +1,119 @@
+{
+  "format_version": 4,
+  "name": "check_identifier_map",
+  "description": "Check a de-identification map locally before a Release Gate.",
+  "inputs": {
+    "original": {
+      "contract": {
+        "format": "text",
+        "max_length": 1048576
+      },
+      "local_only": true
+    },
+    "text": {
+      "contract": {
+        "format": "text",
+        "max_length": 1048576
+      },
+      "local_only": true
+    },
+    "pairs": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "properties": {
+              "placeholder": {
+                "type": "string"
+              },
+              "original": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "additionalProperties": true
+          }
+        }
+      },
+      "local_only": true
+    }
+  },
+  "outputs": {
+    "out": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "pairs": {
+              "type": "array",
+              "maxItems": 1000,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "placeholder": {
+                    "type": "string",
+                    "maxLength": 256
+                  },
+                  "original": {
+                    "type": "string",
+                    "maxLength": 4096
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "placeholder",
+                  "original"
+                ]
+              }
+            },
+            "entries": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unmapped_tokens": {
+              "type": "array",
+              "maxItems": 100,
+              "items": {
+                "type": "string",
+                "maxLength": 1048576
+              }
+            },
+            "unmapped_truncated": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "text",
+            "pairs",
+            "entries",
+            "unmapped_tokens",
+            "unmapped_truncated"
+          ]
+        }
+      },
+      "local_only": true
+    }
+  },
+  "steps": [
+    {
+      "id": "run",
+      "kind": "tool",
+      "builtin": "check_identifier_map",
+      "output": "out",
+      "arguments": {
+        "original": "{{inputs.original}}",
+        "text": "{{inputs.text}}",
+        "pairs": "{{inputs.pairs}}"
+      }
+    }
+  ]
+}

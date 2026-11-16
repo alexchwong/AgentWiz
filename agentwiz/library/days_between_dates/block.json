@@ -1,0 +1,70 @@
+{
+  "format_version": 4,
+  "name": "days_between_dates",
+  "description": "Signed number of days from one ISO date to another.",
+  "inputs": {
+    "from": {
+      "contract": {
+        "format": "text",
+        "max_length": 10
+      },
+      "local_only": false
+    },
+    "to": {
+      "contract": {
+        "format": "text",
+        "max_length": 10
+      },
+      "local_only": false
+    }
+  },
+  "outputs": {
+    "out": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "date": {
+              "type": "string",
+              "maxLength": 10
+            },
+            "clamped": {
+              "type": "boolean"
+            },
+            "days": {
+              "type": "integer",
+              "minimum": -3652425,
+              "maximum": 3652425
+            },
+            "weekday": {
+              "type": "string",
+              "maxLength": 16
+            },
+            "iso_weekday": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 7
+            }
+          },
+          "additionalProperties": false,
+          "required": []
+        }
+      },
+      "local_only": false
+    }
+  },
+  "steps": [
+    {
+      "id": "run",
+      "kind": "tool",
+      "builtin": "date_arithmetic",
+      "output": "out",
+      "arguments": {
+        "operation": "difference",
+        "from": "{{inputs.from}}",
+        "to": "{{inputs.to}}"
+      }
+    }
+  ]
+}

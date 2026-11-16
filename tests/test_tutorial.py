@@ -1,6 +1,7 @@
 """The tutorial: topic registry, sandbox, lifecycle and real guided UI actions (techspec 0.1.4, tests #112, #113;
 0.1.3's isolation and failed-start tests, now by topic ID)."""
 import os
+import re
 import tempfile
 import threading
 import time
@@ -186,6 +187,21 @@ def drive_design(page):
     expect(tid(page,"ws-trial").last).to_have_attribute("data-outcome","complete")
 
 
+def drive_block_library(page):
+    workshop_run(page)
+    assert jsonio.decode_exact(tid(page, "ws-output").text_content()) == {"text": "Order 008 and order 008b.", "count": 2}
+    page.locator('[data-action="library-chat"]').click()
+    expect(tid(page, "agent-send")).to_have_class(re.compile(r"\btutorial-target\b"))   # the block is ticked
+    expect(page.locator('[data-test="agent-capability"]:has(input:checked)')).to_contain_text("block_calculate_")
+    tid(page, "agent-send").click()
+    has(page, "agent-status", "data-stop-reason", "answered")
+    action = page.locator('[data-test="agent-action"][data-outcome="completed"]')
+    expect(action).to_have_count(1)
+    expect(tid(page, "agent-output")).to_contain_text("36")
+    expect(tid(page, "agent-output")).to_contain_text("the Calculate block")
+    tid(page, "agent-switch").uncheck()
+
+
 def drive_workflow(page):
     tid(page, "wf-preflight").click()
     expect(tid(page, "wf-review")).to_contain_text("count_characters → count_words → format_report → local_model")
@@ -228,7 +244,7 @@ def drive_private_release(page):
 
 DRIVERS = {"chat": drive_chat, "agentic-chat": drive_agentic_chat, "document": drive_document, "tool": drive_tool, "contract": drive_contract,
            "repair": drive_repair, "model-block": drive_model_block, "tool-block": drive_tool_block,
-           "python-block": drive_python_block, "script-block": drive_script_block, "workshop-design": drive_design, "workflow": drive_workflow, "release-gate": drive_release_gate,
+           "python-block": drive_python_block, "script-block": drive_script_block, "workshop-design": drive_design, "block-library": drive_block_library, "workflow": drive_workflow, "release-gate": drive_release_gate,
            "private-summary-local": drive_private_local, "private-summary-release": drive_private_release}
 
 
@@ -283,10 +299,11 @@ def test_tutorial_topics(ui, open_page):
 def test_tutorial_topic_registry():
     topics = tutorial_topics.TOPICS
     assert [t.id for t in topics] == ["chat", "agentic-chat", "document", "tool", "contract", "repair", "model-block",
-                                       "tool-block", "python-block", "script-block", "workshop-design", "workflow",
-                                       "release-gate", "private-summary-local", "private-summary-release"] + ASSIST_IDS
+                                       "tool-block", "python-block", "script-block", "workshop-design", "block-library",
+                                       "workflow", "release-gate", "private-summary-local", "private-summary-release"] + ASSIST_IDS
     assert [t.updated_in for t in topics] == (["0.1.3", "0.2.2", "0.1.3", "0.1.3"] + ["0.2.0"] * 2 + ["0.2.1"]
-                                              + ["0.2.0", "0.2.2"] + ["0.2.1"] * 6 + ["0.2.0"] * 5)
+                                              + ["0.2.0", "0.2.2"] + ["0.2.1"] * 2 + ["0.2.2"]
+                                              + ["0.2.1"] * 4 + ["0.2.0"] * 5)
     assert all(tutorial_topics.by_id(t.id) is t for t in topics)
     for bad in ("nope", None, 3, ["chat"]):
         with pytest.raises(KeyError):

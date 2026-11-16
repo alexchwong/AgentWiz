@@ -1,0 +1,119 @@
+{
+  "title": "Minutes from a transcript",
+  "group": "llm",
+  "summary": "Write minutes: summary, decisions and action items.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "minutes_from_transcript-1",
+      "version": 1,
+      "label": "decision and action",
+      "inputs": {
+        "transcript": "Ana: Shall we move the launch to July?\nBen: Yes, July works.\nAna: Agreed, July then. Ben, can you update the plan by Friday?\nBen: Will do.\nCara: We might also want a new logo."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "decisions",
+            "path": [
+              0
+            ],
+            "operation": "present"
+          },
+          {
+            "output": "action_items",
+            "path": [
+              0,
+              "owner"
+            ],
+            "operation": "equals",
+            "value_text": "\"Ben\""
+          },
+          {
+            "output": "decisions",
+            "path": [
+              1
+            ],
+            "operation": "absent"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "minutes_from_transcript-2",
+      "version": 1,
+      "label": "no agreement",
+      "inputs": {
+        "transcript": "Ana: Should we change suppliers?\nBen: Not sure.\nAna: Let's think about it."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "decisions",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "minutes_from_transcript-3",
+      "version": 1,
+      "label": "empty",
+      "inputs": {
+        "transcript": ""
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "decisions",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          },
+          {
+            "output": "action_items",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "required_context": 32768,
+  "max_tokens": 6144,
+  "description": {
+    "sections": {
+      "use": "Turn a meeting transcript into minutes: a summary, the decisions agreed and the action items.",
+      "exclusions": "Decisions only where the transcript shows agreement; suggestions are not listed.",
+      "limitations": "Needs a model context of at least 32,768 tokens (prompt, input, one repair and 6,144 output tokens). Results are model output: review them. Transcript up to 40,000 characters; up to 30 decisions and 50 action items.",
+      "missing_data": "Empty lists when there are no decisions or actions; an unclear owner is null.",
+      "effects": "Sends its inputs to the model of its role (fast by default) and returns the result for review. With unrestricted ports and unrestricted data, that model may be remote; the Add dialog shows the destination. Label inputs Local only to keep them on this machine.",
+      "failures": "If the reply does not meet the output contract after two repairs, the step fails with located issues. A context or token limit is reported as such; shorten the input or use a larger context."
+    },
+    "port_summaries": {
+      "inputs": {
+        "transcript": "The meeting transcript."
+      },
+      "outputs": {
+        "summary": "A short summary of the meeting.",
+        "decisions": "The decisions agreed.",
+        "action_items": "Action items: task, owner (or null) and due (or null)."
+      }
+    }
+  }
+}

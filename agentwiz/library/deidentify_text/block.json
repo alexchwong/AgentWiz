@@ -1,0 +1,87 @@
+{
+  "format_version": 4,
+  "name": "deidentify_text",
+  "description": "Replace identifiers with [KIND_N] placeholders and return the map.",
+  "inputs": {
+    "text": {
+      "contract": {
+        "format": "text",
+        "max_length": 40000
+      },
+      "local_only": true
+    }
+  },
+  "outputs": {
+    "text": {
+      "contract": {
+        "format": "text",
+        "max_length": 40000
+      },
+      "local_only": true
+    },
+    "identifier_map": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "properties": {
+              "placeholder": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "original": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "PERSON",
+                  "ORG",
+                  "PLACE",
+                  "DATE",
+                  "CONTACT",
+                  "ID",
+                  "OTHER"
+                ]
+              }
+            },
+            "required": [
+              "placeholder",
+              "original",
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "local_only": true
+    }
+  },
+  "steps": [
+    {
+      "id": "request",
+      "kind": "model",
+      "role": "fast",
+      "system": {
+        "file": "prompts/system.md"
+      },
+      "prompt": {
+        "file": "prompts/user.md"
+      },
+      "response_mode": "named_json",
+      "task": {
+        "max_tokens": 12288
+      },
+      "repair": {
+        "max_repairs": 2
+      }
+    }
+  ],
+  "budget": {
+    "max_seconds": 180
+  }
+}

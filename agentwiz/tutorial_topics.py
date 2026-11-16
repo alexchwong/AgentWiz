@@ -114,6 +114,15 @@ TOPICS: tuple[Topic, ...] = (
           "Save the word counter and review its port labels. Run the prepared examples in Test. In Design, "
           "change the count unit and save a new revision. Compare both revisions using the same examples.",
           "workshop", "0.2.1", "complete", False, _page("workshop.tutorialCreate"), "ws-save-revision"),
+    Topic("block-library", "Add blocks from the library",
+          "Find and replace and Calculate were added from Workshop's Add from library, which reviews each port's "
+          "Local only label before a block exists. Library blocks are ordinary blocks of yours. Run Find and replace "
+          "with the prepared example, then run Calculate from agentic Chat: the model calls the block and answers "
+          "from its result.",
+          "workshop", "0.2.2", "agent-demo", False,
+          _page("workshop.tutorialPrepare",
+                ["find_and_replace", {"text": "Order 007 and order 007b.", "find": "007", "replace": "008"}],
+                [{"id": "library-chat", "label": "Run Calculate in agentic Chat"}]), "ws-run-test"),
     Topic("workflow", "Wire and run a workflow",
           "In Design, follow the input into Count words and Count characters, then follow both outputs into "
           "Format report. The last stage was upgraded from v3 to v4 and has a local-only input. "

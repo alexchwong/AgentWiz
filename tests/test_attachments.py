@@ -32,7 +32,7 @@ def test_basic_formats_encodings(ui, data, text):
 @pytest.mark.parametrize("data, name, code", [
     ("héllo".encode("latin-1"), "f.txt", "undecodable_text"),
     (codecs.BOM_UTF32_LE + "hi".encode("utf-32-le"), "f.txt", "undecodable_text"),
-    (b"%PDF-1.7", "f.pdf", "unsupported_format"),
+    (b"PK\x03\x04", "f.docx", "unsupported_format"),
     (b"x", "noextension", "unsupported_format"),
 ])
 def test_basic_formats_refused(ui, data, name, code):

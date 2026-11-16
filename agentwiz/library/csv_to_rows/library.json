@@ -1,0 +1,77 @@
+{
+  "title": "CSV to rows",
+  "group": "tool",
+  "summary": "Parse comma-separated text with a header into columns and rows.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "csv_to_rows-1",
+      "version": 1,
+      "label": "quoted delimiter and line break",
+      "inputs": {
+        "csv": "Order ID,Customer,Total\n007,\"Smith, J\",12.50\n008,\"Lee\nUnit 4\",3\n"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"columns\":[\"Order ID\",\"Customer\",\"Total\"],\"rows\":[[\"007\",\"Smith, J\",\"12.50\"],[\"008\",\"Lee\\nUnit 4\",\"3\"]],\"row_count\":2}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "csv_to_rows-2",
+      "version": 1,
+      "label": "IDs stay strings",
+      "inputs": {
+        "csv": "Order ID,Customer,Total\n010,Ng,5\n009,Ng,5\n010,Ng,5\n"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"columns\":[\"Order ID\",\"Customer\",\"Total\"],\"rows\":[[\"010\",\"Ng\",\"5\"],[\"009\",\"Ng\",\"5\"],[\"010\",\"Ng\",\"5\"]],\"row_count\":3}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "csv_to_rows-3",
+      "version": 1,
+      "label": "header only",
+      "inputs": {
+        "csv": "Order ID,Total\n"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"columns\":[\"Order ID\",\"Total\"],\"rows\":[],\"row_count\":0}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "description": {
+    "sections": {
+      "use": "Turn CSV text with a header row into a table (columns and rows) for sorting, statistics or a Markdown table. Values stay exactly as written: 007 stays 007.",
+      "exclusions": "Comma-separated with a header only; edit the block for ; tab or | or for no header. Values are never trimmed or converted to numbers.",
+      "limitations": "Up to 1 MiB, 10,000 data rows, 200 columns and 10,000 characters a field. Standard quoting with doubled quotes. Blank lines are skipped and a leading byte-order mark is removed.",
+      "missing_data": "A header with no data rows gives an empty rows list.",
+      "effects": "Runs locally inside AgentWiz with no network access, files or model; it only returns a value. It has no destination, so it can run on Local only data; its output is restricted whenever an input is.",
+      "failures": "A refusal names a fixed code and, where it applies, a 1-based position (record, row or entry); the message never repeats your text. Check the input against the limits above and run again."
+    },
+    "port_summaries": {
+      "inputs": {
+        "csv": "The CSV text, first row the header."
+      },
+      "outputs": {
+        "out": "The columns, the rows (lists of strings) and row_count."
+      }
+    }
+  }
+}

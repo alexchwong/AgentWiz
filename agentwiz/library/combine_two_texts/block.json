@@ -1,0 +1,56 @@
+{
+  "format_version": 4,
+  "name": "combine_two_texts",
+  "description": "Join two texts with a blank line between them.",
+  "inputs": {
+    "first": {
+      "contract": {
+        "format": "text",
+        "max_length": 1048576
+      },
+      "local_only": false
+    },
+    "second": {
+      "contract": {
+        "format": "text",
+        "max_length": 1048576
+      },
+      "local_only": false
+    }
+  },
+  "outputs": {
+    "out": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "text"
+          ]
+        }
+      },
+      "local_only": false
+    }
+  },
+  "steps": [
+    {
+      "id": "run",
+      "kind": "tool",
+      "builtin": "combine_texts",
+      "output": "out",
+      "arguments": {
+        "parts": [
+          "{{inputs.first}}",
+          "{{inputs.second}}"
+        ]
+      }
+    }
+  ]
+}

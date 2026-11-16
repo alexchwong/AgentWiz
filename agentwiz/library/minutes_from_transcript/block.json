@@ -1,0 +1,99 @@
+{
+  "format_version": 4,
+  "name": "minutes_from_transcript",
+  "description": "Write minutes: summary, decisions and action items.",
+  "inputs": {
+    "transcript": {
+      "contract": {
+        "format": "text",
+        "max_length": 40000
+      },
+      "local_only": false
+    }
+  },
+  "outputs": {
+    "summary": {
+      "contract": {
+        "format": "text",
+        "max_length": 3000
+      },
+      "local_only": false
+    },
+    "decisions": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "string",
+            "maxLength": 300
+          }
+        }
+      },
+      "local_only": false
+    },
+    "action_items": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "properties": {
+              "task": {
+                "type": "string",
+                "maxLength": 300
+              },
+              "owner": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 100
+              },
+              "due": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 100
+              }
+            },
+            "required": [
+              "task",
+              "owner",
+              "due"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "local_only": false
+    }
+  },
+  "steps": [
+    {
+      "id": "request",
+      "kind": "model",
+      "role": "fast",
+      "system": {
+        "file": "prompts/system.md"
+      },
+      "prompt": {
+        "file": "prompts/user.md"
+      },
+      "response_mode": "named_json",
+      "task": {
+        "max_tokens": 6144
+      },
+      "repair": {
+        "max_repairs": 2
+      }
+    }
+  ],
+  "budget": {
+    "max_seconds": 180
+  }
+}

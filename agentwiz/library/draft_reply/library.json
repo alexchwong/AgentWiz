@@ -1,0 +1,117 @@
+{
+  "title": "Draft a reply",
+  "group": "llm",
+  "summary": "Draft a reply to a message covering given points, in a chosen tone.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "draft_reply-1",
+      "version": 1,
+      "label": "refund, warm",
+      "inputs": {
+        "message": "My order arrived broken.",
+        "points": "Apologise. Refund issued today.",
+        "tone": "\"warm\""
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "reply",
+            "operation": "includes",
+            "values": [
+              "refund"
+            ],
+            "case": "insensitive"
+          },
+          {
+            "output": "reply",
+            "operation": "excludes",
+            "values": [
+              "discount"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "draft_reply-2",
+      "version": 1,
+      "label": "firm",
+      "inputs": {
+        "message": "Can I get a 50% discount?",
+        "points": "No discounts on sale items.",
+        "tone": "\"firm\""
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "reply",
+            "operation": "includes",
+            "values": [
+              "discount"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "draft_reply-3",
+      "version": 1,
+      "label": "no points",
+      "inputs": {
+        "message": "Thanks for the update.",
+        "points": "",
+        "tone": "\"neutral\""
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "reply",
+            "operation": "excludes",
+            "values": [
+              "refund",
+              "discount"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "required_context": 16384,
+  "max_tokens": 2048,
+  "description": {
+    "sections": {
+      "use": "Draft a reply to a message, email or ticket that covers the points you give, in a neutral, warm or firm tone.",
+      "exclusions": "It does not send anything and adds no commitments, facts or dates of its own.",
+      "limitations": "Needs a model context of at least 16,384 tokens (prompt, input, one repair and 2,048 output tokens). Results are model output: review them. Message up to 8,000 characters; points up to 4,000; reply up to 6,000.",
+      "missing_data": "With no points, the reply is a brief acknowledgement.",
+      "effects": "Sends its inputs to the model of its role (fast by default) and returns the result for review. With unrestricted ports and unrestricted data, that model may be remote; the Add dialog shows the destination. Label inputs Local only to keep them on this machine.",
+      "failures": "If the reply does not meet the output contract after two repairs, the step fails with located issues. A context or token limit is reported as such; shorten the input or use a larger context."
+    },
+    "port_summaries": {
+      "inputs": {
+        "message": "The message to reply to.",
+        "points": "What the reply must say.",
+        "tone": "neutral, warm or firm."
+      },
+      "outputs": {
+        "reply": "The drafted reply."
+      }
+    }
+  }
+}

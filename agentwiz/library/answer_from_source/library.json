@@ -1,0 +1,120 @@
+{
+  "title": "Answer from a source",
+  "group": "llm",
+  "summary": "Answer a question only from a given source, with quotes.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "answer_from_source-1",
+      "version": 1,
+      "label": "found",
+      "inputs": {
+        "question": "When is it open on Saturday?",
+        "source": "Opening hours: Monday to Friday 9am to 5pm. Saturday 10am to 2pm. Closed on Sundays and public holidays. Parking is free for the first hour."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "found",
+            "path": [],
+            "operation": "equals",
+            "value_text": "true"
+          },
+          {
+            "output": "quotes",
+            "path": [
+              0
+            ],
+            "operation": "equals",
+            "value_text": "\"Saturday 10am to 2pm.\""
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "answer_from_source-2",
+      "version": 1,
+      "label": "not found",
+      "inputs": {
+        "question": "Is there Wi-Fi?",
+        "source": "Opening hours: Monday to Friday 9am to 5pm. Saturday 10am to 2pm. Closed on Sundays and public holidays. Parking is free for the first hour."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "found",
+            "path": [],
+            "operation": "equals",
+            "value_text": "false"
+          },
+          {
+            "output": "quotes",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "answer_from_source-3",
+      "version": 1,
+      "label": "empty source",
+      "inputs": {
+        "question": "What time does it close?",
+        "source": ""
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "found",
+            "path": [],
+            "operation": "equals",
+            "value_text": "false"
+          },
+          {
+            "output": "quotes",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "required_context": 32768,
+  "max_tokens": 1536,
+  "description": {
+    "sections": {
+      "use": "Answer a question strictly from a document you provide, with supporting quotes, for example from a policy, manual or contract.",
+      "exclusions": "Not for general questions: it never uses outside knowledge.",
+      "limitations": "Needs a model context of at least 32,768 tokens (prompt, input, one repair and 1,536 output tokens). Results are model output: review them. Source up to 40,000 characters; question up to 1,000. Quotes should be verbatim; the evaluation checks this.",
+      "missing_data": "When the source does not answer the question, found is false, answer is exactly \"Not found in the source.\" and there are no quotes.",
+      "effects": "Sends its inputs to the model of its role (fast by default) and returns the result for review. With unrestricted ports and unrestricted data, that model may be remote; the Add dialog shows the destination. Label inputs Local only to keep them on this machine.",
+      "failures": "If the reply does not meet the output contract after two repairs, the step fails with located issues. A context or token limit is reported as such; shorten the input or use a larger context."
+    },
+    "port_summaries": {
+      "inputs": {
+        "question": "The question to answer.",
+        "source": "The document to answer from."
+      },
+      "outputs": {
+        "found": "Whether the source contains the answer.",
+        "answer": "The answer, or the not-found sentence.",
+        "quotes": "Up to five verbatim quotes from the source supporting the answer."
+      }
+    }
+  }
+}

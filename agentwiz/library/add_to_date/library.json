@@ -1,0 +1,85 @@
+{
+  "title": "Add to a date",
+  "group": "tool",
+  "summary": "Add months and days to an ISO date.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "add_to_date-1",
+      "version": 1,
+      "label": "month end clamps",
+      "inputs": {
+        "date": "2024-01-31",
+        "months": "1",
+        "days": "0"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"date\":\"2024-02-29\",\"clamped\":true}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "add_to_date-2",
+      "version": 1,
+      "label": "days",
+      "inputs": {
+        "date": "2024-12-25",
+        "months": "0",
+        "days": "10"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"date\":\"2025-01-04\",\"clamped\":false}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "add_to_date-3",
+      "version": 1,
+      "label": "backwards",
+      "inputs": {
+        "date": "2024-03-01",
+        "months": "-1",
+        "days": "-1"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"date\":\"2024-01-31\",\"clamped\":false}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "description": {
+    "sections": {
+      "use": "Work out a due date: an ISO date (YYYY-MM-DD) plus a number of months and days, either may be negative.",
+      "exclusions": "No times or time zones. Years and weeks are not inputs; use 12 months or 7 days.",
+      "limitations": "Months are added first; a day past the month's end is moved back to its last day and clamped is true. Years 1 to 9999.",
+      "missing_data": "Use 0 for months or days you do not need.",
+      "effects": "Runs locally inside AgentWiz with no network access, files or model; it only returns a value. It has no destination, so it can run on Local only data; its output is restricted whenever an input is.",
+      "failures": "A refusal names a fixed code and, where it applies, a 1-based position (record, row or entry); the message never repeats your text. Check the input against the limits above and run again."
+    },
+    "port_summaries": {
+      "inputs": {
+        "date": "The start date, YYYY-MM-DD.",
+        "months": "Whole months to add (negative to subtract).",
+        "days": "Whole days to add (negative to subtract)."
+      },
+      "outputs": {
+        "out": "The new date and whether it was clamped."
+      }
+    }
+  }
+}

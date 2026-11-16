@@ -1,0 +1,111 @@
+{
+  "title": "Table from text",
+  "group": "llm",
+  "summary": "Extract rows for given columns from a text.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "table_from_text-1",
+      "version": 1,
+      "label": "orders",
+      "inputs": {
+        "text": "Order 007 for Smith, J was 12.50. Order 008, for Lee, was 3 dollars. Order 009 has no customer yet.",
+        "columns": "[\"Order ID\",\"Customer\",\"Total\"]"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "rows",
+            "path": [
+              0,
+              0
+            ],
+            "operation": "equals",
+            "value_text": "\"007\""
+          },
+          {
+            "output": "rows",
+            "path": [
+              2,
+              1
+            ],
+            "operation": "equals",
+            "value_text": "\"\""
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "table_from_text-2",
+      "version": 1,
+      "label": "one column",
+      "inputs": {
+        "text": "Fruit: apple, pear.",
+        "columns": "[\"Fruit\"]"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "rows",
+            "path": [
+              1
+            ],
+            "operation": "present"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "table_from_text-3",
+      "version": 1,
+      "label": "nothing",
+      "inputs": {
+        "text": "No data here.",
+        "columns": "[\"Name\",\"Age\"]"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "rows",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "required_context": 32768,
+  "max_tokens": 6144,
+  "description": {
+    "sections": {
+      "use": "Pull a table out of prose or notes for the columns you name, then render it with rows_to_table using the same columns.",
+      "exclusions": "No calculation or type conversion: values are copied as written.",
+      "limitations": "Needs a model context of at least 32,768 tokens (prompt, input, one repair and 6,144 output tokens). Results are model output: review them. Text up to 20,000 characters; 1 to 12 columns; up to 100 rows. Each row should have one value per column; rows_to_table refuses a row of the wrong width (invalid_table).",
+      "missing_data": "A value the text does not state is an empty string; a text without rows gives an empty list.",
+      "effects": "Sends its inputs to the model of its role (fast by default) and returns the result for review. With unrestricted ports and unrestricted data, that model may be remote; the Add dialog shows the destination. Label inputs Local only to keep them on this machine.",
+      "failures": "If the reply does not meet the output contract after two repairs, the step fails with located issues. A context or token limit is reported as such; shorten the input or use a larger context."
+    },
+    "port_summaries": {
+      "inputs": {
+        "text": "The text to read.",
+        "columns": "The column names, a JSON list of 1 to 12 strings."
+      },
+      "outputs": {
+        "rows": "The rows, each a list of strings in column order."
+      }
+    }
+  }
+}

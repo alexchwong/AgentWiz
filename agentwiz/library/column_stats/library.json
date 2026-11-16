@@ -1,0 +1,85 @@
+{
+  "title": "Column statistics",
+  "group": "tool",
+  "summary": "Count, sum, minimum, maximum and mean of one column's numbers.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "column_stats-1",
+      "version": 1,
+      "label": "mixed cells",
+      "inputs": {
+        "columns": "[\"Order ID\",\"Customer\",\"Total\"]",
+        "rows": "[[\"007\",\"Smith, J\",\"12.50\"],[\"008\",\"Lee\\nUnit 4\",\"3\"],[\"009\",\"\",\"x\"]]",
+        "column": "Total"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"count\":3,\"numeric_count\":2,\"empty_count\":0,\"other_count\":1,\"sum\":\"15.50\",\"min\":\"3\",\"max\":\"12.50\",\"mean\":\"7.75\",\"rounded\":false}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "column_stats-2",
+      "version": 1,
+      "label": "negative and decimal",
+      "inputs": {
+        "columns": "[\"v\"]",
+        "rows": "[[\"-1.5\"],[\"2\"],[\"0.25\"]]",
+        "column": "v"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"count\":3,\"numeric_count\":3,\"empty_count\":0,\"other_count\":0,\"sum\":\"0.75\",\"min\":\"-1.5\",\"max\":\"2\",\"mean\":\"0.25\",\"rounded\":false}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "column_stats-3",
+      "version": 1,
+      "label": "no numbers",
+      "inputs": {
+        "columns": "[\"v\"]",
+        "rows": "[[\"n/a\"],[\"\"]]",
+        "column": "v"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"count\":2,\"numeric_count\":0,\"empty_count\":1,\"other_count\":1,\"sum\":null,\"min\":null,\"max\":null,\"mean\":null,\"rounded\":false}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "description": {
+    "sections": {
+      "use": "Summarise one column's numbers exactly: how many there are, their sum, minimum, maximum and mean.",
+      "exclusions": "Plain decimal numbers only: no thousands separators, currency signs, percentages or exponents; such cells count as other.",
+      "limitations": "Exact decimal arithmetic to 34 significant digits; rounded is true when a result was rounded. Numbers are returned as decimal strings.",
+      "missing_data": "With no numeric cells, sum, min, max and mean are null; the counts still add up.",
+      "effects": "Runs locally inside AgentWiz with no network access, files or model; it only returns a value. It has no destination, so it can run on Local only data; its output is restricted whenever an input is.",
+      "failures": "A refusal names a fixed code and, where it applies, a 1-based position (record, row or entry); the message never repeats your text. Check the input against the limits above and run again."
+    },
+    "port_summaries": {
+      "inputs": {
+        "columns": "The column names, as a JSON list.",
+        "rows": "The rows, as a JSON list of lists of strings.",
+        "column": "The name of the column to summarise."
+      },
+      "outputs": {
+        "out": "The counts, sum, min, max and mean (decimal strings or null) and rounded."
+      }
+    }
+  }
+}

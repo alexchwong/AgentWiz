@@ -51,7 +51,13 @@ Paths in this table are relative to the repository root.
 | `agentwiz/workspace_admin.py` | yes | Headless workspace administration: bounded listing, staged clone, reset and tombstone delete, with no-follow filesystem safety and limits. Called by `ui/server.py` during workspace lifecycle operations. |
 | `agentwiz/profiles.py` | yes | Workspace profile copies and shared defaults (format version 2; reads 1): validation, preservation, atomic writes, fingerprints and permanent short-lived library lock. No HTTP. |
 | `agentwiz/jsonio.py` | yes | The one JSON writer (`encode`, `encode_line`); the file writer and strict reader for AgentWiz's own files (`encode_file`, `decode_file`); the exact-number reader and writer (`decode_exact`, `encode_exact(value, indent=None)`, `encode_file_exact`, `decode_file_exact`; `JSONSyntax` and `ExactLimit` are its only errors besides other `ValueError`s) and `encode_record_file` for run files. Standard library only. |
-| `agentwiz/attachments.py` | yes | The basic attachment reader (`.txt`, `.md`, `.csv`, `.json`) and `check_document`, implementing `docs/attachment_interface.md`. No HTTP. |
+| `agentwiz/attachments.py` | yes | The basic attachment reader (`.txt`, `.md`, `.csv`, `.json`; 0.2.2 adds `.tsv`, `.log`, `.yaml`, `.yml`), dispatch of `.pdf` to `pdf_reader`, `coverage()`, `require_text()` and `check_document`, implementing `docs/attachment_interface.md`. No HTTP. |
+| `agentwiz/pdf_reader.py` | yes | **0.2.2 (starter blocks).** The PDF reader on the parent side: `Admission` (`state.pdf`; two slots on Linux and WSL2, one on macOS; four waiters for 10 s), worker launch without a gap, capped pipes, the 30 s deadline, result validation, render with page markers, coverage. Never imports pypdfium2. No HTTP. |
+| `agentwiz/pdf_worker.py` | yes | **0.2.2 (starter blocks).** The worker (`python -I -m agentwiz.pdf_worker`): sets `RLIMIT_CPU` 30 s and, on Linux and WSL2, `RLIMIT_AS` 128 MiB, then imports pypdfium2 (the only module that does) and writes one JSON result. |
+| `agentwiz/library_install.py` | yes | **0.2.2 (starter blocks).** The packaged block library (`agentwiz/library/<key>/`, `index.json`) and `Installer` (`state.block_library`): listing, plan, add with the binding digest and settings hold, Finish adding, provenance. No HTTP. |
+| `agentwiz/library/` | yes | Thirty library entries: `block.json`, `library.json` (title, group, summary, version, three examples, standard description) and prompts. |
+| `agentwiz/tutorial_support/pdf_fixtures.py` | yes | Repository-built PDF fixtures (text, multi-page, partial, no text, encrypted, truncated, over limit, near limit), used by tests and the installed smoke. |
+| `agentwiz/tutorial_support/library.py` | yes | The `block-library` tutorial topic's sandbox installation through the ordinary installer. |
 | `agentwiz/insertion.py` | yes | Provenance lines and preview sizes for files and tool results; `REQUEST_LIMIT`. The page now copies `preview.text` instead of inserting it. No HTTP. |
 | `agentwiz/mcp_library.py` | yes | The shared MCP server library (`servers.json`, `.servers.lock`): validation, fingerprints, atomic writes. No HTTP server code. |
 | `agentwiz/mcp_client.py` | yes | Streamable HTTP MCP client, both eras, standard library only: probe and era cache, discovery entries, legacy sessions and the session lock, gates, reply reading with limits, `classify`. An HTTP *client*; knows nothing of AgentWiz's server. |
@@ -63,7 +69,7 @@ Paths in this table are relative to the repository root.
 | `agentwiz/blocks.py` | yes | **0.1.4.** The block loader, problems, the block store (fingerprints, effective revisions, cache) and the `GET /api/blocks/<name>` view. Reads unmanaged executable v3 blocks and v3 generations selected by managed v2 heads. Workshop publication lives in workshop_assets. No HTTP. |
 | `agentwiz/python_step.py` | yes | **0.2.2.** Python steps through scriptSpell's public `run`: engine identity, float rejection, issue mapping, `CleanupFailed`. No HTTP. |
 | `agentwiz/python_authoring.py` | yes | **0.2.2.** Workshop **Describe it** for Python: examples, source generation and local checks through `YamlAuthoring`; at most three requests. No HTTP. |
-| `agentwiz/agent_tools.py` | yes | **0.2.2.** Built-in tool definitions and the pure utilities (`current_datetime`, `calculate`, `date_arithmetic`). No HTTP. |
+| `agentwiz/agent_tools.py` | yes | **0.2.2.** Built-in tool definitions; the utility registry (`REGISTRY` of `Utility(name, schema, result, description, limits, function)`, from which `UTILITY_TOOLS`, `SCHEMAS`, `DESCRIPTIONS` and `blocks.BUILTIN_TOOLS` derive) with fourteen pure utilities and `run_utility(name, arguments, *, result_limit, check)`; the eight document tool definitions and their effects. No HTTP. |
 | `agentwiz/agent_documents.py` | yes | **0.2.2.** Agentic Chat conversations: staged documents and drafts (`dir_fd`, `O_NOFOLLOW`/`O_EXCL`), labels, memory. No HTTP. |
 | `agentwiz/agent_capabilities.py` | yes | **0.2.2.** MCP tool classifications and the capability inventory with exclusions. No HTTP. |
 | `agentwiz/agent_loop.py` | yes | **0.2.2.** The agent loop: capture, plan, preflight, model turns through `complete_with_tools`, validation, approval binding, dispatch, labels, records; `Manager`. No HTTP. |
@@ -85,10 +91,12 @@ Paths in this table are relative to the repository root.
 | `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`; 0.1.3: `test_checks.py`, `test_contracts.py`, `test_runs.py`, `test_model_step.py`, `test_attempts.py`, `test_history.py`, `test_page.py`, `test_live_judgement.py`; 0.1.4: `test_roles.py`, `test_templates.py`, `test_blocks.py`, `test_block_routes.py`, `test_block_tool.py`, `test_runner.py`, `test_shutdown.py`, `test_signals.py`, `test_tutorial.py`; 0.2.0: `test_workspace_admin.py`, `test_workspace_lifecycle.py`, `test_named_outputs.py`, `test_contract_overhaul.py`, `test_workshop_descriptions.py`; 0.2.2: `test_agent.py` with `agent_helpers.py`), opt-in live checks (`test_live.py`, with the pure judgement function `live_stop.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
 | `docs/attachment_interface.md` | no | The attachment interface (companion document, version 3, draft). |
 | `scripts/build_release.py` | no | Builds the release wheel from `HEAD`, runs release checks RC1–RC3; `--smoke`; `--no-isolation`; `--modelspell-wheel`, `--scriptspell-wheel` (offline smoke); `--changed-since`. |
-| `scripts/agent_eval.py` | no | Owner evaluation of Agentic Chat routes against a live model; not part of the offline suite. |
+| `scripts/agent_eval.py` | no | Owner evaluation of Agentic Chat routes against a live model; `--cohorts tests/agent_eval/cohorts.json` measures library selection and runs the five-scenario Chat gate. Not part of the offline suite. |
+| `scripts/library_eval.py` | no | Owner qualification of the library's model blocks (cases in `tests/library_eval/<key>.json`, invariants in `tests/library_eval/checks.py`): a disposable workspace, the ordinary installer and block runner, no route substitution. |
+| `scripts/utility_stress.py` | no | Worst-case timings of the utilities on bounded input (the reference for their limits). |
 | `scripts/replay_output.py` | no | Replays captured named-output evidence using the current checker. |
 | `scripts/workshop_experiment.py` | no | Prepares Workshop fixtures and compares outcomes through the coordinator. |
-| `scripts/smoke_installed.py` | no | Smoke check (S1–S22) against an installed wheel. |
+| `scripts/smoke_installed.py` | no | Smoke check (S1–S25) against an installed wheel. |
 | `scripts/dev_setup.sh` | no | Developer setup: `./.venv` with an editable install, pytest, `jsonschema`, Playwright and Chromium. |
 | `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for trying the UI without a model; logs the sampling fields and message roles each request carries. Models `json-pass`, `json-repair` and `slow-headers` serve the README tour. |
 | `scripts/stub_mcp_server.py` | no | Scripted MCP server (`--era dual|modern|legacy`, `--token`) for trying the MCP tools tab; logs every request, disconnect, notice and `DELETE`. |
@@ -1508,3 +1516,43 @@ Identifier checking accepts up to 1000 bounded nonempty originals and 1000 hits,
 Unicode case-fold expansions map back to original code-point offsets. JSON property names and
 string values are checked with paths; numeric/null/boolean values are preserved. JSON release
 review uses deterministic exact serialisation, not a claim about downstream HTTP byte layout.
+
+## Starter blocks addendum (0.2.2)
+
+**Utility registry.** `agent_tools.REGISTRY` is the single source for every utility: its schema, result shape,
+description, limits and function. `run_utility(name, arguments, *, result_limit=RESULT_LIMIT, check=None)` keeps the
+call shape the executor's built-in branch already uses. Each utility checks the encoded arguments (at most 1 MiB),
+works out its output size, or a bound on it, before allocating, and refuses with `too_large` instead of truncating;
+`outline` and `scan_identifiers` are the exception and stop at a cap with a flag. Long loops call `check` every
+1,000 steps (`Bounds`), so Stop and the run deadline reach them. Error messages never contain input. The agent
+passes its remaining result budget and its scan check; Tool steps pass the default.
+
+**Draft publication (3.2).** A draft is published in four steps on the conversation: `begin_write`,
+`write_temporary`, `commit` (or `discard`) and `end_write`. `close()` waits for pending writes. The agent
+`Manager` reserves a run (`Reservation`) before preparing it, verifies the reservation on `attach`, and abandons it
+idempotently on every failure path; `while_idle` runs staging, memory and label changes only between runs. Lock
+order is manager, then conversation.
+
+**PDF boundary.** `pdf_reader` (parent) never imports pypdfium2; `pdf_worker` (child) is the only module that does.
+The worker is launched as `[sys.executable, "-I", "-m", "agentwiz.pdf_worker"]` with the environment
+`{"LC_ALL": "C.UTF-8"}`, `close_fds`, a new session and a fresh temporary directory. It sets `RLIMIT_CPU` (30 s) and,
+on Linux and WSL2, `RLIMIT_AS` (128 MiB, the smallest measured value under which every fixture extracts on Python
+3.13) before importing pypdfium2. A crash or hang costs one upload on every platform; memory containment holds on
+Linux and WSL2 only, because macOS does not enforce `RLIMIT_AS`. The worker is not a sandbox: it runs with the
+user's privileges. The parent reads the body in 64 KiB chunks within 60 s, admits through `state.pdf` (slots,
+waiters, `extraction_busy`), caps stdout at 24 MiB and stderr at 64 KiB, enforces the 30 s deadline, validates the
+result against the interface and renders it with page markers. Shutdown closes admission, cancels running workers
+and waits for the slots to drain.
+
+**Library installer.** `Installer.plan` validates each packaged entry as a Workshop draft and returns its port
+labels, destination (for a model block, the role's current profile, endpoint, model and provider pin) and a
+binding digest. `add` re-plans under a settings hold (profile and role saves are refused as busy while it holds),
+refuses a changed binding with `confirmation_required`, publishes through `workshop_service.save(...,
+provenance=...)`, then writes the examples and the description, each with `only_revision` so an edit in between
+stops the installation instead of overwriting. A concurrent import of the same key reports `key_in_use`. Finish
+adding repeats the last two writes for an unchanged revision. Provenance (`metadata.library`) is dropped by any
+ordinary save.
+
+**Evaluation.** `scripts/library_eval.py` qualifies model blocks against the owner's target route (7.1) and
+`scripts/agent_eval.py --cohorts` measures selection with at most eight capabilities per cohort (7.2). Both are
+owner-run; the offline tests run them against the scripted stub.

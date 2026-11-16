@@ -1,0 +1,116 @@
+{
+  "title": "Compare documents by meaning",
+  "group": "llm",
+  "summary": "List the substantive differences between two versions of a document.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "compare_documents_meaning-1",
+      "version": 1,
+      "label": "lease changes",
+      "inputs": {
+        "before": "Rent is $400 per week, due on Mondays. Pets are not allowed. The lease runs for 12 months.",
+        "after": "Rent is $450 per week, due on Mondays. Pets are allowed with approval. The lease runs for twelve months."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "differences",
+            "path": [
+              1
+            ],
+            "operation": "present"
+          },
+          {
+            "output": "differences",
+            "path": [
+              2
+            ],
+            "operation": "absent"
+          },
+          {
+            "output": "differences",
+            "path": [
+              0,
+              "significance"
+            ],
+            "operation": "equals",
+            "value_text": "\"material\""
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "compare_documents_meaning-2",
+      "version": 1,
+      "label": "wording only",
+      "inputs": {
+        "before": "The lease runs for 12 months.",
+        "after": "The lease runs for twelve months."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "differences",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "compare_documents_meaning-3",
+      "version": 1,
+      "label": "both empty",
+      "inputs": {
+        "before": "",
+        "after": ""
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "differences",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "required_context": 32768,
+  "max_tokens": 6144,
+  "description": {
+    "sections": {
+      "use": "See what changed in substance between two versions of a contract, policy or document. Pair it with compare_texts for the literal line-by-line diff.",
+      "exclusions": "Not a line diff: wording-only changes are not listed.",
+      "limitations": "Needs a model context of at least 32,768 tokens (prompt, input, one repair and 6,144 output tokens). Results are model output: review them. Each version up to 20,000 characters; up to 30 differences.",
+      "missing_data": "Equivalent versions give an empty list and a summary saying so.",
+      "effects": "Sends its inputs to the model of its role (fast by default) and returns the result for review. With unrestricted ports and unrestricted data, that model may be remote; the Add dialog shows the destination. Label inputs Local only to keep them on this machine.",
+      "failures": "If the reply does not meet the output contract after two repairs, the step fails with located issues. A context or token limit is reported as such; shorten the input or use a larger context."
+    },
+    "port_summaries": {
+      "inputs": {
+        "before": "The earlier version.",
+        "after": "The later version."
+      },
+      "outputs": {
+        "differences": "Each difference: topic, before, after and significance (minor or material).",
+        "summary": "A short summary of the changes."
+      }
+    }
+  }
+}

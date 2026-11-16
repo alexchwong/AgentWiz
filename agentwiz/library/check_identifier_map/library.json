@@ -1,0 +1,85 @@
+{
+  "title": "Check an identifier map",
+  "group": "tool",
+  "summary": "Check a de-identification map locally before a Release Gate.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "check_identifier_map-1",
+      "version": 1,
+      "label": "preserved token listed",
+      "inputs": {
+        "original": "Alice approved [DRAFT].",
+        "text": "[PERSON_1] approved [DRAFT].",
+        "pairs": "[{\"placeholder\":\"[PERSON_1]\",\"original\":\"Alice\",\"kind\":\"PERSON\"}]"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"text\":\"[PERSON_1] approved [DRAFT].\",\"pairs\":[{\"placeholder\":\"[PERSON_1]\",\"original\":\"Alice\"}],\"entries\":1,\"unmapped_tokens\":[\"[DRAFT]\"],\"unmapped_truncated\":false}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "check_identifier_map-2",
+      "version": 1,
+      "label": "duplicates removed",
+      "inputs": {
+        "original": "Bob and Bob",
+        "text": "[PERSON_1] and [PERSON_1]",
+        "pairs": "[{\"placeholder\":\"[PERSON_1]\",\"original\":\"Bob\"},{\"placeholder\":\"[PERSON_1]\",\"original\":\"Bob\"}]"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"text\":\"[PERSON_1] and [PERSON_1]\",\"pairs\":[{\"placeholder\":\"[PERSON_1]\",\"original\":\"Bob\"}],\"entries\":1,\"unmapped_tokens\":[],\"unmapped_truncated\":false}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "check_identifier_map-3",
+      "version": 1,
+      "label": "empty map",
+      "inputs": {
+        "original": "No names.",
+        "text": "No names.",
+        "pairs": "[]"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"text\":\"No names.\",\"pairs\":[],\"entries\":0,\"unmapped_tokens\":[],\"unmapped_truncated\":false}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "description": {
+    "sections": {
+      "use": "Place between deidentify_text and a Release Gate: it checks the map with Restore's own parser, that it is one-to-one, that every original is in the source, every placeholder in the de-identified text, and that no placeholder was already in the source. Bind the Gate's value and scan to its out.",
+      "exclusions": "It does not look for originals left behind in the text and cannot tell whether the right identifiers were chosen; the Gate review is still required.",
+      "effects": "Runs locally with no network or model. Every port is Local only because its values include originals; the map never leaves the machine.",
+      "limitations": "Texts up to 1 MiB and up to 1,000 map entries. Placeholders use [KIND_N] (bracket_upper).",
+      "missing_data": "An empty map passes. Bracket tokens in the text without a map entry are listed as unmapped_tokens (at most 100).",
+      "failures": "A refusal names a fixed code and, where it applies, a 1-based position (record, row or entry); the message never repeats your text. Check the input against the limits above and run again."
+    },
+    "port_summaries": {
+      "inputs": {
+        "original": "The source text, before de-identification.",
+        "text": "The de-identified text.",
+        "pairs": "The identifier map: a JSON list of {placeholder, original} objects."
+      },
+      "outputs": {
+        "out": "The text unchanged, the checked pairs, entries, unmapped_tokens and unmapped_truncated."
+      }
+    }
+  }
+}

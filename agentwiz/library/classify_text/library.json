@@ -1,0 +1,105 @@
+{
+  "title": "Classify a text",
+  "group": "llm",
+  "summary": "Choose one label from a list for a short text, with a reason.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "classify_text-1",
+      "version": 1,
+      "label": "billing",
+      "inputs": {
+        "text": "I was charged twice this month.",
+        "labels": "[\"billing\",\"technical\",\"other\"]"
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "label",
+            "operation": "includes",
+            "values": [
+              "billing"
+            ],
+            "case": "sensitive"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "classify_text-2",
+      "version": 1,
+      "label": "technical",
+      "inputs": {
+        "text": "The app crashes when I log in.",
+        "labels": "[\"billing\",\"technical\",\"other\"]"
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "label",
+            "operation": "includes",
+            "values": [
+              "technical"
+            ],
+            "case": "sensitive"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "classify_text-3",
+      "version": 1,
+      "label": "no fit",
+      "inputs": {
+        "text": "What are your opening hours?",
+        "labels": "[\"billing\",\"technical\",\"other\"]"
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "label",
+            "operation": "includes",
+            "values": [
+              "other"
+            ],
+            "case": "sensitive"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "required_context": 16384,
+  "max_tokens": 512,
+  "description": {
+    "sections": {
+      "use": "Sort short texts such as support messages or feedback into one of your labels, with a reason.",
+      "exclusions": "One label only; not for multi-label tagging or long documents.",
+      "limitations": "Needs a model context of at least 16,384 tokens (prompt, input, one repair and 512 output tokens). Results are model output: review them. Text up to 8,000 characters; 2 to 20 labels. The output contract cannot check that the label is in your list; for a fixed label set, edit the label output to a Choice of those labels, so a non-member is refused and repaired.",
+      "missing_data": "Empty or unclear text gets the closest label, usually other, with a reason saying so.",
+      "effects": "Sends its inputs to the model of its role (fast by default) and returns the result for review. With unrestricted ports and unrestricted data, that model may be remote; the Add dialog shows the destination. Label inputs Local only to keep them on this machine.",
+      "failures": "If the reply does not meet the output contract after two repairs, the step fails with located issues. A context or token limit is reported as such; shorten the input or use a larger context."
+    },
+    "port_summaries": {
+      "inputs": {
+        "text": "The text to classify.",
+        "labels": "The allowed labels, a JSON list of 2 to 20 strings."
+      },
+      "outputs": {
+        "label": "One label, copied exactly from the list.",
+        "reason": "One sentence explaining the choice."
+      }
+    }
+  }
+}

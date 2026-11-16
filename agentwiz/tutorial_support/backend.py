@@ -163,25 +163,28 @@ class Handler(BaseHTTPRequestHandler):
             log(f"client disconnected (model={model!r})")
 
     def _agent(self, body: dict) -> None:
-        """agent-demo: the first turn calls aw_calculate; once its result is in the transcript, answer with it."""
+        """agent-demo: the first turn calls aw_calculate; once its result is in the transcript, answer with it.
+        When the offered tools include the block capability of a saved `calculate` block (block_calculate_<h8>,
+        the library entry's key, resolved by name), it calls that block instead with the same expression."""
         results = [m.get("content") for m in body.get("messages", []) if isinstance(m, dict) and m.get("role") == "tool"]
+        names = [t.get("function", {}).get("name", "") for t in body.get("tools", []) if isinstance(t, dict)]
+        block = next((n for n in names if n.startswith("block_calculate_")), None)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
         try:
             if not results:
                 call = {"index": 0, "id": "call_1", "type": "function",
-                        "function": {"name": "aw_calculate", "arguments": json.dumps({"expression": "12 * 3"})}}
+                        "function": {"name": block or "aw_calculate",
+                                     "arguments": json.dumps({"expression": "12 * 3"})}}
                 text = json.dumps({"id": "stub-1", "model": "stub", "choices": [
                     {"index": 0, "delta": {"tool_calls": [call]}, "finish_reason": None}]})
                 for c in (b"data: " + text.encode() + b"\n\n", chunk(finish="tool_calls", usage_json=USAGE), DONE):
                     self._send(c)
                 return
-            try:
-                value = json.loads(results[-1])["result"]["result"]
-            except (ValueError, KeyError, TypeError):
-                value = "unknown"
-            for c in words(f"12 × 3 = {value}, worked out by the calculator tool.") + [
+            value = _found_result(results[-1])
+            tool = "the Calculate block" if block else "the calculator tool"
+            for c in words(f"12 × 3 = {value}, worked out by {tool}.") + [
                     chunk(finish="stop", usage_json=USAGE), DONE]:
                 self._send(c)
         except OSError:
@@ -249,3 +252,29 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 
+
+def _found_result(content: str):
+    """The first string value under a "result" key, looking inside JSON text too (a block's output is JSON text)."""
+    def walk(value, depth=0):
+        if depth > 8:
+            return None
+        if isinstance(value, str):
+            try:
+                return walk(json.loads(value), depth + 1)
+            except ValueError:
+                return None
+        if isinstance(value, dict):
+            if isinstance(value.get("result"), str):
+                return value["result"]
+            for child in value.values():
+                found = walk(child, depth + 1)
+                if found is not None:
+                    return found
+        if isinstance(value, list):
+            for child in value:
+                found = walk(child, depth + 1)
+                if found is not None:
+                    return found
+        return None
+    found = walk(content)
+    return "unknown" if found is None else found

@@ -1,0 +1,117 @@
+{
+  "format_version": 4,
+  "name": "scan_for_identifiers",
+  "description": "Find URLs, emails, IPs, dates, phone and long numbers.",
+  "inputs": {
+    "text": {
+      "contract": {
+        "format": "text",
+        "max_length": 1048576
+      },
+      "local_only": false
+    }
+  },
+  "outputs": {
+    "out": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "findings": {
+              "type": "array",
+              "maxItems": 1000,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "url",
+                      "email",
+                      "ip_address",
+                      "date",
+                      "phone",
+                      "long_number"
+                    ]
+                  },
+                  "value": {
+                    "type": "string",
+                    "maxLength": 1048576
+                  },
+                  "line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "column": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "value",
+                  "line",
+                  "column"
+                ]
+              }
+            },
+            "counts": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "email": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "ip_address": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "date": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "phone": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "long_number": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false,
+              "required": []
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "findings",
+            "counts",
+            "truncated"
+          ]
+        }
+      },
+      "local_only": false
+    }
+  },
+  "steps": [
+    {
+      "id": "run",
+      "kind": "tool",
+      "builtin": "scan_identifiers",
+      "output": "out",
+      "arguments": {
+        "text": "{{inputs.text}}"
+      }
+    }
+  ]
+}

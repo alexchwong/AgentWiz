@@ -1,0 +1,182 @@
+{
+  "title": "Current date and time",
+  "group": "tool",
+  "summary": "The current date and time in a time zone.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "current_date_and_time-1",
+      "version": 1,
+      "label": "UTC",
+      "inputs": {
+        "timezone": "UTC"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "out",
+            "path": [
+              "timezone"
+            ],
+            "operation": "equals",
+            "value_text": "\"UTC\""
+          },
+          {
+            "output": "out",
+            "path": [
+              "local"
+            ],
+            "operation": "present"
+          },
+          {
+            "output": "out",
+            "path": [
+              "utc"
+            ],
+            "operation": "present"
+          },
+          {
+            "output": "out",
+            "path": [
+              "utc_offset"
+            ],
+            "operation": "present"
+          },
+          {
+            "output": "out",
+            "path": [
+              "weekday"
+            ],
+            "operation": "present"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "current_date_and_time-2",
+      "version": 1,
+      "label": "Australia/Sydney",
+      "inputs": {
+        "timezone": "Australia/Sydney"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "out",
+            "path": [
+              "timezone"
+            ],
+            "operation": "equals",
+            "value_text": "\"Australia/Sydney\""
+          },
+          {
+            "output": "out",
+            "path": [
+              "local"
+            ],
+            "operation": "present"
+          },
+          {
+            "output": "out",
+            "path": [
+              "utc"
+            ],
+            "operation": "present"
+          },
+          {
+            "output": "out",
+            "path": [
+              "utc_offset"
+            ],
+            "operation": "present"
+          },
+          {
+            "output": "out",
+            "path": [
+              "weekday"
+            ],
+            "operation": "present"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "current_date_and_time-3",
+      "version": 1,
+      "label": "America/New_York",
+      "inputs": {
+        "timezone": "America/New_York"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "out",
+            "path": [
+              "timezone"
+            ],
+            "operation": "equals",
+            "value_text": "\"America/New_York\""
+          },
+          {
+            "output": "out",
+            "path": [
+              "local"
+            ],
+            "operation": "present"
+          },
+          {
+            "output": "out",
+            "path": [
+              "utc"
+            ],
+            "operation": "present"
+          },
+          {
+            "output": "out",
+            "path": [
+              "utc_offset"
+            ],
+            "operation": "present"
+          },
+          {
+            "output": "out",
+            "path": [
+              "weekday"
+            ],
+            "operation": "present"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "description": {
+    "sections": {
+      "use": "Give a workflow the current local date and time in an IANA time zone such as Europe/Paris.",
+      "exclusions": "Not for date arithmetic; use add_to_date or days_between_dates.",
+      "limitations": "Reads this computer's clock. The zone must be an IANA name; abbreviations such as EST are refused.",
+      "missing_data": "Always returns a value for a known zone.",
+      "effects": "Runs locally inside AgentWiz with no network access, files or model; it only returns a value. It has no destination, so it can run on Local only data; its output is restricted whenever an input is.",
+      "failures": "A refusal names a fixed code and, where it applies, a 1-based position (record, row or entry); the message never repeats your text. Check the input against the limits above and run again."
+    },
+    "port_summaries": {
+      "inputs": {
+        "timezone": "An IANA time zone name, such as UTC or Australia/Sydney."
+      },
+      "outputs": {
+        "out": "local and UTC times, the zone, its UTC offset and the weekday."
+      }
+    }
+  }
+}

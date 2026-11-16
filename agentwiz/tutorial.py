@@ -187,6 +187,9 @@ class Tutorial:
             if topic.id.startswith("private-summary-"):
                 from .tutorial_support.private_summary import prepare_tutorial
                 prepare_tutorial(state, self.backend_url, topic.id[len("private-summary-"):])
+            if topic.id == "block-library":
+                from .tutorial_support.library import ensure_library_fixture
+                ensure_library_fixture(state)
             if topic.id == "workflow":
                 from .tutorial_support.workshop import ensure_workflow_fixture
                 ensure_workflow_fixture(state, self.backend_url)

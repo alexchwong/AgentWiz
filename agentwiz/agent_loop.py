@@ -7,8 +7,13 @@ runs do. The model may ask AgentWiz to run one approved capability per turn; Age
 decides what may run and where data may go, and returns a checked result. Nothing in a result, a document or a
 model turn can change the inventory, a classification, a trust grant, a label, a limit or an approval.
 
-Lock order: the manager's lock is a leaf; it is never held while a state, store or token lock is taken, nor
-during a model or tool call, a wait, a check or a file read. Decide under the lock, act after releasing it.
+Lock order: the manager's lock, then a conversation's lock (`while_idle` commits an upload inside the manager's
+hold); never the reverse. The manager's lock is never held while a state, store or token lock is taken, nor during
+a model or tool call, a wait, a check or a content read or write, and `Conversation.close()`, which waits for
+pending writes, is always called after it is released. Decide under the lock, act after releasing it.
+
+From before a run's scope is captured until it detaches, the manager is never idle: `prepare_run` holds an owned
+run reservation, which every idle-only change honours and `attach` verifies (addendum 3.2).
 Messages name rules and locations, never values.
 """
 from __future__ import annotations
@@ -383,6 +388,7 @@ class AgentRun:
         self.partial = ""
         self.reasoning = ""
         self.drafts: list = []
+        self.reservation: Reservation | None = None
         self.usage = {"input_tokens": 0, "output_tokens": 0, "reported": 0, "unreported": 0}
         self.cost = 0.0
         self.cost_reported = False
@@ -747,8 +753,43 @@ class AgentRun:
                 with self.lock:
                     self.drafts.append((item.id, item.name))
                 result = {"draft_id": item.id, "lines": item.lines, "characters": item.characters}
+            elif tool in ("copy_to_draft", "revise_draft"):
+                # Resolution and labels (addendum 3.1): resolve every input, then compute and apply the promotion
+                # before anything is read, so a restricted source never reaches an untrusted orchestrator.
+                inspected = docs.draft_inputs(self.scope, tool, arguments)
+                label = self.restricted or any(i.local_only for i in inspected)
+                if label and not self.restricted:
+                    if self.capture.trusted is None:
+                        return self._outcome({"ok": False, "error": {"code": "restricted_result",
+                                                                     "message": FEEDBACK.get("refused")}},
+                                             outcome="refused", code="restricted_result", restricted=True,
+                                             end="restricted_result")
+                    self.restricted = True
+                source = inspected[0]
+                if tool == "copy_to_draft":
+                    content, copied = docs.copy_content(self.scope, arguments, inspected)
+                    extra = {"lines_copied": copied}
+                    name, fmt = arguments["name"], arguments["format"]
+                else:
+                    content, counts = docs.revise_content(self.scope, arguments, source)
+                    extra = {"counts": counts}
+                    fmt = arguments.get("format") or (source.format if source.format in ("md", "txt") else "txt")
+                    name = arguments.get("name") or source.name
+                item = self.conversation.create_draft(self.run_id, name, fmt, content, label, self._still_running)
+                self.scope.add(item.id)
+                with self.lock:
+                    self.drafts.append((item.id, item.name))
+                result = {"draft_id": item.id, "lines": item.lines, "characters": item.characters, **extra}
+            elif tool == "compare_documents":
+                inspected = [self.scope.resolve(arguments["before_id"]), self.scope.resolve(arguments["after_id"])]
+                result = docs.compare_documents(self.scope, arguments, budget, self._check_scan, inspected)
+            elif tool == "read_table":
+                inspected = [self.scope.resolve(arguments["document_id"])]
+                result = docs.read_table(self.scope, arguments, budget, self._check_scan, inspected[0])
             else:
-                result = agent_tools.run_utility(tool, arguments)
+                # The Chat result limit is passed in, so an output that would not fit is refused up front with
+                # its remedy; the omission envelope stays only as a backstop (addendum 2.1).
+                result = agent_tools.run_utility(tool, arguments, result_limit=budget, check=self._check_scan)
         except ToolError as exc:
             if exc.code == "stopped":
                 raise _End(self._stop_code() if self.token.cancelled else "time_limit") from None
@@ -756,7 +797,7 @@ class AgentRun:
                                  restricted=any(i.local_only for i in inspected))
         except docs.StagingError as exc:
             return self._outcome({"ok": False, "error": {"code": exc.code, "message": "staging is unavailable"}},
-                                 outcome="error", code=exc.code)
+                                 outcome="error", code=exc.code, restricted=any(i.local_only for i in inspected))
         return self._outcome({"ok": True, "result": result}, outcome="completed",
                              restricted=any(i.local_only for i in inspected))
 
@@ -1019,15 +1060,28 @@ class AgentRun:
     # --- running and finishing ---------------------------------------------------------------------------------
     def run(self) -> dict:
         state = self.state
-        writer = state.register_writer("agent run")
+        try:
+            writer = state.register_writer("agent run")
+        except BaseException:
+            self.manager.abandon(self)
+            raise
         try:
             self.store_run = state.store.new_agent_run(save_runs=state.save_runs_now(), token=self.token,
-                                                 handle=self.handle)
-        except BaseException:
+                                                       handle=self.handle)
+            self.run_id = self.store_run.run_id
+            try:
+                self.manager.attach(self)
+            except BaseException:
+                # No `started` event and no model request; the store entry and the writer go with it.
+                state.store.discard_agent_run(self.store_run)
+                raise
+            return self._attached()
+        finally:
             writer.release()
-            raise
-        self.run_id = self.store_run.run_id
-        self.manager.attach(self)
+            self.manager.abandon(self)
+
+    def _attached(self) -> dict:
+        state = self.state
         try:
             if self.store_run.save_runs:
                 state.history.start_run(self.store_run)
@@ -1057,7 +1111,6 @@ class AgentRun:
             if self.timer is not None:
                 self.timer.cancel()
             self.manager.detach(self)
-            writer.release()
 
     def record(self) -> dict:
         snap = self.capture.snapshot
@@ -1154,6 +1207,13 @@ def _wait_committed(op: Any) -> dict:
 
 
 # --- the manager ---------------------------------------------------------------------------------------------------------
+@dataclasses.dataclass
+class Reservation:
+    """`prepare_run`'s hold on the manager: it names the run (once built) and its conversation."""
+    conversation: Any
+    run: Any = None
+
+
 class Manager:
     """The process's one live conversation and its runs (F-20, F-27)."""
 
@@ -1163,6 +1223,7 @@ class Manager:
         self.lock = threading.Lock()
         self.conversation: docs.Conversation | None = None
         self.active: AgentRun | None = None
+        self.reserved: Reservation | None = None
         self.runs: "OrderedDict[str, AgentRun]" = OrderedDict()
         self.closed = False
         if not state.workspace.read_only:
@@ -1179,10 +1240,26 @@ class Manager:
             raise AgentError("no_such_conversation", 404)
         return conversation
 
+    def _busy_locked(self) -> bool:
+        return self.active is not None or self.reserved is not None
+
     def _idle(self) -> None:
+        """An early, cheap refusal: the decisive check is `while_idle`."""
         with self.lock:
-            if self.active is not None:
+            if self._busy_locked():
                 raise AgentError("run_active", 409)
+
+    def while_idle(self, conversation_id: object, fn):
+        """Run `fn` (which must be short) inside one hold of the manager lock in which the manager is not shutting
+        down, the named conversation is the live one, no run is active and nothing is reserved."""
+        with self.lock:
+            if self.closed:
+                raise AgentError("shutting_down", 503)
+            if self.conversation is None or self.conversation.id != conversation_id:
+                raise AgentError("no_such_conversation", 404)
+            if self._busy_locked():
+                raise AgentError("run_active", 409)
+            return fn()
 
     def start_conversation(self) -> dict:
         if self.state.workspace.read_only:
@@ -1190,7 +1267,7 @@ class Manager:
         with self.lock:
             if self.closed:
                 raise AgentError("shutting_down", 503)
-            if self.active is not None:
+            if self._busy_locked():
                 raise AgentError("run_active", 409)
             previous, self.conversation = self.conversation, None
             self.runs.clear()
@@ -1208,7 +1285,7 @@ class Manager:
     def close_conversation(self, conversation_id: object) -> dict:
         conversation = self._require(conversation_id)
         with self.lock:
-            if self.active is not None:
+            if self._busy_locked():
                 raise AgentError("run_active", 409)
             if self.conversation is conversation:
                 self.conversation = None
@@ -1236,44 +1313,69 @@ class Manager:
         on, clear = body.get("on"), body.get("clear", False)
         if (on is not None and type(on) is not bool) or type(clear) is not bool:
             raise AgentError("invalid", 400)
-        self._idle()
-        with conversation.lock:
-            if on is not None:
-                conversation.memory_on = on
-            if clear:
-                conversation.memory = []
-                conversation.memory_cleared_reason = "cleared"
+        def change() -> None:
+            with conversation.lock:
+                if on is not None:
+                    conversation.memory_on = on
+                if clear:
+                    conversation.memory = []
+                    conversation.memory_cleared_reason = "cleared"
+        self.while_idle(conversation.id, change)
         return self.view()
 
-    def stage(self, conversation_id: object, filename: str, data: bytes, local_only: bool) -> dict:
+    def stage(self, conversation_id: object, filename: str, data: bytes, local_only: bool,
+              extract: Any = None) -> dict:
+        """The upload route's order (addendum 3.2): an early idle check, extraction, reserve and write, then the
+        commit inside `while_idle`. A run that started, or a conversation that closed or was replaced, during
+        extraction refuses the upload: its temporary file is removed and nothing is staged. `extract(data,
+        filename)` returns (document, rendered) and may take the PDF deadline; it defaults to the basic reader."""
         from . import attachments
         conversation = self._require(conversation_id)
         self._idle()
-        document = attachments.extract(data, filename=filename)
-        attachments.check_document(document)
-        rendered = attachments.render(document)
+        if extract is None:
+            document = attachments.extract(data, filename=filename)
+            attachments.check_document(document)
+            rendered = attachments.render(document)
+        else:
+            document, rendered = extract(data, filename)
+        attachments.require_text(document)
+        coverage = attachments.coverage(document)
         try:
-            item = conversation.stage(filename, document["format"], rendered["text"], local_only)
+            item = conversation.prepare_stage(filename, document["format"], rendered["text"], local_only, coverage)
         except docs.StagingError as exc:
             raise AgentError(exc.code, exc.status, **({"limit": exc.limit} if exc.limit else {})) from None
-        return {"document": {"id": item.id, "name": item.name, "kind": item.kind, "format": item.format,
-                             "lines": item.lines, "characters": item.characters, "local_only": item.local_only},
-                **self.view()}
+        committed = False
+        try:
+            try:
+                self.while_idle(conversation.id, lambda: conversation.commit(item))
+                committed = True
+            except docs.StagingError as exc:
+                raise AgentError(exc.code, exc.status, **({"limit": exc.limit} if exc.limit else {})) from None
+        finally:
+            if not committed:
+                conversation.discard(item.id)
+            conversation.end_write()
+        document_view = {"id": item.id, "name": item.name, "kind": item.kind, "format": item.format,
+                         "lines": item.lines, "characters": item.characters, "local_only": item.local_only}
+        if coverage is not None:
+            document_view["coverage"] = coverage
+        return {"document": document_view, **self.view()}
 
     def update_document(self, body: Mapping) -> dict:
         conversation = self._require(body.get("conversation"))
         ident = body.get("id")
         if set(body) - {"conversation", "id", "local_only", "remove"} or not isinstance(ident, str):
             raise AgentError("invalid", 400)
-        self._idle()
+        remove = body.get("remove") is True
+        local_only = body.get("local_only")
+        if not remove and type(local_only) is not bool:
+            raise AgentError("invalid", 400)
         try:
-            if body.get("remove") is True:
-                conversation.remove(ident)
+            if remove:
+                item = self.while_idle(conversation.id, lambda: conversation.unregister(ident))
+                conversation.unlink(item)
                 return self.view()
-            local_only = body.get("local_only")
-            if type(local_only) is not bool:
-                raise AgentError("invalid", 400)
-            cleared = conversation.set_label(ident, local_only)
+            cleared = self.while_idle(conversation.id, lambda: conversation.set_label(ident, local_only))
         except docs.StagingError as exc:
             raise AgentError(exc.code, exc.status) from None
         return {**self.view(), "memory_cleared": cleared}
@@ -1308,18 +1410,46 @@ class Manager:
         message = body.get("message")
         if not isinstance(message, str) or not message.strip():
             raise AgentError("message_required", 400)
+        reservation = Reservation(conversation)
         with self.lock:
             if self.closed:
                 raise AgentError("shutting_down", 503)
-            if self.active is not None:
+            if self.conversation is not conversation:
+                raise AgentError("no_such_conversation", 404)
+            if self._busy_locked():
                 raise AgentError("run_active", 409)
-        capture = plan(self.state, conversation, body, for_send=True)
-        return AgentRun(self, conversation, capture, message, observer)
+            self.reserved = reservation
+        try:
+            capture = plan(self.state, conversation, body, for_send=True)
+            run = AgentRun(self, conversation, capture, message, observer)
+        except BaseException:
+            with self.lock:
+                if self.reserved is reservation:
+                    self.reserved = None
+            raise
+        run.reservation = reservation
+        reservation.run = run
+        return run
+
+    def abandon(self, run: AgentRun) -> None:
+        """Release `run`'s reservation if it still holds it. Idempotent."""
+        reservation = getattr(run, "reservation", None)
+        with self.lock:
+            if reservation is not None and self.reserved is reservation:
+                self.reserved = None
 
     def attach(self, run: AgentRun) -> None:
+        """Verify, then commit, in one hold: the reservation is still this run's, its conversation is still the
+        live one and shutdown has not started. Only then is the run active and the reservation cleared."""
         with self.lock:
-            if self.active is not None:
+            reservation = getattr(run, "reservation", None)
+            if self.closed:
+                raise AgentError("shutting_down", 503)
+            if reservation is None or self.reserved is not reservation or reservation.run is not run:
                 raise AgentError("run_active", 409)
+            if self.conversation is not run.conversation:
+                raise AgentError("no_such_conversation", 404)
+            self.reserved = None
             self.active = run
             run.conversation.active_run = run
             self.runs[run.run_id] = run
@@ -1366,11 +1496,14 @@ class Manager:
 
     # --- shutdown (7.5) ----------------------------------------------------------------------------------------
     def cancel_all(self) -> None:
+        """Shutdown: refuse new work and cancel the active run and a reserved one (whose `attach` then refuses)."""
         with self.lock:
             self.closed = True
             active = self.active
-        if active is not None:
-            active.cancel("shutdown")
+            reserved = self.reserved.run if self.reserved is not None else None
+        for run in (active, reserved):
+            if run is not None:
+                run.cancel("shutdown")
 
     def close_all(self) -> None:
         with self.lock:

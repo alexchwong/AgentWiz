@@ -1,0 +1,100 @@
+{
+  "format_version": 4,
+  "name": "critique_against_checklist",
+  "description": "Check a text against each item of a checklist.",
+  "inputs": {
+    "text": {
+      "contract": {
+        "format": "text",
+        "max_length": 20000
+      },
+      "local_only": false
+    },
+    "checklist": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "minItems": 1
+        }
+      },
+      "local_only": false
+    }
+  },
+  "outputs": {
+    "results": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "properties": {
+              "item": {
+                "type": "string",
+                "maxLength": 300
+              },
+              "met": {
+                "type": "string",
+                "enum": [
+                  "yes",
+                  "no",
+                  "unclear"
+                ]
+              },
+              "evidence": {
+                "type": "string",
+                "maxLength": 500
+              }
+            },
+            "required": [
+              "item",
+              "met",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        }
+      },
+      "local_only": false
+    },
+    "overall": {
+      "contract": {
+        "format": "text",
+        "max_length": 1000
+      },
+      "local_only": false
+    }
+  },
+  "steps": [
+    {
+      "id": "request",
+      "kind": "model",
+      "role": "fast",
+      "system": {
+        "file": "prompts/system.md"
+      },
+      "prompt": {
+        "file": "prompts/user.md"
+      },
+      "response_mode": "named_json",
+      "task": {
+        "max_tokens": 4096
+      },
+      "repair": {
+        "max_repairs": 2
+      }
+    }
+  ],
+  "budget": {
+    "max_seconds": 180
+  }
+}

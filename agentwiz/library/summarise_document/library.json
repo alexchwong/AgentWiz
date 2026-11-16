@@ -1,0 +1,108 @@
+{
+  "title": "Summarise a document",
+  "group": "llm",
+  "summary": "Summarise a document at a chosen length, with key points.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "summarise_document-1",
+      "version": 1,
+      "label": "survey, short",
+      "inputs": {
+        "text": "The 2023 library survey received 412 responses. Most respondents visit monthly. The main request was longer weekend opening hours. Satisfaction with staff was high, at 91 percent. Wi-Fi reliability was the most common complaint. The board will consider Sunday opening in March.",
+        "length": "\"short\""
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "summary",
+            "operation": "includes",
+            "values": [
+              "412"
+            ],
+            "case": "insensitive"
+          },
+          {
+            "output": "summary",
+            "operation": "excludes",
+            "values": [
+              "I think"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "summarise_document-2",
+      "version": 1,
+      "label": "one line, medium",
+      "inputs": {
+        "text": "The meeting was cancelled.",
+        "length": "\"medium\""
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "key_points",
+            "path": [],
+            "operation": "present"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "summarise_document-3",
+      "version": 1,
+      "label": "empty",
+      "inputs": {
+        "text": "",
+        "length": "\"short\""
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "key_points",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "required_context": 32768,
+  "max_tokens": 2048,
+  "description": {
+    "sections": {
+      "use": "Summarise a document (a report, notes or an article) in short, medium or long form, with up to eight key points.",
+      "exclusions": "Not a translation, critique or answer to a question; use the matching blocks. No outside knowledge is added.",
+      "limitations": "Needs a model context of at least 32,768 tokens (prompt, input, one repair and 2,048 output tokens). Results are model output: review them. Input up to 40,000 characters. Word limits (80, 200, 400) are instructions to the model.",
+      "missing_data": "An empty or near-empty document gives a one-sentence summary saying so and few or no points.",
+      "effects": "Sends its inputs to the model of its role (fast by default) and returns the result for review. With unrestricted ports and unrestricted data, that model may be remote; the Add dialog shows the destination. Label inputs Local only to keep them on this machine.",
+      "failures": "If the reply does not meet the output contract after two repairs, the step fails with located issues. A context or token limit is reported as such; shorten the input or use a larger context."
+    },
+    "port_summaries": {
+      "inputs": {
+        "text": "The document to summarise.",
+        "length": "short, medium or long."
+      },
+      "outputs": {
+        "summary": "The summary text.",
+        "key_points": "Up to eight key points, each a short string."
+      }
+    }
+  }
+}

@@ -1,0 +1,330 @@
+{
+ "format_version": 1,
+ "note": "Fixed agent-selection cohorts (starter blocks addendum, 7.2). Each cohort offers at most 8 capabilities: the target block plus realistic distractors. 'library:<key>' names a catalog entry; agent_eval.py installs it through the installer and resolves its capability name and revision from the inventory. expected_capabilities must all appear in the run's trace; an empty list means no tool is needed.",
+ "cohorts": [
+  {
+   "id": "summarise",
+   "target": "summarise_document",
+   "capabilities": [
+    "library:summarise_document",
+    "library:extract_action_items",
+    "library:classify_text",
+    "library:translate_text",
+    "aw_read_document",
+    "aw_search_documents",
+    "aw_list_documents",
+    "aw_calculate"
+   ],
+   "cases": [
+    {
+     "id": "summarise-1",
+     "message": "Summarise ops.txt in a few sentences using the Summarise document block.",
+     "documents": [
+      {
+       "name": "ops.txt",
+       "text": "Quarterly operations report.\n\nSummary\nDeliveries rose 12 percent to 4,310 parcels. Two depots, Leeds and Hull, missed the 48-hour target in March.\n\nActions\nPriya will hire two drivers for Leeds by 30 April. Tom will review Hull's routes by 15 April.\n\nCosts\nFuel spend fell to 18,200 pounds.\n",
+       "local_only": false
+      }
+     ],
+     "expected_capabilities": [
+      "library:summarise_document"
+     ],
+     "expected_answer": {
+      "contains": [
+       "12"
+      ]
+     }
+    },
+    {
+     "id": "summarise-none",
+     "message": "In one word, what colour is a clear daytime sky?",
+     "expected_capabilities": [],
+     "expected_answer": {
+      "contains": [
+       "blue"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "actions",
+   "target": "extract_action_items",
+   "capabilities": [
+    "library:extract_action_items",
+    "library:summarise_document",
+    "library:extract_entities",
+    "aw_read_document",
+    "aw_search_documents",
+    "aw_current_datetime"
+   ],
+   "cases": [
+    {
+     "id": "actions-1",
+     "message": "List the action items in ops.txt with their owners.",
+     "documents": [
+      {
+       "name": "ops.txt",
+       "text": "Quarterly operations report.\n\nSummary\nDeliveries rose 12 percent to 4,310 parcels. Two depots, Leeds and Hull, missed the 48-hour target in March.\n\nActions\nPriya will hire two drivers for Leeds by 30 April. Tom will review Hull's routes by 15 April.\n\nCosts\nFuel spend fell to 18,200 pounds.\n",
+       "local_only": false
+      }
+     ],
+     "expected_capabilities": [
+      "library:extract_action_items"
+     ],
+     "expected_answer": {
+      "contains": [
+       "Priya",
+       "Tom"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "classify",
+   "target": "classify_text",
+   "capabilities": [
+    "library:classify_text",
+    "library:extract_entities",
+    "library:summarise_document",
+    "aw_calculate",
+    "aw_find_replace"
+   ],
+   "cases": [
+    {
+     "id": "classify-1",
+     "message": "Classify this message as billing, technical or other: 'I was charged twice.'",
+     "expected_capabilities": [
+      "library:classify_text"
+     ],
+     "expected_answer": {
+      "contains": [
+       "billing"
+      ]
+     }
+    },
+    {
+     "id": "classify-none",
+     "message": "What is the capital of France? Answer in one word.",
+     "expected_capabilities": [],
+     "expected_answer": {
+      "contains": [
+       "Paris"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "table",
+   "target": "table_from_text",
+   "capabilities": [
+    "library:table_from_text",
+    "library:extract_entities",
+    "library:rows_to_table",
+    "aw_parse_csv",
+    "aw_rows_to_table",
+    "aw_calculate"
+   ],
+   "cases": [
+    {
+     "id": "table-1",
+     "message": "Make a table with columns name and city from: 'Ana lives in Porto. Bo lives in Oslo.' Use the Table from text block.",
+     "expected_capabilities": [
+      "library:table_from_text"
+     ],
+     "expected_answer": {
+      "contains": [
+       "Porto",
+       "Oslo"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "find-replace",
+   "target": "find_and_replace",
+   "capabilities": [
+    "library:find_and_replace",
+    "library:proofread",
+    "library:rewrite_for_audience",
+    "aw_find_replace",
+    "aw_compare_texts",
+    "aw_calculate"
+   ],
+   "cases": [
+    {
+     "id": "find-replace-1",
+     "message": "Using the Find and replace block, replace every 'colour' with 'color' in: 'The colour of the colour chart.'",
+     "expected_capabilities": [
+      "library:find_and_replace"
+     ],
+     "expected_answer": {
+      "contains": [
+       "color of the color chart"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "draft",
+   "target": "copy_to_draft",
+   "capabilities": [
+    "aw_list_documents",
+    "aw_read_document",
+    "aw_extract_section",
+    "aw_copy_to_draft",
+    "aw_revise_draft",
+    "aw_create_draft",
+    "library:rewrite_for_audience"
+   ],
+   "cases": [
+    {
+     "id": "draft-1",
+     "message": "Copy the Actions section of ops.txt into a new draft, then revise the draft so 'Tom' reads 'Thomas'.",
+     "documents": [
+      {
+       "name": "ops.txt",
+       "text": "Quarterly operations report.\n\nSummary\nDeliveries rose 12 percent to 4,310 parcels. Two depots, Leeds and Hull, missed the 48-hour target in March.\n\nActions\nPriya will hire two drivers for Leeds by 30 April. Tom will review Hull's routes by 15 April.\n\nCosts\nFuel spend fell to 18,200 pounds.\n",
+       "local_only": false
+      }
+     ],
+     "expected_capabilities": [
+      "aw_copy_to_draft",
+      "aw_revise_draft"
+     ],
+     "expected_answer": {
+      "contains": [
+       "draft"
+      ]
+     }
+    }
+   ]
+  }
+ ],
+ "gate": {
+  "note": "The end-to-end gate (7.2): all five scenarios must pass on the target orchestrator before the README claims library support in Chat. If any fails, the README describes the blocks for Workshop and workflows only and Chat is reported as untested.",
+  "cases": [
+   {
+    "id": "gate-summarise",
+    "message": "Summarise the staged document ops.txt using the Summarise document block.",
+    "capabilities": [
+     "library:summarise_document",
+     "library:extract_action_items",
+     "aw_read_document",
+     "aw_list_documents"
+    ],
+    "documents": [
+     {
+      "name": "ops.txt",
+      "text": "Quarterly operations report.\n\nSummary\nDeliveries rose 12 percent to 4,310 parcels. Two depots, Leeds and Hull, missed the 48-hour target in March.\n\nActions\nPriya will hire two drivers for Leeds by 30 April. Tom will review Hull's routes by 15 April.\n\nCosts\nFuel spend fell to 18,200 pounds.\n",
+      "local_only": false
+     }
+    ],
+    "expected_capabilities": [
+     "library:summarise_document"
+    ],
+    "expected_answer": {
+     "contains": [
+      "12"
+     ]
+    }
+   },
+   {
+    "id": "gate-answer",
+    "message": "Using policy.txt, how many days do customers have to return unused items?",
+    "capabilities": [
+     "library:answer_from_source",
+     "library:summarise_document",
+     "aw_read_document",
+     "aw_search_documents"
+    ],
+    "documents": [
+     {
+      "name": "policy.txt",
+      "text": "Refund policy.\n\nCustomers may return unused items within 30 days of delivery for a full refund. Opened software cannot be refunded. Refunds are paid to the original card within 5 working days.\n",
+      "local_only": false
+     }
+    ],
+    "expected_capabilities": [
+     "library:answer_from_source"
+    ],
+    "expected_answer": {
+     "contains": [
+      "30"
+     ]
+    }
+   },
+   {
+    "id": "gate-draft",
+    "message": "Copy the Actions section of ops.txt into a new draft, then revise the draft so 'Tom' reads 'Thomas'.",
+    "capabilities": [
+     "aw_list_documents",
+     "aw_read_document",
+     "aw_copy_to_draft",
+     "aw_revise_draft",
+     "aw_extract_section"
+    ],
+    "documents": [
+     {
+      "name": "ops.txt",
+      "text": "Quarterly operations report.\n\nSummary\nDeliveries rose 12 percent to 4,310 parcels. Two depots, Leeds and Hull, missed the 48-hour target in March.\n\nActions\nPriya will hire two drivers for Leeds by 30 April. Tom will review Hull's routes by 15 April.\n\nCosts\nFuel spend fell to 18,200 pounds.\n",
+      "local_only": false
+     }
+    ],
+    "expected_capabilities": [
+     "aw_copy_to_draft",
+     "aw_revise_draft"
+    ],
+    "expected_answer": {
+     "contains": [
+      "draft"
+     ]
+    }
+   },
+   {
+    "id": "gate-table",
+    "message": "Read scores.csv with read_table, then sort its rows by score with the Sort and dedupe rows block, dropping repeated names. Who is first?",
+    "capabilities": [
+     "aw_read_table",
+     "library:sort_and_dedupe_rows",
+     "library:rows_to_table",
+     "aw_calculate"
+    ],
+    "documents": [
+     {
+      "name": "scores.csv",
+      "text": "name,team,score\nAsha,blue,71\nBen,red,64\nAsha,blue,71\nCara,red,88\nDev,blue,59\n",
+      "local_only": false
+     }
+    ],
+    "expected_capabilities": [
+     "aw_read_table",
+     "library:sort_and_dedupe_rows"
+    ],
+    "expected_answer": {
+     "contains": [
+      "Dev"
+     ]
+    }
+   },
+   {
+    "id": "gate-no-tool",
+    "message": "What is the capital of France? Answer in one word.",
+    "capabilities": [
+     "aw_calculate",
+     "library:summarise_document"
+    ],
+    "expected_capabilities": [],
+    "expected_answer": {
+     "contains": [
+      "Paris"
+     ]
+    }
+   }
+  ]
+ }
+}

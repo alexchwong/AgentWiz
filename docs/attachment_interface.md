@@ -21,8 +21,9 @@ This document defines how a **reader** turns an attached file into text that Age
 
 | Party | Role | From |
 | --- | --- | --- |
-| AgentWiz's basic reader (`agentwiz/attachments.py`) | Reader for `.txt`, `.md`, `.csv` and `.json`. Implements a subset (Section 8). | 0.1.2 |
-| docSpell | Reader for PDF, Word and other formats. Implements all of it. | 0.1.4 (separate repository) |
+| AgentWiz's basic reader (`agentwiz/attachments.py`) | Reader for `.txt`, `.md`, `.csv` and `.json`; from 0.2.2 also `.tsv`, `.log`, `.yaml` and `.yml`. Implements a subset (Section 8). | 0.1.2 |
+| AgentWiz's PDF reader (`agentwiz/pdf_reader.py`, with the worker `agentwiz/pdf_worker.py`) | Reader for `.pdf` through pypdfium2 in a short-lived worker process. Implements pages, markers and coverage warnings (Section 8). | 0.2.2 |
+| docSpell | Reader for Word and other formats, and later PDF. Implements all of it. When it arrives it replaces the PDF reader through this same interface. | later (separate repository) |
 | AgentWiz | Consumer: uploads, checks each result, renders, previews and inserts. | 0.1.2 |
 
 **Why it is written before docSpell exists.** The interface is shaped by the PDF case, because a text reader never meets pages, tables, or blocks joined across pages. An interface derived from the basic reader would lack exactly what docSpell needs, and docSpell's arrival would then be a breaking change (plan 9.3).
@@ -185,14 +186,29 @@ AgentWiz identifies a reader's errors by their `code` attribute, so it needs no 
 
 | Aspect | Basic reader |
 | --- | --- |
-| `FORMATS` | `("txt", "md", "csv", "json")`, chosen by extension, in any letter case |
+| `FORMATS` | `("txt", "md", "csv", "json", "tsv", "log", "yaml", "yml")`, chosen by extension, in any letter case |
 | `extract` | Decodes UTF-8 (with or without a byte-order mark) or UTF-16 with a byte-order mark; normalises line endings to `\n`; returns one `text` block holding the whole file, verbatim otherwise |
 | `page_count` | Always `null`; each block's `page_start` and `page_end` are present and `null`; no markers |
 | `warnings` | `empty_file` for an empty file; nothing else |
 | `render` | Returns the block's text unchanged; any `pages` argument raises `invalid_page_range` |
 | Errors | `unsupported_format`, `undecodable_text` (including UTF-32) |
 
-AgentWiz keeps reading these four formats itself after docSpell arrives, so they never depend on the optional extra (R3-5).
+AgentWiz keeps reading these text formats itself after docSpell arrives, so they never depend on the optional extra (R3-5).
+
+**The PDF reader (AgentWiz 0.2.2, starter blocks addendum 4.2).**
+
+| Aspect | PDF reader |
+| --- | --- |
+| `FORMATS` | `("pdf",)` |
+| `extract` | Runs the worker on the bytes; one `text` block per page that has text, with `page_start` = `page_end` = the page number; `page_count` is the document's page count |
+| `warnings` | `no_text_layer` (a page without text, with its page), `page_skipped`, `content_limited` (the 300-page or 16 MiB rendered-text limit, with the page where it applied) |
+| `render` | The pages' text under `--- page N ---` markers, for the whole document; a page range raises `invalid_page_range` |
+| Coverage | `coverage(document)`: page count, pages read, pages with text and the warnings, shown in the preview and on a staged item |
+| Limits | 16 MiB source (checked before the body is read), 300 pages, 16 MiB of text, 30 s wall clock; two workers at once (one on macOS), four waiters for 10 s |
+| Errors | `damaged_file` (damaged, truncated or encrypted), `extraction_failed`, `extraction_busy`, `pdf_unavailable`; a PDF with no text at all is refused by the consumer (`require_text`) as `no_extractable_text` |
+
+The worker contains crashes and hangs everywhere and memory only on Linux and WSL2 (`RLIMIT_AS` 128 MiB); it is not
+a sandbox. Text comes in PDFium's order without structure; there is no OCR.
 
 ## 9. Questions left to docSpell's specification
 

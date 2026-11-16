@@ -1,0 +1,295 @@
+{
+  "format_version": 1,
+  "key": "proofread",
+  "required_context": 32768,
+  "cases": [
+    {
+      "id": "proofread-1",
+      "set": "dev",
+      "label": "three errors",
+      "inputs": {
+        "text": "Their are three mistake in this sentense."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "corrected",
+            "operation": "includes",
+            "values": [
+              "sentence"
+            ],
+            "case": "insensitive"
+          },
+          {
+            "output": "corrected",
+            "operation": "excludes",
+            "values": [
+              "sentense"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "critical": false,
+      "stub": {
+        "corrected": "There are three mistakes in this sentence.",
+        "changes": [
+          {
+            "before": "Their are",
+            "after": "There are",
+            "reason": "wrong word"
+          },
+          {
+            "before": "three mistake",
+            "after": "three mistakes",
+            "reason": "plural"
+          },
+          {
+            "before": "sentense",
+            "after": "sentence",
+            "reason": "spelling"
+          }
+        ]
+      },
+      "shipped": true
+    },
+    {
+      "id": "proofread-2",
+      "set": "dev",
+      "label": "already correct",
+      "inputs": {
+        "text": "This sentence is fine."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "corrected",
+            "operation": "includes",
+            "values": [
+              "This sentence is fine."
+            ],
+            "case": "sensitive"
+          }
+        ]
+      },
+      "critical": false,
+      "stub": {
+        "corrected": "This sentence is fine.",
+        "changes": []
+      },
+      "shipped": true
+    },
+    {
+      "id": "proofread-3",
+      "set": "dev",
+      "label": "empty",
+      "inputs": {
+        "text": ""
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "corrected",
+            "operation": "excludes",
+            "values": [
+              "sentence"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "critical": false,
+      "stub": {
+        "corrected": "",
+        "changes": []
+      },
+      "shipped": true
+    },
+    {
+      "id": "proofread-4",
+      "set": "dev",
+      "label": "punctuation",
+      "inputs": {
+        "text": "Lets eat grandma"
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "corrected",
+            "operation": "includes",
+            "values": [
+              "Let's"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "critical": false
+    },
+    {
+      "id": "proofread-5",
+      "set": "dev",
+      "label": "style kept",
+      "inputs": {
+        "text": "gonna be late, sorry!!"
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "corrected",
+            "operation": "includes",
+            "values": [
+              "sorry"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "critical": false
+    },
+    {
+      "id": "proofread-6",
+      "set": "dev",
+      "label": "markdown kept",
+      "inputs": {
+        "text": "# Titel\n\n- iten one\n- item two\n"
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "corrected",
+            "operation": "includes",
+            "values": [
+              "# ",
+              "- item two"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "critical": false
+    },
+    {
+      "id": "proofread-7",
+      "set": "dev",
+      "label": "whitespace",
+      "inputs": {
+        "text": "  "
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "corrected",
+            "operation": "excludes",
+            "values": [
+              "the"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "critical": true
+    },
+    {
+      "id": "proofread-8",
+      "set": "heldout",
+      "label": "homophones",
+      "inputs": {
+        "text": "Your welcome to bring you're dog."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "corrected",
+            "operation": "includes",
+            "values": [
+              "You're welcome",
+              "your dog"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "critical": false,
+      "rubric": {
+        "expected_facts": [
+          "You're welcome",
+          "your dog"
+        ],
+        "required_omissions": [
+          "rewording beyond the fixes"
+        ]
+      }
+    },
+    {
+      "id": "proofread-9",
+      "set": "heldout",
+      "label": "names kept",
+      "inputs": {
+        "text": "Siobhan and Nguyen recieved the award."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "corrected",
+            "operation": "includes",
+            "values": [
+              "Siobhan",
+              "Nguyen",
+              "received"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "critical": false,
+      "rubric": {
+        "expected_facts": [
+          "received"
+        ],
+        "required_omissions": [
+          "changed names"
+        ]
+      }
+    },
+    {
+      "id": "proofread-10",
+      "set": "heldout",
+      "label": "no errors",
+      "inputs": {
+        "text": "The train leaves at noon."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "corrected",
+            "operation": "includes",
+            "values": [
+              "The train leaves at noon."
+            ],
+            "case": "sensitive"
+          }
+        ]
+      },
+      "critical": true,
+      "rubric": {
+        "expected_facts": [
+          "unchanged"
+        ],
+        "required_omissions": [
+          "any change"
+        ]
+      }
+    }
+  ]
+}

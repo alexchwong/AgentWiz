@@ -1,0 +1,85 @@
+{
+  "title": "Find and replace",
+  "group": "tool",
+  "summary": "Replace every exact occurrence of a text with another.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "find_and_replace-1",
+      "version": 1,
+      "label": "several matches",
+      "inputs": {
+        "text": "Order 007 and order 007b.",
+        "find": "007",
+        "replace": "008"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"text\":\"Order 008 and order 008b.\",\"count\":2}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "find_and_replace-2",
+      "version": 1,
+      "label": "case-sensitive, no match",
+      "inputs": {
+        "text": "Alpha beta",
+        "find": "alpha",
+        "replace": "Gamma"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"text\":\"Alpha beta\",\"count\":0}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "find_and_replace-3",
+      "version": 1,
+      "label": "delete a phrase",
+      "inputs": {
+        "text": "Keep [DRAFT] this.",
+        "find": "[DRAFT] ",
+        "replace": ""
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"text\":\"Keep this.\",\"count\":1}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "description": {
+    "sections": {
+      "use": "Replace every occurrence of an exact piece of text, such as a renamed product or a corrected figure, and report how many were replaced.",
+      "exclusions": "Not for patterns, case-insensitive or whole-word matching: it matches literally, character for character. Not for rewording; use a model block.",
+      "limitations": "Text up to 1 MiB; find and replace up to 1,000 characters. Matches are left to right and never overlap. The block omits expected_count; edit the block to require an exact count.",
+      "missing_data": "No match is a result: the text is returned unchanged with count 0.",
+      "effects": "Runs locally inside AgentWiz with no network access, files or model; it only returns a value. It has no destination, so it can run on Local only data; its output is restricted whenever an input is.",
+      "failures": "A refusal names a fixed code and, where it applies, a 1-based position (record, row or entry); the message never repeats your text. Check the input against the limits above and run again."
+    },
+    "port_summaries": {
+      "inputs": {
+        "text": "The text to change.",
+        "find": "The exact text to find (case-sensitive).",
+        "replace": "The text to put in its place; may be empty to delete."
+      },
+      "outputs": {
+        "out": "The changed text and the number of replacements (count)."
+      }
+    }
+  }
+}
