@@ -8,7 +8,6 @@
     "answer_from_source",
     "rewrite_for_audience",
     "proofread",
-    "deidentify_text",
     "translate_text",
     "draft_reply",
     "minutes_from_transcript",

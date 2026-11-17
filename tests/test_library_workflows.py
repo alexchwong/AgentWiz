@@ -135,6 +135,7 @@ def remote_requests(server) -> int:
                and r["body"].get("model") == "r")
 
 
+@pytest.mark.usefixtures("local_deidentify_candidate")
 def test_the_chain_keeps_a_preserved_token_and_restores(ui, server):
     deid_workflow(ui, server)
     server.reply(block_answer(**GOOD), block_answer(text="[PERSON_1] approved [DRAFT]."))
@@ -161,6 +162,7 @@ def test_the_chain_keeps_a_preserved_token_and_restores(ui, server):
     {"text": "[DRAFT] approved [DRAFT].",                                        # collides with a source token
      "identifier_map": [{"placeholder": "[DRAFT]", "original": "Alice", "kind": "PERSON"}]},
 ], ids=["malformed", "two_originals", "two_placeholders", "collision"])
+@pytest.mark.usefixtures("local_deidentify_candidate")
 def test_a_bad_map_fails_the_check_before_the_gate_with_no_remote_request(ui, server, reply):
     deid_workflow(ui, server)
     server.reply(block_answer(**reply))
@@ -173,6 +175,7 @@ def test_a_bad_map_fails_the_check_before_the_gate_with_no_remote_request(ui, se
     assert remote_requests(server) == 0
 
 
+@pytest.mark.usefixtures("local_deidentify_candidate")
 def test_a_declined_gate_makes_no_remote_request(ui, server):
     deid_workflow(ui, server)
     server.reply(block_answer(**GOOD))

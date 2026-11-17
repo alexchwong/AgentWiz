@@ -279,6 +279,12 @@
      "aw_copy_to_draft",
      "aw_revise_draft"
     ],
+    "expected_draft": {
+     "contains": [
+      "Priya will hire two drivers for Leeds by 30 April.",
+      "Thomas will review Hull's routes by 15 April."
+     ]
+    },
     "expected_answer": {
      "contains": [
       "draft"

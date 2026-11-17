@@ -16,7 +16,7 @@ AgentWiz 0.2.2 includes:
   compare documents, read CSV tables, and fourteen local utilities (date and time, calculator, date arithmetic, find
   and replace, Markdown sections and outlines, text diff and combine, CSV parse, sort and table rendering, column
   statistics, identifier scanning and identifier-map checks).
-- **Block library:** thirty ready-made model, Tool and Transform blocks, added from Workshop after reviewing each
+- **Block library:** 29 ready-made model, Tool and Transform blocks, added from Workshop after reviewing each
   port's Local only label.
 - **PDF:** text extraction from PDF files in a short-lived worker process, with page coverage.
 - **Python blocks:** restricted Python that runs locally in scriptSpell's runner, standalone, in fixed workflows
@@ -437,13 +437,13 @@ removes its description.
 
 ## Block library
 
-**Add from library** in Workshop lists thirty ready-made blocks in three groups. Each is an ordinary block of yours
+**Add from library** in Workshop lists 29 ready-made blocks in three groups. Each is an ordinary block of yours
 once added: it has revisions, examples and a standard description, and you can edit, test, compare and wire it like
 any other. A library block never updates itself; a newer library version is added under a new key.
 
 - **Model blocks** (role `fast` by default): Summarise a document, Extract action items, Extract entities, Classify a
   text, Answer from a source (with verbatim quotes, or "Not found in the source."), Rewrite for an audience,
-  Proofread, De-identify a text, Translate a text, Draft a reply, Minutes from a transcript, Compare documents by
+  Proofread, Translate a text, Draft a reply, Minutes from a transcript, Compare documents by
   meaning, Check against a checklist and Table from text.
 - **Tool blocks** (built-in utilities: local, read-only, no model): Find and replace, Extract a Markdown section,
   Document outline, Compare two texts, Combine two texts, CSV to rows, Rows to Markdown table, Sort and remove
@@ -482,18 +482,16 @@ as `["Order ID"]`:
 Model rows to a table: bind `table_from_text.rows` to `rows_to_table.rows`, and bind the same constant or input that
 fed `table_from_text.columns` to `rows_to_table.columns`.
 
-**De-identification.** `deidentify_text` (on a trusted local model) → `check_identifier_map` → a Release Gate →
+**De-identification.** Your local de-identification block → `check_identifier_map` → a Release Gate →
 the remote step → `restore_identifiers`. The map check runs locally before the Gate: a malformed placeholder, one
 placeholder for two originals, one original under two placeholders, or a placeholder that collides with a token
 already in the source fails the workflow before anything is sent. Tokens the remote reply adds or keeps that the map
 does not know stay as they are and are listed. The Gate review is still yours: neither the model nor the scan can
 show that no identifier was missed.
 
-**Quality.** The model blocks' prompts and cases are written for, and evaluated on, LM Studio with the `fast` role;
-a block that does not meet the bar is not shipped. Evaluation on another model is not implied. In agentic Chat the
-library blocks are offered like any saved block, but their use from Chat is **untested**: the end-to-end Chat gate
-(`scripts/agent_eval.py --cohorts`) has not yet been run on a target orchestrator. Use them from Workshop and
-workflows.
+**Quality.** Release qualification tests the model blocks with the `fast` role on a specific OpenRouter or
+LM Studio profile. Results apply to the model and route used in that evaluation. The live Chat evaluation is
+pending. Use the blocks from Workshop and workflows.
 
 ## Workflows
 
@@ -1473,7 +1471,7 @@ Stopping the original AgentWiz process also closes its tutorial.
   switch waits for, and does not cancel, a PDF upload in progress. A non-PDF upload cannot be interrupted by
   shutdown; its body read is bounded at 60 seconds.
 - **Block library.** A model block tested on one model is not evidence for another; each library block's
-  description says which model and context it was tested with. `deidentify_text` and `scan_for_identifiers` reduce
+  description lists its context requirement. Local de-identification and `scan_for_identifiers` reduce
   the work of a Release Gate review and replace none of it; `check_identifier_map` stops an unusable map before the
   Gate only in a workflow that places it, and cannot tell whether an identifier was missed. The installer holds no
   lock across its three writes: examples or a description you save in between are kept, and an edit to the block in

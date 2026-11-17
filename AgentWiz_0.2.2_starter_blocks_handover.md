@@ -146,16 +146,18 @@ qualification and cohort runs, and it is not done (see "Owner actions").
 
 ## Owner actions (before the release merge to `main`)
 
-1. **Qualification (7.1).** Run `python scripts/library_eval.py --profile <LM Studio profile>` (round 1: dev set, one
-   trial), revise prompts, then run `--trials 3 --set all` for the ready blocks. Mark the rubric cases.
+1. **Qualification (7.1).** Use an OpenRouter or LM Studio profile as described in the [release instructions](docs/releases.md).
+   Run the dev set once, revise prompts, then run `--trials 3 --set all` for the ready blocks. Mark the rubric cases
+   and refresh the verdict with `--review`.
    - Remove any block still below the bar after three rounds from `index.json`, together with its cases, tutorial and
      README references.
    - Each model block's description currently states the context it needs (for example 32,768 tokens) but names no
      tested model, because none has been tested yet. Section 10 requires the tested model and context, so add them
      from the report.
-2. **Context risk for `deidentify_text`.** Its `max_tokens` is 12,288, and a long input near its maximum may not fit
-   a 32,768-token context. If the qualification shows `context_rejected` or `truncated` on the long case, lower the
-   input maximum or raise the role's context.
+2. **Deferred `deidentify_text`.** The Local only model block is out of the 0.2.2 catalog and wheel pending qualification
+   on a trusted local profile. Its `max_tokens` is 12,288, and a long input near its maximum may not fit a 32,768-token
+   context. If a future qualification shows `context_rejected` or `truncated` on the long case, lower the input maximum
+   or raise the role's context.
 3. **Agent cohorts and the Chat gate (7.2).** Run `python scripts/agent_eval.py --url … --cohorts
    tests/agent_eval/cohorts.json --report …` against a disposable workspace. Only if all five gate scenarios pass,
    change the README's Block library "Quality" paragraph to claim Chat support.

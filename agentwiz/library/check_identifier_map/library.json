@@ -64,7 +64,7 @@
   ],
   "description": {
     "sections": {
-      "use": "Place between deidentify_text and a Release Gate: it checks the map with Restore's own parser, that it is one-to-one, that every original is in the source, every placeholder in the de-identified text, and that no placeholder was already in the source. Bind the Gate's value and scan to its out.",
+      "use": "Place between your local de-identification block and a Release Gate. It checks the map with Restore's own parser, that it is one-to-one, that every original is in the source, every placeholder in the de-identified text, and that no placeholder was already in the source. Bind the Gate's value and scan to its out.",
       "exclusions": "It does not look for originals left behind in the text and cannot tell whether the right identifiers were chosen; the Gate review is still required.",
       "effects": "Runs locally with no network or model. Every port is Local only because its values include originals; the map never leaves the machine.",
       "limitations": "Texts up to 1 MiB and up to 1,000 map entries. Placeholders use [KIND_N] (bracket_upper).",

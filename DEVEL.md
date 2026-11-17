@@ -238,6 +238,39 @@ Keep check reports factual and task-specific; do not copy historical passes into
 validation claims. Nothing in this guide, `docs/`, `.clinerules`, `tests/`, `scripts/` or `.github/`
 ships in the release wheel.
 
+## 0.2.2 live evaluation quickstart
+
+Run from the repository root after developer setup. Select either backend in the shared model profiles.
+For OpenRouter, use `OPENROUTER_API_KEY` and pin a tool-capable provider in the profile. Use the exact
+saved profile name. These commands use the checked-in synthetic fixtures.
+
+```bash
+. .venv/bin/activate
+python scripts/library_eval.py --route openrouter --profile openrouter-eval --trials 3 --set all --report library-openrouter.json
+# Or use a saved LM Studio profile.
+python scripts/library_eval.py --route lmstudio --profile lmstudio-eval --trials 3 --set all --report library-lmstudio.json
+```
+
+For a dev-set trial, omit `--trials 3 --set all`. After setting the rubric entries' `owner_mark` to `true`
+or `false`, run `python scripts/library_eval.py --review library-openrouter.json` (or use the LM Studio
+report path). The block evaluator exits 0 on a pass, 1 on failure, 2 when blocked and 3 for an incomplete
+run or pending rubric review.
+
+For Agentic Chat, launch `agentwiz --no-browser --workspaces-dir "$(mktemp -d)" --workspace live-eval`.
+In that workspace, load the same profile in Chat and assign `fast` to that profile with the matching
+role location (`cloud` for OpenRouter, `local` for loopback LM Studio). Use the URL AgentWiz prints,
+including its session token. Run one command against the selected route.
+
+```bash
+python scripts/agent_eval.py --url 'http://127.0.0.1:PORT/?t=TOKEN' --route openrouter --cohorts tests/agent_eval/cohorts.json --report chat-openrouter.json
+# Or select the LM Studio profile in Chat and bind fast to it first.
+python scripts/agent_eval.py --url 'http://127.0.0.1:PORT/?t=TOKEN' --route lmstudio --cohorts tests/agent_eval/cohorts.json --report chat-lmstudio.json
+```
+
+See [release operations](docs/releases.md#owner-sign-off-before-merging-to-main-starter-blocks-addendum-section-7)
+for acceptance and [modelSpell developer checks](https://github.com/alexchwong/modelSpell/blob/v0.4.0/DEVEL.md#tests)
+for provider API and tool round-trip diagnostics.
+
 ## Live pytest quick starts
 
 Run these Bash blocks from the repository root after developer setup. Each activates `.venv`

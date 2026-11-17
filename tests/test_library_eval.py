@@ -1,5 +1,5 @@
 """scripts/library_eval.py and tests/library_eval/checks.py against the scripted stub (starter blocks addendum, 7.1).
-Offline: the stub backend stands in for the owner's LM Studio, on the openai_compat route."""
+The loopback backend supplies scripted replies for the qualification and Chat runners."""
 from __future__ import annotations
 
 import importlib.util
@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 
 from agentwiz import library_install as lib
-from conftest import answer, block_answer, save_profile, save_roles
+from agent_helpers import text_turn, tool_call
+from conftest import Reply, answer, block_answer, configure, responses_answer, save_profile, save_roles
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests" / "library_eval"))
@@ -88,15 +89,20 @@ def run(ui, **over):
     return library_eval.evaluate(library_eval.Client(ui), **{**kwargs, **over})
 
 
-def test_the_runner_installs_resolves_and_scores_against_the_stub(ui, server):
-    target(ui, server)
-    server.reply(*[block_answer(**c["stub"]) for c in cases("classify_text") if "stub" in c])
-    report = run(ui)
-    assert report["resolved"]["classify_text"]["kind"] == "openai_compat"
+@pytest.mark.parametrize("route", ["openai_compat", "lmstudio"])
+def test_the_runner_installs_resolves_and_scores_against_the_stub(ui, server, route):
+    save_profile(ui, "target", model="m", kind=route, base_url=server.url + "/v1", provider="")
+
+    def model_reply(stub):
+        return responses_answer(json.dumps(stub)) if route == "lmstudio" else block_answer(**stub)
+
+    server.reply(*(model_reply(c["stub"]) for c in cases("classify_text") if "stub" in c))
+    report = run(ui, route=route)
+    assert report["resolved"]["classify_text"]["kind"] == route
     assert report["target"]["trusted_destination"] is True and report["target"]["owner_fill"]["model_file"] is None
     rows = report["blocks"]["classify_text"]["runs"]
     assert [r["outcome"] for r in rows] == ["correct"] * 3, json.dumps(rows)[:1500]
-    assert all(r["first_pass"] and r["repairs_used"] == 0 and r["route"] == "openai_compat" for r in rows)
+    assert all(r["first_pass"] and r["repairs_used"] == 0 and r["route"] == route for r in rows)
     bar = report["blocks"]["classify_text"]["bar"]
     assert bar["scheduled"] == 3 and bar["correct"] == 3 and bar["meets_bar"] is None   # not a full qualification
     assert ui.state.block_library.provenance("classify_text")["key"] == "classify_text"
@@ -144,7 +150,7 @@ def test_rubric_cases_carry_an_owner_mark():
     assert all(c["set"] == "heldout" for v in keyed.values() for c in v)
 
 
-def test_deidentify_runs_on_a_trusted_local_target(ui, server):
+def test_deidentify_runs_on_a_trusted_local_target(ui, server, local_deidentify_candidate):
     target(ui, server)
     stubbed = [c for c in cases("deidentify_text") if "stub" in c]
     server.reply(*[block_answer(**c["stub"]) for c in stubbed])
@@ -152,6 +158,61 @@ def test_deidentify_runs_on_a_trusted_local_target(ui, server):
     rows = report["blocks"]["deidentify_text"]["runs"]
     assert [r["outcome"] for r in rows] == ["correct"] * len(stubbed), json.dumps(rows)[:1500]
     assert report["blocks"]["deidentify_text"]["bar"]["hard_invariants_held"] is True
+
+
+def test_openrouter_qualification_binds_the_profile_and_reports_rate_limiting(ui, server, local_deidentify_candidate):
+    provider = "deepinfra/turbo"
+    save_profile(ui, "target", model="qwen/model", kind="openrouter", base_url=server.url + "/v1",
+                 provider=provider, api_key="test-key")
+    with pytest.raises(library_eval.Refused, match="Local only"):
+        run(ui, route=None, blocks=["deidentify_text"])
+    assert server.requests == []
+
+    server.reply(block_answer(**cases("classify_text")[0]["stub"]), Reply(status=429, body=b"{}"),
+                 block_answer(**cases("classify_text")[2]["stub"]))
+    report = run(ui, route=None)
+    assert report["target"]["provider"] == report["resolved"]["classify_text"]["provider"] == provider
+    assert report["target"]["roles"]["fast"]["definition"]["location"] == "cloud"
+    assert report["target"]["trusted_destination"] is False
+    assert report["verdict"] == "blocked"
+    rows = report["blocks"]["classify_text"]["runs"]
+    assert [r["outcome"] for r in rows] == ["correct", "blocked", "correct"], rows
+    assert rows[1]["model_error"]["status"] == 429
+    for request in server.requests:
+        assert request["body"]["provider"]["order"] == [provider]
+        assert request["body"]["provider"]["allow_fallbacks"] is False
+    assert "test-key" not in json.dumps(report)
+
+
+def test_full_qualification_needs_rubric_review_and_three_distinct_trials(tmp_path):
+    cases = [{"id": str(i)} for i in range(10)]
+    rows = [{"case": c["id"], "trial": trial, "outcome": "correct"} for c in cases for trial in range(1, 4)]
+    rows[0].update(rubric=["Preserve the stated quantity"], owner_mark=None)
+    bar = library_eval.bar(rows, cases, 3)
+    report = {"format_version": 2, "blocks": {"example": {"runs": rows, "bar": bar}}}
+    library_eval.update_verdict(report)
+    assert report["verdict"] == "rubric_review_pending"
+    path = tmp_path / "report.json"
+    for mark, verdict, exit_code in ((False, "failed", 1), (True, "passed", 0)):
+        rows[0]["owner_mark"] = mark
+        path.write_text(json.dumps(report), encoding="utf-8")
+        assert library_eval.main(["--review", str(path)]) == exit_code
+        assert json.loads(path.read_text(encoding="utf-8"))["verdict"] == verdict
+    assert library_eval.bar(rows, cases[:5], 6)["full_qualification"] is False
+
+
+def test_rubric_report_contains_the_output_with_known_credentials_redacted(ui, server):
+    key = "test-rubric-secret"
+    save_profile(ui, "target", model="qwen/model", kind="openrouter", base_url=server.url + "/v1",
+                 provider="deepinfra/turbo", api_key=key)
+    server.reply(block_answer(found=True, answer=f"Closed on public holidays. {key}",
+                              quotes=["Closed on Sundays and public holidays."]))
+    report = run(ui, route="openrouter", blocks=["answer_from_source"], which="heldout",
+                 case_filter=lambda _key, case: case["label"] == "holiday")
+    row = report["blocks"]["answer_from_source"]["runs"][0]
+    assert row["owner_mark"] is None
+    assert row["review_outputs"]["answer"] == "Closed on public holidays. ***"
+    assert key not in json.dumps(report)
 
 
 # --- agent selection cohorts (7.2) ------------------------------------------------------------------------------------
@@ -196,3 +257,22 @@ def test_cohort_install_and_resolution_by_block_identity(ui):
     assert agent_eval.rates(rows) == {"correct_choice": {"passed": 1, "judged": 1},
                                       "valid_arguments": {"passed": 0, "judged": 0},
                                       "result_used": {"passed": 0, "judged": 1}}
+
+
+@pytest.mark.parametrize("finish,expression,verdict", [("stop", "2+2", "passed"), ("length", "2+2", "failed"),
+                                                        ("stop", "2/0", "failed")])
+def test_agent_gate_requires_completed_tools_and_final_answer_on_openrouter(ui, server, finish, expression, verdict):
+    provider = "deepinfra/turbo"
+    configure(ui, server, kind="openrouter", model="qwen/model", api_key="test-key", provider=provider)
+    save_profile(ui, "target", model="qwen/model", kind="openrouter", provider=provider)
+    save_roles(ui, {"fast": "target"})
+    client = agent_eval.Client(ui.url)
+    selected = agent_eval.model_target(client.json("/api/state"))
+    server.reply(tool_call("aw_calculate", {"expression": expression}), text_turn("4", finish=finish))
+    names = ["aw_calculate"]
+    fixture = {"id": "sum", "message": "Use the calculator for 2+2", "capabilities": names,
+               "expected_capabilities": names, "expected_answer": {"equals": "4"}}
+    result = agent_eval.run_cohorts(client, {"gate": {"cases": [fixture]}}, 5, selected)
+    assert result["gate"]["verdict"] == verdict, result
+    assert server.requests[0]["body"]["provider"]["order"] == [provider]
+    assert server.requests[0]["body"]["provider"]["allow_fallbacks"] is False

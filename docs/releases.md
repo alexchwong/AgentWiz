@@ -6,9 +6,9 @@ and documentation placement are governed by `../DEVEL.md`.
 
 ## Validation and optional review
 
-Release gates are the offline CI matrix and the release tooling's checks and installed-wheel
-smoke. Real-backend live checks and walking the tutorial are optional, not sign-off gates.
-The live-run quickstart is in `../DEVEL.md`.
+Automated release gates are the offline CI matrix, the release tooling's checks and the installed-wheel
+smoke. The 0.2.2 live evaluations below are owner sign-offs before the release merge. The basic live
+pytest checks and tutorial walkthrough are optional. See [the live quickstarts](../DEVEL.md#live-pytest-quick-starts).
 
 Subjective UI review covers presentation (readability, spacing, clipping/overlap), clarity of
 guidance/errors/status and discoverability/understandability of interactions. Use the built-in
@@ -99,7 +99,7 @@ judgement.
    changes, use a version newer than the published version they change and its NEWS section.
    Keep the same version for further edits while it is unreleased. Commit and push when authorized.
 2. Confirm the offline CI matrix passes on Ubuntu and macOS, Python 3.10 and 3.13. A Linux-only
-   local pass does not verify macOS. Optional subjective review/live checks are not gates.
+   local pass covers Linux. See the owner sign-offs below for the 0.2.2 live evaluations.
 3. Run `python scripts/build_release.py --smoke` on the intended committed tree; require
    RC1–RC3 and the installed-wheel smoke S1–S25 to pass. Run the installed-wheel page/tutorial
    checks below as well; source-checkout browser results do not establish packaged UI behavior.
@@ -144,22 +144,35 @@ requires `pypdfium2>=5.13,<6`, which the smoke's dependency preload and the offl
 The release workflow publishes on an eligible `main` push, so these are owner sign-offs before the merge, not
 automatic release conditions:
 
-1. **Model-block qualification.** Run `scripts/library_eval.py --profile <LM Studio profile>` on the target (LM
-   Studio, the `fast` role's settings) and record the report: the model file, quantisation, context length, LM
-   Studio version, reasoning setting, temperature and token budget. Round 1 is one trial of the dev set; the full
-   qualification (3 trials of 10 cases, `--trials 3 --set all`) runs only for ready blocks. The bar per block: at
+**Live acceptance can be cleared entirely on OpenRouter.** An OpenRouter pass and an LM Studio pass carry the
+same weight for the shipped catalog and Agentic Chat scenarios. Choose a profile explicitly and use synthetic
+fixtures. Record the route, model, provider pin where applicable and the effective settings. A blocked run
+requires fresh evidence. Provider API and tool replay diagnostics belong in modelSpell's live suite.
+
+1. **Model-block qualification.** Run `scripts/library_eval.py --profile NAME` on the chosen profile. Round 1
+   is one trial of the dev set. Run full qualification (three trials of ten cases, `--trials 3 --set all`) for
+   ready blocks. Fill in context, reasoning, temperature and token budget. For a local installation also record
+   the model file, quantisation and server version. Each block needs at
    least 29/30 contract executions and 24/30 correct, every critical case correct on all three trials, the hard
-   invariants in every run, and the rubric cases passing the owner's review. A block still below the bar after
-   three revision rounds is removed from `index.json` (with its cases, tutorial and README references) and named in
-   the handover; it never ships with a warning.
-2. **Agent selection.** Run `scripts/agent_eval.py --cohorts tests/agent_eval/cohorts.json` against a disposable
-   workspace and record the three rates. The README claims library support in Chat only after the five-scenario
-   gate passes on the target orchestrator; otherwise it describes the blocks for Workshop and workflows only and
-   reports Chat as untested.
+   invariants in every run and the rubric cases passing the owner's review. Mark `owner_mark` true or false for
+   each rubric and run `scripts/library_eval.py --review REPORT` to refresh the verdict without model calls.
+   Keep passing evidence for every shipped model block. Remove any block still below the bar after three revision
+   rounds from `index.json` and its shipping references, and name it in the handover.
+2. **Agent selection.** Run `scripts/agent_eval.py --cohorts tests/agent_eval/cohorts.json` in a disposable
+   workspace with `fast` bound to the selected Chat destination. Pin a tool-capable OpenRouter provider so
+   fallback stays off. Record the three rates and the five-scenario gate verdict. A passing scenario needs a
+   finished answer, successful expected tool calls in order, valid arguments and the expected result. The README
+   claims library support in Chat only once this gate passes on the target orchestrator.
 3. **PDF wheel matrix.** Confirm `pypdfium2` wheels install and run on Linux x86-64 and arm64, macOS arm64 and
    x86-64, WSL2 and each supported Python, and that its licence notices are present in the installed wheel. A
    target without a usable wheel moves PDF to an `agentwiz[pdf]` extra there.
 4. **PDF on macOS.** Accept, or decline, PDF on macOS without memory containment (Section 9, item 1).
+
+The Local only `deidentify_text` starter is deferred from the 0.2.2 catalog and wheel. Its source and cases are
+available for future qualification. To qualify it in a source checkout, restore its index entry temporarily and
+run the same block evaluation on a trusted local profile, such as LM Studio or a loopback llama-server
+(`--route openai_compat`). Restore shipping metadata only after it passes. The catalog deferral keeps a local
+model run off the OpenRouter release path.
 
 For an uncommitted candidate, transfer the tracked working-tree changes (including deletions)
 to a throwaway clone and commit only there, then run the normal release command in that clone.

@@ -381,6 +381,16 @@ def get_state(ui) -> dict:
     return request(ui, "/api/state")
 
 
+@pytest.fixture
+def local_deidentify_candidate(monkeypatch):
+    """Exercise the deferred source entry against the stub without publishing it in the catalog."""
+    from agentwiz import library_install
+
+    keys = library_install.index()
+    if "deidentify_text" not in keys:
+        monkeypatch.setattr(library_install, "index", lambda: [*keys, "deidentify_text"])
+
+
 def save_profile(ui, name, revision=None, **settings) -> dict:
     """POST /api/profiles/save with the current configuration revision unless one is given."""
     configure_server(ui, settings)

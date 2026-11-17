@@ -545,7 +545,8 @@ try:
 
     # S23 (0.2.2): add three library Tool blocks through the installer and run them as a workflow
     library = json.loads(api('/api/library').read())
-    check(len(library['entries']) == 30 and {e['status'] for e in library['entries']} == {'available'},
+    check(len(library['entries']) == 29 and {e['status'] for e in library['entries']} == {'available'} and
+          'deidentify_text' not in {e['key'] for e in library['entries']},
           'installed library listing')
     planned = json.loads(api('/api/library/plan', {'format_version': 1, 'entries': [
         {'key': k} for k in ('csv_to_rows', 'sort_and_dedupe_rows', 'rows_to_table')]}).read())['entries']

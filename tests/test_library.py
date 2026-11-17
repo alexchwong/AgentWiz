@@ -50,14 +50,6 @@ def model_ready(ui, server, name="p", **over):
     save_roles(ui, {"fast": name})
 
 
-def trust_model(ui, server, model="m"):
-    """Local only ports (deidentify_text) need a trusted local destination."""
-    destination = {"kind": "openai_compat", "url": server.url + "/v1", "model": model, "provider": ""}
-    grants = request(ui, "/api/workshop/destination-trust")
-    request(ui, "/api/workshop/destination-trust", {"format_version": 1, "expected_revision": grants["revision"],
-                                                     "destination": destination, "trusted": True})
-
-
 def revisions(ui, key):
     return ui.state.workshop.assets.revisions(key)["revisions"]
 
@@ -84,11 +76,11 @@ def user_save(ui, key, edit_prompt=True):
 
 
 # --- the packaged entries (5.1) ---------------------------------------------------------------------------------------
-def test_the_index_holds_thirty_entries_in_three_groups():
+def test_the_index_contains_the_release_entries_in_three_groups():
     keys = lib.index()
-    assert len(keys) == 30 == len(set(keys))
+    assert len(keys) == 29 == len(set(keys))
     groups = [lib.entry(k).group for k in keys]
-    assert groups.count("llm") == 14 and groups.count("tool") == 15 and groups.count("transform") == 1
+    assert groups.count("llm") == 13 and groups.count("tool") == 15 and groups.count("transform") == 1
 
 
 @pytest.mark.parametrize("key", lib.index())
@@ -121,10 +113,7 @@ def test_every_packaged_entry_validates(ui, key):
 
 
 def test_model_input_bounds_follow_the_rules():
-    assert lib.entry("deidentify_text").definition["inputs"]["text"]["local_only"] is True
     for key in MODELS:
-        if key == "deidentify_text":
-            continue
         ports = lib.entry(key).definition
         assert not any(p["local_only"] for side in ("inputs", "outputs") for p in ports[side].values())
     assert all(p["local_only"] for side in ("inputs", "outputs")
@@ -154,7 +143,7 @@ def test_listing_statuses_and_roles(ui, server):
 
 
 # --- planning (5.2) ---------------------------------------------------------------------------------------------------
-def test_the_plan_reports_exact_labels_the_destination_and_labels_reviewed(ui, server):
+def test_the_plan_reports_exact_labels_the_destination_and_labels_reviewed(ui, server, local_deidentify_candidate):
     model_ready(ui, server)
     deid, summary = plan(ui, {"key": "deidentify_text"}, {"key": "summarise_document", "as": "summary"})
     assert deid["port_labels"] == {"inputs": {"text": True}, "outputs": {"text": True, "identifier_map": True}}
@@ -169,6 +158,7 @@ def test_the_plan_reports_exact_labels_the_destination_and_labels_reviewed(ui, s
 
 def test_unknown_and_removed_keys_cannot_be_planned_or_added(ui, monkeypatch):
     assert failure_of(lambda: plan(ui, {"key": "no_such"})).status == 404
+    assert failure_of(lambda: plan(ui, {"key": "deidentify_text"})).status == 404
     monkeypatch.setattr(lib, "index", lambda: ["calculate"])
     assert failure_of(lambda: plan(ui, {"key": "find_and_replace"})).status == 404
     out = add(ui, {"key": "find_and_replace", "expected_plan": "x", "confirmations": [], "binding": "x"})
@@ -440,8 +430,6 @@ def test_every_tool_and_transform_example_passes_exactly(ui, key):
 @pytest.mark.parametrize("key", MODELS)
 def test_every_model_example_runs_against_the_scripted_stub(ui, server, key):
     model_ready(ui, server)
-    if key == "deidentify_text":
-        trust_model(ui, server)
     install(ui, {"key": key})
     cases = json.loads((pytest.importorskip("pathlib").Path(__file__).parent / "library_eval" /
                         f"{key}.json").read_text(encoding="utf-8"))["cases"]
