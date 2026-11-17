@@ -2,6 +2,7 @@
 0.1.3's isolation and failed-start tests, now by topic ID)."""
 import os
 import re
+import shutil
 import tempfile
 import threading
 import time
@@ -10,7 +11,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import expect
 
-from agentwiz import history, jsonio, runner, tutorial_topics
+from agentwiz import history, jsonio, runner, tutorial, tutorial_topics
 from agentwiz.workspace import WorkspaceInUse, open_workspace
 from conftest import (failure_of, get_state, iter_events, read_until, request, run_block, switch_history,
                       wait_until)
@@ -335,6 +336,20 @@ def test_tutorial_workspace_administration_is_isolated(ui):
 
 def test_tutorial_sandbox(ui, tmp_path, monkeypatch):
     parent_files = snapshot(ui.workspace.path)
+    # A checkout may retain ignored bytecode from deleted blocks. Seed only registered
+    # examples, and never copy runtime caches into the disposable workspace.
+    source = tmp_path / "tutorial-blocks"
+    shutil.copytree(BLOCKS_SOURCE, source,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
+    stale = source / "wait_for_stop" / "scripts" / "__pycache__"
+    stale.mkdir(parents=True)
+    (stale / "wait.cpython-313.pyc").write_bytes(b"stale bytecode")
+    scripts = source / "word_count" / "scripts"
+    (scripts / "__pycache__").mkdir()
+    (scripts / "__pycache__" / "count_words.cpython-313.pyc").write_bytes(b"cached bytecode")
+    for suffix in ("pyc", "pyo"):
+        (scripts / f"count_words.{suffix}").write_bytes(b"legacy bytecode")
+    monkeypatch.setattr(tutorial, "BLOCKS_SOURCE", source)
     gate = threading.Event()
     monkeypatch.setattr(runner, "before_run_end", lambda: gate.wait(30))     # a block run held before its end
     child = started(ui)
@@ -346,8 +361,12 @@ def test_tutorial_sandbox(ui, tmp_path, monkeypatch):
     assert state["roles"]["map"] == {"fast": "tutorial-json"} and "tutorial-json" in state["profiles"]["names"]
     roles_text = (ws / "roles.json").read_text()
     assert "tutorial-json" in roles_text and "fast" in roles_text
-    packaged = sorted(p.relative_to(BLOCKS_SOURCE) for p in BLOCKS_SOURCE.rglob("*") if p.is_file())
-    assert {p.parts[0] for p in packaged} == set(tutorial_topics.BLOCKS)
+    packaged = sorted(p.relative_to(BLOCKS_SOURCE)
+                      for name in tutorial_topics.BLOCKS
+                      for p in (BLOCKS_SOURCE / name).rglob("*")
+                      if p.is_file() and "__pycache__" not in p.parts and p.suffix not in {".pyc", ".pyo"})
+    assert {p.name for p in (ws / "blocks").iterdir()} == set(tutorial_topics.BLOCKS)
+    assert sorted(p.relative_to(ws / "blocks") for p in (ws / "blocks").rglob("*") if p.is_file()) == packaged
     for rel in packaged:
         assert (ws / "blocks" / rel).read_bytes() == (BLOCKS_SOURCE / rel).read_bytes()
     assert sorted(b["name"] for b in request(child, "/api/blocks")["blocks"]) == sorted(tutorial_topics.BLOCKS)

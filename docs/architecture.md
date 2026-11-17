@@ -77,7 +77,7 @@ Paths in this table are relative to the repository root.
 | `agentwiz/executor.py` | yes | **0.1.4.** `execute_step` for model, tool, Python and built-in tool steps; token tally; step results. Called only by `runner.py`. No HTTP. |
 | `agentwiz/runner.py` | yes | **0.1.4.** `run_block`: input checks, admission, preparation, the executor, the one finaliser, the observer, timers (`make_timer`, `before_run_end`). No HTTP. |
 | `agentwiz/tutorial.py`, `agentwiz/tutorial_topics.py` | yes | The tutorial session manager (child UI, seeding, the pending session) and, **0.1.4**, the topic registry the server, page and tests read. |
-| `agentwiz/tutorial_support/blocks/` | yes | The three example blocks (`extract_fields`, `echo_numbers`, `word_count`) copied byte for byte into the tutorial's temporary workspace; `word_count` is a v4 Python block. |
+| `agentwiz/tutorial_support/blocks/` | yes | The three example blocks (`extract_fields`, `echo_numbers`, `word_count`) registered in `tutorial_topics.BLOCKS` and copied byte for byte into the tutorial's temporary workspace, excluding `__pycache__`, `*.pyc` and `*.pyo`; unregistered directories are not seeded. `word_count` is a v4 Python block. |
 | `agentwiz/output_protocol.py` | yes | Renders named outputs, prompt placeholders and direct-value instructions from captured contracts. |
 | `agentwiz/workshop.py`, `agentwiz/workshop_service.py` | yes | Workshop coordinator support, plans, tickets, batches and contract synthesis. |
 | `agentwiz/workshop_assets.py` | yes | Managed generations, publication, retention, pins and captured assets. |
