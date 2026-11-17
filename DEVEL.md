@@ -217,9 +217,9 @@ anything unverified. Required release tooling checks and smoke remain separate f
   coverage or focused functional gap tests under T1–T3. Do not assign deterministic regression
   checks to the owner. Subjective review is optional and supported inside the UI, not by manual
   setup runbooks. Do not require screenshots, evidence dossiers or tutorial completion.
-- For live-check variables and commands, see [Live pytest quick starts](#live-pytest-quick-starts).
-  Live tests are optional and never part of the offline gate. Deselect with `-m "not live"`;
-  clearing `AGENTWIZ_LIVE_*` alone does not exclude OpenRouter when its API key is set.
+- For live-check variables and commands, see
+  [live checks and evaluation quick starts](#live-checks-and-evaluation-quick-starts).
+  Live tests are optional and never part of the offline gate; deselect them with `-m "not live"`.
 
 ## Documentation and release preparation
 
@@ -238,52 +238,38 @@ Keep check reports factual and task-specific; do not copy historical passes into
 validation claims. Nothing in this guide, `docs/`, `.clinerules`, `tests/`, `scripts/` or `.github/`
 ships in the release wheel.
 
-## 0.2.2 live evaluation quickstart
+## Live checks and evaluation quick starts
 
-Run from the repository root after developer setup. Select either backend in the shared model profiles.
-For OpenRouter, use `OPENROUTER_API_KEY` and pin a tool-capable provider in the profile. Use the exact
-saved profile name. These commands use the checked-in synthetic fixtures.
+These checks are optional and never part of the offline gate, which deselects them with `-m "not live"`.
+Run the Bash blocks from the repository root after developer setup: each activates `.venv` in a
+subshell, so activation and variables do not leak into the parent shell, and supplies default settings
+with `${VAR:-default}`, so an existing non-empty value takes precedence. Local servers must already be
+running with Qwen3.8-27B loaded; these commands do not download or start a model. Each backend's basic
+check makes one request; MCP and the Stop and checked-request tests are separate. Each check skips
+unless its variables are set (CI sets none), runs against a temporary workspace and prints one summary
+line; a skip because required variables are missing is not a successful check, so never record one as
+a pass.
 
-```bash
-. .venv/bin/activate
-python scripts/library_eval.py --route openrouter --profile openrouter-eval --trials 3 --set all --report library-openrouter.json
-# Or use a saved LM Studio profile.
-python scripts/library_eval.py --route lmstudio --profile lmstudio-eval --trials 3 --set all --report library-lmstudio.json
-```
+The two runners select the model differently:
 
-For a dev-set trial, omit `--trials 3 --set all`. After setting the rubric entries' `owner_mark` to `true`
-or `false`, run `python scripts/library_eval.py --review library-openrouter.json` (or use the LM Studio
-report path). The block evaluator exits 0 on a pass, 1 on failure, 2 when blocked and 3 for an incomplete
-run or pending rubric review.
+| Runner | Model comes from |
+| --- | --- |
+| pytest live checks (`tests/test_live.py`) | the backend's `AGENTWIZ_LIVE_<BACKEND>_MODEL` |
+| `scripts/library_eval.py`, `scripts/agent_eval.py` | the saved model profile; `--route` only asserts the backend |
 
-For Agentic Chat, launch `agentwiz --no-browser --workspaces-dir "$(mktemp -d)" --workspace live-eval`.
-In that workspace, load the same profile in Chat and assign `fast` to that profile with the matching
-role location (`cloud` for OpenRouter, `local` for loopback LM Studio). Use the URL AgentWiz prints,
-including its session token. Run one command against the selected route.
+All checks accept `AGENTWIZ_LIVE_TIMEOUT`: seconds per read from AgentWiz, default 600, not a
+whole-test deadline. AgentWiz sends nothing until the model's first visible token, so a loading or
+silently reasoning model can take minutes; for a slower model add
+`export AGENTWIZ_LIVE_TIMEOUT=1200` inside the chosen block before its command. The model checks send
+task settings (`temperature`, `max_tokens`).
 
-```bash
-python scripts/agent_eval.py --url 'http://127.0.0.1:PORT/?t=TOKEN' --route openrouter --cohorts tests/agent_eval/cohorts.json --report chat-openrouter.json
-# Or select the LM Studio profile in Chat and bind fast to it first.
-python scripts/agent_eval.py --url 'http://127.0.0.1:PORT/?t=TOKEN' --route lmstudio --cohorts tests/agent_eval/cohorts.json --report chat-lmstudio.json
-```
+### LM Studio — Qwen3.8-27B
 
-See [release operations](docs/releases.md#owner-sign-off-before-merging-to-main-starter-blocks-addendum-section-7)
-for acceptance and [modelSpell developer checks](https://github.com/alexchwong/modelSpell/blob/v0.4.0/DEVEL.md#tests)
-for provider API and tool round-trip diagnostics.
-
-## Live pytest quick starts
-
-Run these Bash blocks from the repository root after developer setup. Each activates `.venv`
-and runs only that backend's basic live check, not MCP, Stop or checked-request tests.
-Each block supplies default environment settings with `${VAR:-default}`: an existing non-empty
-value takes precedence. The subshell keeps activation and variables set here out of the parent
-shell. Local servers must already be running with Qwen3.8-27B loaded; these commands do not download or start a model.
-
-**LM Studio — Qwen3.8-27B**
-
-Use the exact model ID exposed by LM Studio's `/v1/models`; change the example ID if your
-loaded Qwen3.8-27B has a different identifier. If server authentication is on, uncomment the
-hidden token prompt (or export `AGENTWIZ_LIVE_LMSTUDIO_KEY` beforehand).
+- `AGENTWIZ_LIVE_LMSTUDIO_URL` — the server's address, e.g. `http://localhost:1234/v1`.
+- `AGENTWIZ_LIVE_LMSTUDIO_MODEL` — the model selector. Use the exact ID exposed by LM Studio's
+  `/v1/models`, changing the example if your loaded Qwen3.8-27B has a different identifier.
+- `AGENTWIZ_LIVE_LMSTUDIO_KEY` — optional, when LM Studio's authentication is on. Uncomment the
+  hidden token prompt below, or export it beforehand.
 
 ```bash
 (
@@ -297,13 +283,26 @@ hidden token prompt (or export `AGENTWIZ_LIVE_LMSTUDIO_KEY` beforehand).
 )
 ```
 
-**OpenRouter — Qwen3.8-27B**
+Run the library evaluation against the profile that names this model, using its exact saved name:
 
-This uses OpenRouter's model slug `qwen/qwen3.8-27b` and sends a real, potentially billable
-request. The hidden prompt is used only if `OPENROUTER_API_KEY` is not already set; never paste
-a real key into this guide or a shell command. The basic check prints the available provider
-slugs and pins the first by default, with fallbacks off. If account settings exclude it,
-uncomment the provider override and replace its value with an allowed slug from that output.
+```bash
+. .venv/bin/activate
+python scripts/library_eval.py --route lmstudio --profile lmstudio-eval --trials 3 --set all --report library-lmstudio.json
+```
+
+### OpenRouter — Qwen3.8-27B
+
+- `OPENROUTER_API_KEY` — required. It is outside the `AGENTWIZ_LIVE_*` namespace, so clearing those
+  variables alone does not exclude the checks.
+- `AGENTWIZ_LIVE_OPENROUTER_MODEL` — the model selector, in `author/slug` form; the block below uses
+  `qwen/qwen3.8-27b`.
+- `AGENTWIZ_LIVE_OPENROUTER_PROVIDER` — optional provider slug to pin. Without it the check prints
+  the slugs OpenRouter lists and pins the first, with fallbacks off; when account settings exclude
+  that provider, uncomment the override below and replace its value with an allowed slug from that
+  output.
+
+This sends a real, potentially billable request. The hidden prompt is used only if
+`OPENROUTER_API_KEY` is not already set; never paste a real key into this guide or a shell command.
 
 ```bash
 (
@@ -320,11 +319,26 @@ uncomment the provider override and replace its value with an allowed slug from 
 )
 ```
 
-**llama-server — Qwen3.8-27B**
+`test_live_stop_openrouter` and `test_live_checked_request_openrouter` reuse these variables; see
+Stop and checked-request checks below.
 
-Use the model ID or alias exposed by your running server's `/v1/models`; change the example
-ID to match its Qwen3.8-27B deployment. This live check has no llama-server API-key variable,
-so use a local endpoint that does not require authentication.
+The eval scripts read the model from the profile, not from the environment, and still use
+`OPENROUTER_API_KEY`: pin a tool-capable provider in the profile and use its exact saved name.
+
+```bash
+. .venv/bin/activate
+python scripts/library_eval.py --route openrouter --profile openrouter-eval --trials 3 --set all --report library-openrouter.json
+```
+
+### llama-server — Qwen3.8-27B
+
+- `AGENTWIZ_LIVE_LLAMASERVER_URL` — the server's address, e.g. `http://127.0.0.1:8080/v1`.
+- `AGENTWIZ_LIVE_LLAMASERVER_MODEL` — the model selector. Use the ID or alias exposed by your running
+  server's `/v1/models`, changing the example to match its Qwen3.8-27B deployment.
+
+This check has no llama-server API-key variable, so use a local endpoint that does not require
+authentication. The eval scripts assert only the `openrouter`, `lmstudio` and `openai_compat` routes,
+so this guide shows no eval block for it.
 
 ```bash
 (
@@ -336,45 +350,44 @@ so use a local endpoint that does not require authentication.
 )
 ```
 
-All three inherit `AGENTWIZ_LIVE_TIMEOUT`, whose default is 600 seconds per read, not a
-whole-test deadline. For a model that takes longer to load or reason before its first visible
-token, add `export AGENTWIZ_LIVE_TIMEOUT=1200` inside the chosen block before the pytest command.
-A skip because required variables are missing is not a successful live check. These optional
-checks do not replace the offline gate. Additional Stop and checked-request checks remain
-separate for all three backends, as described below.
+### MCP
 
-### Additional live checks and variables
+`test_live_mcp` requires `AGENTWIZ_LIVE_MCP_URL`, `AGENTWIZ_LIVE_MCP_TOOL` and
+`AGENTWIZ_LIVE_MCP_ARGUMENTS` (JSON text); `AGENTWIZ_LIVE_MCP_TOKEN` is optional. With
+web-retrieval-mcp running, an example is `http://127.0.0.1:8765/mcp`, `search_web`,
+`{"query":"model context protocol"}`.
 
-**Live checks** (`tests/test_live.py`) are optional: a quick end-to-end run against a backend you
-have running. They skip unless their variables are set (CI sets none), run against a temporary
-workspace, and print one summary line.
+### Stop and checked-request checks
 
-| Backend | Variables |
-| --- | --- |
-| LM Studio | `AGENTWIZ_LIVE_LMSTUDIO_URL` (e.g. `http://localhost:1234/v1`), `AGENTWIZ_LIVE_LMSTUDIO_MODEL`; optional `AGENTWIZ_LIVE_LMSTUDIO_KEY` when LM Studio's authentication is on |
-| OpenRouter | `OPENROUTER_API_KEY`, `AGENTWIZ_LIVE_OPENROUTER_MODEL` (`author/slug`); optional `AGENTWIZ_LIVE_OPENROUTER_PROVIDER` (slug to pin; default the first listed) |
-| llama-server | `AGENTWIZ_LIVE_LLAMASERVER_URL` (e.g. `http://127.0.0.1:8080/v1`), `AGENTWIZ_LIVE_LLAMASERVER_MODEL` |
+- **OpenRouter:** `test_live_stop_openrouter` sends a long padded prompt, then Stop after `started`;
+  judgment uses `tests/live_stop.py`, itself tested offline. `test_live_checked_request_openrouter`
+  uses a JSON contract with up to two repairs. Both reuse the OpenRouter variables above.
+- **Local backends:** `test_live_stop_local` and `test_live_checked_request_local` are each
+  parametrized over LM Studio and llama-server. Set both backends' URL/model variables to run both
+  cases, or select one with `-k lmstudio` or `-k llamaserver`. LM Studio's key is optional.
 
-Additional checks:
+Select one check with `python -m pytest -m live -s tests/test_live.py::<test_name>` and its required
+variables set. Never record a missing-variable or blocked-variant skip as a pass.
 
-- **OpenRouter:** `test_live_stop_openrouter` sends a long padded prompt, then Stop after
-  `started`; judgment uses `tests/live_stop.py`, itself tested offline.
-  `test_live_checked_request_openrouter` uses a JSON contract with up to two repairs.
-  LM Studio and llama-server use `test_live_stop_local` and `test_live_checked_request_local`,
-  each parametrized over both backends. Set both backends' URL/model variables to run both cases,
-  or select one with `-k lmstudio` or `-k llamaserver`. LM Studio's key is optional.
-- **MCP:** `test_live_mcp` requires `AGENTWIZ_LIVE_MCP_URL`, `AGENTWIZ_LIVE_MCP_TOOL` and
-  `AGENTWIZ_LIVE_MCP_ARGUMENTS` (JSON text); `AGENTWIZ_LIVE_MCP_TOKEN` is optional.
-  With web-retrieval-mcp running, an example is `http://127.0.0.1:8765/mcp`, `search_web`,
-  `{"query":"model context protocol"}`.
+### Evaluation scripts and review
 
-The model checks send task settings (`temperature`, `max_tokens`). All accept
-`AGENTWIZ_LIVE_TIMEOUT` (seconds per read from AgentWiz, default 600: AgentWiz sends nothing until
-the model's first visible token, so a loading or silently reasoning model can take minutes). The
-live checks are optional checks: they never run in a checkpoint gate, which deselects them with
-`-m "not live"` (unsetting `AGENTWIZ_LIVE_*` alone would not be enough: the OpenRouter check reads
-`OPENROUTER_API_KEY`).
+The scripts use the checked-in synthetic fixtures. For a dev-set trial, omit `--trials 3 --set all`.
+After setting the rubric entries' `owner_mark` to `true` or `false`, run
+`python scripts/library_eval.py --review library-openrouter.json` (or use the LM Studio report path).
+The block evaluator exits 0 on a pass, 1 on failure, 2 when blocked and 3 for an incomplete run or
+pending rubric review.
 
-The basic backend blocks above do not run MCP, Stop or checked-request checks. To select a
-specific additional live check, use `python -m pytest -m live -s tests/test_live.py::<test_name>`
-with the required variables set. Never record a missing-variable or blocked-variant skip as a pass.
+For Agentic Chat, launch `agentwiz --no-browser --workspaces-dir "$(mktemp -d)" --workspace live-eval`.
+In that workspace, load the same profile in Chat and assign `fast` to that profile with the matching
+role location (`cloud` for OpenRouter, `local` for loopback LM Studio). Use the URL AgentWiz prints,
+including its session token. Run one command against the selected route.
+
+```bash
+python scripts/agent_eval.py --url 'http://127.0.0.1:PORT/?t=TOKEN' --route openrouter --cohorts tests/agent_eval/cohorts.json --report chat-openrouter.json
+# Or select the LM Studio profile in Chat and bind fast to it first.
+python scripts/agent_eval.py --url 'http://127.0.0.1:PORT/?t=TOKEN' --route lmstudio --cohorts tests/agent_eval/cohorts.json --report chat-lmstudio.json
+```
+
+See [release operations](docs/releases.md#owner-sign-off-before-merging-to-main-starter-blocks-addendum-section-7)
+for acceptance and [modelSpell developer checks](https://github.com/alexchwong/modelSpell/blob/v0.4.0/DEVEL.md#tests)
+for provider API and tool round-trip diagnostics.

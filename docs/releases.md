@@ -8,7 +8,8 @@ and documentation placement are governed by `../DEVEL.md`.
 
 Automated release gates are the offline CI matrix, the release tooling's checks and the installed-wheel
 smoke. The 0.2.2 live evaluations below are owner sign-offs before the release merge. The basic live
-pytest checks and tutorial walkthrough are optional. See [the live quickstarts](../DEVEL.md#live-pytest-quick-starts).
+pytest checks and tutorial walkthrough are optional. See
+[the live quickstarts](../DEVEL.md#live-checks-and-evaluation-quick-starts).
 
 Subjective UI review covers presentation (readability, spacing, clipping/overlap), clarity of
 guidance/errors/status and discoverability/understandability of interactions. Use the built-in
