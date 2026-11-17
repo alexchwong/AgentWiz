@@ -12,6 +12,7 @@ build/
 htmlcov/
 *.log
 /dist/
+/reports/
 /workspaces/
 /model_profiles/
 /mcp_servers/

@@ -3,8 +3,8 @@
 
     python scripts/library_eval.py --profile NAME [--block KEY] [--trials N] [--set dev|heldout|all] \
         [--route openrouter|lmstudio|openai_compat] [--profiles-dir PATH] [--config PATH] \
-        [--report library_eval_report.json]
-    python scripts/library_eval.py --review library_eval_report.json
+        [--report reports/library_eval_report.json]
+    python scripts/library_eval.py --review reports/library_eval_report.json
 
 What it does, in order:
 
@@ -359,7 +359,7 @@ def main(argv=None) -> int:
     parser.add_argument("--timeout", type=float, default=eval_setup.timeout_default())
     parser.add_argument("--profiles-dir", type=Path, default=None)
     parser.add_argument("--config", type=Path, default=None)
-    parser.add_argument("--report", type=Path, default=Path("library_eval_report.json"))
+    parser.add_argument("--report", type=Path, default=Path("reports/library_eval_report.json"))
     args = parser.parse_args(argv)
     if args.review:
         report = json.loads(args.review.read_text(encoding="utf-8"))
@@ -387,6 +387,7 @@ def main(argv=None) -> int:
 
 
 def write_report(path: Path, report: dict) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     for key, block in report["blocks"].items():
         b = block["bar"]

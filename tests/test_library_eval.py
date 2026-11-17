@@ -306,14 +306,17 @@ def test_disposable_evaluators_ignore_caller_configuration(tmp_path, monkeypatch
         pass
 
 
-def test_agent_cli_disposable_and_attached_modes(tmp_path, monkeypatch, server, ui):
+@pytest.mark.parametrize("destination", [None, "custom/nested/report.json"])
+def test_agent_cli_disposable_and_attached_modes(tmp_path, monkeypatch, server, ui, destination):
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("AGENTWIZ_LIVE_LMSTUDIO_URL", server.url + "/v1")
     cases_path = tmp_path / "cases.json"
     cases_path.write_text(json.dumps([{"id": "plain", "message": "Say pong", "capabilities": [],
                                       "expected_answer": {"equals": "pong"}}]))
-    report = tmp_path / "report.json"
+    report = tmp_path / (destination or "reports/agent_eval_report.json")
+    report_args = ["--report", str(report)] if destination else []
     server.reply(responses_answer("pong"))
-    assert agent_eval.main(["--route", "lmstudio", "--cases", str(cases_path), "--report", str(report)]) == 0
+    assert agent_eval.main(["--route", "lmstudio", "--cases", str(cases_path), *report_args]) == 0
     data = json.loads(report.read_text())
     assert data["totals"]["answer_correct"] == 1
     assert data["route"]["kind"] == "lmstudio"
@@ -348,16 +351,18 @@ def test_evaluation_overrides_are_explicit(tmp_path, monkeypatch):
     assert not (tmp_path / "absent.ini").exists()
 
 
-def test_library_cli_disposable_startup(tmp_path, monkeypatch, server):
+@pytest.mark.parametrize("destination", [None, "custom/nested/library.json"])
+def test_library_cli_disposable_startup(tmp_path, monkeypatch, server, destination):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("AGENTWIZ_LIVE_LMSTUDIO_URL", server.url + "/v1")
     fixture = library_eval.load_cases("classify_text")
     fixture["cases"] = [case for case in fixture["cases"] if "stub" in case]
     monkeypatch.setattr(library_eval, "load_cases", lambda key: fixture)
     server.reply(*(responses_answer(json.dumps(case["stub"])) for case in fixture["cases"]))
-    report_path = tmp_path / "library.json"
+    report_path = tmp_path / (destination or "reports/library_eval_report.json")
+    report_args = ["--report", destination] if destination else []
     result = library_eval.main(["--profile", "lmstudio-eval", "--route", "lmstudio",
-                               "--block", "classify_text", "--report", str(report_path)])
+                               "--block", "classify_text", *report_args])
     report = json.loads(report_path.read_text())
     assert result in (0, 3), report
     assert report["resolved"]["classify_text"]["kind"] == "lmstudio"

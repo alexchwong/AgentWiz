@@ -289,7 +289,7 @@ The evaluator supplies `lmstudio-eval`; no UI profile setup is required. Use the
 
 ```bash
 . .venv/bin/activate
-python scripts/library_eval.py --route lmstudio --profile lmstudio-eval --trials 3 --set all --report library-lmstudio.json
+python scripts/library_eval.py --route lmstudio --profile lmstudio-eval --trials 3 --set all --report reports/library-lmstudio.json
 ```
 
 ### OpenRouter — Qwen3.8-27B
@@ -329,7 +329,7 @@ Export credentials/overrides in the shell running the evaluation; the earlier su
 
 ```bash
 . .venv/bin/activate
-python scripts/library_eval.py --route openrouter --profile openrouter-eval --trials 3 --set all --report library-openrouter.json
+python scripts/library_eval.py --route openrouter --profile openrouter-eval --trials 3 --set all --report reports/library-openrouter.json
 ```
 
 ### llama-server — Qwen3.8-27B
@@ -375,7 +375,7 @@ variables set. Never record a missing-variable or blocked-variant skip as a pass
 
 The scripts use the checked-in synthetic fixtures. For a dev-set trial, omit `--trials 3 --set all`.
 After setting the rubric entries' `owner_mark` to `true` or `false`, run
-`python scripts/library_eval.py --review library-openrouter.json` (or use the LM Studio report path).
+`python scripts/library_eval.py --review reports/library-openrouter.json` (or use the LM Studio report path).
 The block evaluator exits 0 on a pass, 1 on failure, 2 when blocked and 3 for an incomplete run or
 pending rubric review.
 
@@ -383,8 +383,8 @@ Agentic Chat starts its own disposable server, selects the evaluation profile an
 automatically. Run one command against the selected route; no UI setup or session token is needed.
 
 ```bash
-python scripts/agent_eval.py --route openrouter --cohorts tests/agent_eval/cohorts.json --report chat-openrouter.json
-python scripts/agent_eval.py --route lmstudio --cohorts tests/agent_eval/cohorts.json --report chat-lmstudio.json
+python scripts/agent_eval.py --route openrouter --cohorts tests/agent_eval/cohorts.json --report reports/chat-openrouter.json
+python scripts/agent_eval.py --route lmstudio --cohorts tests/agent_eval/cohorts.json --report reports/chat-lmstudio.json
 ```
 
 Both evaluators copy checked-in profiles into temporary storage and create temporary server settings.

@@ -6,7 +6,7 @@ with independently authored cases. Disposable mode selects an evaluation profile
 automatically. Attached mode uses the current Chat model. OpenRouter tools need Automatic routing
 or an explicit provider pin. Custom cases have no threshold.
 
-    python scripts/agent_eval.py --url 'http://127.0.0.1:PORT/?t=TOKEN' --cases cases.json --report report.json \
+    python scripts/agent_eval.py --url 'http://127.0.0.1:PORT/?t=TOKEN' --cases cases.json --report reports/agent_eval_report.json \
         [--chat-template NAME]
 
 A cases file is a JSON list. Each case:
@@ -24,7 +24,7 @@ Cohorts (starter blocks addendum, 7.2). The full library cannot be offered in on
 definition bytes), so library selection is measured on small fixed cohorts instead:
 
     python scripts/agent_eval.py --url 'http://127.0.0.1:PORT/?t=TOKEN' --cohorts tests/agent_eval/cohorts.json \
-        --route openrouter --report report.json
+        --route openrouter --report reports/agent_eval_report.json
 
 Without --url, the workspace and fast binding are prepared automatically.
 With --url, use a disposable workspace with fast already bound; evaluation modifies its data. Each `library:<key>` capability
@@ -328,7 +328,8 @@ def main(argv=None) -> int:
     parser.add_argument("--profile", help="evaluation profile; defaults to <route>-eval")
     parser.add_argument("--profiles-dir", type=Path)
     parser.add_argument("--config", type=Path)
-    parser.add_argument("--report", required=True, help="where to write the JSON report")
+    parser.add_argument("--report", type=Path, default=Path("reports/agent_eval_report.json"),
+                        help="where to write the JSON report (default: reports/agent_eval_report.json)")
     parser.add_argument("--route", choices=("openrouter", "lmstudio", "openai_compat"), help="assert the selected route")
     parser.add_argument("--chat-template", default=None, help="the server's chat template, recorded as given")
     parser.add_argument("--timeout", type=float, default=eval_setup.timeout_default(), help="seconds per read of a run's stream")
@@ -361,6 +362,7 @@ def main(argv=None) -> int:
         exit_code = 2
     finally:
         stack.close()
+    args.report.parent.mkdir(parents=True, exist_ok=True)
     with open(args.report, "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2, ensure_ascii=False)
     print(json.dumps({k: report[k] for k in ("verdict", "reason", "rates", "totals") if k in report}))

@@ -1574,6 +1574,12 @@ ordinary save.
 `scripts/agent_eval.py --cohorts` measures selection with at most eight capabilities per cohort (7.2). Both are
 owner-run; the offline tests run them against the scripted stub.
 
+Reports default to `reports/library_eval_report.json` and `reports/agent_eval_report.json`,
+respectively. Relative paths are resolved against the current working directory; `--report`
+accepts an explicit relative or absolute destination. Both writers create missing parent directories.
+The repository's `/reports/` directory is ignored by Git. Library `--review PATH` updates the
+supplied report in place rather than using the default output path.
+
 
 ### Disposable evaluation configuration
 
