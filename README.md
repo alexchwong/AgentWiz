@@ -69,7 +69,7 @@ python -m pip install ./agentwiz-0.2.1-py3-none-any.whl
 ```
 
 For a published wheel, you can pass the URL with the `#sha256=…` fragment from the release notes
-to pip instead of the local filename. Both methods install the URL- and checksum-pinned modelSpell 0.3.0.
+to pip instead of the local filename. Both methods install the URL- and checksum-pinned modelSpell 0.4.0.
 
 **JSON Schema validation is required and installed automatically** (`jsonschema>=4.26,<5`).
 It brings `rpds-py`, a compiled package; a platform without a published wheel needs a Rust
@@ -615,7 +615,8 @@ Open **Settings → Model settings** to choose the model:
 | --- | --- |
 | Model source | LM Studio, OpenRouter or OpenAI-compatible. |
 | Model ID | Type it, or use **Load models**. |
-| Provider | OpenRouter only. **Load providers** lists the model's providers; choosing one pins the request to it with no fallback. |
+| Routing / Provider | OpenRouter only. Automatic uses modelSpell to probe and select an eligible provider (Balanced, Cheapest or Fastest). Manual pins the selected slug without substitution. OpenRouter-managed is available for text requests only. Automatic selection can make up to four additional billable probes; probe usage is recorded as unreported, not zero. |
+| Privacy | Account default retains account restrictions. Require zero data retention or deny data collection to add explicit requirements to every probe and completion; routing never relaxes them. |
 
 Reasoning and max tokens are set in each request panel (see **Task settings**).
 
@@ -626,11 +627,11 @@ where the key comes from: `key: session`, `key: env OPENROUTER_API_KEY`, `key: c
 
 ### Profiles
 
-A profile stores model source, model ID and provider under a name. It never stores a key or server URL.
+A profile stores model source, model ID, provider routing and privacy requirements under a name. It never stores a key or server URL.
 Older profile URLs are no longer used: transfer any required endpoint manually to the configuration file.
 
-- **Profile files are format version 3.** Older profiles load, but their server URLs are ignored and
-  removed on the next write. Earlier AgentWiz releases cannot read version 3 files. Profiles saved by 0.1.1 load as they are, but
+- **Profile files are format version 4.** Older profiles load, but their server URLs are ignored and
+  removed on the next write. Earlier AgentWiz releases cannot read version 4 files. Existing pins remain Manual; empty providers remain OpenRouter-managed. Profiles saved by 0.1.1 load as they are, but
   their reasoning and max tokens values are dropped the next time the file is written: set them in
   the request panel and press **Save task settings** instead.
 

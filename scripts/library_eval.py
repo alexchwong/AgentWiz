@@ -2,14 +2,14 @@
 """Owner-run qualification of the library's model blocks (starter blocks addendum, 7.1).
 
     python scripts/library_eval.py --profile NAME [--block KEY] [--trials N] [--set dev|heldout|all] \
-        [--route openrouter|lmstudio|openai_compat] [--profiles-dir ./model_profiles] [--config ./config/model-servers.ini] \
+        [--route openrouter|lmstudio|openai_compat] [--profiles-dir PATH] [--config PATH] \
         [--report library_eval_report.json]
     python scripts/library_eval.py --review library_eval_report.json
 
 What it does, in order:
 
 1. Creates a disposable workspace in a new temporary folder and starts an in-process AgentWiz on it (loopback
-   only). The workspace's profiles are seeded from the shared defaults in --profiles-dir, so the profile named by
+   only). The workspace's profiles are seeded from the checked-in evaluation defaults (or explicit --profiles-dir), so the profile named by
    --profile must be one of them. Nothing is written to any other workspace.
 2. Binds every role the selected blocks use to that profile, and, when the profile's destination is on this
    machine, records it as a trusted destination in the disposable workspace (local only ports need one).
@@ -31,7 +31,6 @@ import argparse
 import json
 import sys
 import tempfile
-import threading
 import time
 import urllib.error
 import urllib.request
@@ -41,6 +40,8 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 CASES = ROOT / "tests" / "library_eval"
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(HERE))
+import eval_setup
 sys.path.insert(0, str(CASES))
 
 import checks  # noqa: E402  (tests/library_eval/checks.py)
@@ -51,17 +52,18 @@ class Refused(Exception):
 
 # --- the in-process AgentWiz ---------------------------------------------------------------------------------------
 class Client:
-    def __init__(self, ui):
+    def __init__(self, ui, timeout=None):
+        self.timeout = eval_setup.timeout_default() if timeout is None else timeout
         self.ui = ui
         self.root = f"http://127.0.0.1:{ui.server_address[1]}"
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-    def call(self, path, body=None, timeout=600):
+    def call(self, path, body=None, timeout=None):
         data = None if body is None else json.dumps(body).encode()
         req = urllib.request.Request(self.root + path, data=data, method="GET" if data is None else "POST",
                                      headers={"X-Session-Token": self.ui.token, "Content-Type": "application/json"})
         try:
-            return self.opener.open(req, timeout=timeout)
+            return self.opener.open(req, timeout=self.timeout if timeout is None else timeout)
         except urllib.error.HTTPError as exc:
             raise Refused(f"{path}: HTTP {exc.code} {exc.read()[:500].decode('utf-8', 'replace')}") from None
 
@@ -69,30 +71,9 @@ class Client:
         with self.call(path, body) as resp:
             return json.load(resp)
 
-    def stream(self, path, body, timeout=900):
+    def stream(self, path, body, timeout=None):
         with self.call(path, body, timeout=timeout) as resp:
             return [json.loads(line) for line in resp.read().splitlines() if line.strip()]
-
-
-def start(workdir: Path, profiles_dir: Path, config: Path):
-    from agentwiz import server_config
-    from agentwiz.ui.server import UIServer
-    from agentwiz.workspace import open_workspace
-    server_config.initialize(config)
-    workspace = open_workspace(workdir / "workspaces", "library-eval")
-    ui = UIServer(0, workspace=workspace, profiles_dir=profiles_dir, mcp_servers_dir=workdir / "mcp_servers",
-                  servers=server_config.load(config), config_path=config.absolute())
-    threading.Thread(target=ui.serve_forever, daemon=True).start()
-    return ui
-
-
-def stop(ui) -> None:
-    ui.shutdown()
-    ui.server_close()
-    try:
-        ui.state.workspace.close()
-    except Exception:  # noqa: BLE001 - the folder is temporary
-        pass
 
 
 # --- cases ---------------------------------------------------------------------------------------------------------
@@ -135,7 +116,8 @@ def prepare(client: Client, profile: str, route: str | None, keys: list[str]) ->
 
     route = settings["kind"]
     target = {"profile": profile, "route": route, "model": settings["model"], "base_url": settings["base_url"],
-              "provider": settings["provider"] if route == "openrouter" else "", "trusted_destination": local}
+              "provider": settings["provider"] if route == "openrouter" else "", "trusted_destination": local,
+              "routing": {f: settings.get(f) for f in ("routing_mode", "routing_preset", "routing_zdr", "routing_data_collection")}}
     roles = sorted({role for key in keys for role in roles_of(key)})
     role_view = state["roles"]
     definitions = role_view["definitions"]
@@ -182,6 +164,9 @@ def verify_route(client: Client, target: dict, keys: list[str]) -> dict:
             actual = tuple(dest[field] for field in ("profile", "kind", "url", "model", "provider"))
             if actual != expected:
                 raise Refused(f"{key}: role {role!r} resolves to {actual}, not the target {expected}")
+            capture = client.ui.state.role_capture(role)
+            if {f: getattr(capture.snapshot, f) for f in target["routing"]} != target["routing"]:
+                raise Refused(f"{key}: routing configuration changed")
             resolved[key] = {"role": role, **dest}
     return resolved
 
@@ -264,7 +249,7 @@ def run_case(client: Client, key: str, case: dict, destination: dict) -> dict:
     try:
         events = client.stream("/api/blocks/run", {"name": key, "revision": revision, "inputs": case["inputs"]})
     except (Refused, OSError, ValueError) as exc:
-        reason = str(exc) if isinstance(exc, Refused) else type(exc).__name__
+        reason = str(exc) if isinstance(exc, (Refused, eval_setup.SetupBlocked)) else type(exc).__name__
         return {"outcome": "blocked", "failure_reason": reason, "seconds": round(time.monotonic() - started, 3)}
     seconds = round(time.monotonic() - started, 3)
     finals = [e for e in events if e.get("type") == "final"]
@@ -290,6 +275,7 @@ def run_case(client: Client, key: str, case: dict, destination: dict) -> dict:
                 "role": step.get("role"), "route": (step.get("endpoint") or {}).get("kind"), "model": step.get("model"),
                 "provider": records[-1].get("provider") if records else None,
                 "served_by": (records[-1].get("result") or {}).get("provider") if records else None,
+                "routing": records[-1].get("routing") if records else None,
                 "task": records[-1].get("task") if records else None,
                 **usage_of(records), "seconds": seconds})
     return row
@@ -363,15 +349,16 @@ def evaluate(client: Client, *, profile: str, route: str | None, blocks: list[st
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--profile", help="a shared default profile (the target)")
+    mode.add_argument("--profile", help="an evaluation profile (or an explicitly supplied default)")
     mode.add_argument("--review", type=Path, help="refresh an existing report after marking its rubrics")
     parser.add_argument("--block", action="append", help="a catalog key; repeatable (default: every model block)")
     parser.add_argument("--trials", type=int, default=1)
     parser.add_argument("--set", dest="which", choices=["dev", "heldout", "all"], default="dev")
     parser.add_argument("--route", choices=("openrouter", "lmstudio", "openai_compat"),
                         help="assert the route of the selected profile (default: use the profile's route)")
-    parser.add_argument("--profiles-dir", type=Path, default=Path("./model_profiles"))
-    parser.add_argument("--config", type=Path, default=Path("./config/model-servers.ini"))
+    parser.add_argument("--timeout", type=float, default=eval_setup.timeout_default())
+    parser.add_argument("--profiles-dir", type=Path, default=None)
+    parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--report", type=Path, default=Path("library_eval_report.json"))
     args = parser.parse_args(argv)
     if args.review:
@@ -388,17 +375,14 @@ def main(argv=None) -> int:
         parser.error(f"unknown model block(s): {', '.join(unknown)}" if unknown else "--trials must be at least 1")
     try:
         with tempfile.TemporaryDirectory(prefix="agentwiz-library-eval-") as tmp:
-            ui = start(Path(tmp), args.profiles_dir.resolve(), args.config)
-            try:
-                report = evaluate(Client(ui), profile=args.profile, route=args.route, blocks=blocks, trials=args.trials,
+            with eval_setup.session(Path(tmp), args.profile, args.route, args.profiles_dir, args.config) as ui:
+                report = evaluate(Client(ui, args.timeout), profile=args.profile, route=args.route, blocks=blocks, trials=args.trials,
                                   which=args.which, progress=lambda k, r: print(
                                       f"{k} {r['case']} trial {r['trial']}: {r['outcome']}", flush=True))
-            finally:
-                stop(ui)
-    except (Refused, OSError) as exc:
+    except (Refused, eval_setup.SetupBlocked, OSError, ValueError) as exc:
         report = {"format_version": 2, "target": {"profile": args.profile, "route": args.route},
                   "verdict": "blocked", "blocks": {},
-                  "reason": str(exc) if isinstance(exc, Refused) else type(exc).__name__}
+                  "reason": str(exc) if isinstance(exc, (Refused, eval_setup.SetupBlocked)) else type(exc).__name__}
     return write_report(args.report, report)
 
 

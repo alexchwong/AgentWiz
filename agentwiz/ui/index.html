@@ -354,6 +354,15 @@ dialog.wide-dialog{max-width:96vw}
     <div class="inline"><input id="model" list="model-list"><button type="button" id="load-models">Load models</button></div>
     <datalist id="model-list"></datalist>
     <div id="provider-row">
+      <label for="routing-mode">Routing</label>
+      <select id="routing-mode" data-test="routing-mode"><option value="automatic">Automatic (probes eligible providers)</option><option value="manual">Manual pin</option><option value="managed">OpenRouter-managed (text only)</option></select>
+      <label for="routing-preset">Automatic preference</label>
+      <select id="routing-preset" data-test="routing-preset"><option value="balanced">Balanced</option><option value="cheapest">Cheapest</option><option value="fastest">Fastest</option></select>
+      <label for="routing-zdr">Zero data retention</label>
+      <select id="routing-zdr" data-test="routing-zdr"><option value="">Account default</option><option value="true">Required</option><option value="false">Not explicitly required (account restrictions still apply)</option></select>
+      <label for="routing-data">Data collection</label>
+      <select id="routing-data" data-test="routing-data"><option value="">Account default</option><option value="deny">Deny</option><option value="allow">Allow</option></select>
+      <p>Automatic selection can make up to four short, billable probes. Account privacy restrictions always apply.</p>
       <label for="provider">Provider (OpenRouter)</label>
       <div class="inline"><select id="provider"><option value="">Any (OpenRouter routing)</option></select>
         <button type="button" id="load-providers">Load providers</button></div>
@@ -959,7 +968,10 @@ function syncDialogVisibility() {
 function dialogConfig() {
   const kind = $("kind").value;
   const cfg = { kind, model: $("model").value.trim(),
-    provider: kind === "openrouter" ? $("provider").value : "" };
+    provider: kind === "openrouter" && $("routing-mode").value === "manual" ? $("provider").value : "",
+    routing_mode: $("routing-mode").value, routing_preset: $("routing-preset").value,
+    routing_zdr: $("routing-zdr").value === "" ? null : $("routing-zdr").value === "true",
+    routing_data_collection: $("routing-data").value };
   return cfg;
 }
 
@@ -987,11 +999,18 @@ function fillDialog() {
   $("server-config-note").textContent = `Server connections are configured in ${state.server_config_path || "the model server configuration file"}; restart after editing.`;
   const p = $("provider"); p.length = 1;
   if (state.provider) p.add(new Option(state.provider, state.provider, true, true));
+  $("routing-mode").value = state.routing_mode || (state.provider ? "manual" : "automatic");
+  $("routing-preset").value = state.routing_preset || "balanced";
+  $("routing-zdr").value = state.routing_zdr == null ? "" : String(state.routing_zdr);
+  $("routing-data").value = state.routing_data_collection || "";
   renderProfileControls(); syncDialogVisibility();
 }
 
 $("open-settings").onclick = () => { fillDialog(); settingsMsg(""); $("settings").showModal(); };
-$("kind").onchange = syncDialogVisibility;
+$("kind").onchange = () => {
+  if ($("kind").value === "openrouter") $("routing-mode").value = "automatic";
+  syncDialogVisibility();
+};
 $("open-openrouter-key").onclick = () => { $("openrouter-key-input").value = ""; $("openrouter-key-msg").textContent = ""; $("openrouter-key-dialog").showModal(); };
 $("openrouter-key-cancel").onclick = () => $("openrouter-key-dialog").close();
 $("openrouter-key-dialog").addEventListener("close", () => { $("openrouter-key-input").value = ""; });

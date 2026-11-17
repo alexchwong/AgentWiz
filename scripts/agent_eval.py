@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Owner-run evaluation of agentic Chat on a chosen route (AgentWiz 0.2.2, section 13.3).
 
-Drives a running AgentWiz over its HTTP routes with a file of cases whose expected answers were written
-independently of any model, and writes a report. It uses whatever model is selected in Chat when it starts, so
-choose the route in AgentWiz first. OpenRouter needs an explicit provider pin. Custom cases have no threshold.
+Starts a disposable AgentWiz (or attaches explicitly with --url) and drives its HTTP routes
+with independently authored cases. Disposable mode selects an evaluation profile and binds fast
+automatically. Attached mode uses the current Chat model. OpenRouter tools need Automatic routing
+or an explicit provider pin. Custom cases have no threshold.
 
     python scripts/agent_eval.py --url 'http://127.0.0.1:PORT/?t=TOKEN' --cases cases.json --report report.json \
         [--chat-template NAME]
@@ -25,7 +26,8 @@ definition bytes), so library selection is measured on small fixed cohorts inste
     python scripts/agent_eval.py --url 'http://127.0.0.1:PORT/?t=TOKEN' --cohorts tests/agent_eval/cohorts.json \
         --route openrouter --report report.json
 
-Point it at a disposable workspace with `fast` bound to the selected Chat model. Each `library:<key>` capability
+Without --url, the workspace and fast binding are prepared automatically.
+With --url, use a disposable workspace with fast already bound; evaluation modifies its data. Each `library:<key>` capability
 is added through the installer (plan, then add
 with the plan's confirmations) unless an installed copy of that entry already exists, and its capability name and
 revision are resolved from the inventory after install. A cohort offers at most 8 capabilities. Each case lists
@@ -36,12 +38,20 @@ gate's five scenarios, which must all pass before the README claims library supp
 from __future__ import annotations
 
 import argparse
+import tempfile
+from contextlib import ExitStack
+from pathlib import Path
 import json
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import eval_setup
 
 
 class EvaluationBlocked(Exception):
@@ -68,7 +78,7 @@ class Client:
 
 
 def model_target(state: dict) -> dict:
-    return {key: state.get(key) for key in ("kind", "base_url", "model", "provider")}
+    return {key: state.get(key) for key in ("kind", "base_url", "model", "provider", "routing_mode", "routing_preset", "routing_zdr", "routing_data_collection")}
 
 
 def check_target(state: dict, target: dict, *, require_fast: bool = False) -> None:
@@ -77,8 +87,8 @@ def check_target(state: dict, target: dict, *, require_fast: bool = False) -> No
     if not target["model"]:
         raise EvaluationBlocked("select a model in Chat")
     if require_fast:
-        if target["kind"] == "openrouter" and not target["provider"]:
-            raise EvaluationBlocked("pin a tool-capable OpenRouter provider in Model settings")
+        if target["kind"] == "openrouter" and not target["provider"] and target.get("routing_mode") != "automatic":
+            raise EvaluationBlocked("select Automatic routing or pin a tool-capable OpenRouter provider in Model settings")
         profile = state["roles"]["map"].get("fast")
         settings = state["profiles"]["details"].get(profile, {})
         if model_target(settings) != target or any(row["role"] == "fast" for row in state["roles"]["unresolved"]):
@@ -125,6 +135,8 @@ def run_case(client: Client, case: dict, timeout: float, target: dict | None = N
             row["error"] = "the stream ended without a final event"
             return row
         view = final.get("view", {})
+        row["routing"] = view.get("routing")
+        row["served_by"] = view.get("served_provider")
         row["transport_ok"] = final["stop_reason"] not in ("model_error", "busy", "internal_error")
         row["stop_reason"] = final["stop_reason"]
         trace = view.get("trace", [])
@@ -240,6 +252,8 @@ def run_cohort_case(client: Client, case: dict, names: list[str], blocks: dict, 
             return row
         final = finals[0]
         view = final["view"]
+        row["routing"] = view.get("routing")
+        row["served_by"] = view.get("served_provider")
         trace = view["trace"]
         row["transport_ok"] = final["stop_reason"] not in ("model_error", "busy", "internal_error", "configuration_changed")
         row["stop_reason"] = final["stop_reason"]
@@ -305,20 +319,35 @@ def run_cohorts(client: Client, spec: dict, timeout: float, target: dict) -> dic
     return out
 
 
-def main() -> int:
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--url", required=True, help="the address AgentWiz printed, with ?t=<token>")
+    parser.add_argument("--url", help="the address AgentWiz printed, with ?t=<token>")
     which = parser.add_mutually_exclusive_group(required=True)
     which.add_argument("--cases", help="a JSON list of cases")
     which.add_argument("--cohorts", help="a cohorts file (tests/agent_eval/cohorts.json)")
+    parser.add_argument("--profile", help="evaluation profile; defaults to <route>-eval")
+    parser.add_argument("--profiles-dir", type=Path)
+    parser.add_argument("--config", type=Path)
     parser.add_argument("--report", required=True, help="where to write the JSON report")
     parser.add_argument("--route", choices=("openrouter", "lmstudio", "openai_compat"), help="assert the selected route")
     parser.add_argument("--chat-template", default=None, help="the server's chat template, recorded as given")
-    parser.add_argument("--timeout", type=float, default=600.0, help="seconds per read of a run's stream")
-    args = parser.parse_args()
-    client = Client(args.url)
+    parser.add_argument("--timeout", type=float, default=eval_setup.timeout_default(), help="seconds per read of a run's stream")
+    args = parser.parse_args(argv)
+    if args.url and any((args.profile, args.profiles_dir, args.config)):
+        parser.error("--url cannot be combined with disposable configuration options")
+    if not args.url and not (args.profile or args.route):
+        parser.error("disposable evaluation requires --route or --profile")
     report = {"chat_template": args.chat_template, "route": {"kind": args.route}}
+    stack = ExitStack()
     try:
+        if args.url:
+            client = Client(args.url)
+        else:
+            workdir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="agentwiz-chat-eval-")))
+            profile = args.profile or args.route + "-eval"
+            ui = stack.enter_context(eval_setup.session(workdir, profile, args.route, args.profiles_dir, args.config))
+            client = Client(ui.url)
+            eval_setup.select_chat(client, profile)
         state = client.json("/api/state")
         target = model_target(state)
         report.update(agentwiz_version=state.get("agentwiz_version"), modelspell_version=state.get("modelspell_version"),
@@ -327,9 +356,11 @@ def main() -> int:
             raise EvaluationBlocked(f"Chat uses {target['kind']}; expected {args.route}")
         check_target(state, target, require_fast=bool(args.cohorts))
         exit_code = evaluate(client, target, args, report)
-    except (EvaluationBlocked, OSError) as exc:
-        report.update(verdict="blocked", reason=str(exc) if isinstance(exc, EvaluationBlocked) else type(exc).__name__)
+    except (EvaluationBlocked, eval_setup.SetupBlocked, OSError, ValueError) as exc:
+        report.update(verdict="blocked", reason=str(exc) if isinstance(exc, (EvaluationBlocked, eval_setup.SetupBlocked)) else type(exc).__name__)
         exit_code = 2
+    finally:
+        stack.close()
     with open(args.report, "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2, ensure_ascii=False)
     print(json.dumps({k: report[k] for k in ("verdict", "reason", "rates", "totals") if k in report}))

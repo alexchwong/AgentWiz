@@ -59,6 +59,28 @@ def agent(ui, server):
 
 
 # --- the loop (4.4) ---------------------------------------------------------------------------------------------
+def test_automatic_tool_routing_selects_once_and_reuses_pin(ui, server):
+    configure(ui, server, kind="openrouter", model="example/model", api_key="test-key",
+              provider="", routing_mode="automatic", routing_data_collection="deny")
+    conversation = start_conversation(ui)
+    endpoint = {"tag": "eligible", "provider_name": "eligible",
+                "throughput_last_30m": {"p50": 80}, "latency_last_30m": {"p50": 0.1},
+                "pricing": {"prompt": "0.0000001", "completion": "0.0000001"},
+                "supported_parameters": ["tools", "max_tokens", "temperature"]}
+    probe = {"provider": "eligible", "choices": [{"finish_reason": "stop", "message": {"content": "ok"}}]}
+    server.reply(Reply(body=json.dumps({"data": {"endpoints": [endpoint]}}).encode()),
+                 Reply(body=json.dumps(probe).encode()),
+                 tool_call("aw_calculate", {"expression": "2+2"}), text_turn("4"))
+    events = run(ui, conversation, "Calculate 2+2", ["aw_calculate"], limits={"model_turns": 2})
+    end = final(events)
+    assert end["stop_reason"] == "answered", end
+    bodies = sent_bodies(server)
+    assert len(bodies) == 3  # one probe, two turns; no selection during replay
+    assert all(body["provider"]["order"] == ["eligible"] for body in bodies)
+    assert all(body["provider"]["data_collection"] == "deny" for body in bodies)
+    assert len([r for r in server.requests if r["method"] == "GET"]) == 1
+
+
 def test_text_only_branch_answers_with_complete_and_preview_agrees(ui, server, agent):
     revision = get_state(ui)["revision"]
     preview = request(ui, f"/api/agent/inventory?revision={revision}")
@@ -163,6 +185,20 @@ def test_model_call_in_flight_at_the_deadline_is_cancelled(ui, server, agent, fi
     fire_timers.fire()
     evs = list(it)
     assert final(evs)["stop_reason"] == "time_limit"
+
+
+def test_stop_during_automatic_discovery_prevents_probe_and_completion(ui, server):
+    configure(ui, server, kind="openrouter", model="example/model", api_key="test-key",
+              provider="", routing_mode="automatic")
+    conversation = start_conversation(ui)
+    server.reply(Reply(hold_headers=True))
+    response = run(ui, conversation, "ping", raw=True)
+    it = iter_events(response)
+    started = read_until(it, "started")
+    assert server.wait_holding(1)
+    request(ui, "/api/agent/stop", {"format_version": 1, "run_id": started[-1]["run_id"]})
+    assert final(list(it))["stop_reason"] == "stopped"
+    assert [r["method"] for r in server.requests] == ["GET"]
 
 
 # --- approval (5.4) and MCP outcomes ---------------------------------------------------------------------------------

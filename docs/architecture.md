@@ -106,23 +106,40 @@ Paths in this table are relative to the repository root.
 
 ## The modelSpell dependency
 
-AgentWiz depends on the modelSpell **v0.3.0 release wheel**, pinned by URL and sha256 in
+AgentWiz depends on the modelSpell **v0.4.0 release wheel**, pinned by URL and sha256 in
 `pyproject.toml` (D74).
 The public API AgentWiz uses includes `CancelHandle` (one per run; `cancel()` never blocks and may
 be called from any thread any number of times) and `complete(..., cancel=)`; `Cancelled.sent` is
 `False` when no byte of the request was written, `True` when it may have been, and `None` until
 modelSpell has handled the exception.
-A modelSpell defect found while building AgentWiz is fixed in modelSpell and released as 0.3.1;
+A modelSpell defect found while building AgentWiz is fixed in modelSpell and released upstream;
 AgentWiz takes it as a pin change. Task settings use `supported_settings()` and
 `check_settings()`; AgentWiz keeps no support table of its own, and words its own refusal for a
 setting a route does not send (modelSpell's suggests `extra`, which AgentWiz does not offer). Adding any dependency, required or optional, needs the owner's approval.
+
+OpenRouter profile format 4 adds routing mode, preset, optional ZDR and data-collection policy.
+Older profiles retain Manual for a nonempty slug and Managed for an empty slug. New UI
+OpenRouter choices default to Automatic Balanced. Manual known slugs are sent directly,
+as allowed by modelSpell; no added discovery request is required.
+
+Full request preflight uses `check_completion()` or `check_tool_request()`. Automatic selection
+uses `choose_provider()` under the run cancellation handle and concurrency slot, never a state
+lock. It has a 30-second ceiling and at most four probes; agent selection is also bounded by
+its remaining deadline. The selected policy is retained through repairs and agent tool replay.
+Ordinary block/workflow steps resolve independently against their own effective settings.
+Python authoring uses the same model-call boundary. HTTP 429 retries remain disabled.
+Routing records separate configured intent, selected slug and effective policy from the actual
+completion's reported provider. Probe usage is unreported, not zero; workload token totals do
+not include unreported probe usage. Automatic selection does not promise total-spend enforcement.
+Selection errors get fixed safe descriptions, not raw upstream evidence. No mid-conversation
+provider failover or tool replay against another provider is performed.
 
 Boundary rules:
 
 - Only modelSpell's public API (`modelspell.__all__` and `__version__`). No `modelspell._…`
   imports and no underscore attributes of modelSpell objects. The key source is re-derived from the
   public `Endpoint.api_key_env` field.
-- No transport code for model traffic in AgentWiz, no retries, fallbacks, second client, or thread
+- No custom transport code for model traffic in AgentWiz, no custom retries, fallbacks, second client, or thread
   that abandons a running model call.
 
 **Upgrading modelSpell** (new pin and hash) includes re-checking the two error groups that
@@ -701,8 +718,8 @@ folders are unsupported and not detected.
 `<workspaces-dir>/<workspace>/model-profiles/profiles.json`. Only state.py initiates mutations,
 under its state lock. `profiles.py` handles profile files and library locking; `workspace.py`
 handles workspace.json, its lifetime lock, and the reusable atomic writer. Both libraries use
-`{"format_version": 3, "profiles": {...}}` (`profiles.PROFILES_FORMAT_VERSION`; `workspace.json`
-stays at 1), read versions 1 and 2 too, preserve unknown fields and never receive session keys. Every
+`{"format_version": 4, "profiles": {...}}` (`profiles.PROFILES_FORMAT_VERSION`; `workspace.json`
+stays at 1), read versions 1–3 too, preserve unknown fields and never receive session keys. Every
 write path drops `base_url`, `reasoning` and `max_tokens` from every profile through
 `profiles.write_profiles`. Legacy URLs are migration information only; state warns about differences
 from configured endpoints without using them for requests or equality.
@@ -1556,3 +1573,36 @@ ordinary save.
 **Evaluation.** `scripts/library_eval.py` qualifies model blocks against the owner's target route (7.1) and
 `scripts/agent_eval.py --cohorts` measures selection with at most eight capabilities per cohort (7.2). Both are
 owner-run; the offline tests run them against the scripted stub.
+
+
+### Disposable evaluation configuration
+
+The non-shipped `scripts/eval_setup.py` prepares both live evaluators. Seeds under
+`tests/eval_profiles/profiles.json` contain non-secret OpenRouter and LM Studio targets.
+They are resolved relative to the repository, validated with the ordinary profile reader, and
+materialized in temporary storage before workspace seeding; library locks never touch the seeds.
+The ordinary installer, role resolver and run APIs remain the execution path.
+
+Without external overrides, `AGENTWIZ_LIVE_<BACKEND>_MODEL` overrides the seed model;
+`AGENTWIZ_LIVE_LMSTUDIO_URL` and `_KEY` configure its server, and
+`AGENTWIZ_LIVE_OPENROUTER_PROVIDER` switches Automatic routing to a Manual pin.
+OpenRouter uses `OPENROUTER_API_KEY`; endpoint overrides require explicit server configuration.
+Privacy settings remain those of the selected profile. With `--profiles-dir` or `--config`,
+backend model/URL/key/provider variables are rejected rather than ambiguously merged; explicit
+profiles/configuration plus remaining checked-in defaults define the target. The external profile
+library is read without mutation and copied into the temporary library; an explicit server file
+must already exist. Credentials and session tokens are not report fields.
+
+Both runners create workspaces, defaults libraries, MCP libraries and default server configuration
+inside owned temporary storage and release workspace ownership on exit. Agentic Chat also selects
+the profile and binds `fast` through the normal APIs, then verifies destination equality. Library
+qualification retains its role and destination checks. `--timeout` takes precedence over
+`AGENTWIZ_LIVE_TIMEOUT` (600 seconds by default). Missing/invalid setup blocks the evaluation.
+Neither runner silently reads application profiles/configuration from the caller's directory.
+
+Agentic Chat's explicit `--url` mode instead evaluates an already configured server. It does not
+change the selected model or role bindings, but it does install catalog entries and create case
+data. It is intended for disposable workspaces, not personal sessions. `workshop_experiment.py`
+is likewise an explicit attached-service diagnostic; its offline fixture mode needs no user setup.
+The installed smoke script owns a temporary working directory even when invoked directly, so its
+normal-default-path checks cannot overwrite a caller's application configuration.

@@ -36,7 +36,7 @@ from . import mcp_library as ml
 from . import profiles as pf
 from . import task_settings as ts
 from . import workspace as wsmod
-from .model_call import ModelSettings, RequestSnapshot, SettingsError, settings_from_body, validate_key
+from .model_call import ROUTING_FIELDS, ModelSettings, RequestSnapshot, SettingsError, settings_from_body, validate_key
 from .errors import SettingsHeld, report_internal
 from .workspace import Problem, Workspace
 
@@ -354,6 +354,7 @@ class ProcessState:
         router_source = ("session" if (router.kind, router.base_url) in self._keys else
                          "env:OPENROUTER_API_KEY" if os.environ.get("OPENROUTER_API_KEY", "").strip() else "none")
         return {"kind": s.kind, "base_url": ep.base_url if self.servers else s.base_url, "model": s.model, "provider": s.provider,
+                **{f: getattr(s, f) for f in ROUTING_FIELDS},
                 "key_source": key_source,
                 "openrouter_key_source": router_source, "server_config_path": str(self.config_path or ""),
                 "legacy_server_profiles": sorted(n for n, p in self._profiles.items()
@@ -734,7 +735,8 @@ class ProcessState:
                 self._env_names.add(ep.api_key_env)
             snapshot = RequestSnapshot(endpoint=self._endpoint(s, key), model=s.model, kind=s.kind,
                                        provider=s.provider if s.kind == "openrouter" else "",
-                                       profile_name=profile, profile_modified=False)
+                                       profile_name=profile, profile_modified=False,
+                                       **{f: getattr(s, f) for f in ROUTING_FIELDS})
             defaults = copy.deepcopy(dict((self._role_definitions.get(role) or {}).get("task_defaults") or {}))
             return RoleCapture(role, profile, snapshot, defaults, self._roles_revision)
 
@@ -1174,7 +1176,8 @@ class ProcessState:
             return RequestSnapshot(endpoint=self._endpoint(s, key), model=s.model, kind=s.kind,
                                    provider=s.provider if s.kind == "openrouter" else "",
                                    profile_name=active,
-                                   profile_modified=active is not None and self._profiles.get(active) != s)
+                                   profile_modified=active is not None and self._profiles.get(active) != s,
+                                   **{f: getattr(s, f) for f in ROUTING_FIELDS})
 
     def key_for(self, kind: str, base_url: str) -> str | None:
         """The typed key held for an endpoint, or None (the environment variable then applies). Used by a

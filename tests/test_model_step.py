@@ -10,6 +10,33 @@ from conftest import pinned, Reply, answer, delta, DONE
 SSE = {"Content-Type": "text/event-stream"}
 
 
+def test_automatic_checked_repair_retains_selected_policy(server):
+    import json
+    endpoint = {"tag": "eligible", "provider_name": "eligible",
+                "throughput_last_30m": {"p50": 80}, "latency_last_30m": {"p50": 0.1},
+                "pricing": {"prompt": "0.0000001", "completion": "0.0000001"},
+                "supported_parameters": ["max_tokens"]}
+    probe = {"provider": "eligible", "choices": [{"finish_reason": "stop", "message": {"content": "ok"}}]}
+    server.reply(Reply(body=json.dumps({"data": {"endpoints": [endpoint]}}).encode()),
+                 Reply(body=json.dumps(probe).encode()), answer("wrong"), answer("pong"))
+    snap = RequestSnapshot(Endpoint("openrouter", server.url, api_key="test-key"), "example/model",
+                           "openrouter", "", routing_mode="automatic", routing_data_collection="deny")
+    store = runs.AttemptStore()
+    contract = pinned("reply", 1, checks.parse_contract({"format": "text", "exact": "pong"}))
+    first = model_step.prepare_first(store, snapshot=snap, system="", prompt="ping", task=TaskSettings(),
+                                     source="checked_request", save_runs=False, contract=contract)
+    parent = model_step.run_attempt(store, first)
+    assert parent["check"]["overall"] == "fail"
+    number = store.reserve_attempt(first.run)
+    repaired = model_step.prepare_repair(first.run, number, parent, lambda *_: "test-key")
+    result = model_step.run_attempt(store, repaired)
+    assert result["check"]["overall"] == "pass"
+    assert result["routing"] == parent["routing"]
+    posts = [r["body"] for r in server.requests if r["method"] == "POST"]
+    assert len(posts) == 3
+    assert posts[-1]["provider"] == posts[-2]["provider"]
+
+
 class Sink:
     def __init__(self, status="saved"):
         self.calls, self.status = [], status

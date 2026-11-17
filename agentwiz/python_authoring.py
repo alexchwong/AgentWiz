@@ -234,8 +234,7 @@ class Authoring:
             if flow.handle.cancelled:
                 raise scriptspell.AuthoringError("stopped")
             live = state.role_capture(flow.role.role)
-            if (live.snapshot.model, live.snapshot.endpoint.base_url, live.snapshot.kind) != \
-                    (flow.role.snapshot.model, flow.role.snapshot.endpoint.base_url, flow.role.snapshot.kind):
+            if live.snapshot != flow.role.snapshot:
                 raise scriptspell.AuthoringError("role_changed")
             messages = scriptspell.model_messages(materials)
             if flow.guard is not None:
@@ -256,8 +255,11 @@ class Authoring:
                 effective = resolve_effective(TaskSettings(), (), flow.role.defaults)
                 arguments = model_call.task_arguments(effective.task, flow.role.snapshot.kind,
                                                       flow.role.snapshot.provider)
-                result = modelspell.complete(flow.role.snapshot.endpoint, flow.role.snapshot.model, messages,
-                                             cancel=flow.handle, rate_limit_retries=0, **arguments)
+                record["routing"] = {}
+                result = model_call.call_model(flow.role.snapshot, messages, arguments,
+                                               cancel=flow.handle, on_text=None, on_reasoning=None,
+                                               before_complete=flow.guard.check if flow.guard is not None else None,
+                                               routing=record["routing"])
             except modelspell.Cancelled:
                 record["outcome"] = "stopped"
                 raise scriptspell.AuthoringError("stopped") from None

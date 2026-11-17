@@ -2,6 +2,9 @@
 
 ## 0.2.2
 
+- OpenRouter Automatic routing selects eligible providers across Chat, blocks, workflows and Python authoring; privacy requirements remain unchanged.
+- Manual provider pins remain strict; automatic selections persist through repairs and agent tool replay.
+
 - Agentic Chat: a Chat switch lets the model run one approved capability per turn.
 - Built-in tools list, search and read staged documents, create drafts, tell the time and calculate.
 - MCP tools stay disabled until classified for effects, local file reach and Local only results.

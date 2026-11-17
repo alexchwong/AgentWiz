@@ -1755,6 +1755,7 @@ class Handler(BaseHTTPRequestHandler):
             raise SettingsError("choose a model in Model settings")
         task = parse_task(body.get("task"))
         arguments = model_call.task_arguments(task, snapshot.kind, snapshot.provider)
+        model_call.validate_request(snapshot, arguments)
         copy_ = None
         if contract_ref is not None:
             found = state.contract_for_request(*contract_ref)   # 404, 409 digest_mismatch / contract_unusable

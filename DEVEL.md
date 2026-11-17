@@ -114,7 +114,8 @@ hints; do not use 3.11-only modules/APIs (`tomllib`, `datetime.UTC`, exception g
 - Use only modelSpell's public API (`__all__` and `__version__`); no private imports/attributes.
   Derive key sources from public `Endpoint.api_key_env`. Use `supported_settings()` and
   `check_settings()`; do not maintain a duplicate support table or offer an `extra` escape hatch.
-- Do not add model-traffic transport code, retries, fallbacks, a second client or a thread that
+- Use modelSpell for explicit bounded provider selection; do not add custom model-traffic transport,
+  retries, fallbacks, a second client or a thread that
   abandons a running model call. Preserve cancellation/sent-state semantics.
 - On modelSpell upgrades, re-check error classes/messages against upstream source: only pre-send
   argument-validation messages may be exposed; errors that can contain backend text need fixed
@@ -255,7 +256,8 @@ The two runners select the model differently:
 | Runner | Model comes from |
 | --- | --- |
 | pytest live checks (`tests/test_live.py`) | the backend's `AGENTWIZ_LIVE_<BACKEND>_MODEL` |
-| `scripts/library_eval.py`, `scripts/agent_eval.py` | the saved model profile; `--route` only asserts the backend |
+| `scripts/library_eval.py`, `scripts/agent_eval.py` (disposable mode) | checked-in evaluation profiles, overridden by the same backend live variables |
+| `scripts/agent_eval.py --url ...` | the attached server's selected Chat model; `--route` asserts the backend |
 
 All checks accept `AGENTWIZ_LIVE_TIMEOUT`: seconds per read from AgentWiz, default 600, not a
 whole-test deadline. AgentWiz sends nothing until the model's first visible token, so a loading or
@@ -283,7 +285,7 @@ task settings (`temperature`, `max_tokens`).
 )
 ```
 
-Run the library evaluation against the profile that names this model, using its exact saved name:
+The evaluator supplies `lmstudio-eval`; no UI profile setup is required. Use the same live variables above:
 
 ```bash
 . .venv/bin/activate
@@ -296,10 +298,8 @@ python scripts/library_eval.py --route lmstudio --profile lmstudio-eval --trials
   variables alone does not exclude the checks.
 - `AGENTWIZ_LIVE_OPENROUTER_MODEL` — the model selector, in `author/slug` form; the block below uses
   `qwen/qwen3.8-27b`.
-- `AGENTWIZ_LIVE_OPENROUTER_PROVIDER` — optional provider slug to pin. Without it the check prints
-  the slugs OpenRouter lists and pins the first, with fallbacks off; when account settings exclude
-  that provider, uncomment the override below and replace its value with an allowed slug from that
-  output.
+- `AGENTWIZ_LIVE_OPENROUTER_PROVIDER` — optional provider slug to pin. Without it the check uses Automatic Balanced selection through the production path,
+  including up to four potentially billable probes. With it the exact provider is pinned, without fallback.
 
 This sends a real, potentially billable request. The hidden prompt is used only if
 `OPENROUTER_API_KEY` is not already set; never paste a real key into this guide or a shell command.
@@ -322,8 +322,10 @@ This sends a real, potentially billable request. The hidden prompt is used only 
 `test_live_stop_openrouter` and `test_live_checked_request_openrouter` reuse these variables; see
 Stop and checked-request checks below.
 
-The eval scripts read the model from the profile, not from the environment, and still use
-`OPENROUTER_API_KEY`: pin a tool-capable provider in the profile and use its exact saved name.
+Both evaluators supply `openrouter-eval` with Automatic routing and use `OPENROUTER_API_KEY`.
+The same `AGENTWIZ_LIVE_OPENROUTER_MODEL`, optional provider pin and timeout variables override
+the evaluation defaults. No saved user profile or application server config is required.
+Export credentials/overrides in the shell running the evaluation; the earlier subshell does not retain them.
 
 ```bash
 . .venv/bin/activate
@@ -377,16 +379,24 @@ After setting the rubric entries' `owner_mark` to `true` or `false`, run
 The block evaluator exits 0 on a pass, 1 on failure, 2 when blocked and 3 for an incomplete run or
 pending rubric review.
 
-For Agentic Chat, launch `agentwiz --no-browser --workspaces-dir "$(mktemp -d)" --workspace live-eval`.
-In that workspace, load the same profile in Chat and assign `fast` to that profile with the matching
-role location (`cloud` for OpenRouter, `local` for loopback LM Studio). Use the URL AgentWiz prints,
-including its session token. Run one command against the selected route.
+Agentic Chat starts its own disposable server, selects the evaluation profile and binds `fast`
+automatically. Run one command against the selected route; no UI setup or session token is needed.
 
 ```bash
-python scripts/agent_eval.py --url 'http://127.0.0.1:PORT/?t=TOKEN' --route openrouter --cohorts tests/agent_eval/cohorts.json --report chat-openrouter.json
-# Or select the LM Studio profile in Chat and bind fast to it first.
-python scripts/agent_eval.py --url 'http://127.0.0.1:PORT/?t=TOKEN' --route lmstudio --cohorts tests/agent_eval/cohorts.json --report chat-lmstudio.json
+python scripts/agent_eval.py --route openrouter --cohorts tests/agent_eval/cohorts.json --report chat-openrouter.json
+python scripts/agent_eval.py --route lmstudio --cohorts tests/agent_eval/cohorts.json --report chat-lmstudio.json
 ```
+
+Both evaluators copy checked-in profiles into temporary storage and create temporary server settings.
+`--profiles-dir` and `--config` are explicit external overrides; do not combine them with backend
+live target variables. `OPENROUTER_API_KEY` and the read timeout remain usable. OpenAI-compatible
+routes require an explicit profile because the repository supplies no universal model ID.
+`--timeout` overrides `AGENTWIZ_LIVE_TIMEOUT` for either evaluator.
+
+For intentional attached-server diagnostics, `agent_eval.py --url 'http://127.0.0.1:PORT/?t=TOKEN'`
+retains the existing Chat configuration and requires `fast` to match for cohorts. It installs entries
+and creates evaluation data in that workspace: use a disposable one. Do not combine `--url` with
+profile/configuration options. See the architecture reference for configuration precedence.
 
 See [release operations](docs/releases.md#owner-sign-off-before-merging-to-main-starter-blocks-addendum-section-7)
 for acceptance and [modelSpell developer checks](https://github.com/alexchwong/modelSpell/blob/v0.4.0/DEVEL.md#tests)

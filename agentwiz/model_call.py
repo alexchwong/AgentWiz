@@ -28,7 +28,8 @@ OPENROUTER_HINT = ("OpenRouter found no provider for this request. Check the pro
 OUTCOMES = ("complete", "empty", "reasoning_only", "truncated",
             "truncated_no_answer", "error", "stopped")
 
-_FIELDS = ("kind", "base_url", "model", "provider")
+ROUTING_FIELDS = ("routing_mode", "routing_preset", "routing_zdr", "routing_data_collection")
+_FIELDS = ("kind", "base_url", "model", "provider", *ROUTING_FIELDS)
 
 
 class SettingsError(ValueError):
@@ -41,6 +42,10 @@ class ModelSettings:
     base_url: str = dataclasses.field(default="", compare=False)  # legacy migration information only
     model: str = ""
     provider: str = ""          # OpenRouter provider slug; "" means any
+    routing_mode: str = "managed"
+    routing_preset: str = "balanced"
+    routing_zdr: bool | None = None
+    routing_data_collection: str = ""
 
 
 @dataclass(frozen=True)
@@ -51,6 +56,10 @@ class RequestSnapshot:
     provider: str               # the profile's OpenRouter provider pin; "" means none
     profile_name: str | None = None   # the active profile, for the attempt record (techspec 0.1.3, 8.2)
     profile_modified: bool = False    # the settings differ from the active profile's saved ones
+    routing_mode: str = "managed"
+    routing_preset: str = "balanced"
+    routing_zdr: bool | None = None
+    routing_data_collection: str = ""
 
 
 def settings_from_body(current: ModelSettings, body: Mapping) -> ModelSettings:
@@ -60,11 +69,23 @@ def settings_from_body(current: ModelSettings, body: Mapping) -> ModelSettings:
     if any(f in body for f in RETIRED):
         raise SettingsError(RETIRED_MESSAGE)
     values = {f: body[f] if f in body else getattr(current, f) for f in _FIELDS}
-    if values["kind"] not in KINDS:
-        raise SettingsError(f"kind must be one of {', '.join(KINDS)}")
     for name in ("base_url", "model", "provider"):
         if not isinstance(values[name], str):
             raise SettingsError(f"{name} must be a string")
+    if "provider" in body and "routing_mode" not in body:
+        values["routing_mode"] = "manual" if values["provider"] else "managed"
+    if values["routing_mode"] not in ("managed", "manual", "automatic"):
+        raise SettingsError("routing_mode must be managed, manual or automatic")
+    if values["routing_preset"] not in ("balanced", "cheapest", "fastest"):
+        raise SettingsError("routing_preset must be balanced, cheapest or fastest")
+    if values["routing_zdr"] is not None and type(values["routing_zdr"]) is not bool:
+        raise SettingsError("routing_zdr must be a boolean or null")
+    if values["routing_data_collection"] not in ("", "allow", "deny"):
+        raise SettingsError("routing_data_collection must be allow, deny or empty")
+    if values["routing_mode"] == "manual" and not values["provider"]:
+        raise SettingsError("manual routing requires a provider")
+    if values["kind"] not in KINDS:
+        raise SettingsError(f"kind must be one of {', '.join(KINDS)}")
     if not values["base_url"].isascii():
         # Python's HTTP client cannot send a non-ASCII request line; refuse it here as a setting.
         raise SettingsError("base_url must contain only ASCII characters")
@@ -74,6 +95,8 @@ def settings_from_body(current: ModelSettings, body: Mapping) -> ModelSettings:
     if values["base_url"]:
         Endpoint(values["kind"], values["base_url"])
     if values["kind"] != "openrouter":
+        values["provider"] = ""
+    elif values["routing_mode"] != "manual":
         values["provider"] = ""
     return ModelSettings(**values)
 
@@ -157,12 +180,93 @@ def lmstudio_model_info(endpoint: Endpoint, model_id: str) -> tuple[ModelInfo | 
 def call_model(snapshot: RequestSnapshot, messages: list[dict], arguments: Mapping[str, Any], *,
                model_info: ModelInfo | None = None,
                on_text: Callable[[str], None], on_reasoning: Callable[[str], None],
-               cancel: modelspell.CancelHandle | None = None) -> Result:
-    """One modelSpell call. No retries; exceptions propagate unchanged. `cancel` is the run's
-    CancelHandle (techspec 0.1.3, 8.3); cancelling it ends the call at any stage."""
+               cancel: modelspell.CancelHandle | None = None, routing: dict | None = None,
+               resolved_policy: Mapping | None = None, before_complete=None) -> Result:
+    """Resolve routing then complete, with no workload retries. The run handle cancels both stages."""
     model = model_info if model_info is not None else snapshot.model
+    if routing is not None and resolved_policy is None:
+        routing.update(routing_record(snapshot, arguments))
+        if snapshot.kind == "openrouter" and snapshot.routing_mode == "automatic":
+            routing.update(selection="pending", probe_usage="unreported")
+    if resolved_policy is not None:
+        arguments = {**arguments, "provider": resolved_policy}
+        modelspell.check_completion(snapshot.endpoint, model, **arguments)
+    else:
+        try:
+            arguments, selection = resolve_request(snapshot, arguments, cancel=cancel, model=model)
+        except modelspell.ProviderSelectionError:
+            if routing is not None:
+                routing["selection"] = "failed"
+            raise
+        if routing is not None:
+            routing.update(routing_record(snapshot, arguments, selection))
+    if before_complete is not None:
+        before_complete()
     return modelspell.complete(snapshot.endpoint, model, messages,
                                on_text=on_text, on_reasoning=on_reasoning, cancel=cancel, **arguments)
+
+
+def routing_record(snapshot, arguments, selection=None):
+    """Persist policy and bounded summary only, never backend discovery text."""
+    return {"format_version": 1, **{f: getattr(snapshot, f) for f in ROUTING_FIELDS},
+            "requested_slug": snapshot.provider or None,
+            "selected_slug": selection.slug if selection else snapshot.provider or None,
+            "policy": dict(arguments.get("provider") or {}),
+            "selection": "automatic" if selection and snapshot.routing_mode == "automatic" else "not probed",
+            "probe_usage": "unreported" if selection and snapshot.routing_mode == "automatic" else "not applicable"}
+
+
+def preflight_request(snapshot: RequestSnapshot, arguments: Mapping[str, Any], *, tools=None, model=None) -> dict:
+    """Offline full-request validation, including a validation-only automatic tool pin."""
+    args = dict(arguments)
+    if snapshot.kind == "openrouter":
+        policy = dict(args.get("provider") or {})
+        if snapshot.routing_mode == "automatic":
+            policy.pop("order", None)
+            policy.pop("allow_fallbacks", None)
+        if snapshot.routing_zdr is not None:
+            policy["zdr"] = snapshot.routing_zdr
+        if snapshot.routing_data_collection:
+            policy["data_collection"] = snapshot.routing_data_collection
+        if tools and snapshot.routing_mode == "automatic":
+            policy.update(order=["validation-only"], allow_fallbacks=False)
+        if policy:
+            args["provider"] = policy
+    if tools:
+        modelspell.check_tool_request(snapshot.kind, tools=tools, **args)
+    else:
+        modelspell.check_completion(snapshot.endpoint, model or snapshot.model, **args)
+    return args
+
+
+def validate_request(snapshot, arguments):
+    """Translate offline validation into the existing task-refusal boundary."""
+    try:
+        preflight_request(snapshot, arguments)
+    except (ConfigError, UnsupportedSetting, UnsupportedOperation) as exc:
+        raise TaskSettingError(str(exc)) from None
+
+
+def resolve_request(snapshot: RequestSnapshot, arguments: Mapping[str, Any], *, tools=None,
+                    cancel=None, model=None, timeout=30.0):
+    """Resolve once per compatible run. Selection never relaxes the captured policy."""
+    args = preflight_request(snapshot, arguments, tools=tools, model=model)
+    selection = None
+    if snapshot.kind == "openrouter" and snapshot.routing_mode == "automatic":
+        policy = dict(args.pop("provider", {}) or {})
+        policy.pop("order", None)
+        policy.pop("allow_fallbacks", None)
+        selection = modelspell.choose_provider(
+            snapshot.endpoint, snapshot.model, mode="automatic",
+            preset=snapshot.routing_preset, provider=policy or None, settings=args,
+            tools=bool(tools), cancel=cancel, timeout=timeout, max_attempts=4)
+        if selection.policy is not None:
+            args["provider"] = selection.policy
+    if tools:
+        modelspell.check_tool_request(snapshot.kind, tools=tools, **args)
+    else:
+        modelspell.check_completion(snapshot.endpoint, model or snapshot.model, **args)
+    return args, selection
 
 
 def classify_outcome(result: Result) -> str:
@@ -187,6 +291,8 @@ def describe_error(exc: ModelSpellError, base_url: str) -> str:
     and the base URL, because its message can carry backend text that may reflect the key.
     """
     name = type(exc).__name__
+    if isinstance(exc, modelspell.ProviderSelectionError):
+        return "ProviderSelectionError: no eligible provider could be selected under the configured policy. Check routing requirements, account privacy settings and provider availability."
     status = getattr(exc, "status", None)
     status = status if isinstance(status, int) and not isinstance(status, bool) else None
     if isinstance(exc, (ConfigError, UnsupportedSetting, UnsupportedOperation)) or \

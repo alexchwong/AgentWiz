@@ -52,7 +52,7 @@ REQUEST_BYTES = 1 << 20
 OUTPUT_BYTES = 1 << 20
 RUNS_KEPT = 20
 ROUTE_REMEDIES = {"lmstudio": "choose a reasoning level other than Off, or clear the setting the route does not send",
-                  "openrouter": "pin one provider in Model settings",
+                  "openrouter": "choose Automatic routing or pin one provider in Model settings",
                   "openai_compat": "clear the reasoning level"}
 PREFLIGHT_NOTE = ("Preflight shows that modelSpell accepts the request shape; it does not show that this server, "
                   "model and chat template produce usable tool calls.")
@@ -257,9 +257,9 @@ def plan(state: Any, conversation: Any, body: Mapping, *, for_send: bool) -> Cap
     branch = "tools" if chosen else "text"
     try:
         if branch == "tools":
-            modelspell.check_tool_request(snapshot.kind, tools=definitions, rate_limit_retries=0, **arguments)
+            model_call.preflight_request(snapshot, arguments, tools=definitions)
         else:
-            modelspell.check_completion(snapshot.endpoint, snapshot.model, rate_limit_retries=0, **arguments)
+            model_call.preflight_request(snapshot, arguments)
     except (ConfigError, UnsupportedSetting, UnsupportedOperation) as exc:   # pre-send validation text only
         raise AgentError("route_refused", 409, message=f"{type(exc).__name__}: {exc}",
                          remedy=ROUTE_REMEDIES.get(snapshot.kind), branch=branch) from None
@@ -371,6 +371,9 @@ class AgentRun:
         self.scope = docs.Scope(conversation, capture.allowed)
         self.transcript: list = []
         self.transcript_bytes = 0
+        self.resolved_arguments = None
+        self.routing_selection = None
+        self.served_provider = None
         self.turns = 0
         self.actions = 0
         self.corrections = 0
@@ -531,11 +534,17 @@ class AgentRun:
         budget = self.state.budget
         if not budget.try_acquire():
             raise _End("busy")
-        self.turns += 1
         self.turn_output = 0
         self.partial = ""
         snap, arguments = self.capture.snapshot, self.capture.arguments
         try:
+            if self.resolved_arguments is None:
+                self.resolved_arguments, self.routing_selection = model_call.resolve_request(
+                    snap, arguments, tools=self.capture.definitions if tools else None,
+                    cancel=self.handle, timeout=max(0.001, min(30.0, self.deadline - time.monotonic())))
+            arguments = self.resolved_arguments
+            self._gate_send()
+            self.turns += 1
             if tools:
                 return modelspell.complete_with_tools(
                     snap.endpoint, snap.model, self.transcript, tools=self.capture.definitions,
@@ -570,6 +579,7 @@ class AgentRun:
 
     def _text_branch(self) -> None:
         result = self._send(tools=False)
+        self.served_provider = result.provider
         self.add_usage(model_call.result_to_dict(result))
         outcome = model_call.classify_outcome(result)
         if outcome == "complete":
@@ -583,6 +593,7 @@ class AgentRun:
     def _tool_branch(self) -> None:
         while True:
             turn = self._send(tools=True)
+            self.served_provider = turn.result.provider
             self.add_usage(model_call.result_to_dict(turn.result))
             self._ceilings()
             if not turn.clean:
@@ -1120,6 +1131,8 @@ class AgentRun:
                 "stop_reason": self.stop_reason, "stop_detail": self.stop_detail,
                 "destination": {"kind": snap.kind, "url": snap.endpoint.base_url, "model": snap.model,
                                 "provider": snap.provider, "profile": snap.profile_name},
+                "routing": model_call.routing_record(snap, self.resolved_arguments or self.capture.arguments, self.routing_selection),
+                "served_provider": self.served_provider,
                 "task": dict(self.capture.task.request_shape()), "limits": dict(self.capture.limits),
                 "branch": self.capture.branch,
                 "system_prompt": {"id": SYSTEM_PROMPT_ID, "version": SYSTEM_PROMPT_VERSION},
@@ -1174,6 +1187,9 @@ class AgentRun:
                     "counters": {"model_turns": self.turns, "actions": self.actions,
                                  "corrections": self.corrections, "child_sends": self.child_sends},
                     "drafts": [{"id": i, "name": n} for i, n in self.drafts],
+                    "routing": model_call.routing_record(self.capture.snapshot,
+                        self.resolved_arguments or self.capture.arguments, self.routing_selection),
+                    "served_provider": self.served_provider,
                     "usage": dict(self.usage), "cost": self.cost if self.cost_reported else None,
                     "save_status": self.save_status, **self.save_detail}
 

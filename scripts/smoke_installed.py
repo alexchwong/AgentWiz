@@ -2,9 +2,11 @@
 # (MIT, Copyright (c) 2026 Alex Wong), per AgentWiz techspec 11.2 (0.1.0), 11.1 (0.1.1), 13.1 (0.1.2), 16.1 (0.1.3)
 # and 18.1 (0.1.4).
 """Smoke check against the installed AgentWiz wheel (steps S1-S25). Run with the environment's
-`python -I` from a scratch directory. Every step checks behaviour; none reads a file's contents.
+`python -I`; it creates its own scratch working directory. Every step checks behaviour; none reads a file's contents.
 The launch's default workspace (./workspaces/default) is validated by AgentWiz itself and checked
 through /api/state."""
+import atexit
+import tempfile
 import json
 import os
 import select
@@ -24,6 +26,15 @@ def check(condition, message):
     if not condition:
         sys.exit(f"smoke FAILED: {message}")
 
+
+# Own the working directory even when invoked directly, never overwrite caller configuration.
+_original_cwd = Path.cwd()
+_scratch = tempfile.TemporaryDirectory(prefix="agentwiz-installed-smoke-")
+os.chdir(_scratch.name)
+def _cleanup_scratch():
+    os.chdir(_original_cwd)
+    _scratch.cleanup()
+atexit.register(_cleanup_scratch)
 
 # S1: clear proxies; both packages import from this environment
 for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"):

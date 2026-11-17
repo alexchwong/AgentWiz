@@ -11,8 +11,7 @@ Optional variables:
   AGENTWIZ_LIVE_TIMEOUT               seconds to wait for each read from AgentWiz (default 600). AgentWiz
                                       forwards nothing until the model's first visible token, so a
                                       model that loads, queues or reasons silently can take minutes.
-  AGENTWIZ_LIVE_OPENROUTER_PROVIDER   provider slug to pin (default: the first one listed). Use it when
-                                      your OpenRouter account settings exclude the first provider.
+  AGENTWIZ_LIVE_OPENROUTER_PROVIDER   provider slug to pin (default: automatic selection).
   AGENTWIZ_LIVE_LMSTUDIO_KEY          LM Studio authentication token, when its authentication is on
                                       (required for "Serve on Local Network"). Never printed.
 """
@@ -89,22 +88,19 @@ def test_live_openrouter(ui):
     _configure(ui, kind="openrouter", base_url="", model=model)
     ids = [m["id"] for m in _call(ui, "/api/models", {"kind": "openrouter"})["models"]]
     assert model in ids, f"{model} is not in OpenRouter's model list (expected the form author/slug)"
-    providers = _call(ui, "/api/providers", {"kind": "openrouter", "model": model})["providers"]
-    tagged = [p for p in providers if p["slug"]]
-    assert tagged, "no provider with a slug for this model"
-    print("\nproviders (slug, name): " + ", ".join(f"{p['slug']} ({p['name']})" for p in tagged))
     wanted = os.environ.get("AGENTWIZ_LIVE_OPENROUTER_PROVIDER", "").strip()
-    pinned = next((p for p in tagged if p["slug"] == wanted), None) if wanted else tagged[0]
-    assert pinned is not None, f"AGENTWIZ_LIVE_OPENROUTER_PROVIDER={wanted} is not one of the slugs listed above"
-    print(f"pinned provider: {pinned['slug']} ({pinned['name']}), fallbacks off")
-    _configure(ui, provider=pinned["slug"])
-    evs, end = _stream(ui, hint=(
-        f"The request was pinned to {pinned['slug']} with fallbacks off. If OpenRouter refused it (often HTTP 404 "
-        "when account privacy or provider settings exclude that provider), set AGENTWIZ_LIVE_OPENROUTER_PROVIDER "
-        "to another slug from the list above."))
-    assert end["result"]["provider"] == pinned["name"], (
-        f"answered by {end['result']['provider']!r}, but {pinned['slug']} is listed as {pinned['name']!r}")
-    _report(f"OpenRouter (provider {pinned['slug']})", model, end)
+    _configure(ui, provider=wanted, routing_mode="manual" if wanted else "automatic")
+    evs, end = _stream(ui)
+    routing = end["routing"]
+    assert routing["selected_slug"], "no selected provider was recorded"
+    if wanted:
+        assert routing["selected_slug"] == wanted
+    _report(f"OpenRouter (provider {routing['selected_slug']})", model, end)
+
+
+def test_live_openrouter_manual(ui):
+    _env("AGENTWIZ_LIVE_OPENROUTER_PROVIDER")
+    test_live_openrouter(ui)
 
 
 def test_live_llamaserver(ui):
@@ -147,8 +143,7 @@ def _openrouter(ui, extra=()):
                        optional=("AGENTWIZ_LIVE_OPENROUTER_PROVIDER", "AGENTWIZ_LIVE_TIMEOUT"))
     _configure(ui, kind="openrouter", base_url="", model=model)
     wanted = os.environ.get("AGENTWIZ_LIVE_OPENROUTER_PROVIDER", "").strip()
-    if wanted:
-        _configure(ui, provider=wanted)
+    _configure(ui, provider=wanted, routing_mode="manual" if wanted else "automatic")
     return model
 
 

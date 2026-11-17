@@ -1,0 +1,10 @@
+{
+  "format_version": 2,
+  "target": {
+    "profile": "openrouter-eval",
+    "route": "openrouter"
+  },
+  "verdict": "blocked",
+  "blocks": {},
+  "reason": "profile 'openrouter-eval' is not among the shared defaults (none)"
+}

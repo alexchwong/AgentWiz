@@ -273,6 +273,7 @@ def _prepare_model(state: Any, block: Any, values: Mapping) -> _Preparation:
     try:
         arguments = model_call.task_arguments(prepared_messages.effective.task, capture.snapshot.kind,
                                               capture.snapshot.provider)
+        model_call.validate_request(capture.snapshot, arguments)
     except TaskSettingError as exc:
         return _rejected("steps[0].task", str(exc))
     prepared = executor.PreparedModel(snapshot=capture.snapshot, task=prepared_messages.effective.task,

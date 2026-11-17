@@ -160,8 +160,10 @@ requires fresh evidence. Provider API and tool replay diagnostics belong in mode
    Keep passing evidence for every shipped model block. Remove any block still below the bar after three revision
    rounds from `index.json` and its shipping references, and name it in the handover.
 2. **Agent selection.** Run `scripts/agent_eval.py --cohorts tests/agent_eval/cohorts.json` in a disposable
-   workspace with `fast` bound to the selected Chat destination. Pin a tool-capable OpenRouter provider so
-   fallback stays off. Record the three rates and the five-scenario gate verdict. A passing scenario needs a
+   workspace prepared automatically by selecting `--route openrouter` or `--route lmstudio`. The runner
+   selects its evaluation profile and binds `fast`; no UI setup is required. Use Automatic routing or an
+   explicit tool-capable OpenRouter pin. For intentional attached-server diagnostics, supply `--url` and
+   prepare matching Chat/`fast` settings in that disposable workspace. Record the three rates and the five-scenario gate verdict. A passing scenario needs a
    finished answer, successful expected tool calls in order, valid arguments and the expected result. The README
    claims library support in Chat only once this gate passes on the target orchestrator.
 3. **PDF wheel matrix.** Confirm `pypdfium2` wheels install and run on Linux x86-64 and arm64, macOS arm64 and

@@ -276,3 +276,99 @@ def test_agent_gate_requires_completed_tools_and_final_answer_on_openrouter(ui, 
     assert result["gate"]["verdict"] == verdict, result
     assert server.requests[0]["body"]["provider"]["order"] == [provider]
     assert server.requests[0]["body"]["provider"]["allow_fallbacks"] is False
+
+
+def test_disposable_evaluators_ignore_caller_configuration(tmp_path, monkeypatch, server):
+    import eval_setup
+    monkeypatch.chdir(tmp_path)
+    personal = tmp_path / "config" / "model-servers.ini"
+    personal.parent.mkdir()
+    personal.write_text("not a valid server configuration")
+    monkeypatch.setenv("AGENTWIZ_LIVE_LMSTUDIO_MODEL", "test-model")
+    monkeypatch.setenv("AGENTWIZ_LIVE_LMSTUDIO_URL", server.url + "/v1")
+    workdir = tmp_path / "evaluation"
+    with eval_setup.session(workdir, "lmstudio-eval", "lmstudio") as ui:
+        client = agent_eval.Client(ui.url)
+        eval_setup.select_chat(client, "lmstudio-eval")
+        state = client.json("/api/state")
+        target = agent_eval.model_target(state)
+        agent_eval.check_target(state, target, require_fast=True)
+        assert target["model"] == "test-model"
+        assert target["base_url"] == server.url + "/v1"
+        assert state["roles"]["map"]["fast"] == "lmstudio-eval"
+    assert personal.read_text() == "not a valid server configuration"
+    assert not (tmp_path / "model_profiles").exists()
+    # Session cleanup must release the workspace lock, including after an exception.
+    with pytest.raises(RuntimeError):
+        with eval_setup.session(workdir, "lmstudio-eval", "lmstudio"):
+            raise RuntimeError("abort")
+    with eval_setup.session(workdir, "lmstudio-eval", "lmstudio"):
+        pass
+
+
+def test_agent_cli_disposable_and_attached_modes(tmp_path, monkeypatch, server, ui):
+    monkeypatch.setenv("AGENTWIZ_LIVE_LMSTUDIO_URL", server.url + "/v1")
+    cases_path = tmp_path / "cases.json"
+    cases_path.write_text(json.dumps([{"id": "plain", "message": "Say pong", "capabilities": [],
+                                      "expected_answer": {"equals": "pong"}}]))
+    report = tmp_path / "report.json"
+    server.reply(responses_answer("pong"))
+    assert agent_eval.main(["--route", "lmstudio", "--cases", str(cases_path), "--report", str(report)]) == 0
+    data = json.loads(report.read_text())
+    assert data["totals"]["answer_correct"] == 1
+    assert data["route"]["kind"] == "lmstudio"
+    configure(ui, server)
+    server.reply(text_turn("pong"))
+    assert agent_eval.main(["--url", ui.url, "--cases", str(cases_path), "--report", str(report)]) == 0
+    assert json.loads(report.read_text())["totals"]["answer_correct"] == 1
+
+
+def test_evaluation_overrides_are_explicit(tmp_path, monkeypatch):
+    import eval_setup
+    from agentwiz import profiles, server_config
+    folder = tmp_path / "external"
+    folder.mkdir()
+    profiles.write_profiles(folder, {"format_version": 4, "profiles": {
+        "target": {"kind": "openai_compat", "model": "stub", "provider": ""}}})
+    config = tmp_path / "servers.ini"
+    server_config.initialize(config)
+    copied, selected_config, servers = eval_setup.materialize(
+        tmp_path / "run", "target", "openai_compat", folder, config)
+    assert profiles.read_profiles(copied).profiles["target"].model == "stub"
+    assert selected_config == config
+    assert "openai_compat" in servers
+    with pytest.raises(eval_setup.SetupBlocked):
+        eval_setup.materialize(tmp_path / "bad", "target", "openrouter", folder, config)
+    monkeypatch.setenv("AGENTWIZ_LIVE_OPENAI_COMPAT_MODEL", "other")
+    with pytest.raises(eval_setup.SetupBlocked):
+        eval_setup.materialize(tmp_path / "ambiguous", "target", None, folder, config)
+    monkeypatch.delenv("AGENTWIZ_LIVE_OPENAI_COMPAT_MODEL")
+    with pytest.raises(eval_setup.SetupBlocked):
+        eval_setup.materialize(tmp_path / "missing", "target", None, folder, tmp_path / "absent.ini")
+    assert not (tmp_path / "absent.ini").exists()
+
+
+def test_library_cli_disposable_startup(tmp_path, monkeypatch, server):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AGENTWIZ_LIVE_LMSTUDIO_URL", server.url + "/v1")
+    fixture = library_eval.load_cases("classify_text")
+    fixture["cases"] = [case for case in fixture["cases"] if "stub" in case]
+    monkeypatch.setattr(library_eval, "load_cases", lambda key: fixture)
+    server.reply(*(responses_answer(json.dumps(case["stub"])) for case in fixture["cases"]))
+    report_path = tmp_path / "library.json"
+    result = library_eval.main(["--profile", "lmstudio-eval", "--route", "lmstudio",
+                               "--block", "classify_text", "--report", str(report_path)])
+    report = json.loads(report_path.read_text())
+    assert result in (0, 3), report
+    assert report["resolved"]["classify_text"]["kind"] == "lmstudio"
+    assert all(row["outcome"] == "correct" for row in report["blocks"]["classify_text"]["runs"])
+    assert not (tmp_path / "config").exists()
+
+
+def test_invalid_live_endpoint_blocks_without_requests(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTWIZ_LIVE_LMSTUDIO_URL", "not-an-endpoint")
+    report = tmp_path / "blocked.json"
+    assert library_eval.main(["--profile", "lmstudio-eval", "--block", "classify_text",
+                              "--report", str(report)]) == 2
+    data = json.loads(report.read_text())
+    assert data["verdict"] == "blocked" and data["blocks"] == {}

@@ -78,6 +78,19 @@ def clip(page):
     return page.evaluate("navigator.clipboard.readText()")
 
 
+def test_routing_privacy_controls_restore_captured_configuration(ui, server, open_page):
+    configure(ui, server, kind="openrouter", model="example/model", provider="", routing_mode="automatic",
+              routing_preset="fastest", routing_zdr=True, routing_data_collection="deny")
+    page = open_page(ui, "chat")
+    tid(page, "ws-settings").click()
+    tid(page, "header-model-settings").click()
+    expect(tid(page, "routing-mode")).to_have_value("automatic")
+    expect(tid(page, "routing-preset")).to_have_value("fastest")
+    expect(tid(page, "routing-zdr")).to_have_value("true")
+    expect(tid(page, "routing-data")).to_have_value("deny")
+    assert server.requests == []  # opening settings cannot spend money on discovery or probes
+
+
 def test_settings_overview_updates_while_detached(ui, server, open_page, monkeypatch):
     """Startup and state refresh must work before Overview and while another category is open."""
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)

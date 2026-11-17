@@ -393,3 +393,12 @@ working. Exhaustive subjective UI acceptance is not required for this release.
 Older handovers requested WSL2 verification before sign-off. The current release procedure
 defines the Linux/macOS Python matrix and release tooling as gates; WSL2 remains outside CI
 and must be reported separately, with its documented filesystem constraints unchanged.
+
+## 17 November 2026 — 0.2.2 ModelSpell routing integration
+
+Owner approved completing the ModelSpell 0.4.0 integration across execution and evaluations.
+Automatic selection belongs in the shared production boundary, not in evaluation-only fallback
+loops. Existing profiles retain their routing meaning; new UI OpenRouter choices use Automatic
+Balanced. Manual known slugs remain directly usable without discovery. Selection can incur
+probe charges, retains explicit privacy policy, and never authorizes post-tool provider failover.
+429 recovery remains disabled. Profile routing fields are written in format 4.

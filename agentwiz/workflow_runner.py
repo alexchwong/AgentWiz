@@ -336,11 +336,13 @@ class Graph:
                         issues.append(issue('missing_credential', location, 'the configured model needs a credential'))
                         continue
                     effective = task_settings.resolve_effective(step.task, step.task_resets, role.defaults)
-                    model_call.task_arguments(effective.task, snapshot.kind, snapshot.provider)
+                    arguments = model_call.task_arguments(effective.task, snapshot.kind, snapshot.provider)
+                    model_call.validate_request(snapshot, arguments)
                     destination = {'kind': snapshot.kind, 'url': snapshot.endpoint.base_url, 'model': snapshot.model,
                                    'provider': snapshot.provider or ''}
                     view = {'kind': snapshot.kind, 'url': snapshot.endpoint.base_url, 'model': snapshot.model,
                             'provider': snapshot.provider, 'role': step.role,
+                            'routing': {f: getattr(snapshot, f) for f in model_call.ROUTING_FIELDS},
                             'task_text': jsonio.encode_exact(effective.task.request_shape())}
                     private[node] = workshop.credential_identity(key)
                 else:
