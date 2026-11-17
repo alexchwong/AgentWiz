@@ -43,7 +43,14 @@
       "contains": [
        "blue"
       ]
-     }
+     },
+     "documents": [
+      {
+       "name": "distractor.txt",
+       "text": "This document is unrelated to the question.",
+       "local_only": false
+      }
+     ]
     }
    ]
   },
@@ -293,7 +300,7 @@
    },
    {
     "id": "gate-table",
-    "message": "Read scores.csv with read_table, then sort its rows by score with the Sort and dedupe rows block, dropping repeated names. Who is first?",
+    "message": "Read scores.csv with read_table, then use the Sort and dedupe rows block to sort ascending with score as both the sort and deduplication key. Who is first?",
     "capabilities": [
      "aw_read_table",
      "library:sort_and_dedupe_rows",

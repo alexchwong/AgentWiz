@@ -1113,7 +1113,9 @@ generation's captured definition. Nothing is inlined silently.
 Examples contain id/version/label, named input source texts, expectation,
 origin/verified and optional held_out. An expectation is `whole_output` with a
 `values` map, `fields` with path-segment `assertions`, or `review` with a criterion.
-Assertions distinguish equals, absent, present and null. Edits invalidate
+Assertions distinguish equals, absent, present and null. Field assertions decode JSON outputs;
+an empty path on a Text output compares its literal string against the JSON-encoded expected
+value. Non-empty paths into Text outputs are refused during validation. Edits invalidate
 verification. Batch requests may supply a frozen example list, or
 `example_selection:{key,revision,ids}` to bind current saved versions. Candidates
 must expose the same interface and use identical frozen examples. The coordinator
@@ -1612,3 +1614,20 @@ data. It is intended for disposable workspaces, not personal sessions. `workshop
 is likewise an explicit attached-service diagnostic; its offline fixture mode needs no user setup.
 The installed smoke script owns a temporary working directory even when invoked directly, so its
 normal-default-path checks cannot overwrite a caller's application configuration.
+
+### Evaluation checkpoints and diagnostics
+
+The two non-shipped runners share `scripts/eval_reports.py` for atomic mode-0600 report publication,
+credential redaction and safe exception locations. Both retain completed cases and the active case
+before/after each execution. `execution` is `running`, `complete`, `interrupted` or `blocked`;
+`--review` cannot turn an interrupted/running library report into qualification. Reports have no
+automatic resume or merging. Existing format-2 library reports remain reviewable.
+
+Library fixtures are checked against their declared contracts and shared Workshop expectation
+validator before model requests. Per-case scoring errors are `evaluator_error`, retain outputs and
+attempt diagnostics, and cannot count as model failures or successful qualification. Shared auth or
+configuration failures stop further calls. Contract and correctness thresholds remain unchanged.
+Chat reports retain synthetic answers and live argument/result traces, separate cohort/gate verdicts,
+status counts and unjudged counts for each rate. Overall success cannot hide a blocked cohort behind
+a passing gate. The table fixture uses the packaged block's ascending text sort with `score` as the
+sort/deduplication key; fixed two-digit scores give the same order as numeric sorting.

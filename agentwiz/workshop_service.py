@@ -145,7 +145,10 @@ def judgement(outputs, expectation, verified):
             ok = ok and exact_equal(actual, expected)
     elif expectation.get('kind') == 'fields':
         for item in expectation['assertions']:
-            current = jsonio.decode_exact(outputs[item['output']]['text'])
+            output = outputs.get(item['output'])
+            if output is None:
+                return 'incorrect'
+            current = output['text'] if output['format'] == 'text' else jsonio.decode_exact(output['text'])
             present = True
             for segment in item['path']:
                 if isinstance(current, dict) and segment in current:
@@ -168,6 +171,35 @@ def judgement(outputs, expectation, verified):
     else:
         return 'unknown'
     return 'correct' if ok else 'incorrect'
+
+
+def validate_expectation(e, outputs):
+    """Validate saved and evaluation expectations against the same output interface."""
+    if not isinstance(e, dict) or e.get('kind') not in ('whole_output', 'fields', 'review', 'text'):
+        fail()
+    if e['kind'] == 'whole_output':
+        if set(e) != {'kind', 'values'} or set(e['values']) != set(outputs) or not all(isinstance(t, str) for t in e['values'].values()):
+            fail()
+    elif e['kind'] == 'fields':
+        if set(e) != {'kind', 'assertions'} or not isinstance(e['assertions'], list):
+            fail()
+        for index, row in enumerate(e['assertions']):
+            if not isinstance(row, dict) or set(row) - {'output', 'path', 'operation', 'value_text'} or row.get('output') not in outputs or row.get('operation') not in ('equals', 'absent', 'present', 'null') or not isinstance(row.get('path'), list):
+                fail()
+            if any(type(s) not in (str, int) for s in row['path']):
+                fail()
+            contract = getattr(outputs[row['output']], 'parsed', outputs[row['output']])
+            if contract.format == 'text' and row['path']:
+                fail('example_incompatible', 400, [{'location': f'expectation.assertions[{index}].path',
+                                                 'message': 'Text outputs require an empty path'}])
+            if row['operation'] == 'equals':
+                if not isinstance(row.get('value_text'), str):
+                    fail()
+                jsonio.decode_exact(row['value_text'])
+    elif e['kind'] == 'text':
+        validate_text_expectation(e, outputs)
+    elif set(e) != {'kind', 'criterion'} or not isinstance(e['criterion'], str):
+        fail()
 
 
 TEXT_OPERATIONS = {'includes': {'output', 'operation', 'values', 'case'},
@@ -576,25 +608,9 @@ class Service:
                 fail()
             self.input_shape(block, ex.get('inputs'))
             e = ex.get('expectation')
-            if not isinstance(e, dict) or e.get('kind') not in ('whole_output', 'fields', 'review', 'text') or type(ex.get('verified', False)) is not bool:
+            if type(ex.get('verified', False)) is not bool:
                 fail()
-            if e['kind'] == 'whole_output':
-                if set(e) != {'kind', 'values'} or set(e['values']) != {d.name for d in block.outputs} or not all(isinstance(t, str) for t in e['values'].values()):
-                    fail()
-            elif e['kind'] == 'fields':
-                if set(e) != {'kind', 'assertions'} or not isinstance(e['assertions'], list):
-                    fail()
-                for row in e['assertions']:
-                    if set(row) - {'output', 'path', 'operation', 'value_text'} or row.get('output') not in block.contracts['outputs'] or row.get('operation') not in ('equals', 'absent', 'present', 'null') or not isinstance(row.get('path'), list):
-                        fail()
-                    if any(type(s) not in (str, int) for s in row['path']):
-                        fail()
-                    if row['operation'] == 'equals':
-                        jsonio.decode_exact(row['value_text'])
-            elif e['kind'] == 'text':
-                validate_text_expectation(e, block.contracts['outputs'])
-            elif set(e) != {'kind', 'criterion'} or not isinstance(e['criterion'], str):
-                fail()
+            validate_expectation(e, block.contracts['outputs'])
 
     def labelled_pairs(self, key):
         """(retained revision ID, input name) for every input labelled Local only in a retained v4 revision."""

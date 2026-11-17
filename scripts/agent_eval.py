@@ -52,6 +52,7 @@ import urllib.request
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import eval_setup
+import eval_reports
 
 
 class EvaluationBlocked(Exception):
@@ -133,12 +134,17 @@ def run_case(client: Client, case: dict, timeout: float, target: dict | None = N
         final = next((e for e in events if e.get("type") == "final"), None)
         if final is None:
             row["error"] = "the stream ended without a final event"
-            return row
+            raise EvaluationBlocked(row["error"])
         view = final.get("view", {})
+        row.update(eval_reports.safe({"answer": final.get("answer"), "trace": view.get("trace", [])}, client))
         row["routing"] = view.get("routing")
         row["served_by"] = view.get("served_provider")
         row["transport_ok"] = final["stop_reason"] not in ("model_error", "busy", "internal_error")
         row["stop_reason"] = final["stop_reason"]
+        detail = view.get('stop_detail') or ''
+        row['shared_target_unavailable'] = (final['stop_reason'] == 'configuration_changed' or
+            any(detail.startswith(name + ':') for name in
+                ('AuthError', 'ConfigError', 'UnsupportedSetting', 'UnsupportedOperation', 'DestinationRefused')))
         trace = view.get("trace", [])
         if trace:
             first = trace[0]
@@ -154,15 +160,17 @@ def run_case(client: Client, case: dict, timeout: float, target: dict | None = N
     except EvaluationBlocked as exc:
         row["error"] = str(exc)
     except urllib.error.HTTPError as exc:
+        row["shared_target_unavailable"] = exc.code in (401, 403)
         try:
             row["error"] = json.loads(exc.read()).get("code") or f"HTTP {exc.code}"
         except ValueError:
             row["error"] = f"HTTP {exc.code}"
-    except (urllib.error.URLError, OSError, KeyError, ValueError) as exc:
+    except Exception as exc:
         row["error"] = type(exc).__name__
+        row["diagnostic"] = eval_reports.error(exc, "case")
     finally:
         row["seconds"] = round(time.monotonic() - started, 2)
-    return row
+    return eval_reports.safe(row, client)
 
 
 # --- cohorts (starter blocks addendum, 7.2) -----------------------------------------------------------------------------
@@ -249,14 +257,21 @@ def run_cohort_case(client: Client, case: dict, names: list[str], blocks: dict, 
         finals = [e for e in events if e.get("type") == "final"]
         if len(finals) != 1:
             row["error"] = "the stream did not return exactly one final event"
-            return row
+            raise EvaluationBlocked(row["error"])
         final = finals[0]
         view = final["view"]
+        row.update(eval_reports.safe({"answer": final.get("answer"), "trace": view.get("trace", []),
+                                      "stop_detail": view.get("stop_detail"), "counters": view.get("counters"),
+                                      "usage": view.get("usage")}, client))
         row["routing"] = view.get("routing")
         row["served_by"] = view.get("served_provider")
         trace = view["trace"]
         row["transport_ok"] = final["stop_reason"] not in ("model_error", "busy", "internal_error", "configuration_changed")
         row["stop_reason"] = final["stop_reason"]
+        detail = view.get('stop_detail') or ''
+        row['shared_target_unavailable'] = (final['stop_reason'] == 'configuration_changed' or
+            any(detail.startswith(name + ':') for name in
+                ('AuthError', 'ConfigError', 'UnsupportedSetting', 'UnsupportedOperation', 'DestinationRefused')))
         used = [t.get("capability") for t in trace]
         row["capabilities_used"] = used
         expected = [mapping.get(n, n) for n in case.get("expected_capabilities", [])]
@@ -279,43 +294,95 @@ def run_cohort_case(client: Client, case: dict, names: list[str], blocks: dict, 
     except EvaluationBlocked as exc:
         row["error"] = str(exc)
     except urllib.error.HTTPError as exc:
+        row["shared_target_unavailable"] = exc.code in (401, 403)
         try:
             row["error"] = json.loads(exc.read()).get("code") or f"HTTP {exc.code}"
         except ValueError:
             row["error"] = f"HTTP {exc.code}"
-    except (urllib.error.URLError, OSError, KeyError, ValueError) as exc:
+    except Exception as exc:
         row["error"] = type(exc).__name__
+        row["diagnostic"] = eval_reports.error(exc, "case")
     finally:
         row["seconds"] = round(time.monotonic() - started, 2)
-    return row
+    return eval_reports.safe(row, client)
 
 
 def rates(rows: list[dict]) -> dict:
     def rate(key):
         judged = [r[key] for r in rows if r[key] is not None]
-        return {"passed": sum(1 for v in judged if v), "judged": len(judged)}
+        return {"passed": sum(1 for v in judged if v), "judged": len(judged), "unjudged": len(rows) - len(judged)}
     return {"correct_choice": rate("correct_choice"), "valid_arguments": rate("valid_arguments"),
             "result_used": rate("result_used")}
 
 
-def run_cohorts(client: Client, spec: dict, timeout: float, target: dict) -> dict:
-    cohorts, gate = spec.get("cohorts", []), spec.get("gate", {}).get("cases", [])
-    every = {n for c in cohorts for n in c["capabilities"]} | {n for case in gate for n in case["capabilities"]}
-    blocks = install_entries(client, sorted(n[len("library:"):] for n in every if n.startswith("library:")))
-    out = {"cohorts": [], "gate": None}
+def validate_cohorts(spec):
+    """Refuse malformed fixture structure before installing entries or sending model requests."""
+    ids = set()
+    groups = [(cohort['capabilities'], cohort['cases']) for cohort in spec.get('cohorts', [])]
+    groups += [(case['capabilities'], [case]) for case in spec.get('gate', {}).get('cases', [])]
+    for names, cases in groups:
+        if len(names) > COHORT_LIMIT or len(set(names)) != len(names):
+            raise EvaluationBlocked('invalid cohort capability list')
+        for case in cases:
+            if not isinstance(case.get('id'), str) or case['id'] in ids:
+                raise EvaluationBlocked('missing or duplicate case id')
+            ids.add(case['id'])
+            if not isinstance(case.get('message'), str) or not case['message'].strip():
+                raise EvaluationBlocked(f"{case['id']}: message is required")
+            if not set(case.get('expected_capabilities', [])) <= set(names):
+                raise EvaluationBlocked(f"{case['id']}: expected capability is not offered")
+            if any(name in names for name in ('aw_read_document', 'aw_search_documents', 'aw_read_table')) and not case.get('documents'):
+                raise EvaluationBlocked(f"{case['id']}: document tools need a staged document")
+
+
+def run_cohorts(client: Client, spec: dict, timeout: float, target: dict, report=None, report_path=None) -> dict:
+    out = report if report is not None else {}
+    out.update(cohorts=[], gate=None, execution='running', verdict='incomplete')
+    def save():
+        rows = [row for cohort in out['cohorts'] for row in cohort['cases']]
+        out['rates'] = rates(rows)
+        out['counts'] = eval_reports.counts(rows)
+        eval_reports.checkpoint(report_path, out, client)
+    out['active'] = {'stage': 'preflight'}
+    save()
+    validate_cohorts(spec)
+    cohorts, gate = spec.get('cohorts', []), spec.get('gate', {}).get('cases', [])
+    every = {n for c in cohorts for n in c['capabilities']} | {n for case in gate for n in case['capabilities']}
+    out['active'] = {'stage': 'setup'}
+    save()
+    blocks = install_entries(client, sorted(n[len('library:'):] for n in every if n.startswith('library:')))
+    out['installed'] = blocks
+    def run(case, names):
+        out['active'] = {'case': case['id'], 'stage': 'run'}
+        save()
+        return run_cohort_case(client, case, names, blocks, timeout, target)
     for cohort in cohorts:
-        rows = [run_cohort_case(client, case, cohort["capabilities"], blocks, timeout, target) for case in cohort["cases"]]
-        out["cohorts"].append({"id": cohort["id"], "target": cohort.get("target"), "cases": rows, "rates": rates(rows)})
+        group = {'id': cohort['id'], 'target': cohort.get('target'), 'cases': []}
+        out['cohorts'].append(group)
+        for case in cohort['cases']:
+            group['cases'].append(run(case, cohort['capabilities']))
+            group.update(rates=rates(group['cases']), counts=eval_reports.counts(group['cases']),
+                         verdict=eval_reports.verdict(group['cases']))
+            save()
+            if group['cases'][-1].get('shared_target_unavailable'):
+                raise EvaluationBlocked('shared target authentication or configuration failed')
     if gate:
-        rows = [run_cohort_case(client, case, case["capabilities"], blocks, timeout, target) for case in gate]
-        verdicts = {r["verdict"] for r in rows}
-        verdict = "failed" if "failed" in verdicts else "blocked" if "blocked" in verdicts else "passed"
-        passed = verdict == "passed"
-        out["gate"] = {"cases": rows, "passed": passed, "verdict": verdict,
-                       "consequence": None if passed else ("Describe the library blocks for Workshop and workflows only; "
-                                                           "report Chat as untested.")}
-    out["rates"] = rates([r for c in out["cohorts"] for r in c["cases"]])
-    out["installed"] = blocks
+        result = {'cases': [], 'passed': False, 'verdict': 'incomplete'}
+        out['gate'] = result
+        for case in gate:
+            result['cases'].append(run(case, case['capabilities']))
+            result['counts'] = eval_reports.counts(result['cases'])
+            save()
+            if result['cases'][-1].get('shared_target_unavailable'):
+                raise EvaluationBlocked('shared target authentication or configuration failed')
+        verdict = eval_reports.verdict(result['cases'])
+        result.update(verdict=verdict, passed=verdict == 'passed',
+                      consequence=None if verdict == 'passed' else
+                      'Describe the library blocks for Workshop and workflows only; report Chat as unqualified.')
+    out['cohorts_verdict'] = eval_reports.verdict([r for c in out['cohorts'] for r in c['cases']])
+    rows = [r for c in out['cohorts'] for r in c['cases']] + (out['gate']['cases'] if out['gate'] else [])
+    out.update(execution='complete', active=None, verdict=eval_reports.verdict(rows))
+    save()
     return out
 
 
@@ -339,6 +406,8 @@ def main(argv=None) -> int:
     if not args.url and not (args.profile or args.route):
         parser.error("disposable evaluation requires --route or --profile")
     report = {"chat_template": args.chat_template, "route": {"kind": args.route}}
+    report.update(execution="running", verdict="incomplete")
+    eval_reports.checkpoint(args.report, report)
     stack = ExitStack()
     try:
         if args.url:
@@ -348,6 +417,7 @@ def main(argv=None) -> int:
             profile = args.profile or args.route + "-eval"
             ui = stack.enter_context(eval_setup.session(workdir, profile, args.route, args.profiles_dir, args.config))
             client = Client(ui.url)
+            client.ui = ui
             eval_setup.select_chat(client, profile)
         state = client.json("/api/state")
         target = model_target(state)
@@ -357,14 +427,18 @@ def main(argv=None) -> int:
             raise EvaluationBlocked(f"Chat uses {target['kind']}; expected {args.route}")
         check_target(state, target, require_fast=bool(args.cohorts))
         exit_code = evaluate(client, target, args, report)
-    except (EvaluationBlocked, eval_setup.SetupBlocked, OSError, ValueError) as exc:
-        report.update(verdict="blocked", reason=str(exc) if isinstance(exc, (EvaluationBlocked, eval_setup.SetupBlocked)) else type(exc).__name__)
+    except KeyboardInterrupt:
+        report.update(execution='interrupted', verdict='incomplete', reason='interrupted')
+        exit_code = 3
+    except Exception as exc:
+        report.update(execution='blocked', verdict='blocked',
+                      reason=str(exc) if isinstance(exc, (EvaluationBlocked, eval_setup.SetupBlocked)) else type(exc).__name__,
+                      diagnostic=eval_reports.error(exc, (report.get('active') or {}).get('stage', 'setup')))
         exit_code = 2
     finally:
+        # Save before cleanup: shutdown failure must not erase completed case evidence.
+        eval_reports.checkpoint(args.report, report, locals().get('client'))
         stack.close()
-    args.report.parent.mkdir(parents=True, exist_ok=True)
-    with open(args.report, "w", encoding="utf-8") as fh:
-        json.dump(report, fh, indent=2, ensure_ascii=False)
     print(json.dumps({k: report[k] for k in ("verdict", "reason", "rates", "totals") if k in report}))
     return exit_code
 
@@ -373,17 +447,25 @@ def evaluate(client: Client, target: dict, args, report: dict) -> int:
     if args.cohorts:
         with open(args.cohorts, encoding="utf-8") as fh:
             spec = json.load(fh)
-        report.update(run_cohorts(client, spec, args.timeout, target))
-        report["verdict"] = report["gate"]["verdict"] if report["gate"] else "incomplete"
+        run_cohorts(client, spec, args.timeout, target, report=report, report_path=args.report)
         return {"passed": 0, "failed": 1, "blocked": 2, "incomplete": 3}[report["verdict"]]
     with open(args.cases, encoding="utf-8") as fh:
         cases = json.load(fh)
-    rows = [run_case(client, case, args.timeout, target) for case in cases]
+    rows = []
+    report['cases'] = rows
+    for case in cases:
+        report['active'] = {'case': case['id'], 'stage': 'run'}
+        eval_reports.checkpoint(args.report, report, client)
+        rows.append(run_case(client, case, args.timeout, target))
+        eval_reports.checkpoint(args.report, report, client)
+        if rows[-1].get('shared_target_unavailable'):
+            raise EvaluationBlocked('shared target authentication or configuration failed')
     counted = lambda key: sum(1 for r in rows if r[key] is True)
     report.update(cases=rows, totals={"cases": len(rows), "transport_ok": counted("transport_ok"),
                                     "first_arguments_valid": counted("first_arguments_valid"),
                                     "first_choice_correct": counted("first_choice_correct"),
                                     "answer_correct": counted("answer_correct")},
+                  execution="complete", active=None, verdict="reported",
                   note="Custom cases report results without applying a release threshold.")
     return 0
 

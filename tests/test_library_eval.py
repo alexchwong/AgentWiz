@@ -254,9 +254,9 @@ def test_cohort_install_and_resolution_by_block_identity(ui):
     assert mapping["library:classify_text"].startswith("block_classify_text_") and mapping["aw_calculate"] == "aw_calculate"
     assert chosen[0]["revision"]
     rows = [{"correct_choice": True, "valid_arguments": None, "result_used": False}]
-    assert agent_eval.rates(rows) == {"correct_choice": {"passed": 1, "judged": 1},
-                                      "valid_arguments": {"passed": 0, "judged": 0},
-                                      "result_used": {"passed": 0, "judged": 1}}
+    assert agent_eval.rates(rows) == {"correct_choice": {"passed": 1, "judged": 1, "unjudged": 0},
+                                      "valid_arguments": {"passed": 0, "judged": 0, "unjudged": 1},
+                                      "result_used": {"passed": 0, "judged": 1, "unjudged": 0}}
 
 
 @pytest.mark.parametrize("finish,expression,verdict", [("stop", "2+2", "passed"), ("length", "2+2", "failed"),
@@ -377,3 +377,205 @@ def test_invalid_live_endpoint_blocks_without_requests(tmp_path, monkeypatch):
                               "--report", str(report)]) == 2
     data = json.loads(report.read_text())
     assert data["verdict"] == "blocked" and data["blocks"] == {}
+
+
+# These regressions prevent paid qualification runs losing evidence or mis-scoring Text ports.
+@pytest.mark.parametrize('route', ['openai_compat', 'lmstudio', 'openrouter'])
+def test_missing_source_text_assertion_scores_the_real_heldout_case(ui, server, route):
+    save_profile(ui, 'target', model='m', kind=route, base_url=server.url + '/v1',
+                 provider='deepinfra/turbo' if route == 'openrouter' else '', api_key='test-key')
+    case = next(c for c in cases('answer_from_source') if c['id'] == 'answer_from_source-9')
+    output = dict(found=False, answer='Not found in the source.', quotes=[])
+    server.reply(responses_answer(json.dumps(output)) if route == 'lmstudio' else block_answer(**output))
+    report = run(ui, route=route, blocks=['answer_from_source'], which='all',
+                 case_filter=lambda key, c: c['id'] == case['id'])
+    row = report['blocks']['answer_from_source']['runs'][0]
+    assert row['outcome'] == 'correct' and row['judgement'] == 'correct'
+    assert row['outputs']['answer']['text'] == output['answer']
+    assert row['attempts'] and row['owner_mark'] is None
+
+
+def test_wrong_literal_text_is_incorrect_and_text_paths_are_refused(ui, server, monkeypatch):
+    target(ui, server)
+    server.reply(block_answer(found=False, answer='No manager is named.', quotes=[]))
+    report = run(ui, blocks=['answer_from_source'], which='all',
+                 case_filter=lambda key, c: c['id'] == 'answer_from_source-9')
+    assert report['blocks']['answer_from_source']['runs'][0]['outcome'] == 'incorrect'
+    fixture = library_eval.load_cases('answer_from_source')
+    fixture['cases'][8]['expectation']['assertions'][1]['path'] = ['invalid']
+    monkeypatch.setattr(library_eval, 'load_cases', lambda key: fixture)
+    with pytest.raises(library_eval.Refused, match='answer_from_source-9.*expectation'):
+        library_eval.preflight(['answer_from_source'], 'all')
+
+
+def test_fixture_input_failure_is_found_before_any_model_call(ui, server, monkeypatch):
+    target(ui, server)
+    fixture = library_eval.load_cases('classify_text')
+    fixture['cases'][0]['inputs']['labels'] = 'not json'
+    monkeypatch.setattr(library_eval, 'load_cases', lambda key: fixture)
+    with pytest.raises(library_eval.Refused, match='inputs.labels'):
+        run(ui)
+    assert server.requests == []
+
+
+def test_scoring_error_preserves_outputs_checkpoints_and_later_cases(ui, server, tmp_path, monkeypatch):
+    from agentwiz import workshop_service
+    target(ui, server)
+    fixture = [c for c in cases('classify_text') if 'stub' in c]
+    server.reply(*(block_answer(**c['stub']) for c in fixture))
+    original = workshop_service.judgement
+    calls = []
+    def score(*args):
+        calls.append(1)
+        if len(calls) == 2:
+            raise ValueError('private-exception-body')
+        return original(*args)
+    monkeypatch.setattr(workshop_service, 'judgement', score)
+    path = tmp_path / 'nested' / 'report.json'
+    report = run(ui, report_path=path)
+    rows = report['blocks']['classify_text']['runs']
+    assert [row['outcome'] for row in rows] == ['correct', 'evaluator_error', 'correct']
+    assert rows[1]['outputs'] and rows[1]['attempts'] and rows[1]['diagnostic']['stage'] == 'scoring'
+    assert report['verdict'] == 'blocked'
+    saved = json.loads(path.read_text())
+    assert saved['blocks']['classify_text']['runs'] == rows
+    assert 'private-exception-body' not in path.read_text()
+
+
+def test_cli_interruption_keeps_partial_report_and_review_cannot_pass_it(tmp_path, monkeypatch, server):
+    monkeypatch.setenv('AGENTWIZ_LIVE_LMSTUDIO_URL', server.url + '/v1')
+    fixture = library_eval.load_cases('classify_text')
+    fixture['cases'] = [c for c in fixture['cases'] if 'stub' in c]
+    monkeypatch.setattr(library_eval, 'load_cases', lambda key: fixture)
+    server.reply(responses_answer(json.dumps(fixture['cases'][0]['stub'])))
+    original = library_eval.run_case
+    calls = []
+    def interrupt(*args):
+        calls.append(1)
+        if len(calls) == 2:
+            raise KeyboardInterrupt()
+        return original(*args)
+    monkeypatch.setattr(library_eval, 'run_case', interrupt)
+    path = tmp_path / 'partial.json'
+    assert library_eval.main(['--route', 'lmstudio', '--profile', 'lmstudio-eval', '--block', 'classify_text',
+                              '--report', str(path)]) == 3
+    data = json.loads(path.read_text())
+    assert data['execution'] == 'interrupted' and data['active']['case'] == fixture['cases'][1]['id']
+    assert len(data['blocks']['classify_text']['runs']) == 1
+    assert library_eval.main(['--review', str(path)]) == 3
+
+
+def test_no_tool_cohort_offers_its_real_document_distractors(ui, server):
+    configure(ui, server, model='m')
+    save_profile(ui, 'target', model='m', kind='openai_compat', base_url=server.url + '/v1', provider='')
+    save_roles(ui, {'fast': 'target'})
+    client = agent_eval.Client(ui.url)
+    cohort = COHORTS['cohorts'][0]
+    case = next(c for c in cohort['cases'] if c['id'] == 'summarise-none')
+    server.reply(text_turn('blue'))
+    spec = {'cohorts': [{**cohort, 'cases': [case]}]}
+    result = agent_eval.run_cohorts(client, spec, 5, agent_eval.model_target(client.json('/api/state')))
+    assert result['cohorts'][0]['cases'][0]['verdict'] == 'passed'
+    assert result['counts'] == {'passed': 1, 'failed': 0, 'blocked': 0}
+    assert result['cohorts'][0]['cases'][0]['trace'] == []
+
+
+def test_chat_failure_keeps_invalid_arguments_and_checkpoint(ui, server, tmp_path):
+    configure(ui, server, model='m')
+    save_profile(ui, 'target', model='m', kind='openai_compat', base_url=server.url + '/v1', provider='')
+    save_roles(ui, {'fast': 'target'})
+    client = agent_eval.Client(ui.url)
+    server.reply(tool_call('aw_calculate', {'expression': []}), text_turn('4'))
+    case = {'id': 'bad', 'message': 'Calculate 2+2.', 'capabilities': ['aw_calculate'],
+            'expected_capabilities': ['aw_calculate'], 'expected_answer': {'equals': '4'}}
+    path = tmp_path / 'chat.json'
+    result = agent_eval.run_cohorts(client, {'gate': {'cases': [case]}}, 5,
+                                   agent_eval.model_target(client.json('/api/state')), report_path=path)
+    row = result['gate']['cases'][0]
+    assert row['verdict'] == 'failed' and row['answer'] == '4'
+    assert row['trace'][0]['code'] == 'schema_mismatch'
+    assert 'expression' in row['trace'][0]['arguments_text']
+    assert json.loads(path.read_text())['gate']['cases'][0] == row
+
+
+def test_passing_chat_gate_does_not_hide_a_blocked_cohort(ui, server, monkeypatch):
+    configure(ui, server, model='m')
+    save_profile(ui, 'target', model='m', kind='openai_compat', base_url=server.url + '/v1', provider='')
+    save_roles(ui, {'fast': 'target'})
+    client = agent_eval.Client(ui.url)
+    case = {'id': 'answer', 'message': 'Say 4', 'capabilities': ['aw_calculate'],
+            'expected_capabilities': [], 'expected_answer': {'equals': '4'}}
+    original = agent_eval.run_cohort_case
+    def blocked(client, case, *args):
+        if case['id'] == 'blocked':
+            return {'id': case['id'], 'verdict': 'blocked', 'correct_choice': None,
+                    'valid_arguments': None, 'result_used': None}
+        return original(client, case, *args)
+    monkeypatch.setattr(agent_eval, 'run_cohort_case', blocked)
+    server.reply(text_turn('4'))
+    spec = {'cohorts': [{'id': 'cohort', 'capabilities': ['aw_calculate'], 'cases': [{**case, 'id': 'blocked'}]}],
+            'gate': {'cases': [case]}}
+    result = agent_eval.run_cohorts(client, spec, 5, agent_eval.model_target(client.json('/api/state')))
+    assert result['gate']['passed'] is True
+    assert result['cohorts_verdict'] == result['verdict'] == 'blocked'
+    assert result['rates']['correct_choice']['unjudged'] == 1
+
+
+def test_real_table_gate_reads_then_sorts_through_the_installed_block(ui, server, monkeypatch):
+    configure(ui, server, model='m')
+    save_profile(ui, 'target', model='m', kind='openai_compat', base_url=server.url + '/v1', provider='')
+    save_roles(ui, {'fast': 'target'})
+    client = agent_eval.Client(ui.url)
+    case = next(c for c in COHORTS['gate']['cases'] if c['id'] == 'gate-table')
+    original = agent_eval.resolve
+    def prepare_replies(names, inventory, blocks):
+        chosen, mapping = original(names, inventory, blocks)
+        document = client.json('/api/agent/conversation')['conversation']['documents'][0]['id']
+        server.reply(tool_call('aw_read_table', {'document_id': document, 'max_rows': 10}),
+                     tool_call(mapping['library:sort_and_dedupe_rows'], {
+                         'columns': ['name', 'team', 'score'],
+                         'rows': [['Asha', 'blue', '71'], ['Ben', 'red', '64'], ['Asha', 'blue', '71'],
+                                  ['Cara', 'red', '88'], ['Dev', 'blue', '59']], 'by': ['score']}, 'c2'),
+                     text_turn('Dev is first.'))
+        return chosen, mapping
+    monkeypatch.setattr(agent_eval, 'resolve', prepare_replies)
+    report = agent_eval.run_cohorts(client, {'gate': {'cases': [case]}}, 5,
+                                   agent_eval.model_target(client.json('/api/state')))
+    row = report['gate']['cases'][0]
+    assert row['verdict'] == 'passed', row
+    sorted_result = json.loads(row['trace'][1]['result_text'])['result']['out']
+    assert sorted_result['rows'][0][0] == 'Dev' and sorted_result['removed'] == 1
+
+
+def test_all_selected_library_fixtures_pass_preflight_without_model_calls():
+    selected = library_eval.preflight(MODELS, 'all')
+    assert len(selected) == len(MODELS)
+
+
+def test_chat_cli_interruption_preserves_completed_custom_cases(tmp_path, monkeypatch, server):
+    monkeypatch.setenv('AGENTWIZ_LIVE_LMSTUDIO_URL', server.url + '/v1')
+    cases_path = tmp_path / 'cases.json'
+    cases_path.write_text(json.dumps([{'id': str(i), 'message': 'Say pong', 'capabilities': [],
+                                      'expected_answer': {'equals': 'pong'}} for i in range(2)]))
+    server.reply(responses_answer('pong'))
+    original = agent_eval.run_case
+    def interrupt(client, case, *args):
+        if case['id'] == '1':
+            raise KeyboardInterrupt()
+        return original(client, case, *args)
+    monkeypatch.setattr(agent_eval, 'run_case', interrupt)
+    path = tmp_path / 'chat.json'
+    assert agent_eval.main(['--route', 'lmstudio', '--cases', str(cases_path), '--report', str(path)]) == 3
+    data = json.loads(path.read_text())
+    assert data['execution'] == 'interrupted' and data['verdict'] == 'incomplete'
+    assert data['cases'][0]['answer'] == 'pong' and data['active']['case'] == '1'
+
+
+def test_shared_auth_failure_stops_library_without_discarding_attempt(ui, server):
+    target(ui, server)
+    server.reply(Reply(status=401, body=b'{}'))
+    report = run(ui)
+    rows = report['blocks']['classify_text']['runs']
+    assert len(rows) == 1 and rows[0]['model_error']['class'] == 'AuthError'
+    assert rows[0]['attempts'] and report['execution'] == report['verdict'] == 'blocked'
+    assert len(server.requests) == 1

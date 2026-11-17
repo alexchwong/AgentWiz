@@ -42,6 +42,7 @@ CASES = ROOT / "tests" / "library_eval"
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 import eval_setup
+import eval_reports
 sys.path.insert(0, str(CASES))
 
 import checks  # noqa: E402  (tests/library_eval/checks.py)
@@ -65,7 +66,7 @@ class Client:
         try:
             return self.opener.open(req, timeout=self.timeout if timeout is None else timeout)
         except urllib.error.HTTPError as exc:
-            raise Refused(f"{path}: HTTP {exc.code} {exc.read()[:500].decode('utf-8', 'replace')}") from None
+            raise Refused(f"{path}: HTTP {exc.code}") from None
 
     def json(self, path, body=None):
         with self.call(path, body) as resp:
@@ -94,6 +95,58 @@ def roles_of(key: str) -> list[str]:
 def select(cases: list[dict], which: str) -> list[dict]:
     wanted = {"dev": {"dev"}, "heldout": {"heldout"}, "all": {"dev", "heldout"}}[which]
     return [c for c in cases if c.get("set") in wanted]
+
+
+def preflight(blocks, which, case_filter=None):
+    """Validate selected synthetic fixtures before contacting any model."""
+    from agentwiz import checks as validation, library_install as lib
+    from agentwiz.workshop_service import validate_expectation
+    from agentwiz.workshop import WorkshopError
+
+    selected = {}
+    for key in blocks:
+        data = load_cases(key)
+        inputs = {name: validation.parse_contract(port['contract'])
+                  for name, port in lib.entry(key).definition['inputs'].items()}
+        outputs = {name: validation.parse_contract(port['contract'])
+                   for name, port in lib.entry(key).definition['outputs'].items()}
+        ids = set()
+        cases = select(data['cases'], which)
+        cases = [case for case in cases if case_filter is None or case_filter(key, case)]
+        if not cases:
+            raise Refused(f'{key}: no selected cases')
+        for case in cases:
+            location = f"{key}/{case.get('id', '<missing>')}"
+            stage = 'id'
+            try:
+                if not isinstance(case['id'], str) or case['id'] in ids:
+                    raise ValueError()
+                ids.add(case['id'])
+                stage = 'inputs'
+                if set(case['inputs']) != set(inputs):
+                    raise ValueError()
+                for name, contract in inputs.items():
+                    stage = f'inputs.{name}'
+                    if not isinstance(case['inputs'][name], str) or validation.check_answer(
+                            contract, case['inputs'][name])['overall'] != 'pass':
+                        raise ValueError()
+                stage = 'expectation'
+                expectation = case['expectation']
+                if expectation.get('kind') == 'fields':
+                    for index, assertion in enumerate(expectation.get('assertions', [])):
+                        stage = f'expectation.assertions[{index}]'
+                        validate_expectation({'kind': 'fields', 'assertions': [assertion]}, outputs)
+                stage = 'expectation'
+                validate_expectation(expectation, outputs)
+                if case['expectation']['kind'] == 'whole_output':
+                    for name, text in case['expectation']['values'].items():
+                        stage = f'expectation.values.{name}'
+                        if validation.check_answer(outputs[name], text)['overall'] != 'pass':
+                            raise ValueError()
+            except (ValueError, KeyError, TypeError, AttributeError, WorkshopError):
+                raise Refused(f'{location}: invalid fixture at {stage}') from None
+        selected[key] = (data, cases)
+    return selected
 
 
 # --- set-up ------------------------------------------------------------------------------------------------------------
@@ -264,7 +317,14 @@ def run_case(client: Client, key: str, case: dict, destination: dict) -> dict:
         record["provider"] != destination["provider"] for record in records
     ):
         return {"outcome": "blocked", "failure_reason": "attempt_destination_unverified", "seconds": seconds}
-    row = classify(result, records, case["expectation"], key, case["inputs"])
+    try:
+        row = classify(result, records, case["expectation"], key, case["inputs"])
+    except Exception as exc:
+        row = {"outcome": "evaluator_error", "failure_reason": type(exc).__name__,
+               "diagnostic": eval_reports.error(exc, "scoring")}
+    row.update(eval_reports.safe({"inputs": case["inputs"], "expectation": case["expectation"],
+                                 "outputs": result.get("outputs"), "result": result,
+                                 "attempts": records}, client))
     if case.get("rubric") and result.get("outcome") == "complete":
         from agentwiz.history import redact
 
@@ -278,7 +338,7 @@ def run_case(client: Client, key: str, case: dict, destination: dict) -> dict:
                 "routing": records[-1].get("routing") if records else None,
                 "task": records[-1].get("task") if records else None,
                 **usage_of(records), "seconds": seconds})
-    return row
+    return eval_reports.safe(row, client)
 
 
 # --- the bar ---------------------------------------------------------------------------------------------------------
@@ -289,7 +349,9 @@ def bar(runs: list[dict], cases: list[dict], trials: int) -> dict:
     critical = {c["id"] for c in cases if c.get("critical")}
     critical_ok = all(r["outcome"] == "correct" for r in runs if r["case"] in critical)
     hard_ok = not any(r.get("hard_violation") for r in runs)
-    full = len(cases) == 10 and trials == 3 and len(runs) == 30
+    expected = {(case['id'], trial) for case in cases for trial in range(1, trials + 1)}
+    observed = {(row['case'], row['trial']) for row in runs}
+    full = len(cases) == 10 and trials == 3 and len(runs) == 30 and observed == expected
     return {"scheduled": scheduled, "contract_executions": executed, "correct": correct,
             "critical_all_correct": critical_ok, "hard_invariants_held": hard_ok,
             "full_qualification": full,
@@ -304,7 +366,7 @@ def update_verdict(report: dict) -> None:
         scores["rubric_pending"] = sum(mark is not True and mark is not False for mark in marks)
         if scores["hard_invariants_held"] is False or any(mark is False for mark in marks):
             block["verdict"] = "failed"
-        elif any(r["outcome"] == "blocked" for r in runs):
+        elif any(r["outcome"] in ("blocked", "evaluator_error") for r in runs):
             block["verdict"] = "blocked"
         elif not scores["full_qualification"]:
             block["verdict"] = "incomplete"
@@ -316,33 +378,60 @@ def update_verdict(report: dict) -> None:
     report["verdict"] = next((v for v in ("failed", "blocked", "incomplete", "rubric_review_pending")
                               if v in verdicts), "passed" if verdicts else "blocked")
 
+    if report.get('execution') in ('running', 'interrupted'):
+        report['verdict'] = 'incomplete'
+    elif report.get('execution') == 'blocked':
+        report['verdict'] = 'blocked'
+
 
 def evaluate(client: Client, *, profile: str, route: str | None, blocks: list[str], trials: int, which: str,
-             case_filter=None, progress=None) -> dict:
+             case_filter=None, progress=None, report=None, report_path=None) -> dict:
     import agentwiz
     import modelspell
 
+    report = report if report is not None else {}
+    report.update(format_version=2, trials=trials, set=which, execution='running', verdict='incomplete',
+                  agentwiz_version=agentwiz.__version__, modelspell_version=modelspell.__version__, blocks={})
+    def save():
+        update_verdict(report)
+        eval_reports.checkpoint(report_path, report, client)
+    report['active'] = {'stage': 'preflight'}
+    save()
+    selected = preflight(blocks, which, case_filter)
+    report['active'] = {'stage': 'setup'}
+    save()
     target = prepare(client, profile, route, blocks)
     resolved = verify_route(client, target, blocks)
-    report = {"format_version": 2, "target": target, "resolved": resolved, "trials": trials, "set": which,
-              "agentwiz_version": agentwiz.__version__, "modelspell_version": modelspell.__version__, "blocks": {}}
+    report.update(target=target, resolved=resolved)
     for key in blocks:
-        data = load_cases(key)
-        cases = [c for c in select(data["cases"], which) if case_filter is None or case_filter(key, c)]
+        data, cases = selected[key]
         runs = []
+        block = {'required_context': data.get('required_context'), 'runs': runs, 'bar': bar(runs, cases, trials)}
+        report['blocks'][key] = block
         for trial in range(1, trials + 1):
             for case in cases:
-                row = {"case": case["id"], "trial": trial, "set": case["set"], "critical": bool(case.get("critical")),
-                       **run_case(client, key, case, resolved[key])}
-                if case.get("rubric"):
-                    row["rubric"] = case["rubric"]
-                    row["owner_mark"] = None
+                report['active'] = {'block': key, 'case': case['id'], 'trial': trial, 'stage': 'run'}
+                save()
+                try:
+                    row = run_case(client, key, case, resolved[key])
+                except Exception as exc:
+                    row = {'outcome': 'evaluator_error', 'failure_reason': type(exc).__name__,
+                           'diagnostic': eval_reports.error(exc, 'run')}
+                row.update(case=case['id'], trial=trial, set=case['set'], critical=bool(case.get('critical')))
+                if case.get('rubric'):
+                    row.update(rubric=case['rubric'], owner_mark=None)
                 runs.append(row)
+                block['bar'] = bar(runs, cases, trials)
+                save()
                 if progress:
                     progress(key, row)
-        report["blocks"][key] = {"required_context": data.get("required_context"), "runs": runs,
-                                 "bar": bar(runs, cases, trials)}
-    update_verdict(report)
+                error = row.get('model_error') or {}
+                if error.get('class') in ('AuthError', 'ConfigError', 'UnsupportedSetting', 'DestinationRefused') or error.get('status') in (401, 403):
+                    report.update(execution='blocked', reason='shared_target_unavailable')
+                    save()
+                    return report
+    report.update(execution='complete', active=None)
+    save()
     return report
 
 
@@ -373,22 +462,27 @@ def main(argv=None) -> int:
     unknown = [b for b in blocks if b not in known]
     if unknown or args.trials < 1:
         parser.error(f"unknown model block(s): {', '.join(unknown)}" if unknown else "--trials must be at least 1")
+    report = {"format_version": 2, "target": {"profile": args.profile, "route": args.route},
+              "execution": "running", "verdict": "incomplete", "blocks": {}}
+    eval_reports.checkpoint(args.report, report)
     try:
         with tempfile.TemporaryDirectory(prefix="agentwiz-library-eval-") as tmp:
             with eval_setup.session(Path(tmp), args.profile, args.route, args.profiles_dir, args.config) as ui:
                 report = evaluate(Client(ui, args.timeout), profile=args.profile, route=args.route, blocks=blocks, trials=args.trials,
-                                  which=args.which, progress=lambda k, r: print(
+                                  which=args.which, report=report, report_path=args.report, progress=lambda k, r: print(
                                       f"{k} {r['case']} trial {r['trial']}: {r['outcome']}", flush=True))
-    except (Refused, eval_setup.SetupBlocked, OSError, ValueError) as exc:
-        report = {"format_version": 2, "target": {"profile": args.profile, "route": args.route},
-                  "verdict": "blocked", "blocks": {},
-                  "reason": str(exc) if isinstance(exc, (Refused, eval_setup.SetupBlocked)) else type(exc).__name__}
+    except KeyboardInterrupt:
+        report.update(execution='interrupted', verdict='incomplete', reason='interrupted')
+    except Exception as exc:
+        report.update(execution='blocked', verdict='blocked',
+                      reason=str(exc) if isinstance(exc, (Refused, eval_setup.SetupBlocked)) else type(exc).__name__,
+                      diagnostic=eval_reports.error(exc, (report.get('active') or {}).get('stage', 'setup')))
+    update_verdict(report)
     return write_report(args.report, report)
 
 
 def write_report(path: Path, report: dict) -> int:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    eval_reports.checkpoint(path, report)
     for key, block in report["blocks"].items():
         b = block["bar"]
         print(f"{key}: {b['contract_executions']}/{b['scheduled']} executed, {b['correct']} correct, "

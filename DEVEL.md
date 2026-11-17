@@ -292,45 +292,107 @@ The evaluator supplies `lmstudio-eval`; no UI profile setup is required. Use the
 python scripts/library_eval.py --route lmstudio --profile lmstudio-eval --trials 3 --set all --report reports/library-lmstudio.json
 ```
 
-### OpenRouter — Qwen3.8-27B
+### OpenRouter — complete live-run quickstart
 
-- `OPENROUTER_API_KEY` — required. It is outside the `AGENTWIZ_LIVE_*` namespace, so clearing those
-  variables alone does not exclude the checks.
-- `AGENTWIZ_LIVE_OPENROUTER_MODEL` — the model selector, in `author/slug` form; the block below uses
-  `qwen/qwen3.8-27b`.
-- `AGENTWIZ_LIVE_OPENROUTER_PROVIDER` — optional provider slug to pin. Without it the check uses Automatic Balanced selection through the production path,
-  including up to four potentially billable probes. With it the exact provider is pinned, without fallback.
+**OpenRouter alone can clear the shipped 0.2.2 library and Chat live evaluations.** No LM Studio,
+local model, running AgentWiz UI or manually saved profile is required. Both scripts create and
+clean up their own disposable workspace. Run from the repository root in Bash on Linux, macOS
+or WSL2 after `scripts/dev_setup.sh`.
 
-This sends a real, potentially billable request. The hidden prompt is used only if
-`OPENROUTER_API_KEY` is not already set; never paste a real key into this guide or a shell command.
-
-```bash
-(
-  . .venv/bin/activate || exit
-  if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-    read -r -s -p 'OpenRouter API key: ' OPENROUTER_API_KEY || exit
-    printf '\n'
-  fi
-  export OPENROUTER_API_KEY
-  export AGENTWIZ_LIVE_OPENROUTER_MODEL="${AGENTWIZ_LIVE_OPENROUTER_MODEL:-qwen/qwen3.8-27b}"
-  export AGENTWIZ_LIVE_TIMEOUT="${AGENTWIZ_LIVE_TIMEOUT:-600}"
-  # export AGENTWIZ_LIVE_OPENROUTER_PROVIDER='provider-slug-from-test-output'
-  python -m pytest -m live -s tests/test_live.py::test_live_openrouter
-)
-```
-
-`test_live_stop_openrouter` and `test_live_checked_request_openrouter` reuse these variables; see
-Stop and checked-request checks below.
-
-Both evaluators supply `openrouter-eval` with Automatic routing and use `OPENROUTER_API_KEY`.
-The same `AGENTWIZ_LIVE_OPENROUTER_MODEL`, optional provider pin and timeout variables override
-the evaluation defaults. No saved user profile or application server config is required.
-Export credentials/overrides in the shell running the evaluation; the earlier subshell does not retain them.
+**1. Set up the current terminal once.** Run this in the same terminal used for the commands below;
+it deliberately does not use a subshell, so the exports remain available. The hidden prompt keeps
+the key out of shell history. Requests are real and billable.
 
 ```bash
 . .venv/bin/activate
+if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+  read -r -s -p 'OpenRouter API key: ' OPENROUTER_API_KEY
+  printf '\n'
+fi
+export OPENROUTER_API_KEY
+export AGENTWIZ_LIVE_OPENROUTER_MODEL="${AGENTWIZ_LIVE_OPENROUTER_MODEL:-qwen/qwen3.8-27b}"
+export AGENTWIZ_LIVE_TIMEOUT="${AGENTWIZ_LIVE_TIMEOUT:-600}"
+```
+
+`OPENROUTER_API_KEY` is required. `_MODEL` is an `author/slug` model ID. Timeout is seconds per
+read, not a whole-suite deadline. An existing non-empty environment value takes precedence.
+By default `openrouter-eval` uses production Automatic Balanced selection, including up to four
+potentially billable probes. Optionally pin a known tool-capable provider, with no fallback:
+
+```bash
+# Optional: replace the example with your chosen provider slug.
+# export AGENTWIZ_LIVE_OPENROUTER_PROVIDER='near-ai/fp8'
+# To return to Automatic selection:
+# unset AGENTWIZ_LIVE_OPENROUTER_PROVIDER
+```
+
+Do not set `AGENTWIZ_LIVE_OPENROUTER_KEY` or `_URL`; use `OPENROUTER_API_KEY`. Do not combine backend
+target variables with `--profiles-dir` or `--config`; those are explicit external-configuration modes.
+
+**2. Check the previously crashing block first.** This runs all ten cases once, including the
+held-out Text assertion. It is a diagnostic run, so an `incomplete` verdict/exit 3 is expected;
+one trial cannot qualify a block. Model failures still appear individually.
+
+```bash
+python scripts/library_eval.py --route openrouter --profile openrouter-eval --block answer_from_source --trials 1 --set all --report reports/answer-openrouter-diagnostic.json
+```
+
+**3. Run full library qualification.** This runs three trials of all ten cases for every shipped
+model block. With the current catalog that is 390 scheduled executions, plus permitted repairs
+and provider probes. The Local only `deidentify_text` block remains deferred.
+
+```bash
 python scripts/library_eval.py --route openrouter --profile openrouter-eval --trials 3 --set all --report reports/library-openrouter.json
 ```
+
+For prompt development first, use `--trials 1 --set dev` and a separate report filename. To rerun
+one changed block, add `--block summarise_document` (repeat `--block` to select several) and choose
+a new filename. Separate reports are not automatically merged. A failed block still needs a fresh,
+complete qualification after changes; rerunning only a lucky case does not qualify it.
+
+**4. Review rubric outputs.** In the full JSON report, inspect each `rubric` and `review_outputs`,
+then set its `owner_mark` to `true` or `false`. Refresh scores without any model calls:
+
+```bash
+python scripts/library_eval.py --review reports/library-openrouter.json
+```
+
+**5. Run Agentic Chat cohorts and the five-scenario gate.** Use the same terminal and model exports:
+
+```bash
+python scripts/agent_eval.py --route openrouter --cohorts tests/agent_eval/cohorts.json --report reports/chat-openrouter.json
+```
+
+The report keeps `cohorts_verdict` and `gate.verdict` separate; overall success requires both.
+The Chat support claim is governed specifically by the five-scenario gate. A finished answer alone
+does not pass: expected tools must complete in order, arguments must be valid and results used.
+
+**Read reports and exit codes.** Library exits: 0 passed; 1 qualification failed; 2 blocked;
+3 incomplete or rubric review pending. Cohort evaluation exits: 0 passed; 1 failed; 2 blocked;
+3 incomplete. A nonzero exit does not mean the process crashed. Do not chain these commands with
+`&&` if you want Chat to run despite pending library rubric review.
+
+Both runners checkpoint atomically before and after cases. Ctrl-C retains completed evidence and
+marks the report incomplete; rerun to a new filename (there is no automatic resume). Each report
+records its active case, execution status and diagnostics. Never treat a partial report, a blocked
+run, or a percentage excluding unjudged cases as qualification. Reports use synthetic inputs and
+redacted model/tool diagnostics; do not add real documents or credentials to fixtures. Existing
+report files are replaced by a new run, so use unique names to keep earlier evidence.
+
+**Optional basic integration checks.** These are separate from library/Chat qualification. Select
+only the three OpenRouter tests so missing local-backend variables do not create confusing skips:
+
+```bash
+python -m pytest -m live -s tests/test_live.py::test_live_openrouter tests/test_live.py::test_live_stop_openrouter tests/test_live.py::test_live_checked_request_openrouter
+```
+
+To explicitly exercise a Manual pin, set `AGENTWIZ_LIVE_OPENROUTER_PROVIDER` first and run
+`python -m pytest -m live -s tests/test_live.py::test_live_openrouter_manual`.
+The checked-request test reports whether the model met its contract; a pytest pass alone is not
+library qualification. Stop can report an inconclusive skip when the request finishes too early.
+A missing-variable, unsupported-variant or inconclusive skip is not a pass. Provider API/tool-replay diagnostics
+belong in modelSpell; these checks exercise AgentWiz integration. When finished, remove the key
+from the terminal with `unset OPENROUTER_API_KEY`.
 
 ### llama-server — Qwen3.8-27B
 

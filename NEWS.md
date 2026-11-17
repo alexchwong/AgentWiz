@@ -2,6 +2,8 @@
 
 ## 0.2.2
 
+- Workshop field assertions compare Text outputs literally instead of attempting to decode them as JSON.
+
 - OpenRouter Automatic routing selects eligible providers across Chat, blocks, workflows and Python authoring; privacy requirements remain unchanged.
 - Manual provider pins remain strict; automatic selections persist through repairs and agent tool replay.
 
