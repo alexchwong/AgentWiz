@@ -1,0 +1,50 @@
+{
+  "format_version": 4,
+  "name": "calculate",
+  "description": "Exact decimal arithmetic on an expression.",
+  "inputs": {
+    "expression": {
+      "contract": {
+        "format": "text",
+        "max_length": 500
+      },
+      "local_only": false
+    }
+  },
+  "outputs": {
+    "out": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "result": {
+              "type": "string",
+              "maxLength": 1100
+            },
+            "rounded": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "rounded"
+          ]
+        }
+      },
+      "local_only": false
+    }
+  },
+  "steps": [
+    {
+      "id": "run",
+      "kind": "tool",
+      "builtin": "calculate",
+      "output": "out",
+      "arguments": {
+        "expression": "{{inputs.expression}}"
+      }
+    }
+  ]
+}

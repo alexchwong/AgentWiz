@@ -7,6 +7,11 @@ Historical choices may have been superseded; do not restore retired behavior fro
 
 ## Specification lineage
 
+The 0.2.2 build followed *AgentWiz 0.2.2 — Technical Specification* (v4) and *AgentWiz 0.2.2 — Starter
+Blocks Technical Specification* (v4). The first added Agentic Chat, restricted Python through
+scriptSpell 0.3.0 and the modelSpell 0.4.0 tool API, and retired host Python (v3 script) blocks.
+The addendum expanded the block library, document tools and PDF support.
+
 The owner-authorised contract overhaul specification v1.0 (5 November 2026) superseded
 contradictory contract recommendations in discussion v2 and plan v14. It retained the 0.2.0
 development version and made `jsonschema>=4.26,<5` required while keeping the modelSpell pin.
@@ -389,3 +394,24 @@ working. Exhaustive subjective UI acceptance is not required for this release.
 Older handovers requested WSL2 verification before sign-off. The current release procedure
 defines the Linux/macOS Python matrix and release tooling as gates; WSL2 remains outside CI
 and must be reported separately, with its documented filesystem constraints unchanged.
+
+## 17 November 2026 — 0.2.2 ModelSpell routing integration
+
+Owner approved completing the ModelSpell 0.4.0 integration across execution and evaluations.
+Automatic selection belongs in the shared production boundary, not in evaluation-only fallback
+loops. Existing profiles retain their routing meaning; new UI OpenRouter choices use Automatic
+Balanced. Manual known slugs remain directly usable without discovery. Selection can incur
+probe charges, retains explicit privacy policy, and never authorizes post-tool provider failover.
+429 recovery remains disabled. Profile routing fields are written in format 4.
+
+## 18 November 2026 — 0.2.2 release close-out disposition
+
+- The owner confirmed live qualification of all 13 shipped model blocks, including summarisation after
+  its prompt fix and the refreshed rubric verdicts. The owner also confirmed the Agentic Chat pass on
+  OpenRouter (`openai/gpt-4.1-mini`, eight cohort cases and five acceptance scenarios).
+- The owner confirmed the manual WSL2 PDF check and accepted shipping PDF extraction on macOS
+  without a worker address-space limit. The Linux and WSL2 worker limit is 256 MiB.
+- The Local only `deidentify_text` starter remains deferred pending qualification on a trusted local
+  profile. Its source and cases are retained for that evaluation.
+- Archived implementation context is available in the [baseline handover](https://github.com/alexchwong/AgentWiz/blob/6ad9b9cf54b7c10192f32150c59b16f731574164/AgentWiz_0.2.2_handover.md)
+  and the [starter blocks handover](https://github.com/alexchwong/AgentWiz/blob/6ad9b9cf54b7c10192f32150c59b16f731574164/AgentWiz_0.2.2_starter_blocks_handover.md).

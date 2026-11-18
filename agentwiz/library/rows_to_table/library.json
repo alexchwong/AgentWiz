@@ -1,0 +1,81 @@
+{
+  "title": "Rows to Markdown table",
+  "group": "tool",
+  "summary": "Render columns and rows as a Markdown table.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "rows_to_table-1",
+      "version": 1,
+      "label": "escaping",
+      "inputs": {
+        "columns": "[\"Order ID\",\"Customer\",\"Total\"]",
+        "rows": "[[\"007\",\"Smith, J\",\"12.50\"],[\"008\",\"Lee\\nUnit 4\",\"3\"],[\"009\",\"\",\"x\"]]"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"markdown\":\"| Order ID | Customer | Total |\\n| --- | --- | --- |\\n| 007 | Smith, J | 12.50 |\\n| 008 | Lee<br>Unit 4 | 3 |\\n| 009 |  | x |\\n\"}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "rows_to_table-2",
+      "version": 1,
+      "label": "bars and backslashes",
+      "inputs": {
+        "columns": "[\"a|b\"]",
+        "rows": "[[\"c\\\\d\"]]"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"markdown\":\"| a\\\\|b |\\n| --- |\\n| c\\\\\\\\d |\\n\"}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "rows_to_table-3",
+      "version": 1,
+      "label": "no rows",
+      "inputs": {
+        "columns": "[\"Name\"]",
+        "rows": "[]"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"markdown\":\"| Name |\\n| --- |\\n\"}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "description": {
+    "sections": {
+      "use": "Show a table as Markdown, for a report or a reply. Feeds naturally from csv_to_rows, sort_and_dedupe_rows or table_from_text.",
+      "exclusions": "No alignment, widths or formatting of numbers.",
+      "limitations": "Up to 10,000 rows and 200 columns. Backslashes and bars are escaped and line breaks become <br>. Every row must have one cell per column.",
+      "missing_data": "No rows gives the header and separator lines only.",
+      "effects": "Runs locally inside AgentWiz with no network access, files or model; it only returns a value. It has no destination, so it can run on Local only data; its output is restricted whenever an input is.",
+      "failures": "A refusal names a fixed code and, where it applies, a 1-based position (record, row or entry); the message never repeats your text. Check the input against the limits above and run again."
+    },
+    "port_summaries": {
+      "inputs": {
+        "columns": "The column names, as a JSON list of strings.",
+        "rows": "The rows, as a JSON list of lists of strings."
+      },
+      "outputs": {
+        "out": "The Markdown table text."
+      }
+    }
+  }
+}

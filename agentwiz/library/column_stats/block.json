@@ -1,0 +1,133 @@
+{
+  "format_version": 4,
+  "name": "column_stats",
+  "description": "Count, sum, minimum, maximum and mean of one column's numbers.",
+  "inputs": {
+    "columns": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      "local_only": false
+    },
+    "rows": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "string",
+              "maxLength": 10000
+            }
+          }
+        }
+      },
+      "local_only": false
+    },
+    "column": {
+      "contract": {
+        "format": "text",
+        "max_length": 200
+      },
+      "local_only": false
+    }
+  },
+  "outputs": {
+    "out": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "numeric_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "empty_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "other_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sum": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 1100
+            },
+            "min": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 1100
+            },
+            "max": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 1100
+            },
+            "mean": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 1100
+            },
+            "rounded": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "numeric_count",
+            "empty_count",
+            "other_count",
+            "sum",
+            "min",
+            "max",
+            "mean",
+            "rounded"
+          ]
+        }
+      },
+      "local_only": false
+    }
+  },
+  "steps": [
+    {
+      "id": "run",
+      "kind": "tool",
+      "builtin": "column_stats",
+      "output": "out",
+      "arguments": {
+        "columns": "{{inputs.columns}}",
+        "rows": "{{inputs.rows}}",
+        "column": "{{inputs.column}}"
+      }
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "title": "Extract entities",
+  "group": "llm",
+  "summary": "List the people, organisations, dates and places a text mentions.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "extract_entities-1",
+      "version": 1,
+      "label": "mixed",
+      "inputs": {
+        "text": "On 3 March, Maria Lopez of Acme Ltd met Wei Chen in Sydney. Acme Ltd later opened an office in Perth."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "people",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[\"Maria Lopez\",\"Wei Chen\"]"
+          },
+          {
+            "output": "organisations",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[\"Acme Ltd\"]"
+          },
+          {
+            "output": "places",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[\"Sydney\",\"Perth\"]"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "extract_entities-2",
+      "version": 1,
+      "label": "dates only",
+      "inputs": {
+        "text": "Due 2024-05-01, reviewed 9 May."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "people",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "extract_entities-3",
+      "version": 1,
+      "label": "nothing",
+      "inputs": {
+        "text": "It rained all day."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "people",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          },
+          {
+            "output": "places",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "required_context": 32768,
+  "max_tokens": 4096,
+  "description": {
+    "sections": {
+      "use": "Pull out the people, organisations, dates and places a text mentions, each exactly as written.",
+      "exclusions": "No linking, normalising or classifying beyond the four lists; not a de-identification tool.",
+      "limitations": "Needs a model context of at least 32,768 tokens (prompt, input, one repair and 4,096 output tokens). Results are model output: review them. Input up to 40,000 characters; at most 50 values per list. Each value should be an exact substring of the text; the evaluation checks this.",
+      "missing_data": "A category with no mentions is an empty list.",
+      "effects": "Sends its inputs to the model of its role (fast by default) and returns the result for review. With unrestricted ports and unrestricted data, that model may be remote; the Add dialog shows the destination. Label inputs Local only to keep them on this machine.",
+      "failures": "If the reply does not meet the output contract after two repairs, the step fails with located issues. A context or token limit is reported as such; shorten the input or use a larger context."
+    },
+    "port_summaries": {
+      "inputs": {
+        "text": "The text to read."
+      },
+      "outputs": {
+        "people": "People named, as written.",
+        "organisations": "Organisations named, as written.",
+        "dates": "Dates mentioned, as written.",
+        "places": "Places named, as written."
+      }
+    }
+  }
+}

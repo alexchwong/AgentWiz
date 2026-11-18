@@ -8,6 +8,51 @@ from agentwiz.task_settings import TaskSettings
 PIN = {"order": ["deepinfra/turbo"], "allow_fallbacks": False}
 
 
+def test_automatic_routing_preserves_policy_and_sends_selected_pin(server):
+    """A privacy rejection must move to another candidate, not weaken the policy."""
+    import json
+    from modelspell import Endpoint
+    from agentwiz.model_call import RequestSnapshot, call_model
+    from conftest import Reply
+
+    def row(slug, price):
+        return {"tag": slug, "provider_name": slug, "throughput_last_30m": {"p50": 80},
+                "latency_last_30m": {"p50": 0.1},
+                "pricing": {"prompt": price, "completion": price},
+                "supported_parameters": ["max_tokens", "temperature"]}
+
+    def reply(body, status=200):
+        return Reply(status=status, body=json.dumps(body).encode())
+
+    server.reply(reply({"data": {"endpoints": [row("excluded", "0.0000001"), row("eligible", "0.0000002")]}}),
+                 reply({"error": {"message": "No endpoints found matching your data policy"}}, 404),
+                 reply({"provider": "eligible", "choices": [{"finish_reason": "stop", "message": {"content": "ok"}}]}),
+                 reply({"provider": "eligible", "choices": [{"finish_reason": "stop", "message": {"content": "pong"}}]}))
+    snapshot = RequestSnapshot(Endpoint("openrouter", server.url, api_key="test-key"),
+                               "example/model", "openrouter", "", routing_mode="automatic",
+                               routing_data_collection="deny")
+    routing = {}
+    result = call_model(snapshot, [{"role": "user", "content": "ping"}],
+                        {"max_tokens": 16}, on_text=None, on_reasoning=None, routing=routing)
+    assert result.text == "pong"
+    assert routing["selected_slug"] == "eligible"
+    bodies = [r["body"] for r in server.requests if r["method"] == "POST"]
+    assert len(bodies) == 3
+    assert all(body["provider"]["data_collection"] == "deny" for body in bodies)
+    assert all(body["provider"]["allow_fallbacks"] is False for body in bodies)
+    assert bodies[-1]["provider"]["order"] == ["eligible"]
+
+
+def test_invalid_automatic_request_never_discovers(server):
+    from modelspell import ConfigError, Endpoint
+    from agentwiz.model_call import RequestSnapshot, resolve_request
+    snapshot = RequestSnapshot(Endpoint("openrouter", server.url, api_key="test-key"),
+                               "example/model", "openrouter", "", routing_mode="automatic")
+    with pytest.raises(ConfigError):
+        resolve_request(snapshot, {"max_tokens": -1})
+    assert server.requests == []
+
+
 @pytest.mark.parametrize("task, kind, pin, expected", [
     # Section 7.4's table: provider pin x (only max_tokens | another setting)
     (TaskSettings(), "openrouter", "", {}),

@@ -51,7 +51,13 @@ Paths in this table are relative to the repository root.
 | `agentwiz/workspace_admin.py` | yes | Headless workspace administration: bounded listing, staged clone, reset and tombstone delete, with no-follow filesystem safety and limits. Called by `ui/server.py` during workspace lifecycle operations. |
 | `agentwiz/profiles.py` | yes | Workspace profile copies and shared defaults (format version 2; reads 1): validation, preservation, atomic writes, fingerprints and permanent short-lived library lock. No HTTP. |
 | `agentwiz/jsonio.py` | yes | The one JSON writer (`encode`, `encode_line`); the file writer and strict reader for AgentWiz's own files (`encode_file`, `decode_file`); the exact-number reader and writer (`decode_exact`, `encode_exact(value, indent=None)`, `encode_file_exact`, `decode_file_exact`; `JSONSyntax` and `ExactLimit` are its only errors besides other `ValueError`s) and `encode_record_file` for run files. Standard library only. |
-| `agentwiz/attachments.py` | yes | The basic attachment reader (`.txt`, `.md`, `.csv`, `.json`) and `check_document`, implementing `docs/attachment_interface.md`. No HTTP. |
+| `agentwiz/attachments.py` | yes | The basic attachment reader (`.txt`, `.md`, `.csv`, `.json`; 0.2.2 adds `.tsv`, `.log`, `.yaml`, `.yml`), dispatch of `.pdf` to `pdf_reader`, `coverage()`, `require_text()` and `check_document`, implementing `docs/attachment_interface.md`. No HTTP. |
+| `agentwiz/pdf_reader.py` | yes | **0.2.2 (starter blocks).** The PDF reader on the parent side: `Admission` (`state.pdf`; two slots on Linux and WSL2, one on macOS; four waiters for 10 s), worker launch without a gap, capped pipes, the 30 s deadline, result validation, render with page markers, coverage. Never imports pypdfium2. No HTTP. |
+| `agentwiz/pdf_worker.py` | yes | **0.2.2 (starter blocks).** The worker (`python -I -m agentwiz.pdf_worker`): sets `RLIMIT_CPU` 30 s and, on Linux and WSL2, `RLIMIT_AS` 256 MiB, then imports pypdfium2 (the only module that does) and writes one JSON result. |
+| `agentwiz/library_install.py` | yes | **0.2.2 (starter blocks).** The packaged block library (`agentwiz/library/<key>/`, `index.json`) and `Installer` (`state.block_library`): listing, plan, add with the binding digest and settings hold, Finish adding, provenance. No HTTP. |
+| `agentwiz/library/` | yes | Thirty library entries: `block.json`, `library.json` (title, group, summary, version, three examples, standard description) and prompts. |
+| `agentwiz/tutorial_support/pdf_fixtures.py` | yes | Repository-built PDF fixtures (text, multi-page, partial, no text, encrypted, truncated, over limit, near limit), used by tests and the installed smoke. |
+| `agentwiz/tutorial_support/library.py` | yes | The `block-library` tutorial topic's sandbox installation through the ordinary installer. |
 | `agentwiz/insertion.py` | yes | Provenance lines and preview sizes for files and tool results; `REQUEST_LIMIT`. The page now copies `preview.text` instead of inserting it. No HTTP. |
 | `agentwiz/mcp_library.py` | yes | The shared MCP server library (`servers.json`, `.servers.lock`): validation, fingerprints, atomic writes. No HTTP server code. |
 | `agentwiz/mcp_client.py` | yes | Streamable HTTP MCP client, both eras, standard library only: probe and era cache, discovery entries, legacy sessions and the session lock, gates, reply reading with limits, `classify`. An HTTP *client*; knows nothing of AgentWiz's server. |
@@ -61,11 +67,17 @@ Paths in this table are relative to the repository root.
 | `agentwiz/roles.py` | yes | **0.1.4.** `roles.json`: parsing, reading, writing. Called from `state.py` under the state lock. No HTTP. |
 | `agentwiz/templates.py` | yes | **0.1.4.** `{{inputs.x.y}}` scanning and filling (text and typed), with provenance. No HTTP. |
 | `agentwiz/blocks.py` | yes | **0.1.4.** The block loader, problems, the block store (fingerprints, effective revisions, cache) and the `GET /api/blocks/<name>` view. Reads unmanaged executable v3 blocks and v3 generations selected by managed v2 heads. Workshop publication lives in workshop_assets. No HTTP. |
-| `agentwiz/script_step.py` | yes | **0.1.4.** The script step: the single `selectors` supervisor owning the pipes, process-group handling, `Retained` cleanup owners. Hooks `spawn`, `after_spawn`. No HTTP. |
-| `agentwiz/executor.py` | yes | **0.1.4.** `execute_step` for model, tool and script steps; token tally; step results. Called only by `runner.py`. No HTTP. |
+| `agentwiz/python_step.py` | yes | **0.2.2.** Python steps through scriptSpell's public `run`: engine identity, float rejection, issue mapping, `CleanupFailed`. No HTTP. |
+| `agentwiz/python_authoring.py` | yes | **0.2.2.** Workshop **Describe it** for Python: examples, source generation and local checks through `YamlAuthoring`; at most three requests. No HTTP. |
+| `agentwiz/agent_tools.py` | yes | **0.2.2.** Built-in tool definitions; the utility registry (`REGISTRY` of `Utility(name, schema, result, description, limits, function)`, from which `UTILITY_TOOLS`, `SCHEMAS`, `DESCRIPTIONS` and `blocks.BUILTIN_TOOLS` derive) with fourteen pure utilities and `run_utility(name, arguments, *, result_limit, check)`; the eight document tool definitions and their effects. No HTTP. |
+| `agentwiz/agent_documents.py` | yes | **0.2.2.** Agentic Chat conversations: staged documents and drafts (`dir_fd`, `O_NOFOLLOW`/`O_EXCL`), labels, memory. No HTTP. |
+| `agentwiz/agent_capabilities.py` | yes | **0.2.2.** MCP tool classifications and the capability inventory with exclusions. No HTTP. |
+| `agentwiz/agent_loop.py` | yes | **0.2.2.** The agent loop: capture, plan, preflight, model turns through `complete_with_tools`, validation, approval binding, dispatch, labels, records; `Manager`. No HTTP. |
+| `agentwiz/prompts/agent_system.md` | yes | Packaged Agentic Chat system prompt (`agent_system`, version 2). |
+| `agentwiz/executor.py` | yes | **0.1.4.** `execute_step` for model, tool, Python and built-in tool steps; token tally; step results. Called only by `runner.py`. No HTTP. |
 | `agentwiz/runner.py` | yes | **0.1.4.** `run_block`: input checks, admission, preparation, the executor, the one finaliser, the observer, timers (`make_timer`, `before_run_end`). No HTTP. |
 | `agentwiz/tutorial.py`, `agentwiz/tutorial_topics.py` | yes | The tutorial session manager (child UI, seeding, the pending session) and, **0.1.4**, the topic registry the server, page and tests read. |
-| `agentwiz/tutorial_support/blocks/` | yes | **0.1.4.** The four example blocks (`extract_fields`, `echo_numbers`, `word_count`, `wait_for_stop`) copied byte for byte into the tutorial's temporary workspace. |
+| `agentwiz/tutorial_support/blocks/` | yes | The three example blocks (`extract_fields`, `echo_numbers`, `word_count`) registered in `tutorial_topics.BLOCKS` and copied byte for byte into the tutorial's temporary workspace, excluding `__pycache__`, `*.pyc` and `*.pyo`; unregistered directories are not seeded. `word_count` is a v4 Python block. |
 | `agentwiz/output_protocol.py` | yes | Renders named outputs, prompt placeholders and direct-value instructions from captured contracts. |
 | `agentwiz/workshop.py`, `agentwiz/workshop_service.py` | yes | Workshop coordinator support, plans, tickets, batches and contract synthesis. |
 | `agentwiz/workshop_assets.py` | yes | Managed generations, publication, retention, pins and captured assets. |
@@ -76,12 +88,15 @@ Paths in this table are relative to the repository root.
 | `agentwiz/ui/server.py` | yes | The HTTP server; the only module that knows HTTP. `Handler.write_event` is the one writer of stream events. |
 | `agentwiz/ui/index.html` | yes | Workshop/Workbench/History, shared Settings dialogs; one framework-free file with no build step. |
 | `pyproject.toml`, `README.md`, `LICENSE` | metadata | Packaging, wheel description, MIT license. |
-| `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`; 0.1.3: `test_checks.py`, `test_contracts.py`, `test_runs.py`, `test_model_step.py`, `test_attempts.py`, `test_history.py`, `test_page.py`, `test_live_judgement.py`; 0.1.4: `test_roles.py`, `test_templates.py`, `test_blocks.py`, `test_block_routes.py`, `test_block_tool.py`, `test_scripts.py`, `test_script_cleanup.py`, `test_runner.py`, `test_shutdown.py`, `test_signals.py`, `test_tutorial.py`; 0.2.0: `test_workspace_admin.py`, `test_workspace_lifecycle.py`, `test_named_outputs.py`, `test_contract_overhaul.py`, `test_workshop_descriptions.py`), opt-in live checks (`test_live.py`, with the pure judgement function `live_stop.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
+| `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`; 0.1.3: `test_checks.py`, `test_contracts.py`, `test_runs.py`, `test_model_step.py`, `test_attempts.py`, `test_history.py`, `test_page.py`, `test_live_judgement.py`; 0.1.4: `test_roles.py`, `test_templates.py`, `test_blocks.py`, `test_block_routes.py`, `test_block_tool.py`, `test_runner.py`, `test_shutdown.py`, `test_signals.py`, `test_tutorial.py`; 0.2.0: `test_workspace_admin.py`, `test_workspace_lifecycle.py`, `test_named_outputs.py`, `test_contract_overhaul.py`, `test_workshop_descriptions.py`; 0.2.2: `test_agent.py` with `agent_helpers.py`), opt-in live checks (`test_live.py`, with the pure judgement function `live_stop.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
 | `docs/attachment_interface.md` | no | The attachment interface (companion document, version 3, draft). |
-| `scripts/build_release.py` | no | Builds the release wheel from `HEAD`, runs release checks RC1–RC3; `--smoke`; `--no-isolation`; `--modelspell-wheel` (offline smoke); `--changed-since`. |
+| `scripts/build_release.py` | no | Builds the release wheel from `HEAD`, runs release checks RC1–RC3; `--smoke`; `--no-isolation`; `--modelspell-wheel`, `--scriptspell-wheel` (offline smoke); `--changed-since`. |
+| `scripts/agent_eval.py` | no | Owner evaluation of Agentic Chat routes against a live model; `--cohorts tests/agent_eval/cohorts.json` measures library selection and runs the five-scenario Chat gate. Not part of the offline suite. |
+| `scripts/library_eval.py` | no | Owner qualification of the library's model blocks (cases in `tests/library_eval/<key>.json`, invariants in `tests/library_eval/checks.py`): a disposable workspace, the ordinary installer and block runner, no route substitution. |
+| `scripts/utility_stress.py` | no | Worst-case timings of the utilities on bounded input (the reference for their limits). |
 | `scripts/replay_output.py` | no | Replays captured named-output evidence using the current checker. |
 | `scripts/workshop_experiment.py` | no | Prepares Workshop fixtures and compares outcomes through the coordinator. |
-| `scripts/smoke_installed.py` | no | Smoke check (S1–S15) against an installed wheel. |
+| `scripts/smoke_installed.py` | no | Smoke check (S1–S25) against an installed wheel. |
 | `scripts/dev_setup.sh` | no | Developer setup: `./.venv` with an editable install, pytest, `jsonschema`, Playwright and Chromium. |
 | `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for trying the UI without a model; logs the sampling fields and message roles each request carries. Models `json-pass`, `json-repair` and `slow-headers` serve the README tour. |
 | `scripts/stub_mcp_server.py` | no | Scripted MCP server (`--era dual|modern|legacy`, `--token`) for trying the MCP tools tab; logs every request, disconnect, notice and `DELETE`. |
@@ -91,23 +106,40 @@ Paths in this table are relative to the repository root.
 
 ## The modelSpell dependency
 
-AgentWiz depends on the modelSpell **v0.3.0 release wheel**, pinned by URL and sha256 in
+AgentWiz depends on the modelSpell **v0.4.0 release wheel**, pinned by URL and sha256 in
 `pyproject.toml` (D74).
 The public API AgentWiz uses includes `CancelHandle` (one per run; `cancel()` never blocks and may
 be called from any thread any number of times) and `complete(..., cancel=)`; `Cancelled.sent` is
 `False` when no byte of the request was written, `True` when it may have been, and `None` until
 modelSpell has handled the exception.
-A modelSpell defect found while building AgentWiz is fixed in modelSpell and released as 0.3.1;
+A modelSpell defect found while building AgentWiz is fixed in modelSpell and released upstream;
 AgentWiz takes it as a pin change. Task settings use `supported_settings()` and
 `check_settings()`; AgentWiz keeps no support table of its own, and words its own refusal for a
 setting a route does not send (modelSpell's suggests `extra`, which AgentWiz does not offer). Adding any dependency, required or optional, needs the owner's approval.
+
+OpenRouter profile format 4 adds routing mode, preset, optional ZDR and data-collection policy.
+Older profiles retain Manual for a nonempty slug and Managed for an empty slug. New UI
+OpenRouter choices default to Automatic Balanced. Manual known slugs are sent directly,
+as allowed by modelSpell; no added discovery request is required.
+
+Full request preflight uses `check_completion()` or `check_tool_request()`. Automatic selection
+uses `choose_provider()` under the run cancellation handle and concurrency slot, never a state
+lock. It has a 30-second ceiling and at most four probes; agent selection is also bounded by
+its remaining deadline. The selected policy is retained through repairs and agent tool replay.
+Ordinary block/workflow steps resolve independently against their own effective settings.
+Python authoring uses the same model-call boundary. HTTP 429 retries remain disabled.
+Routing records separate configured intent, selected slug and effective policy from the actual
+completion's reported provider. Probe usage is unreported, not zero; workload token totals do
+not include unreported probe usage. Automatic selection does not promise total-spend enforcement.
+Selection errors get fixed safe descriptions, not raw upstream evidence. No mid-conversation
+provider failover or tool replay against another provider is performed.
 
 Boundary rules:
 
 - Only modelSpell's public API (`modelspell.__all__` and `__version__`). No `modelspell._…`
   imports and no underscore attributes of modelSpell objects. The key source is re-derived from the
   public `Endpoint.api_key_env` field.
-- No transport code for model traffic in AgentWiz, no retries, fallbacks, second client, or thread
+- No custom transport code for model traffic in AgentWiz, no custom retries, fallbacks, second client, or thread
   that abandons a running model call.
 
 **Upgrading modelSpell** (new pin and hash) includes re-checking the two error groups that
@@ -499,7 +531,7 @@ refuse a renderer it does not know. The section is composed in
 `{{output.NAME}}`; `scan_text`, `fill_text` and `fill_arguments` stay input-only. A filled text is never
 rescanned.
 
-## Blocks, roles and scripts
+## Blocks, roles and Python steps
 
 - **Loader.** `blocks.py` turns a folder into a `Block` or a problem (`unreadable`, `invalid`,
   `newer_format`, `unusable`; precedence `invalid` > `unreadable` > `unusable`, `newer_format` alone).
@@ -513,18 +545,32 @@ rescanned.
 - **Admission.** `POST /api/blocks/run` checks, in order, body and size, the block at the revision the
   page showed (404 `no_such_block`, 409 `stale_revision`, 409 `block_unusable`), the `inputs` shape,
   then the runner: **inputs are checked before any slot is taken** (BD-03), then non-blocking
-  admission (503 `busy` naming the budget), then preparation (role, fills, server, script hash).
+  admission (503 `busy` naming the budget), then preparation (role, fills, server, Python source and engine).
 - **One finaliser.** `runner._finalise` decides the outcome from explicit input, preparation and step
   results, commits the run, releases slots, delivers `final` (best effort) and saves `result.json`
   once. Delivery is an observer (`BlockDelivery`); no delivery failure affects a run.
 - **Cancellation.** One token per run with a reason (first cancellation wins: `user_stop`,
   `budget_exceeded`). Each step kind has one dispatch gate (model: `reserve_attempt`; tool and
-  script: the step lock). Cancellation is inspected before repair, exhaustion and the token allowance.
-- **Script steps.** `script_step.py`: one `selectors` supervisor owns every pipe; the unbuffered pipe
-  objects are the sole close owners of their descriptors (never `os.close` on a recorded number);
-  every wait is bounded and every deadline is a `runner.make_timer` timer. A group whose cleanup
-  cannot be confirmed is handed, with the process and pipes, to a `Retained` owner that keeps the
-  script slot and a writer registration until the group is gone. Scripts need POSIX process groups.
+  Python: the step lock). Cancellation is inspected before repair, exhaustion and the token allowance.
+- **Python steps (0.2.2).** `python_step.run` calls scriptSpell's public `run` with the block's source,
+  the checked inputs and limits no higher than scriptSpell's; Stop and the block deadline reach it through
+  its cancel callback. A float at any depth fails the step (`float_output`). Admission takes one of four
+  `state.python` slots. If scriptSpell reports that a worker's cleanup could not be confirmed,
+  `state.python_cleanup_failed()` closes the budget and sets `python_restart_required` until restart.
+  The Overview reports the restart requirement. Slow worker cleanup under heavy load can trigger it.
+  v4 Tool steps with `builtin` run `agent_tools` locally and take no MCP slot. v3 `script` steps load as
+  unusable (`host_script_retired`); an engine other than the installed one loads as `engine_changed`
+  (workflow snapshots load with `engine_check=False` and report it at readiness).
+- **Agentic Chat (0.2.2).** `state.agent` is one `agent_loop.Manager`: one live conversation and at most one
+  run. Each run captures the destination, inventory, labels and limits, preflights with `check_tool_request`,
+  then loops model turns through `complete_with_tools`. Every tool request is validated against the captured
+  definitions; MCP calls that may change state wait for an approval bound to the SHA-256 of the materialised
+  arguments. Saved blocks run as child block runs through `runner` with `FrozenSource.parent_guard` and
+  `before_tool`. Reading restricted material promotes the run; an untrusted destination then ends it with
+  `restricted_result`. The deadline is a `runner.make_timer` timer.
+  `GET /api/agent/inventory` accepts an integer `revision` and JSON-encoded `task`, `capabilities` and
+  `limits` in its query. `GET /api/agent/drafts/<id>` accepts an optional `conversation` query
+  parameter and defaults to the live conversation.
 - **Roles.** `roles.json` through `roles.py`, under the state lock, with its own revision; a save
   refuses a profile that does not exist. Resolution is live, at preparation (`state.resolve_role`).
   Version 2 retains the string assignment map and adds `definitions`, keyed by role, each containing
@@ -582,10 +628,10 @@ rescanned.
   `UIServer.server_close(wait=)` calls it (and the tutorial's halves around it); `__main__.py` owns the
   one signal controller. `UIServer.grace_s` exists so the tutorial's bounded Exit can be lowered in tests.
 - **Hooks tests use (all do nothing in shipped code):** `runner.make_timer`, `runner.before_run_end`,
-  `script_step.spawn`, `script_step.after_spawn`, `state.before_register_writer`, `state.before_write`,
+  `state.before_register_writer`, `state.before_write`,
   and the `BlockDelivery` write boundary (`Handler.write_event`).
 - **Constants tests lower:** `blocks.BLOCK_FILE_LIMIT`, `FILE_LIMIT`, `LIST_LIMIT`, `CACHE_LIMIT`;
-  `script_step.POLL_S`, `RETAINED_POLL_S`, `OUTPUT_LIMIT`, `STDERR_TAIL`, `KILL_GRACE_S`;
+  `state.POLL_S`; `agent_documents` limits;
   `runs.RESULT_LIMIT`, `RESULT_BYTES`; `state.SHUTDOWN_GRACE_S` (and `UIServer.grace_s`).
 - **New error mappings.** 400 `block_body`; 404 `no_such_block`, `no_such_run`; 409 `stale_revision`,
   `block_unusable` (with the problem), `not_held` (410); 503 `busy` (with `budget` for admission);
@@ -676,8 +722,8 @@ folders are unsupported and not detected.
 `<workspaces-dir>/<workspace>/model-profiles/profiles.json`. Only state.py initiates mutations,
 under its state lock. `profiles.py` handles profile files and library locking; `workspace.py`
 handles workspace.json, its lifetime lock, and the reusable atomic writer. Both libraries use
-`{"format_version": 3, "profiles": {...}}` (`profiles.PROFILES_FORMAT_VERSION`; `workspace.json`
-stays at 1), read versions 1 and 2 too, preserve unknown fields and never receive session keys. Every
+`{"format_version": 4, "profiles": {...}}` (`profiles.PROFILES_FORMAT_VERSION`; `workspace.json`
+stays at 1), read versions 1–3 too, preserve unknown fields and never receive session keys. Every
 write path drops `base_url`, `reasoning` and `max_tokens` from every profile through
 `profiles.write_profiles`. Legacy URLs are migration information only; state warns about differences
 from configured endpoints without using them for requests or equality.
@@ -808,6 +854,7 @@ The page and the terminal receive only text that cannot contain a credential:
 | `ReadOnly` | 409 `{"error": "profiles are read-only: <file>: <problem>", "code": "read_only"}` (or "the workspace is read-only: …") | nothing |
 | `NoSuchProfile` | 404 `{"error": "no such profile", "code": "no_such_profile"}`; profile names are not echoed | nothing |
 | `WriteFailed` | 500 `{"error": "could not write <path>: <strerror>", "code": "write_failed"}` | nothing |
+| Client disconnect (`BrokenPipeError`, `ConnectionResetError`) | no further reply; close the connection | nothing |
 | Anything else | 500 `{"error": "InternalError: <Class>", "code": "internal"}`, or an `error` event `InternalError: <Class>` | `[AgentWiz] internal error in <route>: <Class>` and stack locations, never messages or values |
 
 Never add a handler that formats an exception's message unless the exception is AgentWiz's own.
@@ -1070,7 +1117,9 @@ generation's captured definition. Nothing is inlined silently.
 Examples contain id/version/label, named input source texts, expectation,
 origin/verified and optional held_out. An expectation is `whole_output` with a
 `values` map, `fields` with path-segment `assertions`, or `review` with a criterion.
-Assertions distinguish equals, absent, present and null. Edits invalidate
+Assertions distinguish equals, absent, present and null. Field assertions decode JSON outputs;
+an empty path on a Text output compares its literal string against the JSON-encoded expected
+value. Non-empty paths into Text outputs are refused during validation. Edits invalidate
 verification. Batch requests may supply a frozen example list, or
 `example_selection:{key,revision,ids}` to bind current saved versions. Candidates
 must expose the same interface and use identical frozen examples. The coordinator
@@ -1490,3 +1539,136 @@ Identifier checking accepts up to 1000 bounded nonempty originals and 1000 hits,
 Unicode case-fold expansions map back to original code-point offsets. JSON property names and
 string values are checked with paths; numeric/null/boolean values are preserved. JSON release
 review uses deterministic exact serialisation, not a claim about downstream HTTP byte layout.
+
+## Starter blocks addendum (0.2.2)
+
+**Utility registry.** `agent_tools.REGISTRY` is the single source for every utility: its schema, result shape,
+description, limits and function. `run_utility(name, arguments, *, result_limit=RESULT_LIMIT, check=None)` keeps the
+call shape the executor's built-in branch already uses. Each utility checks the encoded arguments (at most 1 MiB),
+works out its output size, or a bound on it, before allocating, and refuses with `too_large` instead of truncating;
+`outline` and `scan_identifiers` are the exception and stop at a cap with a flag. Long loops call `check` every
+1,000 steps (`Bounds`), so Stop and the run deadline reach them. Error messages never contain input. The agent
+passes its remaining result budget and its scan check; Tool steps pass the default.
+
+**Draft publication (3.2).** A draft is published in four steps on the conversation: `begin_write`,
+`write_temporary`, `commit` (or `discard`) and `end_write`. `close()` waits for pending writes. The agent
+`Manager` reserves a run (`Reservation`) before preparing it, verifies the reservation on `attach`, and abandons it
+idempotently on every failure path; `while_idle` runs staging, memory and label changes only between runs. Lock
+order is manager, then conversation.
+
+**PDF boundary.** `pdf_reader` (parent) never imports pypdfium2; `pdf_worker` (child) is the only module that does.
+The worker is launched as `[sys.executable, "-I", "-m", "agentwiz.pdf_worker"]` with the environment
+`{"LC_ALL": "C.UTF-8"}`, `close_fds`, a new session and a fresh temporary directory. It sets `RLIMIT_CPU` (30 s) and,
+on Linux and WSL2, `RLIMIT_AS` (256 MiB, about twice the ~126 MiB `near_limit` needed on Python 3.13, so a valid
+PDF keeps headroom while an allocation limit still applies) before importing pypdfium2. A crash or hang costs one
+upload on every platform; memory containment holds on Linux and WSL2 only, because macOS does not enforce `RLIMIT_AS`.
+The worker is not a sandbox: it runs with the user's privileges. The parent reads the body in 64 KiB chunks
+within 60 s, admits through `state.pdf` (slots, waiters, `extraction_busy`), caps stdout at 24 MiB and stderr at
+64 KiB, enforces the 30 s deadline, validates the result against the interface and renders it with page markers.
+Shutdown closes admission, cancels running workers and waits for the slots to drain.
+
+**Library installer.** `Installer.plan` validates each packaged entry as a Workshop draft and returns its port
+labels, destination (for a model block, the role's current profile, endpoint, model and provider pin) and a
+binding digest. `add` re-plans under a settings hold (profile and role saves are refused as busy while it holds),
+refuses a changed binding with `confirmation_required`, publishes through `workshop_service.save(...,
+provenance=...)`, then writes the examples and the description, each with `only_revision` so an edit in between
+stops the installation instead of overwriting. A concurrent import of the same key reports `key_in_use`. Finish
+adding repeats the last two writes for an unchanged revision. Provenance (`metadata.library`) is dropped by any
+ordinary save.
+
+**Evaluation.** `scripts/library_eval.py` qualifies model blocks against the owner's target route (7.1) and
+`scripts/agent_eval.py --cohorts` measures selection with at most eight capabilities per cohort (7.2). Both are
+owner-run; the offline tests run them against the scripted stub.
+
+Reports default to `reports/library_eval_report.json` and `reports/agent_eval_report.json`,
+respectively. Relative paths are resolved against the current working directory; `--report`
+accepts an explicit relative or absolute destination. Both writers create missing parent directories.
+The repository's `/reports/` directory is ignored by Git. Library `--review PATH` updates the
+supplied report in place rather than using the default output path.
+
+
+### Disposable evaluation configuration
+
+The non-shipped `scripts/eval_setup.py` prepares both live evaluators. Seeds under
+`tests/eval_profiles/profiles.json` contain non-secret OpenRouter and LM Studio targets.
+They are resolved relative to the repository, validated with the ordinary profile reader, and
+materialized in temporary storage before workspace seeding; library locks never touch the seeds.
+The ordinary installer, role resolver and run APIs remain the execution path.
+
+Without external overrides, `AGENTWIZ_LIVE_<BACKEND>_MODEL` overrides the seed model;
+`AGENTWIZ_LIVE_LMSTUDIO_URL` and `_KEY` configure its server, and
+`AGENTWIZ_LIVE_OPENROUTER_PROVIDER` switches Automatic routing to a Manual pin.
+OpenRouter uses `OPENROUTER_API_KEY`; endpoint overrides require explicit server configuration.
+Privacy settings remain those of the selected profile. With `--profiles-dir` or `--config`,
+backend model/URL/key/provider variables are rejected rather than ambiguously merged; explicit
+profiles/configuration plus remaining checked-in defaults define the target. The external profile
+library is read without mutation and copied into the temporary library; an explicit server file
+must already exist. Credentials and session tokens are not report fields.
+
+Both runners create workspaces, defaults libraries, MCP libraries and default server configuration
+inside owned temporary storage and release workspace ownership on exit. Agentic Chat also selects
+the profile and binds `fast` through the normal APIs, then verifies destination equality. Library
+qualification retains its role and destination checks. `--timeout` takes precedence over
+`AGENTWIZ_LIVE_TIMEOUT` (600 seconds by default). Missing/invalid setup blocks the evaluation.
+Neither runner silently reads application profiles/configuration from the caller's directory.
+
+Agentic Chat's explicit `--url` mode instead evaluates an already configured server. It does not
+change the selected model or role bindings, but it does install catalog entries and create case
+data. It is intended for disposable workspaces, not personal sessions. `workshop_experiment.py`
+is likewise an explicit attached-service diagnostic; its offline fixture mode needs no user setup.
+The installed smoke script owns a temporary working directory even when invoked directly, so its
+normal-default-path checks cannot overwrite a caller's application configuration.
+
+### Evaluation checkpoints and diagnostics
+
+The two non-shipped runners share `scripts/eval_reports.py` for atomic mode-0600 report publication,
+credential redaction and safe exception locations. Both retain completed cases and the active case
+before/after each execution. `execution` is `running`, `complete`, `interrupted` or `blocked`;
+`--review` cannot turn an interrupted/running library report into qualification. Reports have no
+automatic resume or merging. Existing format-2 library reports remain reviewable.
+
+Library fixtures are checked against their declared contracts and shared Workshop expectation
+validator before model requests. Per-case scoring errors are `evaluator_error`, retain outputs and
+attempt diagnostics, and cannot count as model failures or successful qualification. Shared auth or
+configuration failures stop further calls. Contract and correctness thresholds remain unchanged.
+Chat reports retain synthetic answers and live argument/result traces, separate cohort/gate verdicts,
+status counts and unjudged counts for each rate. Overall success cannot hide a blocked cohort behind
+a passing gate. The table fixture uses the packaged block's ascending text sort with `score` as the
+sort/deduplication key; fixed two-digit scores give the same order as numeric sorting.
+
+Library qualification uses a narrow, evaluation-only deadline equivalence for minutes: a due value
+`by <expected>` can compare equal to `<expected>` only when that exact prefixed deadline appears in
+the transcript and the assertion targets `action_items[i].due`. It does not normalize other fields,
+change dates or erase `before`/`after` qualifiers. Judgement adjustments are recorded separately from
+unaltered raw outputs. This does not change Workshop's general exact comparison or runtime outputs.
+
+`scripts/eval_attempts.py` extracts compact diagnostics from attempt records for the live evaluator and
+the standalone `scripts/summarize_library_eval.py`. Diagnostic fields retain original outcomes
+(including `empty`, `reasoning_only`, `truncated_no_answer`), finish reason, truncation, available token
+usage, effective task limits and answer/reasoning character counts. They contain no reply or reasoning
+body. The summarizer can derive these from an older report's saved attempts without model calls;
+qualification thresholds and automatic repair policy are unchanged.
+
+Workshop polling captures both the selected draft/revision generation and its poll generation. A
+new load invalidates their presentation; after each awaited batch/child fetch, the observer checks
+its identity before changing shared results or status. Detached polls track completion only for the
+operation-bound activity indicator; superseded observers do not cancel server runs.
+A delayed completion cannot replace a newer save status or repopulate a different selection's results.
+
+Library summary reports separate `critical_cases_blocked` from genuine critical failures. Selected
+block verdicts are distinct from full-catalog coverage; omitting other blocks in a targeted retest
+is not a stored-verdict discrepancy. `--case-delay` is explicit pacing between cases, never workload
+retry, rate-limit recovery, fallback or a change to acceptance thresholds.
+
+Grouped rubric review bundles hold a hash of the original full report and all evidence for every
+trial. Explicit case marks apply to its displayed trials; individual marks may override them.
+Unmarked entries preserve existing marks. Import rejects changed/stale evidence, duplicates,
+non-boolean marks and approval of absent outputs. Only owner marks and refreshed verdicts are
+published; raw trial outputs, execution evidence and qualification thresholds are unchanged.
+
+The Tests workflow validates packaged UI outside the checkout and PDF native wheels across the
+Linux/macOS CPU architectures and Python 3.10–3.13. `check_installed_ui.py` copies tests/scripts to a
+throwaway directory, verifies site-packages imports and runs existing page/library/tutorial checks.
+`check_pdf_install.py` checks installed notices and real worker extraction, including near-limit and
+partial fixtures. Neither check requires models. WSL2 is reported separately; macOS memory containment
+remains an owner disposition, not something these checks prove.

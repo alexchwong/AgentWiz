@@ -1,0 +1,69 @@
+{
+  "format_version": 4,
+  "name": "compare_texts",
+  "description": "A line-by-line unified diff of two texts.",
+  "inputs": {
+    "before": {
+      "contract": {
+        "format": "text",
+        "max_length": 1048576
+      },
+      "local_only": false
+    },
+    "after": {
+      "contract": {
+        "format": "text",
+        "max_length": 1048576
+      },
+      "local_only": false
+    }
+  },
+  "outputs": {
+    "out": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "changed": {
+              "type": "boolean"
+            },
+            "diff": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "added_lines": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "removed_lines": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "changed",
+            "diff",
+            "added_lines",
+            "removed_lines"
+          ]
+        }
+      },
+      "local_only": false
+    }
+  },
+  "steps": [
+    {
+      "id": "run",
+      "kind": "tool",
+      "builtin": "compare_texts",
+      "output": "out",
+      "arguments": {
+        "before": "{{inputs.before}}",
+        "after": "{{inputs.after}}",
+        "context_lines": 3
+      }
+    }
+  ]
+}

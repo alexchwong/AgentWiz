@@ -18,6 +18,14 @@ class ShuttingDown(Exception):
         super().__init__("AgentWiz is shutting down")
 
 
+class SettingsHeld(Exception):
+    """A library installation holds the settings for one local file publication (starter blocks addendum, 5.2):
+    a change to profiles, the role map or role definitions is refused for that moment. Answered as 503 `busy`."""
+
+    def __init__(self) -> None:
+        super().__init__("Model settings are in use by a library installation for a moment. Try again.")
+
+
 def report_internal(route: str, exc: BaseException) -> None:
     """Terminal report for an unexpected failure: class and stack locations only, never messages."""
     lines = [f"[AgentWiz] internal error in {route}: {type(exc).__name__}"]

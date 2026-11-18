@@ -1,0 +1,280 @@
+{
+  "format_version": 1,
+  "key": "table_from_text",
+  "required_context": 32768,
+  "cases": [
+    {
+      "id": "table_from_text-1",
+      "set": "dev",
+      "label": "orders",
+      "inputs": {
+        "text": "Order 007 for Smith, J was 12.50. Order 008, for Lee, was 3 dollars. Order 009 has no customer yet.",
+        "columns": "[\"Order ID\",\"Customer\",\"Total\"]"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "rows",
+            "path": [
+              0,
+              0
+            ],
+            "operation": "equals",
+            "value_text": "\"007\""
+          },
+          {
+            "output": "rows",
+            "path": [
+              2,
+              1
+            ],
+            "operation": "equals",
+            "value_text": "\"\""
+          }
+        ]
+      },
+      "critical": false,
+      "stub": {
+        "rows": [
+          [
+            "007",
+            "Smith, J",
+            "12.50"
+          ],
+          [
+            "008",
+            "Lee",
+            "3 dollars"
+          ],
+          [
+            "009",
+            "",
+            ""
+          ]
+        ]
+      },
+      "shipped": true
+    },
+    {
+      "id": "table_from_text-2",
+      "set": "dev",
+      "label": "one column",
+      "inputs": {
+        "text": "Fruit: apple, pear.",
+        "columns": "[\"Fruit\"]"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "rows",
+            "path": [
+              1
+            ],
+            "operation": "present"
+          }
+        ]
+      },
+      "critical": false,
+      "stub": {
+        "rows": [
+          [
+            "apple"
+          ],
+          [
+            "pear"
+          ]
+        ]
+      },
+      "shipped": true
+    },
+    {
+      "id": "table_from_text-3",
+      "set": "dev",
+      "label": "nothing",
+      "inputs": {
+        "text": "No data here.",
+        "columns": "[\"Name\",\"Age\"]"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "rows",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "critical": false,
+      "stub": {
+        "rows": []
+      },
+      "shipped": true
+    },
+    {
+      "id": "table_from_text-4",
+      "set": "dev",
+      "label": "missing value",
+      "inputs": {
+        "text": "Ana is 30. Ben's age is unknown.",
+        "columns": "[\"Name\",\"Age\"]"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "rows",
+            "path": [
+              1,
+              1
+            ],
+            "operation": "equals",
+            "value_text": "\"\""
+          }
+        ]
+      },
+      "critical": true
+    },
+    {
+      "id": "table_from_text-5",
+      "set": "dev",
+      "label": "empty",
+      "inputs": {
+        "text": "",
+        "columns": "[\"A\"]"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "rows",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "critical": true
+    },
+    {
+      "id": "table_from_text-6",
+      "set": "dev",
+      "label": "list",
+      "inputs": {
+        "text": "- Paris, France\n- Rome, Italy",
+        "columns": "[\"City\",\"Country\"]"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "rows",
+            "path": [
+              1,
+              0
+            ],
+            "operation": "equals",
+            "value_text": "\"Rome\""
+          }
+        ]
+      },
+      "critical": false
+    },
+    {
+      "id": "table_from_text-7",
+      "set": "dev",
+      "label": "ids stay text",
+      "inputs": {
+        "text": "Codes: 0012 (red), 0034 (blue).",
+        "columns": "[\"Code\",\"Colour\"]"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "rows",
+            "path": [
+              0,
+              0
+            ],
+            "operation": "equals",
+            "value_text": "\"0012\""
+          }
+        ]
+      },
+      "critical": false
+    },
+    {
+      "id": "table_from_text-8",
+      "set": "heldout",
+      "label": "prices",
+      "inputs": {
+        "text": "Tea costs $3 and coffee $4.",
+        "columns": "[\"Item\",\"Price\"]"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "rows",
+            "path": [
+              1,
+              0
+            ],
+            "operation": "equals",
+            "value_text": "\"coffee\""
+          }
+        ]
+      },
+      "critical": false
+    },
+    {
+      "id": "table_from_text-9",
+      "set": "heldout",
+      "label": "no rows",
+      "inputs": {
+        "text": "The meeting went well.",
+        "columns": "[\"Name\"]"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "rows",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "critical": true
+    },
+    {
+      "id": "table_from_text-10",
+      "set": "heldout",
+      "label": "three columns",
+      "inputs": {
+        "text": "Kim (Sales, Perth); Lee (IT, Hobart).",
+        "columns": "[\"Name\",\"Team\",\"City\"]"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "rows",
+            "path": [
+              1,
+              2
+            ],
+            "operation": "equals",
+            "value_text": "\"Hobart\""
+          }
+        ]
+      },
+      "critical": false
+    }
+  ]
+}

@@ -32,3 +32,30 @@ jobs:
         run: python -m playwright install chromium
       - name: Run the offline suite (the live checks are deselected, whatever variables the runner holds)
         run: python -m pytest -m "not live"
+      - name: Build the candidate wheel
+        run: python -m pip wheel . --no-deps --wheel-dir "$RUNNER_TEMP/agentwiz-wheels"
+      - name: Replace editable installation with the candidate wheel
+        run: python -m pip install --no-deps --force-reinstall "$RUNNER_TEMP"/agentwiz-wheels/agentwiz-*.whl
+      - name: Check installed-wheel pages and tutorial outside the checkout
+        run: python scripts/check_installed_ui.py
+
+  pdf-wheels:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Build the candidate wheel
+        run: python -m pip wheel . --no-deps --wheel-dir "$RUNNER_TEMP/agentwiz-wheels"
+      - name: Install the wheel and require a binary pypdfium2 distribution
+        run: python -m pip install --only-binary=pypdfium2 "$RUNNER_TEMP"/agentwiz-wheels/agentwiz-*.whl
+      - name: Check dependency compatibility
+        run: python -m pip check
+      - name: Extract packaged PDF fixtures and check licence notices
+        run: python -I scripts/check_pdf_install.py --require-installed

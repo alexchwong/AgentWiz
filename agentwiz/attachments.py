@@ -1,10 +1,12 @@
-"""The basic attachment reader and the consumer-side check of a reader's result (techspec 0.1.2,
-Section 8.3; *AgentWiz attachment interface*, docs/attachment_interface.md).
+"""The basic attachment reader, the dispatch to the PDF reader and the consumer-side check of a reader's result
+(techspec 0.1.2, Section 8.3; *AgentWiz attachment interface*, docs/attachment_interface.md; starter blocks
+addendum, Section 4).
 
-Reads `.txt`, `.md`, `.csv` and `.json` files as text, implementing the interface's basic subset
-(its Section 8). `check_document` checks any reader's result against the interface's Sections 3 and 4,
-so that docSpell's results meet the same check from 0.1.4. This module and
-`docs/attachment_interface.md` change together until docSpell's build freezes the interface (D35).
+Reads `.txt`, `.md`, `.csv`, `.json`, `.tsv`, `.log`, `.yaml` and `.yml` files as text, implementing the
+interface's basic subset (its Section 8); YAML is not parsed. `.pdf` is dispatched by extension to `pdf_reader`,
+which extracts in a worker process. `check_document` checks any reader's result against the interface's Sections
+3 and 4. This module and `docs/attachment_interface.md` change together until docSpell's build freezes the
+interface (D35).
 
 Nothing is written to disk. Messages are AgentWiz's own text and never contain file content.
 Standard library only; knows nothing about HTTP.
@@ -17,12 +19,14 @@ from collections.abc import Mapping
 from pathlib import Path
 
 INTERFACE_VERSION = 1
-FORMATS = ("txt", "md", "csv", "json")
+FORMATS = ("txt", "md", "csv", "json", "tsv", "log", "yaml", "yml")   # the basic reader's text formats
+PDF_FORMATS = ("pdf",)                                                  # pdf_reader's
 ACCEPTED_INTERFACE_VERSIONS = frozenset({1})
 
 _BLOCK_TYPES = ("text", "heading", "paragraph", "list", "table", "figure")
-_UNSUPPORTED = ("AgentWiz reads .txt, .md, .csv and .json files. PDF, Word and other formats need docSpell, "
-                "which arrives in a later release.")
+_UNSUPPORTED = ("AgentWiz reads .txt, .md, .csv, .json, .tsv, .log, .yaml, .yml and .pdf files. Word and other "
+                "formats need docSpell, which arrives in a later release.")
+NO_TEXT = "The PDF has no extractable text; it may be scanned. AgentWiz does not run OCR."
 _UNDECODABLE = "The file is not UTF-8 text (or UTF-16 with a byte-order mark). Save a UTF-8 copy and attach that."
 _MALFORMED = "The reader returned a malformed result."
 
@@ -34,17 +38,40 @@ class AttachmentError(Exception):
     invalid_page_range. Consumer code (check_document only): unsupported_interface_version.
     """
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, status: int = 400):
         super().__init__(message)
         self.code = code
+        self.status = status
+
+
+def extension(filename: str) -> str:
+    """The lowercase extension of a file name, or "" (never opened)."""
+    name = Path(filename).name
+    return name.rsplit(".", 1)[1].lower() if "." in name.lstrip(".") else ""
+
+
+def is_pdf(filename: str) -> bool:
+    return extension(filename) in PDF_FORMATS
 
 
 def _format_of(filename: str) -> str:
-    name = Path(filename).name
-    ext = name.rsplit(".", 1)[1].lower() if "." in name.lstrip(".") else ""
-    if ext not in FORMATS:
+    ext = extension(filename)
+    if ext not in FORMATS and ext not in PDF_FORMATS:
         raise AttachmentError("unsupported_format", _UNSUPPORTED)
     return ext
+
+
+def _from_reader(exc: Exception) -> AttachmentError:
+    """A reader's error identified by its `code` attribute (interface 6), as this module's class."""
+    return AttachmentError(getattr(exc, "code", "extraction_failed"), str(exc), getattr(exc, "status", 400))
+
+
+def _pdf(source, filename, slot) -> dict:
+    from . import pdf_reader
+    try:
+        return pdf_reader.extract(source, filename=filename, slot=slot)
+    except pdf_reader.AttachmentError as exc:
+        raise _from_reader(exc) from None
 
 
 def _decode(data: bytes) -> str:
@@ -62,22 +89,28 @@ def _decode(data: bytes) -> str:
         raise AttachmentError("undecodable_text", _UNDECODABLE) from None
 
 
-def extract(source: bytes | str | os.PathLike, *, filename: str | None = None) -> dict:
-    """Read one file and return its document result (interface Section 3; basic subset, Section 8)."""
+def extract(source: bytes | str | os.PathLike, *, filename: str | None = None, slot=None) -> dict:
+    """Read one file and return its document result (interface Section 3; basic subset, Section 8). A `.pdf` is
+    dispatched to the PDF reader; `slot` is its admitted upload record (`state.pdf`), if any."""
     if isinstance(source, (bytes, bytearray, memoryview)):
         if filename is None:
             raise AttachmentError("extraction_failed", "A filename is required with file bytes.")
+        fmt = _format_of(filename)
+        if fmt in PDF_FORMATS:
+            return _pdf(source, filename, slot)
         data = bytes(source)
     else:
         path = Path(source)
         filename = path.name if filename is None else filename
         fmt = _format_of(filename)
+        if fmt in PDF_FORMATS:
+            return _pdf(source, filename, slot)
         try:
             data = path.read_bytes()
         except OSError:
             raise AttachmentError("damaged_file", "The file cannot be read.") from None
         return _document(fmt, data)
-    return _document(_format_of(filename), data)
+    return _document(fmt, data)
 
 
 def _document(fmt: str, data: bytes) -> dict:
@@ -89,12 +122,33 @@ def _document(fmt: str, data: bytes) -> dict:
 
 
 def render(document: dict, pages: tuple[int, int] | None = None) -> dict:
-    """The text to insert (interface Section 5). The basic formats have no pages."""
+    """The text to insert (interface Section 5), by the reader that produced the document. The basic formats have
+    no pages."""
+    if document.get("format") in PDF_FORMATS:
+        from . import pdf_reader
+        try:
+            return pdf_reader.render(document, pages)
+        except pdf_reader.AttachmentError as exc:
+            raise _from_reader(exc) from None
     if pages is not None:
         raise AttachmentError("invalid_page_range", "This file has no pages, so no page range can be chosen.")
     blocks = document["blocks"]
     text = blocks[0]["text"] if blocks else ""
     return {"text": text, "pages": None, "included_pages": None, "notice": None}
+
+
+def coverage(document: dict) -> dict | None:
+    """A paginated document's bounded coverage record (addendum 4.2), or None for the text formats."""
+    if document.get("page_count") is None:
+        return None
+    from . import pdf_reader
+    return pdf_reader.coverage(document)
+
+
+def require_text(document: dict) -> None:
+    """Both routes refuse to insert or stage a PDF that has pages but no extractable text."""
+    if any(w.get("code") == "no_extractable_text" for w in document.get("warnings", [])):
+        raise AttachmentError("no_extractable_text", NO_TEXT)
 
 
 def _is_int(v: object) -> bool:

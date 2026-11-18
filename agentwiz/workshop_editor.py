@@ -1,26 +1,34 @@
 """Exact typed field projections, starter generation and proposal compilation."""
 from __future__ import annotations
 
-import ast
 import copy
-from pathlib import Path
 
-from . import blocks, checks, jsonio, templates
+from . import blocks, checks, jsonio, python_step
 from .task_settings import OVERRIDABLE
 from .workshop import WorkshopError
-from .workshop_assets import fail, fingerprint, wire_files
+from .workshop_assets import fail, wire_files
 
 TYPES = {'Text': 'string', 'Choice': 'string', 'Whole number': 'integer', 'Number': 'number',
          'Yes/No': 'boolean', 'List': 'array', 'Group': 'object'}
 BOUNDS = {'minimum': 'minimum', 'maximum': 'maximum', 'min_length': 'minLength',
           'max_length': 'maxLength', 'min_items': 'minItems', 'max_items': 'maxItems'}
 SECTIONS = ('use', 'exclusions', 'effects', 'limitations', 'missing_data', 'failures')
-SCRIPT_IDS = ('count_text', 'select_fields', 'format_report', 'restore_placeholders')
-# Transform-only starters: no generated-script (version 1) form exists.
-TRANSFORM_ONLY_IDS = ('restore_placeholders',)
+# Built-in transforms (version 2 starters). The version-1 generated host-script form is retired (0.2.2, 10.6).
+TRANSFORM_IDS = ('count_text', 'select_fields', 'format_report', 'restore_placeholders')
 RESTORE_DEFAULTS = {'unknown': 'fail', 'placeholder_syntax': 'bracket_upper'}
 MODEL_IDS = ('write_text', 'summarise', 'extract_fields', 'choose_label', 'check_source')
-STARTERS = MODEL_IDS + SCRIPT_IDS + ('call_tool',)
+TOOL_IDS = ('call_tool', 'builtin_utility')
+STARTERS = MODEL_IDS + TRANSFORM_IDS + TOOL_IDS
+BLANK_IDS = ('blank_model', 'blank_tool', 'blank_python')
+# The Start with menu, grouped by type (0.2.2, 11). "describe_python" opens Python authoring (10.7).
+GROUPS = (('llm', 'LLM', MODEL_IDS + ('blank_model',)),
+          ('tool', 'Tool', ('call_tool', 'builtin_utility', 'blank_tool')),
+          ('python', 'Python', ('describe_python', 'blank_python')),
+          ('transform', 'Transform', TRANSFORM_IDS))
+PYTHON_FILE = 'scripts/main.py'
+PYTHON_BLANK = ('def transform(inputs):\n'
+                '    # Return a dictionary with exactly the declared output names.\n'
+                '    return {"out": inputs["text"]}\n')
 
 
 def typed(value):
@@ -196,73 +204,23 @@ def port(spec):
     return {'description': spec['description'], 'contract': contract}
 
 
-WRAPPER = '''import sys
-from _agentwiz_starter_runtime import jsonio, templates
-params = jsonio.decode_exact({parameters})
-values = jsonio.decode_exact(sys.stdin.read())
-if not isinstance(values, dict):
-    raise ValueError('inputs must be an object')
-kind = {starter!r}
-if kind == 'count_text':
-    text = values['text']
-    out = len(text.split()) if params['unit'] == 'whitespace_words' else len(text)
-elif kind == 'select_fields':
-    out = {{}}
-    for mapping in params['mappings']:
-        current = values
-        try:
-            for segment in mapping['source_path']:
-                current = current[segment]
-        except (KeyError, TypeError):
-            if mapping['required']:
-                raise ValueError('missing required source field')
-            continue
-        out[mapping['destination']] = current
-else:
-    out, fills = templates.fill_text(params['template'], 'report', values)
-sys.stdout.write(jsonio.encode_exact({{'out': out}}))
-'''
-
-
-def generate_script(starter, parameters):
-    if starter not in SCRIPT_IDS or starter in TRANSFORM_ONLY_IDS or not isinstance(parameters, dict):
-        fail()
-    if starter == 'count_text' and (set(parameters) != {'unit'} or parameters['unit'] not in ('whitespace_words', 'characters')):
-        fail()
-    if starter == 'select_fields':
-        if set(parameters) != {'mappings'} or not isinstance(parameters['mappings'], list):
-            fail()
-        for m in parameters['mappings']:
-            if set(m) != {'source_path', 'destination', 'required'} or not isinstance(m['source_path'], list) or not m['source_path'] or type(m['required']) is not bool:
-                fail()
-            if any(not isinstance(p, str) or blocks.IDENT.fullmatch(p) is None for p in [*m['source_path'], m['destination']]):
-                fail()
-    if starter == 'format_report':
-        if set(parameters) != {'template'} or not isinstance(parameters['template'], str):
-            fail()
-        templates.scan_text(parameters['template'], 'report')
-    source = WRAPPER.format(starter=starter, parameters=repr(jsonio.encode_exact(parameters)))
-    runtime = {'scripts/_agentwiz_starter_runtime/__init__.py': b''}
-    for module in (jsonio, templates):
-        runtime['scripts/_agentwiz_starter_runtime/' + module.__name__.split('.')[-1] + '.py'] = Path(module.__file__).read_bytes()
-    # License is shipped as package data so installed generation has the same attribution.
-    runtime['scripts/_agentwiz_starter_runtime/LICENSE'] = (Path(__file__).parent / 'workshop_license.txt').read_bytes()
-    metadata = {'starter': starter, 'parameters': parameters, 'starter_version': 1,
-                'runtime_digest': fingerprint(runtime), 'support': list(runtime)}
-    return {**runtime, 'scripts/main.py': source.encode('utf-8')}, metadata
+def python_definition(key, inputs, outputs, labels=None):
+    """A v4 Python block definition with the installed engine (0.2.2, 10.1). `inputs` and `outputs` map port
+    names to contracts; `labels` is True/False for every port, or None to leave labels for the author."""
+    obj = {'format_version': blocks.WORKFLOW_FORMAT_VERSION, 'name': key, 'description': '',
+           'inputs': {n: {'contract': c} for n, c in inputs.items()},
+           'outputs': {n: {'contract': c} for n, c in outputs.items()},
+           'steps': [{'id': 'run', 'kind': 'python', 'file': PYTHON_FILE, 'engine': python_step.engine()}]}
+    if labels is not None:
+        for side in ('inputs', 'outputs'):
+            for declaration in obj[side].values():
+                declaration['local_only'] = labels
+    return obj
 
 
 def classification(draft):
-    from .workshop_assets import decode_files
-    m = draft.get('metadata', {})
-    if m.get('starter') not in SCRIPT_IDS:
-        return 'custom'
-    if m.get('starter_version') != 1:
-        return 'unsupported_starter_version'
-    files = decode_files(draft['files'])
-    expected = WRAPPER.format(starter=m['starter'], parameters=repr(jsonio.encode_exact(m['parameters']))).encode('utf-8')
-    runtime = {p: b for p, b in files.items() if p.startswith('scripts/_agentwiz_starter_runtime/')}
-    return 'starter' if files.get('scripts/main.py') == expected and fingerprint(runtime) == m.get('runtime_digest') and set(runtime) == set(m.get('support', [])) else 'custom'
+    """Starter classification is meaningful only for version-2 transforms now."""
+    return 'custom'
 
 
 DATA_HANDLING = {'private': True, 'not_private': False, 'per_port': None}
@@ -274,26 +232,29 @@ def starter(identifier, key, role=None, server=None, tool=None, *, version=1, da
     unset, so Save stays refused until each port is chosen. Without it the block is v3, as before."""
     if data_handling is not None and data_handling not in DATA_HANDLING:
         fail()
-    if identifier in ('blank_model','blank_tool','blank_script'):
+    if identifier == 'blank_python':
+        label = DATA_HANDLING[data_handling] if data_handling is not None else None
+        text = {'format': 'text'}
+        obj = python_definition(key, {'text': text}, {'out': text}, label)
+        return {'key': key, 'definition_text': jsonio.encode_exact(obj),
+                'files': wire_files({PYTHON_FILE: PYTHON_BLANK.encode('utf-8')}),
+                'metadata': {'format_version': 1, 'origin': 'manual', 'effects': 'read-only'}}
+    if identifier in ('blank_model', 'blank_tool'):
         kind = identifier.split('_')[1]
-        if kind == 'script' and data_handling is not None:
-            fail()
-        draft = starter({'model':'write_text','tool':'call_tool','script':'format_report'}[kind], key, role, server, tool,
+        draft = starter({'model':'write_text','tool':'call_tool'}[kind], key, role, server, tool,
                         data_handling=data_handling)
         definition = jsonio.decode_exact(draft['definition_text'])
         definition['description'] = ''
         if kind == 'model':
             definition['steps'][0]['prompt'] = {'text':''}
-        if kind == 'script':
-            draft['files'] = {'scripts/main.py':''}
         draft['metadata'] = {'format_version':1,'origin':'manual','effects':'unknown'}
         draft['definition_text'] = jsonio.encode_exact(definition)
         return draft
     if identifier not in STARTERS or type(version) is not int or version not in (1, 2):
         fail()
-    if data_handling is not None and (identifier in SCRIPT_IDS or version != 1):
+    if data_handling is not None and (identifier in TRANSFORM_IDS or version != 1):
         fail()
-    if identifier in TRANSFORM_ONLY_IDS and version != 2:
+    if identifier in TRANSFORM_IDS and version != 2:
         fail()
     text = {'format': 'text'}
     obj = {'format_version': blocks.FORMAT_VERSION, 'name': key, 'description': identifier.replace('_', ' '),
@@ -314,27 +275,33 @@ def starter(identifier, key, role=None, server=None, tool=None, *, version=1, da
         obj['steps'] = [{'id': 'request', 'kind': 'model', 'role': role, 'system': {'text': ''},
                          'prompt': {'text': instructions + '\n{{inputs.text}}'},
                          'response_mode': 'named_json'}]
-    elif identifier in SCRIPT_IDS:
+    elif identifier in TRANSFORM_IDS:
         params = {'count_text': {'unit': 'whitespace_words'}, 'select_fields': {'mappings': [{'source_path': ['text'], 'destination': 'text', 'required': True}]}, 'format_report': {'template': '{{inputs.text}}'},
                   'restore_placeholders': dict(RESTORE_DEFAULTS)}[identifier]
         if identifier == 'restore_placeholders':
             obj['inputs']['pairs'] = {'contract': {'format': 'json'}}
             obj['description'] = 'restore placeholders'
-        if version == 2:
-            obj['format_version'] = blocks.WORKFLOW_FORMAT_VERSION
-            for side in ('inputs', 'outputs'):
-                for declaration in obj[side].values():
-                    # The mapping holds originals, so every restore port is Local only.
-                    declaration['local_only'] = identifier == 'restore_placeholders'
-            m.update(starter_version=2, parameters=params)
-            obj['steps'] = [{'id': 'transform', 'kind': 'transform', 'operation': identifier,
-                             'operation_version': 1, 'parameters': params, 'output': 'out'}]
-        else:
-            files, generated = generate_script(identifier, params)
-            m.update(generated)
-            obj['steps'] = [{'id': 'script', 'kind': 'script', 'file': 'scripts/main.py', 'timeout_s': 60}]
+        obj['format_version'] = blocks.WORKFLOW_FORMAT_VERSION
+        for side in ('inputs', 'outputs'):
+            for declaration in obj[side].values():
+                # The mapping holds originals, so every restore port is Local only.
+                declaration['local_only'] = identifier == 'restore_placeholders'
+        m.update(starter_version=2, parameters=params)
+        obj['steps'] = [{'id': 'transform', 'kind': 'transform', 'operation': identifier,
+                         'operation_version': 1, 'parameters': params, 'output': 'out'}]
         if identifier not in ('format_report', 'restore_placeholders'):
             obj['outputs']['out']['contract'] = {'format': 'json'}
+    elif identifier == 'builtin_utility':
+        # A Tool block bound to a built-in utility (6.8): local execution, read-only, workflow-ready.
+        obj['format_version'] = blocks.WORKFLOW_FORMAT_VERSION
+        obj['description'] = 'calculate'
+        obj['steps'] = [{'id': 'call', 'kind': 'tool', 'builtin': 'calculate',
+                         'arguments': {'expression': '{{inputs.text}}'}, 'output': 'out'}]
+        obj['outputs']['out']['contract'] = {'format': 'json'}
+        if data_handling is None:
+            for side in ('inputs', 'outputs'):
+                for declaration in obj[side].values():
+                    declaration['local_only'] = False
     else:
         m['effects'] = 'unknown'
         obj['steps'] = [{'id': 'call', 'kind': 'tool', 'server': server, 'tool': tool, 'arguments': {}, 'output': 'out'}]
@@ -349,7 +316,7 @@ def starter(identifier, key, role=None, server=None, tool=None, *, version=1, da
     m['description_sections'] = {'use': obj['description'], 'exclusions': 'Use for one independent block operation.',
         'effects': 'Review the selected external tool before running.' if identifier == 'call_tool' else 'Produces a returned value for review.',
         'limitations': 'Model answers require correctness review.' if identifier in MODEL_IDS else
-                       'Replaces exact placeholder tokens only; a placeholder the text reworded is not restored.' if identifier == 'restore_placeholders' else 'Scripts have ordinary user-level filesystem and network access.' if identifier in SCRIPT_IDS else 'Remote behavior may change.',
+                       'Replaces exact placeholder tokens only; a placeholder the text reworded is not restored.' if identifier == 'restore_placeholders' else 'Runs locally inside AgentWiz.' if identifier in TRANSFORM_IDS or identifier == 'builtin_utility' else 'Remote behavior may change.',
         'missing_data': 'Omit unspecified quantity.' if identifier == 'extract_fields' else
                         'An unknown placeholder fails the step unless set to leave it in place; unused pairs are listed.' if identifier == 'restore_placeholders' else 'Review required inputs before running.',
         'failures': 'Inspect located input, execution and output-check issues.'}
@@ -360,30 +327,13 @@ def edit(draft, operation):
     """Apply a targeted field edit to the authoritative contract on the server."""
     result = copy.deepcopy(draft)
     obj = jsonio.decode_exact(result['definition_text'])
-    if operation.get('kind') in ('upgrade_for_workflows', 'convert_transform'):
-        kind = operation['kind']
+    if operation.get('kind') == 'upgrade_for_workflows':
         step = obj['steps'][0]
         if obj.get('format_version') != blocks.FORMAT_VERSION:
             fail('invalid', 400)
-        if kind == 'convert_transform':
-            if step['kind'] != 'script' or classification(result) != 'starter':
-                fail('custom_source', 409)
-            meta = result['metadata']
-            operation_id, parameters = meta['starter'], meta['parameters']
-            obj['steps'] = [{'id': step['id'], 'kind': 'transform', 'operation': operation_id,
-                             'operation_version': 1, 'parameters': parameters, 'output': next(iter(obj['outputs']))}]
-            result['files'] = {}
-            result.pop('root_sources', None)
-            for field in ('runtime_digest', 'support', 'source_review'):
-                meta.pop(field, None)
-            meta['starter_version'] = 2
-        elif step['kind'] not in ('model', 'tool'):
+        if step['kind'] not in ('model', 'tool'):
             fail('invalid', 400)
         obj['format_version'] = blocks.WORKFLOW_FORMAT_VERSION
-        if kind == 'convert_transform':
-            for side in ('inputs', 'outputs'):
-                for port in obj[side].values():
-                    port['local_only'] = False
         result['definition_text'] = jsonio.encode_exact(obj)
     elif operation.get('kind') == 'design_form':
         result.setdefault('metadata', {})['display_name'] = operation['name']
@@ -460,8 +410,10 @@ def edit(draft, operation):
                 step.pop('task_resets')
             step['response_mode'] = 'named_json'
             step['repair'] = {'max_repairs': jsonio.decode_exact(operation['repairs'])}
-        elif step['kind'] == 'script':
+        elif step['kind'] == 'python':
             result['files'][step['file']] = operation['behaviour']
+        elif step['kind'] == 'tool' and 'builtin' in step:
+            step.update(builtin=operation['binding'], arguments=jsonio.decode_exact(operation.get('arguments', '{}')))
         elif step['kind'] == 'tool':
             step.update(server=operation['binding'], tool=operation['behaviour'], arguments=jsonio.decode_exact(operation.get('arguments','{}')))
         obj['budget'] = jsonio.decode_exact(operation['budget'])
@@ -479,12 +431,7 @@ def edit(draft, operation):
             result['metadata']['parameters'] = operation['parameters']
             result['definition_text'] = jsonio.encode_exact(obj)
             return result
-        if classification(result) != 'starter':
-            fail('custom_source', 409)
-        files, meta = generate_script(result['metadata']['starter'], operation['parameters'])
-        result['files'] = wire_files(files)
-        result['metadata'].update(meta)
-        result.pop('root_sources', None)
+        fail('custom_source', 409)
     elif operation.get('kind') == 'make_local_copy':
         # Explicit only: replace one failed reference with the definition this draft's generation captured.
         from .contract_schema import contract_digest

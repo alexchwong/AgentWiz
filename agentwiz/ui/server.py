@@ -37,7 +37,8 @@ from .. import (__version__, attachments, checks, contract_schema, contract_serv
                 output_protocol, runner, runs, tool_forms, tutorial_topics, workshop)
 from .. import workspace as wsmod
 from .. import workspace_admin
-from ..errors import ShuttingDown, report_internal  # noqa: F401  (re-exported; defined in errors.py since 0.1.4)
+from .. import agent_documents, agent_loop, library_install, pdf_reader
+from ..errors import SettingsHeld, ShuttingDown, report_internal  # noqa: F401  (re-exported; defined in errors.py since 0.1.4)
 from ..mcp_client import MCPError
 from ..model_call import SettingsError, describe_error
 from ..task_settings import TaskSettingError, parse_task
@@ -53,7 +54,10 @@ ASSETS = {f"/assets/{name}.js": (Path(__file__).with_name(f"{name}.js"), "text/j
           for name in ("contracts", "workflows")}
 JSON = "application/json"
 UPLOAD_LIMIT = 52_428_800          # 50 MiB; the JSON cap is insertion.REQUEST_LIMIT. Tests may lower both.
+BODY_CHUNK = 64 << 10              # an upload body is read in chunks of at most this (addendum 4.2)
+BODY_DEADLINE_S = 60.0             # the whole body of an upload, for every format. Tests may lower it.
 UPLOAD_ROUTE = "/api/attachments/extract"
+AGENT_UPLOAD_ROUTE = "/api/agent/documents"     # the second raw-body route (0.2.2, 4.9)
 WORKSPACES_ROUTE = "/api/workspaces"
 _HEX = set("0123456789abcdefABCDEF")
 
@@ -247,7 +251,8 @@ class UIServer(ThreadingHTTPServer):
                 ("block_attempt", state.store.running_count()),
                 ("block_run", len(state.store.active_block_runs())),
                 ("mcp_operation", state.mcp_ops.active_count()),
-                ("script", state.scripts.in_flight)):
+                ("python", state.python.in_flight),
+                ("agent_run", 1 if state.agent.active is not None else 0)):
             if count:
                 active.append({"kind": kind, "count": count})
         outstanding = state.writers.outstanding()
@@ -516,6 +521,31 @@ class BlockDelivery(_Delivery, runner.Observer):
         self._write(event)
 
 
+class AgentDelivery(_Delivery, agent_loop.Observer):
+    """The HTTP observer of an agent run: best effort, bounded by the page timeout. After the first failure it
+    drops every later event; the run continues, and its state stays readable by run ID (4.8)."""
+
+    def __init__(self, handler: "Handler"):
+        super().__init__(handler)
+        self.head_sent = False
+
+    def event(self, event: dict) -> None:
+        with self._lock:
+            if self.gone:
+                return
+        try:
+            if not self.head_sent:
+                self.head_sent = True
+                self.handler.send_response(200)
+                self.handler.send_header("Content-Type", "application/x-ndjson")
+                self.handler.send_header("Cache-Control", "no-store")
+                self.handler.end_headers()
+            self.handler.write_event(event)
+        except OSError:
+            with self._lock:
+                self.gone = True
+
+
 class Handler(BaseHTTPRequestHandler):
     server: UIServer
     protocol_version = "HTTP/1.0"  # each response closes its connection, which delimits the stream
@@ -577,8 +607,12 @@ class Handler(BaseHTTPRequestHandler):
         """Run a route, mapping every failure to a reply that cannot contain a credential."""
         try:
             fn()
+        except agent_loop.AgentError as exc:     # fixed codes and AgentWiz's own fields, never a value
+            self._reply_safely(exc.status, {"error": "agentic Chat request refused", "code": exc.code, **exc.extra})
         except workshop.WorkshopError as exc:
             self._reply_safely(exc.status, {"error": "Workshop request refused", "code": exc.code, **({"issues": exc.issues} if exc.issues else {}), **({"plan": exc.plan} if hasattr(exc, "plan") else {})})
+        except library_install.LibraryError as exc:
+            self._reply_safely(exc.status, {"error": str(exc), "code": exc.code})
         except workspace_admin.WorkspaceAdminError as exc:
             payload = {"error": str(exc), "code": exc.code}
             for key in ("path", "holder", "active", "limit", "cleanup"):
@@ -596,8 +630,8 @@ class Handler(BaseHTTPRequestHandler):
             self._reply_safely(411, {"error": "Content-Length is required", "code": "length_required"})
         except FilenameError as exc:
             self._reply_safely(400, {"error": f"{exc}", "code": "bad_filename"})
-        except attachments.AttachmentError as exc:  # the reader's own text, never file content
-            self._reply_safely(400, {"error": str(exc), "code": exc.code})
+        except (attachments.AttachmentError, pdf_reader.AttachmentError) as exc:  # reader text, never file content
+            self._reply_safely(getattr(exc, "status", 400), {"error": str(exc), "code": exc.code})
         except TaskSettingError as exc:  # AgentWiz's text or a modelSpell pre-send message
             self._reply_safely(400, {"error": f"TaskSettingError: {exc}", "code": "task_setting"})
         except BlockBodyError as exc:
@@ -612,7 +646,7 @@ class Handler(BaseHTTPRequestHandler):
             self._reply_safely(409, {"error": str(exc), "code": "read_only"})
         except BadArguments as exc:
             self._reply_safely(400, {"error": f"BadArguments: {exc}", "code": "bad_arguments"})
-        except (mcp_ops.Busy, ShuttingDown, TutorialBusy) as exc:
+        except (mcp_ops.Busy, ShuttingDown, TutorialBusy, SettingsHeld) as exc:
             self._reply_safely(503, {"error": str(exc), "code": "busy"})
         except runner.Busy as exc:  # names the budget (15.1)
             self._reply_safely(503, {"error": f"{exc.limit} {exc.budget} are still running or stopping. "
@@ -664,6 +698,8 @@ class Handler(BaseHTTPRequestHandler):
             self._reply_safely(500, {"error": str(exc), "code": "write_failed"})
         except ModelSpellError as exc:
             self._reply_safely(400, {"error": describe_error(exc, self._base_url)})
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
         except Exception as exc:  # noqa: BLE001 - deliberately broad: messages may carry keys
             report_internal(route, exc)
             self._reply_safely(500, {"error": f"InternalError: {type(exc).__name__}", "code": "internal"})
@@ -740,6 +776,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._attempt_poll(path[len("/api/attempts/"):])
         if path.startswith("/api/block_runs/"):
             return self._block_run_poll(path[len("/api/block_runs/"):])
+        if path.startswith("/api/agent/"):
+            return self._agent_get(path[len("/api/agent/"):])
+        if path == "/api/library":
+            return self._send(200, self.server.state.block_library.listing())
         if path == "/api/runs":
             return self._send(200, self.server.state.history.list_runs())
         if path.startswith("/api/runs/"):
@@ -760,6 +800,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._workspaces_post(path)
         if path.startswith("/api/workshop/") and path != "/api/workshop/tickets":
             return self._workshop_post(path[len("/api/workshop/"):], self._body())
+        if path in ("/api/library/plan", "/api/library/add"):
+            body = self._body()
+            if body.get("format_version") != 1 or set(body) != {"format_version", "entries"}:
+                raise BodyError("format_version must be 1 and the only other member is entries")
+            installer = self.server.state.block_library
+            return self._send(200, installer.plan(body) if path.endswith("/plan") else installer.add(body))
         routes = {"/api/workshop/tickets": self._workshop_ticket, "/api/tutorial/start": self._tutorial_start,
                   "/api/tutorial/step": self._tutorial_step,
                   "/api/tutorial/exit": self._tutorial_exit,
@@ -784,6 +830,10 @@ class Handler(BaseHTTPRequestHandler):
                   "/api/mcp/servers": self._mcp_servers, "/api/mcp/token": self._mcp_token,
                   "/api/mcp/tools": self._mcp_tools, "/api/mcp/call": self._mcp_call,
                   "/api/mcp/cancel": self._mcp_cancel}
+        if path == AGENT_UPLOAD_ROUTE:
+            return self._agent_upload()
+        if path.startswith("/api/agent/"):
+            return self._agent_post(path[len("/api/agent/"):], self._body())
         if path == UPLOAD_ROUTE:
             return self._upload()
         body = self._body(" Copy a smaller part of the file." if path == "/api/complete" else "")
@@ -793,7 +843,9 @@ class Handler(BaseHTTPRequestHandler):
         handler(body)
 
     def _state_body(self, view: dict) -> dict:
+        from .. import python_step
         out = {**view, "agentwiz_version": __version__, "modelspell_version": modelspell.__version__,
+               "scriptspell_version": python_step.version(),
                "limits": {"request_bytes": insertion.REQUEST_LIMIT, "upload_bytes": UPLOAD_LIMIT}}
         out["workspace"] = {**view["workspace"], "admin": self.server.workspace_admin_enabled}
         return out
@@ -884,8 +936,12 @@ class Handler(BaseHTTPRequestHandler):
             from ..outbound_policy import candidates
             result = candidates(self.server.state)
         elif path == 'starters':
-            from ..workshop_editor import SCRIPT_IDS, STARTERS, examples
-            result = {'format_version': 1, 'starters': [{'id': k, 'version': 2 if k in SCRIPT_IDS else 1, 'examples': examples(k)} for k in STARTERS]}
+            from ..workshop_editor import GROUPS, STARTERS, TRANSFORM_IDS, examples
+            from ..agent_tools import REGISTRY
+            result = {'format_version': 1, 'starters': [{'id': k, 'version': 2 if k in TRANSFORM_IDS else 1, 'examples': examples(k)} for k in STARTERS],
+                      'groups': [{'id': ident, 'label': label, 'entries': list(entries)} for ident, label, entries in GROUPS],
+                      'builtins': [{'id': u.name, 'title': u.name.replace('_', ' '), 'description': u.description}
+                                   for u in REGISTRY.values()]}
         elif len(parts) == 3 and parts[0] == 'blocks' and parts[2] == 'revisions':
             result = service.assets.revisions(parts[1])
         elif len(parts) == 4 and parts[0] == 'blocks' and parts[2] == 'revisions':
@@ -983,6 +1039,18 @@ class Handler(BaseHTTPRequestHandler):
             result = service.start(path, body)
         elif path == 'assist':
             result = service.assist(body)
+        elif len(parts) == 2 and parts[0] == 'python':
+            # Python authoring (0.2.2, 10.7): Describe it, Generate examples, Edit as YAML, Generate and check, Apply.
+            flows = service.python
+            if parts[1] == 'start':
+                result = flows.start(body)
+            elif parts[1] in ('examples', 'generate', 'apply', 'stop') and set(body) == {'flow'}:
+                result = {'examples': flows.generate_examples, 'generate': flows.generate_and_check,
+                          'apply': flows.apply, 'stop': flows.stop}[parts[1]](body['flow'])
+            elif parts[1] == 'accept' and set(body) == {'flow', 'text'}:
+                result = flows.accept_examples(body['flow'], body['text'])
+            else:
+                return self._send(404, {'code': 'missing'})
         elif path == 'proposals/apply':
             result = service.apply(body)
         elif len(parts) == 3 and parts[0] == 'batches' and parts[2] == 'stop':
@@ -1051,31 +1119,86 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"url": session.parent.url})
         threading.Thread(target=session.close, daemon=True).start()
 
-    def _upload(self) -> None:
-        """POST /api/attachments/extract (Section 8.4): the file's bytes; nothing is stored."""
-        length = self._length(UPLOAD_LIMIT)
+    # --- uploads (addendum 4.2) ------------------------------------------------------------------------------
+    def _read_upload(self, length: int, slot=None) -> bytes:
+        """The body in chunks of at most BODY_CHUNK under one BODY_DEADLINE_S deadline for the whole body. The
+        socket timeout bounds each read, not the whole, so a slow sender cannot keep a read going. For a PDF the
+        slot's cancelled flag is checked between chunks, and the connection is stored in the slot so that
+        shutdown can interrupt a read blocked waiting for bytes."""
+        if slot is not None:
+            slot.attach_socket(self.connection)
+        deadline = time.monotonic() + BODY_DEADLINE_S
+        chunks, received = [], 0
+        try:
+            while received < length:
+                if slot is not None:
+                    slot.check()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise _ReadTimeout()
+                self.connection.settimeout(max(0.01, min(self.timeout or remaining, remaining)))
+                try:
+                    chunk = self.rfile.read1(min(BODY_CHUNK, length - received))
+                except OSError:
+                    if slot is not None:
+                        slot.check()
+                    raise _ReadTimeout() from None
+                if not chunk:
+                    if slot is not None:
+                        slot.check()
+                    raise _ReadTimeout()
+                chunks.append(chunk)
+                received += len(chunk)
+        finally:
+            try:
+                self.connection.settimeout(self.timeout)
+            except OSError:
+                pass
+        if slot is not None:
+            slot.check()                                   # after the body, before the worker starts
+        return b"".join(chunks)
+
+    def _admitted_upload(self, route_limit: int):
+        """(filename, length, slot): X-Filename and Content-Length before anything is read. A `.pdf` is held to
+        16 MiB on both routes and admitted to a PDF slot before its body is read, so a waiting request holds no
+        file bytes. The caller releases the slot in its `finally`."""
+        filename = decode_filename(self.headers.get("X-Filename"))
+        pdf = attachments.is_pdf(filename)
+        length = self._length(pdf_reader.SOURCE_LIMIT if pdf else route_limit)
         if length is None:
             raise LengthRequired()
-        filename = decode_filename(self.headers.get("X-Filename"))
+        slot = self.server.state.pdf.acquire() if pdf else None
+        return filename, length, slot
+
+    @staticmethod
+    def _read_document(data: bytes, filename: str, slot=None) -> tuple[dict, dict]:
         try:
-            data = self.rfile.read(length) if length else b""
-        except OSError:
-            raise _ReadTimeout() from None
-        if len(data) < length:
-            raise _ReadTimeout()
-        try:
-            document = attachments.extract(data, filename=filename)
+            document = attachments.extract(data, filename=filename, slot=slot)
             attachments.check_document(document)
             rendered = attachments.render(document)
-        except attachments.AttachmentError:
+        except (attachments.AttachmentError, pdf_reader.AttachmentError):
             raise
         except Exception as exc:  # noqa: BLE001 - any other reader failure is extraction_failed (interface 6)
             raise attachments.AttachmentError("extraction_failed",
                                               f"The reader failed ({type(exc).__name__}).") from None
+        attachments.require_text(document)
+        if slot is not None:
+            slot.check()                                   # immediately before the result is returned or staged
+        return document, rendered
+
+    def _upload(self) -> None:
+        """POST /api/attachments/extract (Section 8.4): the file's bytes; nothing is stored."""
+        filename, length, slot = self._admitted_upload(UPLOAD_LIMIT)
+        try:
+            data = self._read_upload(length, slot) if length else b""
+            document, rendered = self._read_document(data, filename, slot)
+        finally:
+            if slot is not None:
+                slot.release()
         self._send(200, {"filename": filename, "format": document["format"], "page_count": document["page_count"],
                          "warnings": document["warnings"], "source_bytes": len(data),
                          "source_sha256": hashlib.sha256(data).hexdigest(),
-                         "notice": rendered["notice"],
+                         "notice": rendered["notice"], "coverage": attachments.coverage(document),
                          "insertion": insertion.preview(insertion.file_provenance(filename), rendered["text"])})
 
     def _config(self, body: dict) -> None:
@@ -1480,6 +1603,125 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"providers": self._entries(modelspell.list_providers(endpoint, model or ""))})
 
 
+    # --- agentic Chat (0.2.2, 4.9) -----------------------------------------------------------------------------
+    def _agent_get(self, path: str) -> None:
+        manager = self.server.state.agent
+        query = parse_qs(urlparse(self.path).query)
+        if path == "conversation":
+            return self._send(200, manager.view())
+        if path == "inventory":
+            body: dict = {}
+            try:
+                if "revision" in query:
+                    body["revision"] = int(query["revision"][0])
+                if "task" in query:
+                    body["task"] = json.loads(query["task"][0])
+                if "capabilities" in query:
+                    body["capabilities"] = json.loads(query["capabilities"][0])
+                if "limits" in query:
+                    body["limits"] = json.loads(query["limits"][0])
+            except (ValueError, IndexError):
+                raise BodyError("revision, task, capabilities and limits must be JSON") from None
+            return self._send(200, manager.inventory(body))
+        if path.startswith("runs/"):
+            return self._send(200, manager.run_view(path[len("runs/"):]))
+        if path.startswith("drafts/"):
+            conversation = query.get("conversation", [None])[0]
+            name, data = manager.draft_bytes(path[len("drafts/"):], conversation)
+            ctype = "text/markdown; charset=utf-8" if name.endswith(".md") else "text/plain; charset=utf-8"
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if path == "capabilities":
+            return self._send(200, self._capabilities_view())
+        return self._send(404, {"error": "not found"})
+
+    def _capabilities_view(self) -> dict:
+        from .. import agent_capabilities
+        state = self.server.state
+        revision, rows = state.agent.store.read()
+        eligible, refused = agent_capabilities.mcp_candidates(state, rows)
+        tools = [{"url": c.url, "server": c.server, "tool": c.tool, "schema_digest": c.schema_digest,
+                  "name": c.name, "eligible": True,
+                  "classification": {k: v for k, v in state.agent.store.row(rows, c.url, c.server, c.tool,
+                                                                            c.schema_digest).items()
+                                     if k in agent_capabilities.DEFAULTS}} for c in eligible]
+        tools += [{**row, "eligible": False} for row in refused]
+        return {"format_version": 1, "revision": revision, "rows": rows, "tools": tools}
+
+    def _agent_post(self, path: str, body: dict) -> None:
+        if body.get("format_version") != 1 or type(body.get("format_version")) is not int:
+            raise BodyError("format_version must be 1")
+        body = {k: v for k, v in body.items() if k != "format_version"}
+        manager = self.server.state.agent
+        if path == "conversation":
+            if body:
+                raise BodyError("starting a conversation takes no fields")
+            return self._send(200, manager.start_conversation())
+        if path == "conversation/close":
+            return self._send(200, manager.close_conversation(body.get("conversation")))
+        if path == "conversation/memory":
+            return self._send(200, manager.memory(body))
+        if path == "documents/update":
+            return self._send(200, manager.update_document(body))
+        if path == "run":
+            return self._agent_run(body)
+        if path == "stop":
+            if set(body) != {"run_id"}:
+                raise BodyError("stop takes run_id")
+            return self._send(200, manager.stop(body["run_id"]))
+        if path == "approve":
+            return self._send(200, manager.approve(body))
+        if path == "capabilities":
+            try:
+                result = manager.store.update(self.server.state, body)
+            except ValueError:
+                raise workshop.WorkshopError("invalid", 400) from None
+            return self._send(200, result)
+        return self._send(404, {"error": "not found"})
+
+    def _agent_upload(self) -> None:
+        """POST /api/agent/documents: the file's bytes, as on /api/attachments/extract (raw-body exception)."""
+        conversation = self.headers.get("X-Conversation")
+        flag = self.headers.get("X-Local-Only", "true")
+        if flag not in ("true", "false"):
+            raise BodyError('X-Local-Only must be "true" or "false"')
+        filename, length, slot = self._admitted_upload(agent_documents.SOURCE_LIMIT)   # before the body is read
+        try:
+            data = self._read_upload(length, slot) if length else b""
+            try:
+                result = self.server.state.agent.stage(
+                    conversation, filename, data, flag == "true",
+                    extract=lambda raw, name: self._read_document(raw, name, slot))
+            except (attachments.AttachmentError, pdf_reader.AttachmentError, agent_loop.AgentError):
+                raise
+            except Exception as exc:  # noqa: BLE001 - any other reader failure is extraction_failed (interface 6)
+                raise attachments.AttachmentError("extraction_failed",
+                                                  f"The reader failed ({type(exc).__name__}).") from None
+        finally:
+            if slot is not None:
+                slot.release()
+        self._send(200, result)
+
+    def _agent_run(self, body: dict) -> None:
+        """Refusals are real HTTP statuses before the run exists (4.9); then an NDJSON stream."""
+        state = self.server.state
+        delivery = AgentDelivery(self)
+        run = state.agent.prepare_run(body, delivery)
+        try:
+            state.add_delivery(delivery)
+            try:
+                run.run()
+            finally:
+                state.remove_delivery(delivery)
+        finally:
+            state.agent.abandon(run)          # a failure before run() releases the reservation; idempotent
+
     # --- model requests (techspec 0.1.3, 5.2, 8.6-8.8, 9.4) ----------------------------------------------
     def write_event(self, event: dict) -> None:
         """The one writer of stream events (a test hook, techspec 18.1). Raises OSError (TimeoutError
@@ -1513,6 +1755,7 @@ class Handler(BaseHTTPRequestHandler):
             raise SettingsError("choose a model in Model settings")
         task = parse_task(body.get("task"))
         arguments = model_call.task_arguments(task, snapshot.kind, snapshot.provider)
+        model_call.validate_request(snapshot, arguments)
         copy_ = None
         if contract_ref is not None:
             found = state.contract_for_request(*contract_ref)   # 404, 409 digest_mismatch / contract_unusable

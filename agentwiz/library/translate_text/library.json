@@ -1,0 +1,115 @@
+{
+  "title": "Translate a text",
+  "group": "llm",
+  "summary": "Translate a text into a target language, keeping Markdown and numbers.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "translate_text-1",
+      "version": 1,
+      "label": "French to English",
+      "inputs": {
+        "text": "Le colis arrive le 12 mai.",
+        "target_language": "English"
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "text",
+            "operation": "includes",
+            "values": [
+              "12",
+              "May"
+            ],
+            "case": "insensitive"
+          },
+          {
+            "output": "source_language",
+            "operation": "includes",
+            "values": [
+              "French"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "translate_text-2",
+      "version": 1,
+      "label": "Markdown kept",
+      "inputs": {
+        "text": "# Hello\n\n- 3 apples\n",
+        "target_language": "Spanish"
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "text",
+            "operation": "includes",
+            "values": [
+              "# ",
+              "- 3"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "translate_text-3",
+      "version": 1,
+      "label": "empty",
+      "inputs": {
+        "text": "",
+        "target_language": "German"
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "source_language",
+            "operation": "includes",
+            "values": [
+              "unknown"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "required_context": 32768,
+  "max_tokens": 8192,
+  "description": {
+    "sections": {
+      "use": "Translate a text into another language, keeping its Markdown structure, numbers and names.",
+      "exclusions": "Not a localisation of dates, units or currency; values are kept as written.",
+      "limitations": "Needs a model context of at least 32,768 tokens (prompt, input, one repair and 8,192 output tokens). Results are model output: review them. Text up to 20,000 characters; the translation may be longer.",
+      "missing_data": "An empty text gives an empty translation and source_language \"unknown\".",
+      "effects": "Sends its inputs to the model of its role (fast by default) and returns the result for review. With unrestricted ports and unrestricted data, that model may be remote; the Add dialog shows the destination. Label inputs Local only to keep them on this machine.",
+      "failures": "If the reply does not meet the output contract after two repairs, the step fails with located issues. A context or token limit is reported as such; shorten the input or use a larger context."
+    },
+    "port_summaries": {
+      "inputs": {
+        "text": "The text to translate.",
+        "target_language": "The language to translate into, for example French."
+      },
+      "outputs": {
+        "text": "The translation.",
+        "source_language": "The source language, in English."
+      }
+    }
+  }
+}

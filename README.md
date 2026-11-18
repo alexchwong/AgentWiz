@@ -7,10 +7,23 @@ You choose a model backend (LM Studio, OpenRouter, or any OpenAI-compatible serv
 llama-server), type an optional system prompt and an input, and watch the reasoning and the answer
 stream back, followed by token usage, cost and a clear outcome.
 
-AgentWiz 0.2.1 includes:
+AgentWiz 0.2.2 includes:
 
-- **Workshop:** create, understand, save, test and compare one model, tool or Python block at a time.
-- **Ten starters** and blank blocks, exact structured fields, prompt preview and a standard description for each saved revision.
+- **Agentic Chat:** a switch in Chat that lets the model ask AgentWiz to run one approved capability per turn.
+  AgentWiz decides what may run, validates every request, asks before any call that may change state, and
+  decides where data may go.
+- **Built-in tools:** list, search and read staged documents, create, copy into and revise downloadable drafts,
+  compare documents, read CSV tables, and fourteen local utilities (date and time, calculator, date arithmetic, find
+  and replace, Markdown sections and outlines, text diff and combine, CSV parse, sort and table rendering, column
+  statistics, identifier scanning and identifier-map checks).
+- **Block library:** 29 ready-made model, Tool and Transform blocks, added from Workshop after reviewing each
+  port's Local only label.
+- **PDF:** text extraction from PDF files in a short-lived worker process, with page coverage.
+- **Python blocks:** restricted Python that runs locally in scriptSpell's runner, standalone, in fixed workflows
+  and from agentic Chat; **Describe it** drafts examples and source for you to review.
+- **Workshop:** create, understand, save, test and compare one model, tool, Python or transform block at a time.
+- **Starters grouped by type** (LLM, Tool, Python, Transform) and blank blocks, exact structured fields, prompt
+  preview and a standard description for each saved revision.
 - **Saved revisions:** display names, duplicate, restore, explicit import of unmanaged v3 blocks and newest-20 retention. Eligible retained
   revisions can be selected, described, tested and compared without changing the default.
 - **Examples and correctness:** exact outputs, field assertions or human review, independently of contract acceptance.
@@ -25,11 +38,12 @@ AgentWiz 0.2.1 includes:
 - **Guided tutorial topics** using isolated local services, with no API keys or live model required.
 
 Model profiles, roles and MCP servers are shared settings. Credentials stay in process memory.
-Scripts run with your filesystem and network access. AgentWiz uses the pinned modelSpell 0.3.0 public API.
+Python blocks run in scriptSpell's restricted runner: a language-level restriction, not an OS sandbox. Host
+Python (v3 script) blocks are retired. AgentWiz uses the pinned modelSpell 0.4.0 and scriptSpell 0.3.0 public APIs.
 
 ## Install
 
-This guide covers AgentWiz 0.2.1, which requires Python 3.10 or later.
+AgentWiz 0.2.2 requires Python 3.10 or later.
 
 ```bash
 curl -fsSL https://github.com/alexchwong/AgentWiz/releases/latest/download/install.sh | bash
@@ -46,16 +60,16 @@ files report `migration_required`. Recreate or deliberately rewrite them as exec
 and current Text/JSON contracts. Reusable contract references need exact revision pins. For model
 steps, update the reply instructions to match the [named JSON envelope](#named-outputs).
 
-If you have a locally built 0.2.1 wheel, or its published wheel once available, install it with:
+If you have a local copy of the 0.2.2 wheel, install it with:
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install ./agentwiz-0.2.1-py3-none-any.whl
+python -m pip install ./agentwiz-0.2.2-py3-none-any.whl
 ```
 
 For a published wheel, you can pass the URL with the `#sha256=…` fragment from the release notes
-to pip instead of the local filename. Both methods install the URL- and checksum-pinned modelSpell 0.3.0.
+to pip instead of the local filename. Both methods install the pinned modelSpell 0.4.0 and scriptSpell 0.3.0 wheels.
 
 **JSON Schema validation is required and installed automatically** (`jsonschema>=4.26,<5`).
 It brings `rpds-py`, a compiled package; a platform without a published wheel needs a Rust
@@ -159,9 +173,68 @@ either one. Session API keys and MCP tokens are memory-only: switching or resett
 re-enter them when needed. Workspace administration is disabled inside the tutorial's temporary
 workspace.
 
+## Agentic Chat
+
+Turn on **Agentic** in Workbench → Chat. Off, Chat is exactly as before. On, the panel shows, before Send:
+
+- the model destination (kind, URL, model, provider), whether it is local and trusted for Local only data, and
+  modelSpell's offline preflight. Preflight shows that modelSpell accepts the request shape; it does not show that
+  a given server, model and chat template produce usable tool calls;
+- the conversation's documents and drafts, each with its **Local only** switch (on by default for uploads);
+- the capabilities, each with a tick and, for a saved block, its exact revision;
+- items excluded for this model, with the reason. Exclusion never changes a label;
+- three limits: model turns (default 8, at most 20), actions (6, at most 20) and run time (300 s, at most 1,800);
+- **Remember this conversation** (on by default), **Clear memory** and **New conversation**.
+
+During a run the panel streams the model's text and reasoning, lists each proposed action and its outcome, asks
+for approval when one is needed, and ends with the answer, the stop reason and the trace. **Stop** is available
+throughout. A reload reattaches to the running conversation, its run and any pending approval.
+
+**What can be offered.** The built-in tools (eight document tools and fourteen utilities, below); MCP tools you have
+classified; and saved workflow-ready (v4)
+model, tool, transform and Python blocks. Every MCP tool is disabled and unknown-effect until you classify it in
+Settings → MCP servers → **Agentic Chat: tool classifications**: **Enabled**, **Effects** (read-only, changes state
+or unknown), **Cannot reach files on this computer** (your statement; AgentWiz cannot verify it, and a tool
+without it is never offered, directly or inside a Tool block) and **Results Local only** (on by default). A tool
+appears there once its list has been loaded. Saved workflows, Release Gates and v3 host-script blocks are never
+offered.
+
+**Approval.** Built-in tools, read-only MCP tools and model, transform and Python blocks need none. Every call to
+an MCP tool classified as changing state or unknown asks first, showing exactly the arguments the server will
+receive (for a Tool block, after its template is filled). A denial is final for that call and counts as an
+action; an approval is single-use and expires after 120 seconds or at the run's deadline.
+
+**Documents and drafts.** Choose a `.txt`, `.md`, `.csv`, `.tsv`, `.json`, `.log`, `.yaml`, `.yml` or `.pdf` file in
+the panel: it is read as on the Documents tab and staged under `<workspace>/agent_documents/`. A PDF shows its
+coverage (pages read, pages with text, and any page without a text layer). The model reaches a document only by its
+ID, through search (literal, case-insensitive, in document order) and read (by the document's own line numbers; long
+lines by column). **Create draft** writes a new Markdown or text draft that you can download. **Copy to draft**
+copies a line range of a document or draft into a new draft (or appends it to one), **Revise draft** applies exact
+find-and-replace edits to a draft as a new draft, **Compare documents** gives a line diff of two items, and **Read
+table** reads a staged CSV or TSV by rows. None of them ever changes a document; reading restricted material for a
+draft restricts the draft. Up to 20 documents and drafts (10 drafts) and 64 MiB per conversation. Staged files are removed when the
+conversation closes, the workspace changes and AgentWiz exits.
+
+**Privacy.** A document marked Local only, and anything derived from it, is restricted. For a model that is not
+a trusted local destination, restricted documents, MCP tools with Local only results and blocks with protected
+design or Local only outputs are excluded before the run. A run that reads restricted material becomes
+restricted for the rest of the run; if the model is not a trusted local destination, the result is withheld and
+the run ends. Tightening a label clears the conversation's memory. Your typed message is never labelled, and
+AgentWiz never copies protected material into it.
+
+**Memory.** Each answered run adds its question, answer and the drafts it created; the next run sends them.
+Earlier tool calls are never replayed. At most 20 entries; when full, start a new conversation or clear memory.
+Memory is kept in process memory only and is lost on restart. After a restricted run on a trusted local model,
+sending to any other model is refused until you turn memory off, clear it or start a new conversation.
+
+**Records.** With **Save runs** on, each run saves one record: destination, settings, limits, your message and the
+final answer, and one action trace with each action's identity, approval, outcome, byte sizes and digests. It
+never holds tool arguments, tool results, excerpts or draft contents. A restricted run is marked Local only in
+History.
+
 ## Block Workshop
 
-Choose **New block**, a starter or blank model/tool/script and a stable block key. Set its display name,
+Choose **New block**, a starter or blank block and a stable block key. Set its display name,
 purpose, inputs, behaviour and outputs in Design. A model role resolves to a profile; a tool binds to a
 server and discovered tool. Insert input controls use the existing `{{inputs.name}}` template syntax.
 The block key is an internal identifier, not a display title: use 1–64 ASCII letters, digits, dots,
@@ -179,7 +252,11 @@ servers: add their URLs in Settings → MCP servers first. Discovery lists tools
 Model and tool starters ask for **Port labels**: **Local only**, **No local-only label** or **Decide per
 port**. The choice creates a workflow-ready (v4) block; with Decide per port, saving waits until each port has
 a label. A label declares only that port; restrictions can still come from connected inputs, examples or
-protected design. Built-in transform starters are workflow-ready; Python script blocks run standalone only.
+protected design. **Start with** groups starters by type: **LLM** (the five model starters and Blank), **Tool**
+(Call an MCP tool, Built-in utility, Blank), **Python** (Describe it, Blank) and **Transform** (Count text, Select or
+rename fields, Format report, Restore placeholders). Every block they create is workflow-ready. A Tool block shows its
+binding as **Built-in** (one of the fourteen utilities listed under [Block library](#block-library): local,
+read-only, no approval) or the MCP server name. **Add from library** adds ready-made blocks; see below.
 Creation errors keep the dialog and entered values available for correction. **Create draft** opens
 Design without calling a model; **Create with assistance** first creates the same draft, then opens the
 separate assistance request/review workflow. Neither button saves a revision automatically.
@@ -262,11 +339,17 @@ being pruned. Duplicate keeps the original key intact and offers explicit copyin
 draft loads a retained definition into a draft; a deliberate Save creates a new revision, without rerunning it.
 Renaming the display name also requires Save; the stable key remains in Details.
 
-Python starters expose validated parameters and captured runtime identity. Actual source/support edits
-become custom Python and disable those parameter controls. Update support files retains captured copies
-or previews root replacements/additions/removals. Root files selected for replacement are rechecked at
-publication. Old revisions keep their captured helpers and data. Scripts are not sandboxed; source
-review does not establish safety, and undeclared dependencies or absolute-path assumptions cannot be inferred.
+**Python blocks.** A Python block's `scripts/main.py` defines `transform(inputs)` and returns a dictionary with
+exactly the declared outputs. It runs in scriptSpell's restricted runner (no files, network, environment or imports
+outside its profile; 64 KiB of source, 1 MiB of inputs and of outputs, 1 s of execution, 5 s in all). It is a
+language-level restriction, not an OS sandbox. JSON numbers arrive as `int` (whole numbers written without a decimal
+point) or `Decimal`; a script that returns a float fails with `float_output`, so divide with `Decimal`.
+**Describe it** asks the selected role for three examples (shown as fields; **Edit as YAML** changes them, checked
+locally with no model call), then **Generate and check** asks for the source and runs every example exactly as the
+saved block will. **Apply** puts the source and the examples, unconfirmed, into the draft; Test and Save stay
+separate. The flow sends at most three requests. A block saved with a scriptSpell profile or codec that differs
+from the installed one is unusable (`engine_changed`) until it is tested and saved again. v3 host-script blocks load
+as unusable (`host_script_retired`).
 
 For a workflow-ready block, the **Protection** card counts port labels, shows **Design protection** (off, set
 here, or inherited from protected assistance and not clearable) and notes that run restrictions also depend on
@@ -312,7 +395,7 @@ with no correct result, time per correct result is undefined. Backend internals 
 Save runs is off by default and is captured once at Start. Saving off retains active/latest session evidence
 until process restart. Saving on writes comparison evidence and child histories; these can be opened from
 Recent runs and comparisons and deleted independently. Stop cancels the current child and remaining trials.
-Reload reattaches to retained work by ID without dispatching it again. Real tool/script calls may change
+Reload reattaches to retained work by ID without dispatching it again. Real tool calls may change
 external state, and an unknown tool outcome is never automatically retried.
 
 Assist offers four independent draft actions. Choose the action, role, task, stage or Improve sections, then review
@@ -351,6 +434,64 @@ review it again. An unreadable, linked or newer-format sidecar shows **Descripti
 and is protected from writes. An invalid or mismatched v1 sidecar can be replaced if AgentWiz
 can read its freshness token. The sidecar is independent of execution. Pruning a revision also
 removes its description.
+
+## Block library
+
+**Add from library** in Workshop lists 29 ready-made blocks in three groups. Each is an ordinary block of yours
+once added: it has revisions, examples and a standard description, and you can edit, test, compare and wire it like
+any other. A library block never updates itself; a newer library version is added under a new key.
+
+- **Model blocks** (role `fast` by default): Summarise a document, Extract action items, Extract entities, Classify a
+  text, Answer from a source (with verbatim quotes, or "Not found in the source."), Rewrite for an audience,
+  Proofread, Translate a text, Draft a reply, Minutes from a transcript, Compare documents by
+  meaning, Check against a checklist and Table from text.
+- **Tool blocks** (built-in utilities: local, read-only, no model): Find and replace, Extract a Markdown section,
+  Document outline, Compare two texts, Combine two texts, CSV to rows, Rows to Markdown table, Sort and remove
+  duplicates, Column statistics, Scan for identifiers, Check an identifier map, Current date and time, Calculate, Add
+  to a date and Days between dates.
+- **Transform blocks**: Restore identifiers.
+
+**Adding.** Tick entries, optionally rename them (**Add as**), and for a model block choose its role. **Review**
+shows each port's Local only label, the role and the destination that role resolves to now; **Add** requires that
+you have reviewed the labels. If a role, a profile's endpoint or a provider pin changes after the review, Add asks
+again and writes nothing. A key already in use is refused, case-insensitively. Each entry's status is one of
+**Available**, **Installed**, **Key in use** or **Incomplete**; an addition interrupted after the block was saved
+offers **Finish adding**, which writes the missing examples and description unless you have edited the block since,
+in which case it reports what was written. Examples or a description you save yourself meanwhile are kept as you
+wrote them. Saving an added block yourself makes it an ordinary revision without the library record.
+
+**The utilities** behind the Tool blocks are also built-in tools in agentic Chat and Tool-step bindings:
+`current_datetime`, `calculate`, `date_arithmetic`, `find_replace`, `extract_section`, `outline`, `compare_texts`,
+`combine_texts`, `parse_csv`, `rows_to_table`, `sort_dedupe_rows`, `column_stats`, `scan_identifiers` and
+`check_identifier_map`. Each takes at most 1 MiB of arguments, works out its output size before producing it, and
+refuses with `too_large` rather than truncating; only `outline` and `scan_identifiers` stop at a cap and say so.
+Table values stay verbatim strings, so IDs such as `007` keep their leading zeros.
+
+**Wiring examples.** A CSV to a sorted Markdown table: `csv_to_rows` → `sort_and_dedupe_rows` → `rows_to_table`,
+binding each node's `columns` and `rows` by path from the previous node's `out`, and `sort.by` to a constant such
+as `["Order ID"]`:
+
+```json
+"sort.columns": {"kind": "node", "node": "parse", "port": "out", "path": ["columns"]},
+"sort.rows":    {"kind": "node", "node": "parse", "port": "out", "path": ["rows"]},
+"sort.by":      {"kind": "constant", "name": "sort_keys"},
+"table.columns":{"kind": "node", "node": "sort",  "port": "out", "path": ["columns"]},
+"table.rows":   {"kind": "node", "node": "sort",  "port": "out", "path": ["rows"]}
+```
+
+Model rows to a table: bind `table_from_text.rows` to `rows_to_table.rows`, and bind the same constant or input that
+fed `table_from_text.columns` to `rows_to_table.columns`.
+
+**De-identification.** Your local de-identification block → `check_identifier_map` → a Release Gate →
+the remote step → `restore_identifiers`. The map check runs locally before the Gate: a malformed placeholder, one
+placeholder for two originals, one original under two placeholders, or a placeholder that collides with a token
+already in the source fails the workflow before anything is sent. Tokens the remote reply adds or keeps that the map
+does not know stay as they are and are listed. The Gate review is still yours: neither the model nor the scan can
+show that no identifier was missed.
+
+**Quality.** You can use library blocks from Workshop, workflows and Agentic Chat. For 0.2.2, the
+shipped model blocks passed live qualification and Agentic Chat passed its live evaluation with
+`openai/gpt-4.1-mini` on OpenRouter. Qualification results apply to the tested models and profiles.
 
 ## Workflows
 
@@ -474,7 +615,8 @@ Open **Settings → Model settings** to choose the model:
 | --- | --- |
 | Model source | LM Studio, OpenRouter or OpenAI-compatible. |
 | Model ID | Type it, or use **Load models**. |
-| Provider | OpenRouter only. **Load providers** lists the model's providers; choosing one pins the request to it with no fallback. |
+| Routing / Provider | OpenRouter only. Automatic uses modelSpell to probe and select an eligible provider (Balanced, Cheapest or Fastest). Manual pins the selected slug without substitution. OpenRouter-managed is available for text requests only. Automatic selection can make up to four additional billable probes; probe usage is recorded as unreported, not zero. |
+| Privacy | Account default retains account restrictions. Require zero data retention or deny data collection to add explicit requirements to every probe and completion; routing never relaxes them. |
 
 Reasoning and max tokens are set in each request panel (see **Task settings**).
 
@@ -485,11 +627,11 @@ where the key comes from: `key: session`, `key: env OPENROUTER_API_KEY`, `key: c
 
 ### Profiles
 
-A profile stores model source, model ID and provider under a name. It never stores a key or server URL.
+A profile stores model source, model ID, provider routing and privacy requirements under a name. It never stores a key or server URL.
 Older profile URLs are no longer used: transfer any required endpoint manually to the configuration file.
 
-- **Profile files are format version 3.** Older profiles load, but their server URLs are ignored and
-  removed on the next write. Earlier AgentWiz releases cannot read version 3 files. Profiles saved by 0.1.1 load as they are, but
+- **Profile files are format version 4.** Older profiles load, but their server URLs are ignored and
+  removed on the next write. Earlier AgentWiz releases cannot read version 4 files. Existing pins remain Manual; empty providers remain OpenRouter-managed. Profiles saved by 0.1.1 load as they are, but
   their reasoning and max tokens values are dropped the next time the file is written: set them in
   the request panel and press **Save task settings** instead.
 
@@ -583,8 +725,9 @@ it sends what the panel shows.
 
 ## Attachments
 
-**Attach file…** on the **Documents** tab reads `.txt`, `.md`, `.csv` and `.json` files, chosen by the
-extension in any letter case. Files must be UTF-8 (with or without a byte-order mark) or UTF-16 with
+**Attach file…** on the **Documents** tab reads `.txt`, `.md`, `.csv`, `.tsv`, `.json`, `.log`, `.yaml`, `.yml` and
+`.pdf` files, chosen by the extension in any letter case. Text files are read as below; PDF is described at the end
+of this section. Files must be UTF-8 (with or without a byte-order mark) or UTF-16 with
 a byte-order mark; anything else, including Latin-1 and UTF-32, is refused with a message asking for
 a UTF-8 copy. Line endings become `\n`. The file is kept as it is: CSV is not turned into a table
 and JSON is not reformatted.
@@ -602,7 +745,21 @@ sent until you press **Send**.
   display and the provenance line.
 - Earlier versions had **Insert into Input**, **Insert into System prompt** and an **Insertions**
   list. They are gone; copy and paste instead.
-- PDF and Word files need docSpell, which arrives in a later release.
+- **PDF.** A `.pdf` is read on both routes (Documents and agentic Chat) by a short-lived worker process
+  (`python -I -m agentwiz.pdf_worker`) using pypdfium2. Text comes page by page in PDFium's order, under
+  `--- page N ---` markers, without structure: tables read as runs of text, and scanned pages are reported and
+  skipped (no OCR). Limits: 16 MiB per file, 300 pages, 16 MiB of text and 30 seconds. At most two PDFs are
+  read at once (one on macOS), four more may wait up to 10 seconds, and further uploads are refused as busy. The
+  preview reports coverage: pages read, pages with text, and warnings such as a page without a text layer. A PDF
+  with no text at all, an encrypted PDF and a damaged one are refused with a reason.
+- **The worker boundary.** A PDFium crash or hang costs one upload, not AgentWiz and the keys and conversation it
+  holds. On Linux and WSL2 the worker also runs under a 256 MiB address-space limit: headroom for a valid PDF at
+  the limits above, while a runaway allocation still fails and costs one upload. **The macOS worker has no
+  address-space limit.** It runs one PDF at a time with the same 30-second deadline. The
+  worker is not a sandbox on any platform: it runs with your user's permissions. It receives no credentials (its
+  environment is a fixed minimal one).
+- The text formats are `.txt`, `.md`, `.csv`, `.tsv`, `.json`, `.log`, `.yaml` and `.yml`. Word and other formats
+  need docSpell, which arrives in a later release.
 
 ## MCP tools
 
@@ -1056,23 +1213,27 @@ budget stop, a model error, an empty answer, an incomplete check or a contract e
 which applied. Each repair is a full request, which on a local model without prompt caching is a full
 prompt evaluation.
 
-## Script steps
+## Python steps
 
-A script step runs one of your Python files under `scripts/`. The block's inputs arrive on standard
-input as one JSON object. The script prints one JSON object on standard output whose keys exactly
-match the block's declared output names.
+A Python step (`"kind": "python"`, block format 4) names its source file under `scripts/` and the scriptSpell
+`engine` it was saved with:
 
-- The script runs with an allow-listed environment (`PATH`, `HOME`, `LANG`, `TMPDIR`), so it holds no
-  credentials, in its own process group, with a time limit (`timeout_s`, default 60, at most 3,600).
-  Its working folder is a scratch folder; with Save runs on it is kept as `scratch/<step id>/` in the
-  run's folder.
-- **Stop** (and the time budget) sends the process group SIGTERM, then SIGKILL after 2 seconds.
-- AgentWiz hashes the file when the block loads and checks the hash again just before Python opens
-  it; a file that changed in between is not run. An edit in that last instant is not detected.
-- Output is limited (32 MiB; the last 1 MiB of standard error is kept).
-- **A script is not sandboxed.** It runs as you, with your access to files and the network, and can
-  read any file you can, including files that hold keys. Run only scripts you wrote or read.
-- Script steps need POSIX process groups: Linux, macOS and WSL2. Native Windows is not supported.
+```json
+{"id": "run", "kind": "python", "file": "scripts/main.py",
+ "engine": {"name": "scriptspell", "profile": "scriptspell-pure-v5", "codec": 2}}
+```
+
+- The inputs are the checked values: a Text port's string, a JSON port's exact value (`int`, `Decimal`, `str`,
+  `bool`, `None`, lists and objects). Outputs may be the same types; a float at any depth fails the step.
+- scriptSpell's limits apply and can only be lowered; the block's `max_seconds` still bounds the run. **Stop**
+  ends the step as stopped. At most 4 Python steps run at once. If scriptSpell cannot confirm a worker's cleanup,
+  Python blocks are disabled until AgentWiz restarts, and Settings → Overview says so.
+- Restricted Python is a language-level restriction, not an OS sandbox. A Python step has no destination and can
+  run on Local only data; its outputs are restricted whenever an input is.
+- Python steps run on Linux, WSL2 and macOS. Native Windows is not supported.
+- A v4 Tool step may carry `"builtin": "<utility>"` (any of the fourteen utilities listed under
+  [Block library](#block-library)) in place of `server` and `tool`; such a step runs locally, takes no MCP slot and
+  needs no classification or approval.
 
 ## Runs and budgets
 
@@ -1307,7 +1468,19 @@ Stopping the original AgentWiz process also closes its tutorial.
   never resolves holds its slot until the resolver gives up.
 - **Unknown tool outcomes.** A lost connection, a server failure, a deadline or Stop after a call
   was sent leaves its outcome unknown; AgentWiz never resends it.
-- **Documents** are the four text formats, kept whole; the token count is an estimate.
+- **Documents** are the eight text formats, kept whole, and PDF text without structure; the token count is an
+  estimate. The PDF worker is not a sandbox, and on macOS it does not contain a runaway allocation. A workspace
+  switch waits for, and does not cancel, a PDF upload in progress. A non-PDF upload cannot be interrupted by
+  shutdown; its body read is bounded at 60 seconds.
+- **Block library.** A model block tested on one model is not evidence for another; each library block's
+  description lists its context requirement. Local de-identification and `scan_for_identifiers` reduce
+  the work of a Release Gate review and replace none of it; `check_identifier_map` stops an unusable map before the
+  Gate only in a workflow that places it, and cannot tell whether an identifier was missed. The installer holds no
+  lock across its three writes: examples or a description you save in between are kept, and an edit to the block in
+  between stops the installation, which reports what was written. The Add review binds the destination at
+  installation only; a later change to the role changes where the block sends. Workflows have no iteration, so
+  `csv_to_rows` output cannot be processed row by row by a model block in a workflow. Table width and header
+  uniqueness are checked by the blocks that consume a table, not by contracts.
 - **Workspaces.** One AgentWiz process owns one workspace at a time; the Workspaces dialog can switch
   within the launch folder. The default folders are relative to where AgentWiz is launched. Shared,
   network and cloud-synced folders are unsupported and not detected. Clone excludes saved runs and
@@ -1324,17 +1497,23 @@ Stopping the original AgentWiz process also closes its tutorial.
   AgentWiz; their reasoning text is still displayed. On LM Studio's native route (reasoning "off"),
   truncation is modelSpell's estimate. Stop, contracts and repair on LM Studio and llama-server are
   covered by optional live checks; results require an available configured backend.
-- **Blocks.** One step per block: no wiring, routing or nesting yet. Workshop writes managed revisions. Scripts run without a sandbox and need POSIX process groups. A script that
-  starts its own session escapes group termination. The token budget is a soft, reported-usage
+- **Agentic Chat.** A route can pass preflight and still choose the wrong capability; the owner's evaluation
+  (`scripts/agent_eval.py`) is the evidence. `Cannot reach files on this computer` and `Effects` are your statements;
+  a wrong one defeats the boundary for that tool. Trusted endpoints can relay what they receive. A document or tool
+  result can still steer which approved read-only capability the model calls and what it writes in an unrestricted
+  answer. A request too large for the model's context is refused by the backend. Token and cost ceilings act only
+  after usage is reported. One conversation and one run per process; memory is lost on restart.
+- **Python blocks** are not an OS sandbox, and the 1 MiB and 5 second limits rule out whole-document work. Floats are
+  rejected, so a script that divides integers with `/` fails until it uses `Decimal`.
+- **Blocks.** One step per block: no wiring, routing or nesting yet. Workshop writes managed revisions. The token budget is a soft, reported-usage
   allowance; time budgets are not an exact ceiling. Block runs continue after the page closes, up to
   their time budget, holding their slots; they do not survive a restart. Results are held for 100
   runs and 256 MiB; older ones are available from History only if saving was on. A stopped or
   timed-out tool call may still have run. A truncated attempt cannot publish outputs even when its
-  checks pass. Graceful exit can wait for a script group that will not die. A second Ctrl-C exits
-  immediately and skips cleanup. The tutorial doubles process budgets while it is open.
+  checks pass. A second Ctrl-C exits immediately and skips cleanup. The tutorial doubles process budgets while it is open.
 - **The page** is checked in a headless Chromium by the developer tests; other browsers are covered
   only by the tour above.
-- **WSL2** is not checked by the automated tests.
+- **WSL2** is outside hosted CI. PDF extraction was checked manually for 0.2.2.
 
 ## License
 

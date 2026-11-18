@@ -1,0 +1,66 @@
+{
+  "format_version": 4,
+  "name": "current_date_and_time",
+  "description": "The current date and time in a time zone.",
+  "inputs": {
+    "timezone": {
+      "contract": {
+        "format": "text",
+        "max_length": 64
+      },
+      "local_only": false
+    }
+  },
+  "outputs": {
+    "out": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "local": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "timezone": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "utc_offset": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "utc": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "weekday": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "local",
+            "timezone",
+            "utc_offset",
+            "utc",
+            "weekday"
+          ]
+        }
+      },
+      "local_only": false
+    }
+  },
+  "steps": [
+    {
+      "id": "run",
+      "kind": "tool",
+      "builtin": "current_datetime",
+      "output": "out",
+      "arguments": {
+        "timezone": "{{inputs.timezone}}"
+      }
+    }
+  ]
+}

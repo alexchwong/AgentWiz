@@ -53,7 +53,7 @@ def completed(ui, ident):
 
 def counter(ui, key='counter'):
     """Two retained revisions of one script block with observably different behaviour."""
-    draft = send(ui, 'preview', starter='count_text', key=key)['draft']
+    draft = send(ui, 'preview', starter='count_text', starter_version=2, key=key)['draft']
     first = plan_save(ui, draft)
     alternate = send(ui, 'preview', draft=draft, edit={'kind': 'starter_parameters',
                                                        'parameters': {'unit': 'characters'}})['draft']
@@ -187,10 +187,12 @@ def test_restore_to_draft_publishes_a_new_default(ui):
 
 
 # --- M02 ---------------------------------------------------------------------------------------------------
-def script_draft(key, inputs, source='print(\'{"out": 1}\')\n', origin='manual'):
-    obj = {'format_version': 3, 'name': key, 'inputs': {n: {'contract': {'format': 'text'}} for n in inputs},
-           'outputs': {'out': {'contract': {'format': 'json'}}},
-           'steps': [{'id': 'run', 'kind': 'script', 'file': 'scripts/main.py', 'timeout_s': 5}]}
+def script_draft(key, inputs, source='def transform(inputs):\n    return {"out": 1}\n', origin='manual'):
+    """A Python block draft (0.2.2: host scripts are retired)."""
+    from conftest import python_engine
+    obj = {'format_version': 4, 'name': key, 'inputs': {n: {'contract': {'format': 'text'}, 'local_only': False} for n in inputs},
+           'outputs': {'out': {'contract': {'format': 'json'}, 'local_only': False}},
+           'steps': [{'id': 'run', 'kind': 'python', 'file': 'scripts/main.py', 'engine': python_engine()}]}
     return {'key': key, 'definition_text': jsonio.encode_exact(obj), 'files': {'scripts/main.py': source},
             'metadata': {'support': [], 'origin': origin, 'effects': 'read-only'}}
 
@@ -214,7 +216,7 @@ def test_old_interfaces_snapshot_contracts_and_example_diagnostics(ui):
 def test_saved_preview_reads_snapshots_while_runs_refuse_damaged_pins(ui, server):
     saved = save_contract(ui, 'report', '{"format": "text", "min_length": 1}')
     pin = {'name': 'report', 'revision': 1, 'digest': saved['digest']}
-    draft = send(ui, 'preview', starter='format_report', key='reporter')['draft']
+    draft = send(ui, 'preview', starter='format_report', starter_version=2, key='reporter')['draft']
     definition = jsonio.decode_exact(draft['definition_text'])
     definition['outputs']['out']['contract'] = pin
     draft['definition_text'] = jsonio.encode_exact(definition)
@@ -258,18 +260,6 @@ def test_pruned_selection_before_start_and_after_capture(ui, monkeypatch):
     assert failure_of(lambda: request(ui, f'/api/workshop/blocks/counter/revisions/{first["durable_id"]}')).status == 404
     for bad in ('0' * 32, 'not-an-id'):
         assert failure_of(lambda: send(ui, 'preview', key='counter', revision=bad)).status == 404
-
-
-def test_old_manual_script_keeps_its_provenance_under_a_generated_head(ui):
-    manual_rev = plan_save(ui, script_draft('lineage', []))
-    generated = script_draft('lineage', [], source='print(\'{"out": 2}\')\n', origin='llm_generated')
-    plan_save(ui, generated, manual_rev['base_digest'])
-    plan = send(ui, 'plans', action='test', request={'key': 'lineage', 'revision': manual_rev['durable_id'], 'inputs': {}})
-    assert 'generated_source' not in {r['kind'] for r in plan['required_confirmations']}
-    assert plan['descriptor']['candidates'][0]['draft']['metadata']['origin'] == 'manual'
-    batch = completed(ui, start_planned(ui, 'test', {'key': 'lineage', 'revision': manual_rev['durable_id'],
-                                                     'inputs': {}})['batch_id'])
-    assert batch['rows'][0]['outputs']['out']['text'] == '1'
 
 
 def test_unsupported_executable_formats_have_no_basis():
@@ -479,11 +469,12 @@ def test_cancelled_describe_exposes_no_candidate(ui, server):
 def test_outbound_context_is_allowlisted_redacted_and_session_only(ui, server, monkeypatch):
     describer(ui, server)
     switch_history(ui, True)
-    obj = {'format_version': 3, 'name': 'helper', 'description': 'Adds a helper constant',
-           'inputs': {'text': {'description': 'Words to count', 'contract': {'format': 'text'}}},
-           'outputs': {'out': {'contract': {'format': 'json'}}},
-           'steps': [{'id': 'run', 'kind': 'script', 'file': 'scripts/main.py', 'timeout_s': 5}]}
-    source = '# MAINSOURCEMARKER uses CREDENTIALVALUE123\nimport helper\nprint(\'{"out": 1}\')\n'
+    from conftest import python_engine
+    obj = {'format_version': 4, 'name': 'helper', 'description': 'Adds a helper constant',
+           'inputs': {'text': {'description': 'Words to count', 'contract': {'format': 'text'}, 'local_only': False}},
+           'outputs': {'out': {'contract': {'format': 'json'}, 'local_only': False}},
+           'steps': [{'id': 'run', 'kind': 'python', 'file': 'scripts/main.py', 'engine': python_engine()}]}
+    source = '# MAINSOURCEMARKER uses CREDENTIALVALUE123\ndef transform(inputs):\n    return {"out": 1}\n'
     draft = {'key': 'helper', 'definition_text': jsonio.encode_exact(obj),
              'files': {'scripts/main.py': source, 'scripts/helper.py': 'SUPPORTSECRETMARKER = 1\n'},
              'metadata': {'support': ['scripts/helper.py'], 'origin': 'manual', 'effects': 'read-only'}}

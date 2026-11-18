@@ -1,6 +1,8 @@
 """The tutorial: topic registry, sandbox, lifecycle and real guided UI actions (techspec 0.1.4, tests #112, #113;
 0.1.3's isolation and failed-start tests, now by topic ID)."""
 import os
+import re
+import shutil
 import tempfile
 import threading
 import time
@@ -9,12 +11,11 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import expect
 
-from agentwiz import jsonio, script_step, tutorial_topics
+from agentwiz import history, jsonio, runner, tutorial, tutorial_topics
 from agentwiz.workspace import WorkspaceInUse, open_workspace
-from conftest import (failure_of, get_state, group_gone, iter_events, read_until, request, run_block, switch_history,
+from conftest import (failure_of, get_state, iter_events, read_until, request, run_block, switch_history,
                       wait_until)
 from test_page import browser, context, open_page, tid, has
-from test_script_cleanup import kill_group
 
 EXACT = '{"id":9007199254740993,"ratio":0.10000000000000000001}'
 BLOCKS_SOURCE = Path(tutorial_topics.__file__).with_name("tutorial_support") / "blocks"
@@ -138,6 +139,19 @@ def drive_tool_block(page):
     assert jsonio.decode_exact(tid(page, "ws-output").text_content()) == jsonio.decode_exact(EXACT)
 
 
+def drive_agentic_chat(page):
+    tid(page, "agent-send").click()
+    has(page, "agent-status", "data-stop-reason", "answered")
+    expect(page.locator('[data-test="agent-action"][data-outcome="completed"]')).to_have_count(1)
+    expect(tid(page, "agent-output")).to_contain_text("36")
+    tid(page, "agent-switch").uncheck()                    # Chat returns to its ordinary form for the next topics
+
+
+def drive_python_block(page):
+    workshop_run(page)
+    assert tid(page, "ws-output").text_content() == "9"
+
+
 def drive_script_block(page):
     workshop_run(page)
     assert tid(page, "ws-output").text_content() == "9"
@@ -158,8 +172,11 @@ def drive_design(page):
     tid(page,"ws-test").click()
     tid(page,"ws-run-saved-examples").click()
     tid(tid(page,"ws-dialog"),"ws-confirm").click()
-    expect(tid(page,"ws-trial")).to_have_count(2)
-    expect(tid(page,"ws-trial").first).to_have_attribute("data-outcome","complete")
+    has(page,"ws-status","data-state","complete")
+    trials = tid(page,"ws-trial")
+    expect(trials).to_have_count(2)
+    for trial in trials.all():
+        expect(trial).to_have_attribute("data-outcome","complete")
     tid(page,"ws-design").click()
     tid(page,"ws-choice-count-unit").select_option("characters")
     tid(page,"ws-apply-parameters").click()
@@ -172,6 +189,21 @@ def drive_design(page):
     tid(tid(page,"ws-dialog"),"ws-confirm").click()
     expect(tid(page,"ws-trial")).to_have_count(4)
     expect(tid(page,"ws-trial").last).to_have_attribute("data-outcome","complete")
+
+
+def drive_block_library(page):
+    workshop_run(page)
+    assert jsonio.decode_exact(tid(page, "ws-output").text_content()) == {"text": "Order 008 and order 008b.", "count": 2}
+    page.locator('[data-action="library-chat"]').click()
+    expect(tid(page, "agent-send")).to_have_class(re.compile(r"\btutorial-target\b"))   # the block is ticked
+    expect(page.locator('[data-test="agent-capability"]:has(input:checked)')).to_contain_text("block_calculate_")
+    tid(page, "agent-send").click()
+    has(page, "agent-status", "data-stop-reason", "answered")
+    action = page.locator('[data-test="agent-action"][data-outcome="completed"]')
+    expect(action).to_have_count(1)
+    expect(tid(page, "agent-output")).to_contain_text("36")
+    expect(tid(page, "agent-output")).to_contain_text("the Calculate block")
+    tid(page, "agent-switch").uncheck()
 
 
 def drive_workflow(page):
@@ -214,9 +246,9 @@ def drive_private_release(page):
     expect(tid(page, "wf-trace")).to_contain_text("correct")
 
 
-DRIVERS = {"chat": drive_chat, "document": drive_document, "tool": drive_tool, "contract": drive_contract,
+DRIVERS = {"chat": drive_chat, "agentic-chat": drive_agentic_chat, "document": drive_document, "tool": drive_tool, "contract": drive_contract,
            "repair": drive_repair, "model-block": drive_model_block, "tool-block": drive_tool_block,
-           "script-block": drive_script_block, "workshop-design": drive_design, "workflow": drive_workflow, "release-gate": drive_release_gate,
+           "python-block": drive_python_block, "script-block": drive_script_block, "workshop-design": drive_design, "block-library": drive_block_library, "workflow": drive_workflow, "release-gate": drive_release_gate,
            "private-summary-local": drive_private_local, "private-summary-release": drive_private_release}
 
 
@@ -270,10 +302,12 @@ def test_tutorial_topics(ui, open_page):
 
 def test_tutorial_topic_registry():
     topics = tutorial_topics.TOPICS
-    assert [t.id for t in topics] == ["chat", "document", "tool", "contract", "repair", "model-block", "tool-block",
-                                       "script-block", "workshop-design", "workflow", "release-gate",
-                                       "private-summary-local", "private-summary-release"] + ASSIST_IDS
-    assert [t.updated_in for t in topics] == ["0.1.3"] * 3 + ["0.2.0"] * 2 + ["0.2.1"] + ["0.2.0"] + ["0.2.1"] * 6 + ["0.2.0"] * 5
+    assert [t.id for t in topics] == ["chat", "agentic-chat", "document", "tool", "contract", "repair", "model-block",
+                                       "tool-block", "python-block", "script-block", "workshop-design", "block-library",
+                                       "workflow", "release-gate", "private-summary-local", "private-summary-release"] + ASSIST_IDS
+    assert [t.updated_in for t in topics] == (["0.1.3", "0.2.2", "0.1.3", "0.1.3"] + ["0.2.0"] * 2 + ["0.2.1"]
+                                              + ["0.2.0", "0.2.2"] + ["0.2.1"] * 2 + ["0.2.2"]
+                                              + ["0.2.1"] * 4 + ["0.2.0"] * 5)
     assert all(tutorial_topics.by_id(t.id) is t for t in topics)
     for bad in ("nope", None, 3, ["chat"]):
         with pytest.raises(KeyError):
@@ -303,17 +337,39 @@ def test_tutorial_workspace_administration_is_isolated(ui):
     assert request(ui, "/api/workspaces")["tutorial_active"] is False
 
 
-def test_tutorial_sandbox(ui, spawned, tmp_path):
+def test_tutorial_sandbox(ui, tmp_path, monkeypatch):
     parent_files = snapshot(ui.workspace.path)
+    # A checkout may retain ignored bytecode from deleted blocks. Seed only registered
+    # examples, and never copy runtime caches into the disposable workspace.
+    source = tmp_path / "tutorial-blocks"
+    shutil.copytree(BLOCKS_SOURCE, source,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
+    stale = source / "wait_for_stop" / "scripts" / "__pycache__"
+    stale.mkdir(parents=True)
+    (stale / "wait.cpython-313.pyc").write_bytes(b"stale bytecode")
+    scripts = source / "word_count" / "scripts"
+    (scripts / "__pycache__").mkdir()
+    (scripts / "__pycache__" / "count_words.cpython-313.pyc").write_bytes(b"cached bytecode")
+    for suffix in ("pyc", "pyo"):
+        (scripts / f"count_words.{suffix}").write_bytes(b"legacy bytecode")
+    monkeypatch.setattr(tutorial, "BLOCKS_SOURCE", source)
+    gate = threading.Event()
+    monkeypatch.setattr(runner, "before_run_end", lambda: gate.wait(30))     # a block run held before its end
     child = started(ui)
+    real_close = child.state.store.close
+    child.state.store.close = lambda: (gate.set(), real_close())[1]          # shutdown releases the held run
     root = Path(ui.tutorial.folder.name)
     ws = child.workspace.path
     state = get_state(child)
     assert state["roles"]["map"] == {"fast": "tutorial-json"} and "tutorial-json" in state["profiles"]["names"]
     roles_text = (ws / "roles.json").read_text()
     assert "tutorial-json" in roles_text and "fast" in roles_text
-    packaged = sorted(p.relative_to(BLOCKS_SOURCE) for p in BLOCKS_SOURCE.rglob("*") if p.is_file())
-    assert {p.parts[0] for p in packaged} == set(tutorial_topics.BLOCKS)
+    packaged = sorted(p.relative_to(BLOCKS_SOURCE)
+                      for name in tutorial_topics.BLOCKS
+                      for p in (BLOCKS_SOURCE / name).rglob("*")
+                      if p.is_file() and "__pycache__" not in p.parts and p.suffix not in {".pyc", ".pyo"})
+    assert {p.name for p in (ws / "blocks").iterdir()} == set(tutorial_topics.BLOCKS)
+    assert sorted(p.relative_to(ws / "blocks") for p in (ws / "blocks").rglob("*") if p.is_file()) == packaged
     for rel in packaged:
         assert (ws / "blocks" / rel).read_bytes() == (BLOCKS_SOURCE / rel).read_bytes()
     assert sorted(b["name"] for b in request(child, "/api/blocks")["blocks"]) == sorted(tutorial_topics.BLOCKS)
@@ -324,42 +380,34 @@ def test_tutorial_sandbox(ui, spawned, tmp_path):
     assert failure_of(lambda: request(child, "/api/tutorial/step", {"topic": "nope"})).status == 400
     assert failure_of(lambda: request(child, "/api/tutorial/step", {"step": 2})).status == 400
     switch_history(child, True)
-    it = iter_events(run_block(child, "wait_for_stop", {}, raw=True))
-    run_id = read_until(it, "started")[-1]["run_id"]
-    read_until(it, "operation")
-    assert wait_until(lambda: spawned)
+    it = iter_events(run_block(child, "word_count", {"text": "a b"}, raw=True))
+    read_until(it, "started")
+    assert wait_until(lambda: child.state.store.active_block_runs())
     assert request(child, "/api/tutorial/step", {"topic": "chat"}) == {"busy": True}
-    # Exit ends the group and removes the temporary folder, scratch folders included
-    scratch = [p for p in root.rglob("scratch")]
-    assert scratch, "the saved run has a scratch folder"
+    # Exit ends the held run and removes the temporary folder
     ui.tutorial.close()
-    assert wait_until(lambda: group_gone(spawned[0]))
     assert not root.exists() and ui.tutorial.child is None and ui.tutorial.pending is None
     list(it)
     assert snapshot(ui.workspace.path) == parent_files
 
 
 @pytest.fixture
-def retained_child(ui, spawned, monkeypatch):
-    """A tutorial child whose waiting script cannot be ended (the double): its cleanup owner is retained."""
-    monkeypatch.setattr(script_step, "KILL_GRACE_S", 0.1)
-    monkeypatch.setattr(script_step, "RETAINED_POLL_S", 0.05)
-    real_send = script_step.send_group
+def retained_child(ui, monkeypatch):
+    """A tutorial child whose run-history write cannot finish (the double): its writer stays registered."""
+    gate, entered = threading.Event(), threading.Event()
+
+    def blocked():
+        entered.set()
+        gate.wait(30)
+    monkeypatch.setattr(history, "before_write", blocked)
     child = started(ui)
     child.grace_s = 0.2                                                    # the bounded waits, lowered
     switch_history(child, True)
-    monkeypatch.setattr(script_step, "send_group", lambda pgid, sig: None)
-    it = iter_events(run_block(child, "wait_for_stop", {}, raw=True))
-    read_until(it, "operation")
-    assert wait_until(lambda: spawned)
-
-    def release():
-        monkeypatch.setattr(script_step, "send_group", real_send)
-        kill_group(spawned[0])
-
-    yield child, release, it
-    monkeypatch.setattr(script_step, "send_group", real_send)
-    kill_group(spawned[0])
+    it = iter_events(run_block(child, "word_count", {"text": "a b"}, raw=True))
+    read_until(it, "started")
+    assert entered.wait(10)
+    yield child, gate.set, it
+    gate.set()
 
 
 def test_tutorial_bounded_exit_with_outstanding_cleanup(ui, retained_child, monkeypatch):
@@ -380,10 +428,10 @@ def test_tutorial_bounded_exit_with_outstanding_cleanup(ui, retained_child, monk
     get_state(ui)                                                          # the parent still answers requests
     fail = failure_of(lambda: request(ui, "/api/tutorial/start", {}))      # a second start is refused
     assert fail.status == 503 and fail.body["code"] == "busy"
-    assert session.child is None and session.resources == [] and ui.state.scripts.in_flight == 0
-    # the double reports the child gone: the next start reclaims the pending session and succeeds
+    assert session.child is None and session.resources == [] and ui.state.python.in_flight == 0
+    # the double lets the write finish: the next start reclaims the pending session and succeeds
     release()
-    assert wait_until(lambda: child.state.scripts.in_flight == 0, 10)
+    assert wait_until(lambda: not child.state.writers.outstanding(), 10)
     new = started(ui)
     assert new is not child and session.pending is None
     assert not root.exists() and root.name in [Path(c).name for c in cleaned]
@@ -421,3 +469,49 @@ def test_tutorial_model_block_inherits_its_role_default_and_declares_two_outputs
     assert prepared["sources"]["temperature"] == "role_default"
     assert [o["name"] for o in prepared["outputs"]] == ["fields", "note"]
 
+
+
+def test_late_batch_response_cannot_replace_a_new_revision_saved_status(ui, open_page):
+    """Force the old poll to arrive after Save; no sleeps or longer assertion timeout."""
+    import json
+    import urllib.parse
+    page = open_page(ui)
+    tid(page, 'header-tutorial').click()
+    has(page, 'tutorial-status', 'data-state', 'ready')
+    tid(page, 'tutorial-jump').select_option('workshop-design')
+    has(page, 'tutorial-box', 'data-topic', 'workshop-design')
+    has(page, 'tutorial-status', 'data-state', 'ready')
+    dialog = tid(page, 'ws-dialog')
+    tid(page, 'ws-save-revision').click()
+    tid(dialog, 'ws-confirm').click()
+    has(page, 'ws-status', 'data-state', 'saved')
+    tid(page, 'ws-test').click()
+    held = []
+    batch_url = '**/api/workshop/batches/*'
+    page.route(batch_url, lambda route: held.append(route), times=1)
+    tid(page, 'ws-run-saved-examples').click()
+    with page.expect_request(batch_url) as poll:
+        tid(dialog, 'ws-confirm').click()
+    try:
+        child = ui.tutorial.child
+        # The route callback is dispatched on the page's next event pump, not when expect_request
+        # returns, so take the path from the request the expectation reported.
+        path = urllib.parse.urlsplit(poll.value.url).path
+        assert wait_until(lambda: request(child, path)['state'] != 'running')
+        completed = request(child, path)
+        tid(page, 'ws-design').click()
+        tid(page, 'ws-choice-count-unit').select_option('characters')
+        tid(page, 'ws-apply-parameters').click()
+        tid(page, 'ws-save-revision').click()
+        tid(dialog, 'ws-confirm').click()
+        has(page, 'ws-status', 'data-state', 'saved')
+        assert len(held) == 1, 'the first batch poll was not held'
+        with page.expect_response(batch_url) as delivered:
+            held.pop().fulfill(status=200, content_type='application/json', body=json.dumps(completed))
+        delivered.value.finished()
+        # Flush rendering after delivery, without accessing page implementation state.
+        page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        has(page, 'ws-status', 'data-state', 'saved')
+    finally:
+        for route in held:
+            route.continue_()

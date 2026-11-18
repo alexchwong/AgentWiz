@@ -1,7 +1,7 @@
 """Isolated tutorial instances. No source checkout or external services required.
 
 0.1.4 (Section 14): topics come from `tutorial_topics`; the child's temporary workspace is seeded with a profile, a
-role map and the four example blocks; ending a session closes the child through `UIServer.server_close(wait=False)`,
+role map and the registered example blocks; ending a session closes the child through `UIServer.server_close(wait=False)`,
 and a session whose cleanup is still outstanding becomes the manager's one pending session (14.5)."""
 from __future__ import annotations
 
@@ -107,7 +107,10 @@ class Tutorial:
         state.save_roles({ROLE: ROLE_PROFILE}, state.view()["roles"]["revision"],
                          {ROLE: {"description": "Routine extraction", "location": "local",
                                  "task_defaults": {"temperature": 0}}})
-        shutil.copytree(BLOCKS_SOURCE, workspace.path / "blocks", copy_function=shutil.copyfile)
+        for name in tutorial_topics.BLOCKS:
+            shutil.copytree(BLOCKS_SOURCE / name, workspace.path / "blocks" / name,
+                            copy_function=shutil.copyfile,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
 
     def start(self):
         from .ui.server import UIServer
@@ -187,6 +190,9 @@ class Tutorial:
             if topic.id.startswith("private-summary-"):
                 from .tutorial_support.private_summary import prepare_tutorial
                 prepare_tutorial(state, self.backend_url, topic.id[len("private-summary-"):])
+            if topic.id == "block-library":
+                from .tutorial_support.library import ensure_library_fixture
+                ensure_library_fixture(state)
             if topic.id == "workflow":
                 from .tutorial_support.workshop import ensure_workflow_fixture
                 ensure_workflow_fixture(state, self.backend_url)

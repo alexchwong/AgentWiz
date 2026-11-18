@@ -1,0 +1,15 @@
+{
+  "format_version": 4,
+  "profiles": {
+    "openrouter-eval": {
+      "kind": "openrouter", "model": "qwen/qwen3.8-27b", "provider": "",
+      "routing_mode": "automatic", "routing_preset": "balanced",
+      "routing_zdr": null, "routing_data_collection": ""
+    },
+    "lmstudio-eval": {
+      "kind": "lmstudio", "model": "qwen3.8-27b", "provider": "",
+      "routing_mode": "managed", "routing_preset": "balanced",
+      "routing_zdr": null, "routing_data_collection": ""
+    }
+  }
+}

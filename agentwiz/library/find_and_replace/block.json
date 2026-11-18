@@ -1,0 +1,67 @@
+{
+  "format_version": 4,
+  "name": "find_and_replace",
+  "description": "Replace every exact occurrence of a text with another.",
+  "inputs": {
+    "text": {
+      "contract": {
+        "format": "text",
+        "max_length": 1048576
+      },
+      "local_only": false
+    },
+    "find": {
+      "contract": {
+        "format": "text",
+        "max_length": 1000
+      },
+      "local_only": false
+    },
+    "replace": {
+      "contract": {
+        "format": "text",
+        "max_length": 1000
+      },
+      "local_only": false
+    }
+  },
+  "outputs": {
+    "out": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "text",
+            "count"
+          ]
+        }
+      },
+      "local_only": false
+    }
+  },
+  "steps": [
+    {
+      "id": "run",
+      "kind": "tool",
+      "builtin": "find_replace",
+      "output": "out",
+      "arguments": {
+        "text": "{{inputs.text}}",
+        "find": "{{inputs.find}}",
+        "replace": "{{inputs.replace}}"
+      }
+    }
+  ]
+}

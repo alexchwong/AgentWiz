@@ -188,14 +188,15 @@ class SnapshotContracts:
 
 
 class Capture:
-    def __init__(self, files, key, contracts, metadata=None, *, internal_contracts=False, validators=None):
+    def __init__(self, files, key, contracts, metadata=None, *, internal_contracts=False, validators=None,
+                 engine_check=True):
         from . import blocks
         self.directory = tempfile.TemporaryDirectory(prefix='agentwiz-capture-')
         self.root = Path(self.directory.name)
         try:
             write_files(self.root, files)
             self.parsed = blocks.parse_block(self.root, key, contracts, internal_contracts=internal_contracts,
-                                             validators=validators)
+                                             validators=validators, engine_check=engine_check)
             self.files = files
             self.metadata = metadata or {}
             self.digest = fingerprint(files)
@@ -449,8 +450,8 @@ class Assets:
             fail()
         if metadata.get('effects', 'unknown') not in ('read-only', 'changes state', 'unknown'):
             fail()
-        from .workshop_editor import SCRIPT_IDS
-        if metadata.get('starter') in SCRIPT_IDS:
+        from .workshop_editor import TRANSFORM_IDS
+        if metadata.get('starter') in TRANSFORM_IDS:
             version = metadata.get('starter_version')
             runtime_digest = metadata.get('runtime_digest')
             if type(version) is not int or version < 1 or not isinstance(metadata.get('parameters'), dict):
@@ -500,8 +501,6 @@ class Assets:
                 found.extend((name, p) for p in templates.scan_text(text, name))
         elif step.kind == 'tool':
             found = templates.scan_arguments(step.arguments)
-        elif step.kind == 'script' and captured.metadata.get('starter') == 'format_report':
-            found = [('report', p) for p in templates.scan_text(captured.metadata['parameters']['template'], 'report')]
         for location, placeholder in found:
             port = block.contracts['inputs'].get(placeholder.path[0])
             if port is None:

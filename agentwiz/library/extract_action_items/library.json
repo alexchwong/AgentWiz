@@ -1,0 +1,125 @@
+{
+  "title": "Extract action items",
+  "group": "llm",
+  "summary": "List the action items in notes, with owner and due date if stated.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "extract_action_items-1",
+      "version": 1,
+      "label": "meeting notes",
+      "inputs": {
+        "text": "Notes from Tuesday.\nPriya will send the revised budget to finance by Friday 14 June.\nWe agreed to move the launch to 2 July.\nSomeone should look at the vendor contract at some point.\nTom: I'll book the room.\nMaybe we could try a new logo."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "items",
+            "path": [
+              0,
+              "owner"
+            ],
+            "operation": "equals",
+            "value_text": "\"Priya\""
+          },
+          {
+            "output": "items",
+            "path": [
+              0,
+              "due"
+            ],
+            "operation": "equals",
+            "value_text": "\"Friday 14 June\""
+          },
+          {
+            "output": "items",
+            "path": [
+              3
+            ],
+            "operation": "absent"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "extract_action_items-2",
+      "version": 1,
+      "label": "no owner",
+      "inputs": {
+        "text": "The report must be filed by 30 June."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "items",
+            "path": [
+              0,
+              "owner"
+            ],
+            "operation": "equals",
+            "value_text": "null"
+          },
+          {
+            "output": "items",
+            "path": [
+              0,
+              "due"
+            ],
+            "operation": "equals",
+            "value_text": "\"30 June\""
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "extract_action_items-3",
+      "version": 1,
+      "label": "no actions",
+      "inputs": {
+        "text": "We discussed the weather and the football."
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "items",
+            "path": [],
+            "operation": "equals",
+            "value_text": "[]"
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "required_context": 32768,
+  "max_tokens": 6144,
+  "description": {
+    "sections": {
+      "use": "Turn meeting notes, emails or transcripts into a list of action items with their owner and due date when the text states them.",
+      "exclusions": "Suggestions and ideas are not listed. Dates are not interpreted or converted.",
+      "limitations": "Needs a model context of at least 32,768 tokens (prompt, input, one repair and 6,144 output tokens). Results are model output: review them. Input up to 40,000 characters; at most 50 items.",
+      "missing_data": "owner and due are null unless stated; text without actions gives an empty list.",
+      "effects": "Sends its inputs to the model of its role (fast by default) and returns the result for review. With unrestricted ports and unrestricted data, that model may be remote; the Add dialog shows the destination. Label inputs Local only to keep them on this machine.",
+      "failures": "If the reply does not meet the output contract after two repairs, the step fails with located issues. A context or token limit is reported as such; shorten the input or use a larger context."
+    },
+    "port_summaries": {
+      "inputs": {
+        "text": "The notes or text to read."
+      },
+      "outputs": {
+        "items": "Action items: task, owner (or null) and due (or null), as written."
+      }
+    }
+  }
+}

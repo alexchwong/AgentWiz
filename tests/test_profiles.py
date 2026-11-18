@@ -41,6 +41,19 @@ def settings_of(state):
     return {k: state[k] for k in ("kind", "base_url", "model", "provider")}
 
 
+def test_routing_profile_round_trip_preserves_privacy(make_ui, tmp_path, server):
+    ui = open_ui(make_ui, tmp_path)
+    save(ui, "automatic", kind="openrouter", model="example/model", provider="",
+         routing_mode="automatic", routing_preset="fastest", routing_zdr=True,
+         routing_data_collection="deny")
+    select(ui, "automatic")
+    state = get_state(ui)
+    assert state["routing_mode"] == "automatic" and state["routing_preset"] == "fastest"
+    assert state["routing_zdr"] is True and state["routing_data_collection"] == "deny"
+    saved = state["profiles"]["details"]["automatic"]
+    assert all(saved[f] == state[f] for f in ("routing_mode", "routing_preset", "routing_zdr", "routing_data_collection"))
+
+
 def open_ui(make_ui, tmp_path, name="w"):
     ws = open_workspace(tmp_path / "ws", name)
     make_ui.opened.append(ws)
@@ -72,7 +85,7 @@ DAMAGED = [
     ("profiles.json", '{"format_version": 1, "active": null, "active": null, "profiles": {}}', False,
      "invalid_json"),
     ("profiles.json", profiles_text()[:-1] + ', "extra": 0.10000000000000000001}', False, "invalid_json"),
-    ("profiles.json", profiles_text(format_version=4), False, "newer_format"),
+    ("profiles.json", profiles_text(format_version=5), False, "newer_format"),
     ("workspace.json", '{"format_version": 1, "created_by": "AgentWiz", "save_runs": false, "active_profile": 4}', True, "invalid_field"),
     ("profiles.json", bad_profile(model=64), False, "invalid_field"),
     ("profiles.json", bad_profile(base_url="http://u:p@127.0.0.1:1/v1"), False, "invalid_field"),
@@ -411,7 +424,7 @@ def read_json(path):
     return json.loads(path.read_bytes())
 
 
-def test_profile_format_v3(make_ui, tmp_path, server):
+def test_profile_format_v4(make_ui, tmp_path, server):
     defaults = tmp_path / "model_profiles" / "profiles.json"
     write_ws_file(defaults, json.dumps({"format_version": 1, "profiles": {
         "d": dict(V1_PROFILE), "same": {**V1_PROFILE, "reasoning": "low"}}}))
@@ -429,7 +442,7 @@ def test_profile_format_v3(make_ui, tmp_path, server):
     # the next save writes version 2 without the retired fields, keeping unknown fields
     save(ui, "a", model="m2")
     doc = read_json(folder / "model-profiles" / "profiles.json")
-    assert doc["format_version"] == 3 and doc["future_top"] == 1
+    assert doc["format_version"] == 4 and doc["future_top"] == 1
     for name in ("a", "same"):
         assert "reasoning" not in doc["profiles"][name] and "max_tokens" not in doc["profiles"][name]
     assert doc["profiles"]["a"]["future_field"] == "kept" and doc["profiles"]["a"]["model"] == "m2"
@@ -442,13 +455,13 @@ def test_profile_format_v3(make_ui, tmp_path, server):
     # a new workspace seeded from version 1 defaults gets a version 2 file without them
     second = open_ui(make_ui, tmp_path, "two")
     doc = read_json(second.workspace.path / "model-profiles" / "profiles.json")
-    assert doc["format_version"] == 3
+    assert doc["format_version"] == 4
     assert all("reasoning" not in p and "max_tokens" not in p for p in doc["profiles"].values())
 
     # export rewrites the whole defaults file as version 2
     save(ui, "a", export_default=True)
     doc = read_json(defaults)
-    assert doc["format_version"] == 3 and sorted(doc["profiles"]) == ["a", "d", "same"]
+    assert doc["format_version"] == 4 and sorted(doc["profiles"]) == ["a", "d", "same"]
     assert all("reasoning" not in p and "max_tokens" not in p for p in doc["profiles"].values())
 
     # the retired fields are refused on the settings and profile routes

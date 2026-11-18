@@ -1,0 +1,81 @@
+{
+  "title": "Extract a Markdown section",
+  "group": "tool",
+  "summary": "Return the part of a Markdown text under one heading.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "extract_section-1",
+      "version": 1,
+      "label": "with a subsection",
+      "inputs": {
+        "markdown": "# Report\nIntro.\n## Scope\nIn scope.\n### Detail\nMore.\n## Risks\nNone.\n",
+        "heading": "scope"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"found\":true,\"matches\":1,\"section\":\"## Scope\\nIn scope.\\n### Detail\\nMore.\\n\",\"level\":2,\"start_line\":3,\"end_line\":6}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "extract_section-2",
+      "version": 1,
+      "label": "last section",
+      "inputs": {
+        "markdown": "# Report\nIntro.\n## Scope\nIn scope.\n### Detail\nMore.\n## Risks\nNone.\n",
+        "heading": "Risks"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"found\":true,\"matches\":1,\"section\":\"## Risks\\nNone.\\n\",\"level\":2,\"start_line\":7,\"end_line\":8}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "extract_section-3",
+      "version": 1,
+      "label": "not found",
+      "inputs": {
+        "markdown": "# Report\nIntro.\n## Scope\nIn scope.\n### Detail\nMore.\n## Risks\nNone.\n",
+        "heading": "Budget"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"found\":false,\"matches\":0,\"section\":\"\",\"level\":null,\"start_line\":null,\"end_line\":null}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "description": {
+    "sections": {
+      "use": "Pull one section out of a Markdown document by its heading, with its subsections, for a model block or a reviewer to work on.",
+      "exclusions": "Only ATX headings (lines starting with #). Setext headings (underlined with = or -), headings inside block quotes or lists, HTML blocks and indented code are not recognised.",
+      "limitations": "Markdown up to 1 MiB. Headings inside fenced code are ignored. The heading is compared after trimming and collapsing spaces, ignoring case; the first match wins and matches counts all.",
+      "missing_data": "A heading that is not found gives found false, an empty section and null line numbers.",
+      "effects": "Runs locally inside AgentWiz with no network access, files or model; it only returns a value. It has no destination, so it can run on Local only data; its output is restricted whenever an input is.",
+      "failures": "A refusal names a fixed code and, where it applies, a 1-based position (record, row or entry); the message never repeats your text. Check the input against the limits above and run again."
+    },
+    "port_summaries": {
+      "inputs": {
+        "markdown": "The Markdown document.",
+        "heading": "The heading text to find, without the # marks."
+      },
+      "outputs": {
+        "out": "found, matches, the section text, its level and its first and last line numbers."
+      }
+    }
+  }
+}

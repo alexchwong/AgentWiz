@@ -248,7 +248,7 @@ def saved_uses(state):
     for row in listing['blocks'][:BLOCK_LIMIT]:
         loaded = state.block_loaded(row.get('name'))
         block = loaded.block if loaded is not None else None
-        if block is None or block.step.kind not in ('model', 'tool'):
+        if block is None or not (block.step.kind == 'model' or block.step.mcp):
             continue
         destination, _ = config_destination(config, block.step)
         if destination is not None:
@@ -278,7 +278,7 @@ def saved_uses(state):
                         if opened is None:
                             continue
                         block, is_protected = opened.parsed.block, True
-                    if block.step.kind not in ('model', 'tool'):
+                    if not (block.step.kind == 'model' or block.step.mcp):
                         continue
                     destination, _ = config_destination(config, block.step)
                     if destination is not None:

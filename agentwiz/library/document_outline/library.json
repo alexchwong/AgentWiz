@@ -1,0 +1,77 @@
+{
+  "title": "Document outline",
+  "group": "tool",
+  "summary": "List the headings of a Markdown text with levels and lines.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "document_outline-1",
+      "version": 1,
+      "label": "nested headings",
+      "inputs": {
+        "markdown": "# Report\nIntro.\n## Scope\nIn scope.\n### Detail\nMore.\n## Risks\nNone.\n"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"headings\":[{\"level\":1,\"text\":\"Report\",\"line\":1},{\"level\":2,\"text\":\"Scope\",\"line\":3},{\"level\":3,\"text\":\"Detail\",\"line\":5},{\"level\":2,\"text\":\"Risks\",\"line\":7}],\"truncated\":false}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "document_outline-2",
+      "version": 1,
+      "label": "fenced code ignored",
+      "inputs": {
+        "markdown": "# A\n```\n# not\n```\n## B ##\n"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"headings\":[{\"level\":1,\"text\":\"A\",\"line\":1},{\"level\":2,\"text\":\"B\",\"line\":5}],\"truncated\":false}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "document_outline-3",
+      "version": 1,
+      "label": "no headings",
+      "inputs": {
+        "markdown": "Just text.\n"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"headings\":[],\"truncated\":false}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "description": {
+    "sections": {
+      "use": "See the structure of a Markdown document: each heading's level, text and line number.",
+      "exclusions": "Only ATX headings (#). Setext headings, block quotes and lists are not recognised.",
+      "limitations": "Markdown up to 1 MiB; at most 2,000 headings, after which truncated is true.",
+      "missing_data": "A text without headings gives an empty list.",
+      "effects": "Runs locally inside AgentWiz with no network access, files or model; it only returns a value. It has no destination, so it can run on Local only data; its output is restricted whenever an input is.",
+      "failures": "A refusal names a fixed code and, where it applies, a 1-based position (record, row or entry); the message never repeats your text. Check the input against the limits above and run again."
+    },
+    "port_summaries": {
+      "inputs": {
+        "markdown": "The Markdown document."
+      },
+      "outputs": {
+        "out": "The headings in order and whether the list was truncated."
+      }
+    }
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "title": "Restore identifiers",
+  "group": "transform",
+  "summary": "Put originals back in place of [KIND_N] placeholders; unknown tokens stay.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "restore_identifiers-1",
+      "version": 1,
+      "label": "restored",
+      "inputs": {
+        "text": "[PERSON_1] approved on [DATE_1].",
+        "pairs": "[{\"placeholder\":\"[PERSON_1]\",\"original\":\"Alice\"},{\"placeholder\":\"[DATE_1]\",\"original\":\"3 March\"}]"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "Alice approved on 3 March."
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "restore_identifiers-2",
+      "version": 1,
+      "label": "preserved [DRAFT] token",
+      "inputs": {
+        "text": "[PERSON_1] approved [DRAFT].",
+        "pairs": "[{\"placeholder\":\"[PERSON_1]\",\"original\":\"Alice\"},{\"placeholder\":\"[DATE_1]\",\"original\":\"3 March\"}]"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "Alice approved [DRAFT]."
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "restore_identifiers-3",
+      "version": 1,
+      "label": "pair unused",
+      "inputs": {
+        "text": "[PERSON_1] signed.",
+        "pairs": "[{\"placeholder\":\"[PERSON_1]\",\"original\":\"Alice\"},{\"placeholder\":\"[DATE_1]\",\"original\":\"3 March\"}]"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "Alice signed."
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "description": {
+    "sections": {
+      "use": "The last step of the de-identification workflow: replace each [KIND_N] placeholder in a model's reply with its original, using the map that check_identifier_map passed.",
+      "exclusions": "Not a check of the map; place check_identifier_map before the Release Gate for that.",
+      "effects": "Runs locally with no network or model. Every port is Local only because the output contains originals.",
+      "limitations": "Replaces exact placeholder tokens only: a placeholder the remote model reworded or split is not restored.",
+      "missing_data": "An unknown token, such as a [DRAFT] that was in the source, is left in place and listed in the step details, as are pairs that were not used.",
+      "failures": "A malformed map fails the step with a located issue; nothing is sent anywhere."
+    },
+    "port_summaries": {
+      "inputs": {
+        "text": "The text with placeholders, usually a remote model's reply.",
+        "pairs": "The identifier map, from check_identifier_map's out pairs."
+      },
+      "outputs": {
+        "out": "The text with originals restored."
+      }
+    }
+  }
+}

@@ -381,6 +381,16 @@ def get_state(ui) -> dict:
     return request(ui, "/api/state")
 
 
+@pytest.fixture
+def local_deidentify_candidate(monkeypatch):
+    """Exercise the deferred source entry against the stub without publishing it in the catalog."""
+    from agentwiz import library_install
+
+    keys = library_install.index()
+    if "deidentify_text" not in keys:
+        monkeypatch.setattr(library_install, "index", lambda: [*keys, "deidentify_text"])
+
+
 def save_profile(ui, name, revision=None, **settings) -> dict:
     """POST /api/profiles/save with the current configuration revision unless one is given."""
     configure_server(ui, settings)
@@ -1102,21 +1112,6 @@ def fire_timers(monkeypatch):
     return hub
 
 
-@pytest.fixture
-def spawned(monkeypatch):
-    """The process groups of every script started, learnt through script_step.after_spawn (11.4)."""
-    from agentwiz import script_step
-    groups: list[int] = []
-    original = script_step.after_spawn
-
-    def record(pgid):
-        groups.append(pgid)
-        original(pgid)
-
-    monkeypatch.setattr(script_step, "after_spawn", record)
-    return groups
-
-
 def group_gone(pgid: int) -> bool:
     try:
         os.killpg(pgid, 0)
@@ -1125,3 +1120,21 @@ def group_gone(pgid: int) -> bool:
     except PermissionError:
         return False
     return False
+
+
+# --- Python blocks (0.2.2, 10.1) ---------------------------------------------------------------------------
+def python_engine() -> dict:
+    from agentwiz import python_step
+    return python_step.engine()
+
+
+def python_block(name="py", inputs=None, outputs=None, file="scripts/go.py", local_only=False, **over) -> dict:
+    """A v4 Python block definition; `inputs`/`outputs` map port names to contracts."""
+    inputs = inputs if inputs is not None else {"text": {"format": "text"}}
+    outputs = outputs if outputs is not None else {"out": {"format": "json"}}
+    block = {"format_version": 4, "name": name, "description": "a Python block",
+             "inputs": {n: {"contract": c, "local_only": local_only} for n, c in inputs.items()},
+             "outputs": {n: {"contract": c, "local_only": False} for n, c in outputs.items()},
+             "steps": [{"id": "run", "kind": "python", "file": file, "engine": python_engine()}]}
+    block.update(over)
+    return block

@@ -5,11 +5,12 @@ import dataclasses
 import heapq
 import hashlib
 import secrets
+import sys
 import copy
 import threading
 import time
 
-from . import release_gate, checks, jsonio, model_call, outbound_policy, runner, runs, task_settings
+from . import release_gate, checks, jsonio, model_call, outbound_policy, python_step, runner, runs, task_settings
 from .state import NoSuchServer, RoleUnresolved
 from .workflow_evidence import EvidenceError
 from .workflow_definition import bundle_graph, digest, names, problem, select, source, value_text
@@ -282,7 +283,7 @@ class Graph:
                 node = source_id[1]
                 if node in self.gates:
                     continue
-                if (node not in self.protected_nodes and self.blocks[node].step.kind in ('model', 'tool')
+                if (node not in self.protected_nodes and not self.blocks[node].step.local
                         and not (releasing and self.released_lineage(source_id))):
                     warning = {**issue('unrestricted_ancestor', location, f'upstream node {node} can dispatch before this restriction applies'),
                                'node': node}
@@ -307,7 +308,14 @@ class Graph:
                     continue
                 block = opened.parsed.block
             step = block.step
-            if step.kind == 'transform':
+            if step.local:
+                # Local execution (0.2.2, 10.5): no destination, grant, credential or MCP observation.
+                if step.kind == 'python' and sys.platform not in ('linux', 'darwin'):
+                    issues.append(issue('platform_unavailable', f'nodes.{node}',
+                                        'Python blocks run on Linux, WSL2 and macOS only'))
+                elif step.kind == 'python' and not python_step.engine_matches(step.engine or {}):
+                    issues.append(issue('engine_changed', f'nodes.{node}',
+                                        'the installed scriptSpell engine differs from the captured one; rebind'))
                 continue
             location = f'nodes.{node}'
             role = None
@@ -328,11 +336,13 @@ class Graph:
                         issues.append(issue('missing_credential', location, 'the configured model needs a credential'))
                         continue
                     effective = task_settings.resolve_effective(step.task, step.task_resets, role.defaults)
-                    model_call.task_arguments(effective.task, snapshot.kind, snapshot.provider)
+                    arguments = model_call.task_arguments(effective.task, snapshot.kind, snapshot.provider)
+                    model_call.validate_request(snapshot, arguments)
                     destination = {'kind': snapshot.kind, 'url': snapshot.endpoint.base_url, 'model': snapshot.model,
                                    'provider': snapshot.provider or ''}
                     view = {'kind': snapshot.kind, 'url': snapshot.endpoint.base_url, 'model': snapshot.model,
                             'provider': snapshot.provider, 'role': step.role,
+                            'routing': {f: getattr(snapshot, f) for f in model_call.ROUTING_FIELDS},
                             'task_text': jsonio.encode_exact(effective.task.request_shape())}
                     private[node] = workshop.credential_identity(key)
                 else:

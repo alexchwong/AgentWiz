@@ -32,7 +32,7 @@ CONTRACT_LABEL = "Tutorial example"
 ROLE = "fast"                 # the role the example model block uses
 ROLE_PROFILE = "tutorial-json"  # the seeded profile it is mapped to
 ROLE_MODEL = "block-fields-repair"    # that profile's stand-in model
-BLOCKS = ("extract_fields", "echo_numbers", "word_count", "wait_for_stop")
+BLOCKS = ("extract_fields", "echo_numbers", "word_count")
 
 
 @dataclass(frozen=True)
@@ -61,6 +61,11 @@ TOPICS: tuple[Topic, ...] = (
     Topic("chat", "Chat", "Send the filled message to start a conversation. Copy beside the answer lets you reuse it. "
           "Stop is available while a response is running.", "chat", "0.1.3", "complete", False,
           _page("chat.tutorialPrepare", ["Hello! Please give a short tutorial response."]), "chat-send"),
+    Topic("agentic-chat", "Agentic Chat",
+          "Agentic is on and the calculator is ticked, so the model may ask AgentWiz to run it. Send: the model asks for "
+          "one calculation, AgentWiz checks and runs it, and the model answers from the result. The Actions list shows "
+          "what ran. AgentWiz decides what may run; tools that change state ask for your approval.",
+          "chat", "0.2.2", "agent-demo", False, _page("agent.tutorialPrepare", ["What is 12 times 3?"]), "agent-send"),
     Topic("document", "Use a document", "Use example document to open a preview. Copy includes provenance; paste it "
           "into Chat to discuss the document.", "documents", "0.1.3", "complete", False,
           _page(None, [], [{"id": "example-document", "label": "Use example document"}]), None),
@@ -94,6 +99,12 @@ TOPICS: tuple[Topic, ...] = (
           "provenance.", "workshop", "0.2.0", "complete", True,
           _page("workshop.tutorialPrepare",
                 ["echo_numbers", {"id": "9007199254740993", "ratio": "0.10000000000000000001"}]), "ws-run-test"),
+    Topic("python-block", "Run a Python block",
+          "This block's step is Python: transform(inputs) counts the words. It runs locally in scriptSpell's restricted "
+          "runner, a language-level restriction rather than an OS sandbox. Run it; the output is checked against the "
+          "block's integer contract.", "workshop", "0.2.2", "complete", False,
+          _page("workshop.tutorialPrepare", ["word_count", {"text": "The quick brown fox jumps over the lazy dog"}]),
+          "ws-run-test"),
     Topic("script-block", "Run a transform and stop a local model",
           "Run the built-in word counter. Then try the local model that waits. Run it and press Stop.",
           "workshop", "0.2.1", "complete", True,
@@ -103,6 +114,15 @@ TOPICS: tuple[Topic, ...] = (
           "Save the word counter and review its port labels. Run the prepared examples in Test. In Design, "
           "change the count unit and save a new revision. Compare both revisions using the same examples.",
           "workshop", "0.2.1", "complete", False, _page("workshop.tutorialCreate"), "ws-save-revision"),
+    Topic("block-library", "Add blocks from the library",
+          "Find and replace and Calculate were added from Workshop's Add from library, which reviews each port's "
+          "Local only label before a block exists. Library blocks are ordinary blocks of yours. Run Find and replace "
+          "with the prepared example, then run Calculate from agentic Chat: the model calls the block and answers "
+          "from its result.",
+          "workshop", "0.2.2", "agent-demo", False,
+          _page("workshop.tutorialPrepare",
+                ["find_and_replace", {"text": "Order 007 and order 007b.", "find": "007", "replace": "008"}],
+                [{"id": "library-chat", "label": "Run Calculate in agentic Chat"}]), "ws-run-test"),
     Topic("workflow", "Wire and run a workflow",
           "In Design, follow the input into Count words and Count characters, then follow both outputs into "
           "Format report. The last stage was upgraded from v3 to v4 and has a local-only input. "

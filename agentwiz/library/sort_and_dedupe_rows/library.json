@@ -1,0 +1,85 @@
+{
+  "title": "Sort and remove duplicates",
+  "group": "tool",
+  "summary": "Sort table rows by columns and drop repeated keys.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "sort_and_dedupe_rows-1",
+      "version": 1,
+      "label": "dedupe by ID",
+      "inputs": {
+        "columns": "[\"Order ID\",\"Customer\",\"Total\"]",
+        "rows": "[[\"010\",\"Ng\",\"5\"],[\"009\",\"Ng\",\"5\"],[\"010\",\"Ng\",\"5\"],[\"\",\"Ali\",\"1\"]]",
+        "by": "[\"Order ID\"]"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"columns\":[\"Order ID\",\"Customer\",\"Total\"],\"rows\":[[\"009\",\"Ng\",\"5\"],[\"010\",\"Ng\",\"5\"],[\"\",\"Ali\",\"1\"]],\"removed\":1}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "sort_and_dedupe_rows-2",
+      "version": 1,
+      "label": "two keys",
+      "inputs": {
+        "columns": "[\"Order ID\",\"Customer\",\"Total\"]",
+        "rows": "[[\"010\",\"Ng\",\"5\"],[\"009\",\"Ng\",\"5\"],[\"010\",\"Ng\",\"5\"],[\"\",\"Ali\",\"1\"]]",
+        "by": "[\"Customer\",\"Order ID\"]"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"columns\":[\"Order ID\",\"Customer\",\"Total\"],\"rows\":[[\"\",\"Ali\",\"1\"],[\"009\",\"Ng\",\"5\"],[\"010\",\"Ng\",\"5\"]],\"removed\":1}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "sort_and_dedupe_rows-3",
+      "version": 1,
+      "label": "text order",
+      "inputs": {
+        "columns": "[\"n\"]",
+        "rows": "[[\"10\"],[\"9\"],[\"1\"]]",
+        "by": "[\"n\"]"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"columns\":[\"n\"],\"rows\":[[\"1\"],[\"10\"],[\"9\"]],\"removed\":0}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "description": {
+    "sections": {
+      "use": "Sort a table by one to five columns and keep only the first row for each combination of those columns, for example one row per order ID.",
+      "exclusions": "Sorts as text (by character code), ascending; edit the block for numeric or descending order, or to keep duplicates. Text order puts 10 before 9.",
+      "limitations": "Up to 10,000 rows. The sort is stable; empty keys sort last.",
+      "missing_data": "An empty table gives an empty table and removed 0.",
+      "effects": "Runs locally inside AgentWiz with no network access, files or model; it only returns a value. It has no destination, so it can run on Local only data; its output is restricted whenever an input is.",
+      "failures": "A refusal names a fixed code and, where it applies, a 1-based position (record, row or entry); the message never repeats your text. Check the input against the limits above and run again."
+    },
+    "port_summaries": {
+      "inputs": {
+        "columns": "The column names, as a JSON list.",
+        "rows": "The rows, as a JSON list of lists of strings.",
+        "by": "The columns to sort and deduplicate by, as a JSON list of names."
+      },
+      "outputs": {
+        "out": "The columns, the sorted rows and the number of rows removed."
+      }
+    }
+  }
+}

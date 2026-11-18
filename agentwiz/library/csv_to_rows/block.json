@@ -1,0 +1,72 @@
+{
+  "format_version": 4,
+  "name": "csv_to_rows",
+  "description": "Parse comma-separated text with a header into columns and rows.",
+  "inputs": {
+    "csv": {
+      "contract": {
+        "format": "text",
+        "max_length": 1048576
+      },
+      "local_only": false
+    }
+  },
+  "outputs": {
+    "out": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 200,
+              "items": {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              }
+            },
+            "rows": {
+              "type": "array",
+              "maxItems": 10000,
+              "items": {
+                "type": "array",
+                "maxItems": 200,
+                "items": {
+                  "type": "string",
+                  "maxLength": 10000
+                }
+              }
+            },
+            "row_count": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "columns",
+            "rows",
+            "row_count"
+          ]
+        }
+      },
+      "local_only": false
+    }
+  },
+  "steps": [
+    {
+      "id": "run",
+      "kind": "tool",
+      "builtin": "parse_csv",
+      "output": "out",
+      "arguments": {
+        "csv": "{{inputs.csv}}",
+        "delimiter": ",",
+        "has_header": true
+      }
+    }
+  ]
+}

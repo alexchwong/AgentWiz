@@ -128,6 +128,8 @@ class Writer:
             if run.kind == "block":
                 payload.update(block=run.block, input_texts=run.input_texts, inputs=run.inputs,
                                budget=run.budget, contract=None, contracts=run.contracts)
+            elif run.kind == "agent":
+                payload.update(inputs={}, contract=None)
             else:
                 payload.update(inputs=run.inputs, contract=run.contract)
             payload.update(agentwiz_version=__version__, modelspell_version=modelspell.__version__)
@@ -244,7 +246,11 @@ class Writer:
             numbers = self._attempt_files(folder)
             row["attempts"] = len(numbers)
             try:
-                row["outcome"] = self._read(folder / RESULT_FILE).get("outcome")
+                result = self._read(folder / RESULT_FILE)
+                row["outcome"] = result.get("outcome")
+                if result.get("source") == "agent":
+                    # A restricted agent run is marked Local only in History (0.2.2, 4.8).
+                    row["local_only"] = result.get("label") == "restricted"
             except (OSError, ValueError):
                 if numbers:
                     try:
@@ -299,7 +305,7 @@ class Writer:
             except (OSError, ValueError) as exc:
                 problems.append(self._problem(str(file), exc))
         result = None
-        is_block = isinstance(run, dict) and run.get("source") == "block"
+        is_block = isinstance(run, dict) and run.get("source") in ("block", "agent")
         if is_block:
             try:
                 result = self._read(folder / RESULT_FILE)

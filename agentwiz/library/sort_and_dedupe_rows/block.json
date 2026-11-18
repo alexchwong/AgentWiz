@@ -1,0 +1,118 @@
+{
+  "format_version": 4,
+  "name": "sort_and_dedupe_rows",
+  "description": "Sort table rows by columns and drop repeated keys.",
+  "inputs": {
+    "columns": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      "local_only": false
+    },
+    "rows": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "string",
+              "maxLength": 10000
+            }
+          }
+        }
+      },
+      "local_only": false
+    },
+    "by": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      "local_only": false
+    }
+  },
+  "outputs": {
+    "out": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 200,
+              "items": {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              }
+            },
+            "rows": {
+              "type": "array",
+              "maxItems": 10000,
+              "items": {
+                "type": "array",
+                "maxItems": 200,
+                "items": {
+                  "type": "string",
+                  "maxLength": 10000
+                }
+              }
+            },
+            "removed": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "columns",
+            "rows",
+            "removed"
+          ]
+        }
+      },
+      "local_only": false
+    }
+  },
+  "steps": [
+    {
+      "id": "run",
+      "kind": "tool",
+      "builtin": "sort_dedupe_rows",
+      "output": "out",
+      "arguments": {
+        "columns": "{{inputs.columns}}",
+        "rows": "{{inputs.rows}}",
+        "by": "{{inputs.by}}",
+        "numeric": false,
+        "descending": false,
+        "dedupe": true
+      }
+    }
+  ]
+}

@@ -213,6 +213,7 @@ def prepare_first(store: runs.AttemptStore, *, snapshot: RequestSnapshot, system
     checks.require_validation([contract.parsed] if contract else [])
     if arguments is None:
         arguments = model_call.task_arguments(task, snapshot.kind, snapshot.provider)
+    model_call.preflight_request(snapshot, arguments)
     if contract is not None:
         generated = output_protocol.single_value_instructions(contract.parsed)
         system = system + '\n\n' + generated if system else generated
@@ -252,7 +253,9 @@ def prepare_repair(run: runs.Run, number: int, parent: dict,
     key = key_for(s["kind"], s["base_url"])
     snapshot = RequestSnapshot(endpoint=Endpoint(s["kind"], s["base_url"], api_key=key), model=s["model"],
                                kind=s["kind"], provider=s["provider"],
-                               profile_name=parent["profile"]["name"], profile_modified=parent["profile"]["modified"])
+                               profile_name=parent["profile"]["name"], profile_modified=parent["profile"]["modified"],
+                               **{f: parent.get("routing", {}).get(f, getattr(model_call.ModelSettings(), f))
+                                  for f in model_call.ROUTING_FIELDS})
     task = parse_task(s["task"])
     arguments = model_call.task_arguments(task, snapshot.kind, snapshot.provider)
     return PreparedAttempt(run, number, parent, snapshot, task, arguments, list(parent["input_messages"]),
@@ -341,6 +344,7 @@ def run_attempt_with_value(store: runs.AttemptStore, prepared: PreparedAttempt, 
 
     page_gone = False
     model_called = False
+    routing = dict(p.parent.get("routing") or {}) if p.parent else {}
     lookup: str | None = None
     started_failed = False
     result = None
@@ -381,7 +385,9 @@ def run_attempt_with_value(store: runs.AttemptStore, prepared: PreparedAttempt, 
                 model_called = True
                 result = model_call.call_model(p.snapshot, p.messages_sent, p.arguments, model_info=model_info,
                                                on_text=wrap(callbacks.text), on_reasoning=wrap(callbacks.reasoning),
-                                               cancel=run.handle)
+                                               cancel=run.handle, routing=routing,
+                                               before_complete=dispatch.check if dispatch is not None else None,
+                                               resolved_policy=routing.get("policy") if p.parent and p.snapshot.kind == "openrouter" else None)
             except modelspell.Cancelled as exc:
                 cancelled_exc = exc
             except Exception as exc:  # noqa: BLE001 - ModelSpellError or anything unexpected
@@ -391,6 +397,8 @@ def run_attempt_with_value(store: runs.AttemptStore, prepared: PreparedAttempt, 
         if isinstance(exc, Exception):
             failure = exc
 
+    if routing:
+        base["routing"] = routing
     before_end_point()
     end = store.end_point(aid)
 

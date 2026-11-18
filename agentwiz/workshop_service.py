@@ -10,10 +10,10 @@ import threading
 import time
 from pathlib import Path
 
-from . import blocks, checks, contract_schema, history, jsonio, model_step, runner, runs, task_settings as ts, templates
+from . import agent_tools, blocks, checks, contract_schema, history, jsonio, model_step, runner, runs, task_settings as ts, templates
 from . import workshop_editor as editor
 from .state import RoleUnresolved
-from . import draft_lineage, outbound_policy
+from . import draft_lineage, outbound_policy, python_step
 from .workshop import TOKEN, WorkshopError
 from .workshop_assets import Assets, Capture, decode_files, document, fail, fingerprint, head, key_name, read, relative, wire_files
 from .workspace import write_atomic_bytes
@@ -145,7 +145,10 @@ def judgement(outputs, expectation, verified):
             ok = ok and exact_equal(actual, expected)
     elif expectation.get('kind') == 'fields':
         for item in expectation['assertions']:
-            current = jsonio.decode_exact(outputs[item['output']]['text'])
+            output = outputs.get(item['output'])
+            if output is None:
+                return 'incorrect'
+            current = output['text'] if output['format'] == 'text' else jsonio.decode_exact(output['text'])
             present = True
             for segment in item['path']:
                 if isinstance(current, dict) and segment in current:
@@ -168,6 +171,35 @@ def judgement(outputs, expectation, verified):
     else:
         return 'unknown'
     return 'correct' if ok else 'incorrect'
+
+
+def validate_expectation(e, outputs):
+    """Validate saved and evaluation expectations against the same output interface."""
+    if not isinstance(e, dict) or e.get('kind') not in ('whole_output', 'fields', 'review', 'text'):
+        fail()
+    if e['kind'] == 'whole_output':
+        if set(e) != {'kind', 'values'} or set(e['values']) != set(outputs) or not all(isinstance(t, str) for t in e['values'].values()):
+            fail()
+    elif e['kind'] == 'fields':
+        if set(e) != {'kind', 'assertions'} or not isinstance(e['assertions'], list):
+            fail()
+        for index, row in enumerate(e['assertions']):
+            if not isinstance(row, dict) or set(row) - {'output', 'path', 'operation', 'value_text'} or row.get('output') not in outputs or row.get('operation') not in ('equals', 'absent', 'present', 'null') or not isinstance(row.get('path'), list):
+                fail()
+            if any(type(s) not in (str, int) for s in row['path']):
+                fail()
+            contract = getattr(outputs[row['output']], 'parsed', outputs[row['output']])
+            if contract.format == 'text' and row['path']:
+                fail('example_incompatible', 400, [{'location': f'expectation.assertions[{index}].path',
+                                                 'message': 'Text outputs require an empty path'}])
+            if row['operation'] == 'equals':
+                if not isinstance(row.get('value_text'), str):
+                    fail()
+                jsonio.decode_exact(row['value_text'])
+    elif e['kind'] == 'text':
+        validate_text_expectation(e, outputs)
+    elif set(e) != {'kind', 'criterion'} or not isinstance(e['criterion'], str):
+        fail()
 
 
 TEXT_OPERATIONS = {'includes': {'output', 'operation', 'values', 'case'},
@@ -232,6 +264,8 @@ class Service:
         self.drafts = draft_lineage.References(self.lock)
         from .workflow_service import Workflows
         self.workflows = Workflows(self)
+        from .python_authoring import Authoring
+        self.python = Authoring(state)                  # Python authoring flows (0.2.2, 10.7)
 
     def credential_identity(self, value):
         candidate = secrets.token_hex(16)
@@ -278,6 +312,12 @@ class Service:
         if 'display_name' in body:
             draft.setdefault('metadata', {})['display_name'] = body['display_name']
         definition = jsonio.decode_exact(draft['definition_text'])
+        step = next(iter(definition.get('steps') or []), None) if isinstance(definition, dict) else None
+        if isinstance(step, dict) and step.get('kind') == 'python' and definition.get('format_version') == 4:
+            # The engine is written from the installed scriptSpell (0.2.2, 10.1): testing and saving a draft
+            # always uses the engine this installation runs, so `engine_changed` clears by Test and Save.
+            step['engine'] = python_step.engine()
+            draft['definition_text'] = jsonio.encode_exact(definition)
         metadata = draft.setdefault('metadata', {})
         if lineage.script_origin:
             metadata['script_origin'] = lineage.script_origin
@@ -376,8 +416,7 @@ class Service:
         p = captured.parsed
         result = {'format_version': 1, 'draft': draft, 'source_digest': captured.digest,
                   'issues': list(p.problem.issues) if p.problem else [], 'kind': p.kind,
-                  'classification': editor.classification(draft) if p.kind == 'script' else
-                  'starter' if p.kind == 'transform' and draft.get('metadata', {}).get('starter_version') == 2 else None}
+                  'classification': 'starter' if p.kind == 'transform' and draft.get('metadata', {}).get('starter_version') == 2 else None}
         definition = jsonio.decode_exact(draft['definition_text'])
         result['valid'] = p.problem is None
         result['input_ports'] = list(definition.get('inputs', {}))
@@ -406,9 +445,16 @@ class Service:
             'context_local_only': definition.get('context_local_only', False),
             'protection_origin': draft.get('metadata', {}).get('protection_origin'),
             'purpose': definition.get('description', ''), 'kind': step.get('kind'),
-            'binding': step.get('role', step.get('server', '')), 'system': asset_text(step.get('system', {})),
+            'binding': step.get('role', step.get('server', step.get('builtin', ''))), 'system': asset_text(step.get('system', {})),
+            'builtin': step.get('builtin'),
+            'builtin_description': (agent_tools.REGISTRY[step['builtin']].description
+                                    if step.get('builtin') in agent_tools.REGISTRY else None),
+            'builtin_choices': ([[name, name.replace('_', ' ')] for name in agent_tools.UTILITY_TOOLS]
+                                if 'builtin' in step else []),
+            # "From library <key> v<n>" for a block whose first revision carries the library provenance.
+            'library_source': self.state.block_library.provenance(draft['key']),
             'behaviour': asset_text(step.get('prompt', {})) if step.get('kind') == 'model' else
-                captured.files.get(step.get('file'), b'').decode() if step.get('kind') == 'script' else step.get('tool', ''),
+                captured.files.get(step.get('file'), b'').decode() if step.get('kind') == 'python' else step.get('tool', ''),
             'arguments': jsonio.encode_exact(step.get('arguments', {})), 'budget': jsonio.encode_exact(definition.get('budget', {})), 'settings': jsonio.encode_exact(step.get('task', {})),
             'repairs': str(step.get('repair', {}).get('max_repairs', 2)),
             'sampling': {k:str(v) for k,v in step.get('task',{}).items() if k != 'advanced'},
@@ -434,15 +480,17 @@ class Service:
                         'provider': snapshot.provider or ''})
                     from .model_call import task_arguments
                     task_arguments(p.block.step.task, snapshot.kind, snapshot.provider)
+                elif p.kind == 'tool' and p.block.step.builtin is not None:
+                    result['destination'] = {'builtin': p.block.step.builtin}
                 elif p.kind == 'tool':
                     snapshot = self.state.mcp_snapshot_for_block(p.block.step.server)
                     result['destination'] = {'server': p.block.step.server, 'tool': p.block.step.tool, 'url': snapshot.url}
                     if p.block.step.tool:
                         result['destination_facts'] = outbound_policy.facts(self.state, {
                             'kind': 'mcp', 'url': snapshot.url, 'server': p.block.step.server, 'tool': p.block.step.tool})
-                elif p.kind == 'script':
-                    result['script_source'] = captured.files[p.block.step.script_file].decode('utf-8')
-                    result['script_warning'] = 'Python runs with user-level filesystem and network access.'
+                elif p.kind == 'python':
+                    result['python_source'] = captured.files[p.block.step.script_file].decode('utf-8')
+                    result['python_engine'] = dict(p.block.step.engine or {})
             except Exception:
                 result['setup_issues'].append({'location': 'behaviour', 'code': 'setup_unavailable'})
             result['facts'] = {'purpose': p.description, 'kind': p.kind,
@@ -490,7 +538,7 @@ class Service:
                             'outputs': [{'name': spec.name, 'description': spec.description,
                                          'format': spec.label(), 'schema': spec.schema_text()}
                                         for spec in messages.plan.specs()]}
-                elif checked.passed and p.kind == 'tool':
+                elif checked.passed and p.kind == 'tool' and p.block.step.builtin is None:
                     result['prepared'] = {'arguments_text': jsonio.encode_exact(templates.fill_arguments(p.block.step.arguments, checked.values)[0])}
         return result
 
@@ -560,25 +608,9 @@ class Service:
                 fail()
             self.input_shape(block, ex.get('inputs'))
             e = ex.get('expectation')
-            if not isinstance(e, dict) or e.get('kind') not in ('whole_output', 'fields', 'review', 'text') or type(ex.get('verified', False)) is not bool:
+            if type(ex.get('verified', False)) is not bool:
                 fail()
-            if e['kind'] == 'whole_output':
-                if set(e) != {'kind', 'values'} or set(e['values']) != {d.name for d in block.outputs} or not all(isinstance(t, str) for t in e['values'].values()):
-                    fail()
-            elif e['kind'] == 'fields':
-                if set(e) != {'kind', 'assertions'} or not isinstance(e['assertions'], list):
-                    fail()
-                for row in e['assertions']:
-                    if set(row) - {'output', 'path', 'operation', 'value_text'} or row.get('output') not in block.contracts['outputs'] or row.get('operation') not in ('equals', 'absent', 'present', 'null') or not isinstance(row.get('path'), list):
-                        fail()
-                    if any(type(s) not in (str, int) for s in row['path']):
-                        fail()
-                    if row['operation'] == 'equals':
-                        jsonio.decode_exact(row['value_text'])
-            elif e['kind'] == 'text':
-                validate_text_expectation(e, block.contracts['outputs'])
-            elif set(e) != {'kind', 'criterion'} or not isinstance(e['criterion'], str):
-                fail()
+            validate_expectation(e, block.contracts['outputs'])
 
     def labelled_pairs(self, key):
         """(retained revision ID, input name) for every input labelled Local only in a retained v4 revision."""
@@ -686,13 +718,23 @@ class Service:
             write_atomic_bytes(root, key + '.json', jsonio.encode_file_exact(
                 {'format_version': 1, 'revision': secrets.token_hex(16), 'examples': examples}))
 
-    def save_examples(self, key, body):
+    def only_revision(self, key, ident):
+        """The sole-revision guard (starter blocks addendum, 5.2): inside the caller's reservation, the block's
+        current revision is `ident` and it is the block's only revision; otherwise nothing is written."""
+        h = head(self.assets.root(key)) if self.assets.root(key).exists() else None
+        if h is None or h['current'] != ident or h['retained'] != [ident]:
+            fail('edited', 409)
+
+    def save_examples(self, key, body, *, only_revision=None):
+        """`only_revision` is internal (the library installer); no HTTP body can set it."""
         key_name(key)
         if self.state.workspace.read_only:
             fail('read_only', 409)
         writer = self.state.register_writer('Workshop examples')
         try:
             with self.assets.reserve(key, 'examples'):
+                if only_revision is not None:
+                    self.only_revision(key, only_revision)
                 previous = self.collection(key)
                 if previous['revision'] != body.get('expected_revision'):
                     fail('stale', 409)
@@ -955,7 +997,7 @@ class Service:
                         raise
                 arm = ('revision ' + str(saved.number)) if saved is not None else 'the current draft' if 'draft' in candidate else 'the saved block'
                 self.validate_examples(examples, b, arm if action == 'batches' else None)
-                snapshot = self.state.resolve_role(b.step.role) if b.step.kind == 'model' else self.state.mcp_snapshot_for_block(b.step.server) if b.step.kind == 'tool' else None
+                snapshot = self.state.resolve_role(b.step.role) if b.step.kind == 'model' else self.state.mcp_snapshot_for_block(b.step.server) if b.step.mcp else None
                 role_capture = None
                 if b.step.kind == 'model':
                     role_capture = self.state.role_capture(b.step.role)
@@ -993,6 +1035,8 @@ class Service:
                     plan_view = model_step.OutputPlan.of(b.outputs, b.contracts['outputs']).view()
                     record['output_plan'] = {k: plan_view[k] for k in ('mode', 'renderer', 'digest')}
                     record['credential_identity'] = credential_identity
+                elif b.step.kind == 'tool' and b.step.builtin is not None:
+                    record['destination'] = {'builtin': b.step.builtin}
                 elif b.step.kind == 'tool':
                     # Configuration snapshot stays in memory. Only sanitized identity is displayed.
                     record['destination'] = {'server': b.step.server, 'tool': b.step.tool}
@@ -1036,12 +1080,7 @@ class Service:
                     c.protected = bool(authoring_protected or protected_inputs or block.context_local_only
                                        or c.metadata.get('protection_clear_pending'))
                     c.dispatch = None
-                    if c.protected and block.step.kind == 'script':
-                        raise WorkshopError('protected_host_script', 409, [{
-                            'code': 'protected_host_script', 'location': 'step',
-                            'message': 'a protected script would run with ordinary host access',
-                            'restriction_sources': sources, 'remedy': outbound_policy.remedy('protected_host_script')}])
-                    if c.protected and block.step.kind in ('model', 'tool'):
+                    if c.protected and (block.step.kind == 'model' or block.step.mcp):
                         c.dispatch = outbound_policy.block_dispatch(self.state, block, c.snapshot)
                         view['trust_revision'] = c.dispatch.revision
                         view['protected'] = True
@@ -1139,7 +1178,9 @@ class Service:
             error.plan = self.public_plan(plan)
             raise error
 
-    def save(self, body):
+    def save(self, body, *, provenance=None):
+        """`provenance` is internal (the library installer): the immutable `metadata.library` record of an imported
+        first revision. Every other save drops `metadata.library`, so an edited block never claims to be it."""
         plan, captures = self.prepare('save', body)
         try:
             self.check_plan(plan, body)
@@ -1151,6 +1192,9 @@ class Service:
             # A new generation starts without standard prose and never inherits one (spec v2 section 3).
             metadata.pop('description_sections', None)
             metadata.pop('description_basis', None)
+            metadata.pop('library', None)
+            if provenance is not None:
+                metadata['library'] = dict(provenance)
             if 'source_review' in plan['descriptor']:
                 metadata['source_review'] = plan['descriptor']['source_review']
             from .workshop_assets import captured_maps, contract_maps_digest
@@ -1277,7 +1321,7 @@ class Service:
                     reason = 'stopped'
                     break
                 capture = captures[row['arm']]
-                if capture.parsed.kind == 'tool' and self.state.mcp_snapshot_for_block(capture.parsed.block.step.server) != capture.snapshot:
+                if capture.parsed.block.step.mcp and self.state.mcp_snapshot_for_block(capture.parsed.block.step.server) != capture.snapshot:
                     reason = 'dependency_changed'
                     break
                 if fingerprint({p: read(capture.root, p) for p in capture.files}) != capture.digest:
@@ -1759,8 +1803,9 @@ class Service:
                 'outcome': outcome, 'plan': self.describe_public(batch['plan']), 'rows': rows,
                 'proposal': proposal, 'saving': False}
 
-    def save_description(self, key, ident, body):
-        """PUT .../revisions/<id>/description: an accepted proposal or a manual edit. Writes only the sidecar."""
+    def save_description(self, key, ident, body, *, only_revision=None):
+        """PUT .../revisions/<id>/description: an accepted proposal or a manual edit. Writes only the sidecar.
+        `only_revision` is internal (the library installer); no HTTP body can set it."""
         from . import workshop_descriptions as descriptions
         kind = descriptions.check_write_body(body)
         key_name(key)
@@ -1776,6 +1821,8 @@ class Service:
         writer = self.state.register_writer('Workshop description')
         try:
             with self.assets.reserve(key):
+                if only_revision is not None:
+                    self.only_revision(key, only_revision)
                 saved = self.assets.saved(key, ident)                  # recheck retention: 404 when pruned
                 root = self.assets.root(key)
                 with self.assets.snapshot(saved) as captured:

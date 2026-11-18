@@ -1,10 +1,12 @@
 # Adapted from modelSpell scripts/smoke_installed.py at commit 1759c6e3c28a637731434a73c46088048583e358
 # (MIT, Copyright (c) 2026 Alex Wong), per AgentWiz techspec 11.2 (0.1.0), 11.1 (0.1.1), 13.1 (0.1.2), 16.1 (0.1.3)
 # and 18.1 (0.1.4).
-"""Smoke check against the installed AgentWiz wheel (steps S1-S17). Run with the environment's
-`python -I` from a scratch directory. Every step checks behaviour; none reads a file's contents.
+"""Smoke check against the installed AgentWiz wheel (steps S1-S25). Run with the environment's
+`python -I`; it creates its own scratch working directory. Every step checks behaviour; none reads a file's contents.
 The launch's default workspace (./workspaces/default) is validated by AgentWiz itself and checked
 through /api/state."""
+import atexit
+import tempfile
 import json
 import os
 import select
@@ -25,6 +27,15 @@ def check(condition, message):
         sys.exit(f"smoke FAILED: {message}")
 
 
+# Own the working directory even when invoked directly, never overwrite caller configuration.
+_original_cwd = Path.cwd()
+_scratch = tempfile.TemporaryDirectory(prefix="agentwiz-installed-smoke-")
+os.chdir(_scratch.name)
+def _cleanup_scratch():
+    os.chdir(_original_cwd)
+    _scratch.cleanup()
+atexit.register(_cleanup_scratch)
+
 # S1: clear proxies; both packages import from this environment
 for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"):
     os.environ.pop(name, None)
@@ -33,13 +44,15 @@ os.environ.pop("OPENROUTER_API_KEY", None)
 
 import agentwiz  # noqa: E402
 import modelspell  # noqa: E402
+import scriptspell  # noqa: E402
 
 prefix = Path(sys.prefix).resolve()
-for mod in (agentwiz, modelspell):
+for mod in (agentwiz, modelspell, scriptspell):
     check(prefix in Path(mod.__file__).resolve().parents, f"{mod.__name__} imported from {mod.__file__}")
 
-# S2: --version from the console script and from python -m; modelSpell is the pinned 0.3.0
-check(modelspell.__version__ == "0.3.0", f"modelSpell {modelspell.__version__} installed, expected 0.3.0")
+# S2: --version from the console script and from python -m; modelSpell 0.4.0 and scriptSpell 0.3.0 are pinned
+check(modelspell.__version__ == "0.4.0", f"modelSpell {modelspell.__version__} installed, expected 0.4.0")
+check(scriptspell.__version__ == "0.3.0", f"scriptSpell {scriptspell.__version__} installed, expected 0.3.0")
 expected = f"AgentWiz {agentwiz.__version__} (modelSpell {modelspell.__version__})"
 bindir = Path(sys.executable).parent
 exe = bindir / ("agentwiz.exe" if os.name == "nt" else "agentwiz")
@@ -57,11 +70,69 @@ def chunk(content=None, finish=None):
 
 received = []
 silent_reached, silent_closed = threading.Event(), threading.Event()
+AUTHOR_YAML = ("interface:\n  inputs:\n    text: str\n  outputs:\n    words: int | Decimal\nexamples:\n"
+               "  - inputs:\n      text: one two\n    outputs:\n      words: 2\n"
+               "  - inputs:\n      text: a\n    outputs:\n      words: 1\n"
+               "  - inputs:\n      text: ''\n    outputs:\n      words: 0\n")
+AUTHOR_SOURCE = "def transform(inputs):\n    return {'words': len(inputs['text'].split())}\n"
+
+
+def tool_call(name, arguments):
+    call = {"index": 0, "id": "call_1", "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}
+    return [b"data: " + json.dumps({"choices": [{"delta": {"tool_calls": [call]}, "finish_reason": None}]}).encode() + b"\n\n",
+            chunk(finish="tool_calls"), b"data: [DONE]\n\n"]
+
+
+def agent_turn(body):
+    """Scripted agent models (S18-S22): the next step follows from the tool results already in the transcript."""
+    model, messages = body["model"], body.get("messages", [])
+    results = [json.loads(m["content"]) for m in messages if m.get("role") == "tool"]
+    tools = [t["function"]["name"] for t in body.get("tools", [])]
+    if model == "agent-two-step":
+        steps = [("aw_calculate", {"expression": "10-3"}), ("aw_date_arithmetic", {"operation": "weekday", "date": "2026-11-16"})]
+    elif model == "agent-docs":
+        hit = results[0]["result"]["hits"][0] if results else None
+        steps = [("aw_search_documents", {"query": "B17"}),
+                 ("aw_read_document", {"document_id": hit["document_id"] if hit else "", "start_line": 1}),
+                 ("aw_create_draft", {"name": "summary", "format": "md", "content": "# B17 holds part 007"})]
+    elif model == "agent-draft":
+        source = results[0]["result"]["documents"][0]["id"] if results else ""
+        copied = results[1]["result"]["draft_id"] if len(results) > 1 else ""
+        steps = [("aw_list_documents", {}),
+                 ("aw_copy_to_draft", {"source_id": source, "start_line": 2, "end_line": 2, "name": "excerpt",
+                                       "format": "txt"}),
+                 ("aw_revise_draft", {"source_id": copied, "edits": [{"find": "Tom", "replace": "Thomas",
+                                                                      "expected_count": 1}]})]
+    else:
+        steps = [(next(t for t in tools if t.startswith("block_")), {"text": "one two three"})]
+    if len(results) < len(steps):
+        return tool_call(*steps[len(results)])
+    return [chunk("done"), chunk(finish="stop"), b"data: [DONE]\n\n"]
 
 
 class Stub(BaseHTTPRequestHandler):
     def do_POST(self):
         received.append(json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}"))
+        if received[-1].get("model") == "author":
+            # Python authoring (S21) does not stream: YAML examples first, then the source.
+            system = received[-1]["messages"][0]["content"]
+            text = AUTHOR_SOURCE if "transform" in system and "interface:" in system else AUTHOR_YAML
+            data = json.dumps({"id": "r", "choices": [{"index": 0, "finish_reason": "stop",
+                                                       "message": {"role": "assistant", "content": text}}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if str(received[-1].get("model", "")).startswith("agent-"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            for c in agent_turn(received[-1]):
+                self.wfile.write(c)
+                self.wfile.flush()
+            return
         if received[-1].get("model") == "silent":
             silent_reached.set()
             deadline = time.monotonic() + 60
@@ -146,9 +217,9 @@ try:
     check(initial["mcp"]["read_only"] is False and initial["mcp"]["servers"] == {}, f"MCP library: {initial['mcp']}")
     check(initial["task"]["read_only"] is False, f"task settings: {initial['task']}")
     check("reasoning" not in initial and "max_tokens" not in initial, "retired settings still in /api/state")
-    # S4 (0.1.4): no roles yet, and the script budget is four
-    check(initial["roles"]["map"] == {} and initial["scripts"]["limit"] == 4,
-          f"roles/scripts: {initial['roles']} {initial['scripts']}")
+    # S4 (0.1.4, 0.2.2): no roles yet, and the Python budget is four
+    check(initial["roles"]["map"] == {} and initial["python"]["limit"] == 4,
+          f"roles/python: {initial['roles']} {initial['python']}")
     # S4 (0.1.3): contracts and history are present, empty and off
     check(initial["contracts"]["items"] == [] and initial["contracts"]["format_version"] == 2
           and initial["contracts"]["validation"]["available"] is True, f"contracts: {initial['contracts']}")
@@ -284,24 +355,26 @@ try:
     finally:
         mcp.shutdown()
 
-    # S13 (0.1.4): a script block written into the running workspace is found without a restart and runs from the
-    # wheel: started, then final `complete`, the output equal to the input.
-    block_dir = Path(expected_path) / "blocks" / "echo_script"
+    # S13 (0.2.2): a Python block written into the running workspace is found without a restart and runs from the
+    # wheel through scriptSpell's restricted runner: started, then final `complete`, the output equal to the input.
+    block_dir = Path(expected_path) / "blocks" / "echo_python"
     (block_dir / "scripts").mkdir(parents=True)
+    engine = {"name": "scriptspell", "profile": scriptspell.profile()["profile"], "codec": scriptspell.profile()["codec"]}
     (block_dir / "block.json").write_text(json.dumps({
-        "format_version": 3, "name": "echo_script", "inputs": {"a": {"contract": {"format": "text"}}},
-        "outputs": {"x": {"contract": {"format": "text"}}, "y": {"contract": {"format": "json"}}},
-        "steps": [{"id": "run", "kind": "script", "file": "scripts/go.py", "timeout_s": 20}]}))
-    (block_dir / "scripts" / "go.py").write_text(
-        "import json, sys\nd = json.load(sys.stdin)\nprint(json.dumps({'x': d['a'], 'y': {'n': 1}}))\n")
+        "format_version": 4, "name": "echo_python",
+        "inputs": {"a": {"contract": {"format": "text"}, "local_only": False}},
+        "outputs": {"x": {"contract": {"format": "text"}, "local_only": False},
+                    "y": {"contract": {"format": "json"}, "local_only": False}},
+        "steps": [{"id": "run", "kind": "python", "file": "scripts/go.py", "engine": engine}]}))
+    (block_dir / "scripts" / "go.py").write_text("def transform(inputs):\n    return {'x': inputs['a'], 'y': {'n': 1}}\n")
     listing = json.loads(api("/api/blocks").read())
-    row = next((b for b in listing["blocks"] if b["name"] == "echo_script"), None)
+    row = next((b for b in listing["blocks"] if b["name"] == "echo_python"), None)
     check(row is not None and row["problem"] is None, f"block listing: {listing}")
     events = [json.loads(line) for line in api("/api/blocks/run", {
-        "name": "echo_script", "revision": row["revision"], "inputs": {"a": "pong"}}).read().splitlines() if line]
+        "name": "echo_python", "revision": row["revision"], "inputs": {"a": "pong"}}).read().splitlines() if line]
     check(events[0]["type"] == "started" and events[-1]["type"] == "final"
           and events[-1]["outcome"] == "complete"
-          and events[-1]["result"]["outputs"]["x"] == {"format": "text", "text": "pong"}, f"script block: {events}")
+          and events[-1]["result"]["outputs"]["x"] == {"format": "text", "text": "pong"}, f"Python block: {events}")
 
     # S14 (0.1.4): the tutorial child ships its example blocks and scripts in the wheel
     tutorial = json.loads(api("/api/tutorial/start", {}).read())
@@ -316,7 +389,7 @@ try:
     try:
         child_listing = json.loads(child_api("/api/blocks").read())
         names = sorted(b["name"] for b in child_listing["blocks"])
-        check(names == ["echo_numbers", "extract_fields", "wait_for_stop", "word_count"]
+        check(names == ["echo_numbers", "extract_fields", "word_count"]
               and all(b["problem"] is None for b in child_listing["blocks"]), f"tutorial blocks: {child_listing}")
         counter = next(b for b in child_listing["blocks"] if b["name"] == "word_count")
         events = [json.loads(line) for line in child_api("/api/blocks/run", {
@@ -333,8 +406,9 @@ try:
         return json.loads(api('/api/workshop/' + path, payload).read())
 
     starters = workshop('starters')
-    check(len(starters['starters']) == 10, 'installed Workshop starter inventory')
-    draft = workshop('preview', {'starter': 'count_text', 'key': 'installed_counter'})['draft']
+    check(len(starters['starters']) == 11 and [g['id'] for g in starters['groups']] == ['llm', 'tool', 'python', 'transform'],
+          'installed Workshop starter inventory')
+    draft = workshop('preview', {'starter': 'count_text', 'starter_version': 2, 'key': 'installed_counter'})['draft']
     save = {'draft': draft, 'expected_identity': None}
     plan = workshop('plans', {'action': 'save', 'request': save})
     saved = workshop('save', {**save, 'expected_plan': plan['expected_plan'],
@@ -351,7 +425,7 @@ try:
         time.sleep(.02)
         batch = workshop('batches/' + operation['batch_id'])
     check(batch['state'] == 'complete' and batch['rows'][0]['outputs']['out']['text'] == '3',
-          'installed Workshop frozen script trial')
+          'installed Workshop frozen transform trial')
     duplicate = workshop('test', start)
     check(duplicate['operation_id'] == operation['operation_id'], 'installed Workshop duplicate Start')
 
@@ -422,6 +496,142 @@ try:
         result = workshop('workflow-jobs/' + job_id)
     check(result['outcome'] == 'complete' and result['outputs']['out']['text'] == '[P1] synthetic'
           and not result['outputs']['out']['local_only'], 'installed gate releases its reviewed value')
+
+    # S18-S22 (0.2.2): agentic Chat and Python authoring against the scripted stub
+    def agent(path, body=None):
+        return json.loads(api('/api/agent/' + path, None if body is None else {'format_version': 1, **body}).read())
+
+    def agent_run(model, message, capabilities):
+        state = json.loads(api("/api/state").read())
+        state = json.loads(api("/api/config", {"revision": state["revision"], "kind": "openai_compat", "model": model}).read())
+        return [json.loads(line) for line in api('/api/agent/run', {
+            'format_version': 1, 'conversation': conversation, 'revision': state['revision'], 'message': message,
+            'capabilities': capabilities}).read().splitlines() if line]
+
+    conversation = agent('conversation', {})['conversation']['id']
+    # S18: one scripted two-step agent run
+    events = agent_run('agent-two-step', 'two steps', [{'name': 'aw_calculate'}, {'name': 'aw_date_arithmetic'}])
+    final = events[-1]
+    check(final['type'] == 'final' and final['stop_reason'] == 'answered'
+          and [t['outcome'] for t in final['view']['trace']] == ['completed', 'completed'], f'agent two-step: {events}')
+    # S19: one search-read-draft run over a staged document; the draft downloads
+    data = b"bin B17 holds part 007\n"
+    staged = urllib.request.Request(root + '/api/agent/documents', data=data, method='POST', headers={
+        'X-Session-Token': token, 'X-Filename': 'bins.txt', 'X-Conversation': conversation, 'X-Local-Only': 'false',
+        'Content-Length': str(len(data))})
+    check(json.loads(urllib.request.urlopen(staged, timeout=30).read())['document']['lines'] == 1, 'agent staging')
+    events = agent_run('agent-docs', 'summarise B17', [{'name': n} for n in
+                       ('aw_search_documents', 'aw_read_document', 'aw_create_draft')])
+    final = events[-1]
+    check(final['stop_reason'] == 'answered' and len(final['view']['drafts']) == 1, f'agent documents: {events}')
+    draft_id = final['view']['drafts'][0]['id']
+    check(api('/api/agent/drafts/' + draft_id).read() == b'# B17 holds part 007', 'agent draft download')
+    # S20 is S13's standalone Python block run. S21: one Python authoring flow (Describe it, Generate and check)
+    state = json.loads(api("/api/state").read())
+    state = json.loads(api("/api/profiles/save", {"name": "author", "kind": "openai_compat", "model": "author",
+                                                  "provider": "", "revision": state["revision"]}).read())
+    json.loads(api("/api/roles/save", {"roles": {"fast": "author"}, "revision": state["roles"]["revision"]}).read())
+    flow = workshop('python/start', {'key': 'authored_words', 'instruction': 'Count the words', 'role': 'fast'})['flow']
+    workshop('python/examples', {'flow': flow})
+    checked = workshop('python/generate', {'flow': flow})
+    check([r['status'] for r in checked['results']] == ['match'] * 3 and checked['requests'] == 2,
+          f'Python authoring: {checked}')
+    applied = workshop('python/apply', {'flow': flow})
+    check(all(isinstance(v, str) for ex in applied['examples'] for v in ex['inputs'].values()), 'authored examples')
+    # S22: one scripted agent run that calls a saved Python block (the S13 block counts words here)
+    (block_dir / "scripts" / "go.py").write_text("def transform(inputs):\n    return {'x': inputs['a'], 'y': len(inputs['a'].split())}\n")
+    inventory = agent('inventory?revision=' + str(json.loads(api("/api/state").read())['revision']))
+    block = next(c for c in inventory['capabilities'] if c['kind'] == 'block' and c['identity']['block'] == 'echo_python')
+    original = agent_turn
+    globals()['agent_turn'] = lambda body: (tool_call(block['name'], {'a': 'one two three'})
+                                            if not [m for m in body.get('messages', []) if m.get('role') == 'tool']
+                                            else [chunk('3'), chunk(finish='stop'), b'data: [DONE]\n\n'])
+    try:
+        events = agent_run('agent-python', 'count', [{'name': block['name'], 'revision': block['revision']}])
+    finally:
+        globals()['agent_turn'] = original
+    tool_results = [json.loads(m['content']) for m in received[-1]['messages'] if m.get('role') == 'tool']
+    check(events[-1]['stop_reason'] == 'answered' and tool_results[-1]['result'] == {'x': 'one two three', 'y': 3},
+          f'agent Python block: {events}')
+
+    # S23 (0.2.2): add three library Tool blocks through the installer and run them as a workflow
+    library = json.loads(api('/api/library').read())
+    check(len(library['entries']) == 29 and {e['status'] for e in library['entries']} == {'available'} and
+          'deidentify_text' not in {e['key'] for e in library['entries']},
+          'installed library listing')
+    planned = json.loads(api('/api/library/plan', {'format_version': 1, 'entries': [
+        {'key': k} for k in ('csv_to_rows', 'sort_and_dedupe_rows', 'rows_to_table')]}).read())['entries']
+    check([p['outcome'] for p in planned] == ['planned'] * 3, f'library plan: {planned}')
+    added = json.loads(api('/api/library/add', {'format_version': 1, 'entries': [
+        {'key': p['key'], 'as': p['as'], 'expected_plan': p['expected_plan'],
+         'confirmations': p['required_confirmations'], 'binding': p['binding']} for p in planned]}).read())['entries']
+    check([a['outcome'] for a in added] == ['added'] * 3, f'library add: {added}')
+    revision_of = {a['as']: a['revision'] for a in added}
+
+    def node(name, path):
+        return {'kind': 'node', 'node': name, 'port': 'out', 'path': path}
+    workflow = 'installed_orders'
+    definition = {'name': workflow, 'purpose': 'Sorted orders',
+                  'inputs': {'csv': {'contract': {'format': 'text'}, 'local_only': False}},
+                  'constants': {'sort_keys': {'value': ['Order ID'], 'local_only': False}},
+                  'nodes': {'parse': {'bindings': {'csv': {'kind': 'input', 'port': 'csv'}}},
+                            'sort': {'bindings': {'columns': node('parse', ['columns']), 'rows': node('parse', ['rows']),
+                                                  'by': {'kind': 'constant', 'name': 'sort_keys'}}},
+                            'table': {'bindings': {'columns': node('sort', ['columns']), 'rows': node('sort', ['rows'])}}},
+                  'outputs': {'markdown': {'contract': {'format': 'json'}, 'local_only': False,
+                                           'binding': {'kind': 'node', 'node': 'table', 'port': 'out'}}}}
+    keys = {'parse': 'csv_to_rows', 'sort': 'sort_and_dedupe_rows', 'table': 'rows_to_table'}
+    save = {'name': workflow, 'file_token': None, 'definition_text': json.dumps(definition),
+            'selections': {n: {'key': k, 'revision': revision_of[k]} for n, k in keys.items()}}
+    plan = workshop('plans', {'action': 'workflow_save', 'request': save})
+    workshop(f'workflows/{workflow}/save', {'request': save, 'expected_plan': plan['expected_plan'],
+                                           'confirmations': plan['required_confirmations']})
+    request = {'name': workflow, 'inputs': {'csv': 'Order ID,Customer\n010,Ng\n007,"Smith, J"\n010,Ng\n'}}
+    plan = workshop('plans', {'action': 'workflow_run', 'request': request})
+    check(plan['descriptor']['order'] == ['parse', 'sort', 'table'], f'library workflow preflight: {plan["descriptor"]}')
+    job = workshop(f'workflows/{workflow}/run', {'request': request, 'expected_plan': plan['expected_plan'],
+                    'ticket': workshop('tickets', {})['ticket'], 'confirmations': plan['required_confirmations']})
+    deadline = time.monotonic() + 15
+    result = workshop('workflow-jobs/' + job['operation_id'])
+    while result['outcome'] == 'running' and time.monotonic() < deadline:
+        time.sleep(.02)
+        result = workshop('workflow-jobs/' + job['operation_id'])
+    check(result['outcome'] == 'complete' and json.loads(result['outputs']['markdown']['text'])['markdown'] ==
+          '| Order ID | Customer |\n| --- | --- |\n| 007 | Smith, J |\n| 010 | Ng |\n', f'library workflow: {result}')
+
+    # S24 (0.2.2): the packaged PDF fixtures extract on both upload routes through the worker, with coverage
+    from agentwiz.tutorial_support import pdf_fixtures
+    for name, pages_with_text in (('text', 1), ('partial', 2)):
+        data = pdf_fixtures.FIXTURES[name]()
+        upload = urllib.request.Request(root + '/api/attachments/extract', method='POST', data=data, headers={
+            'X-Session-Token': token, 'Content-Type': 'application/octet-stream', 'X-Filename': name + '.pdf',
+            'Content-Length': str(len(data))})
+        extracted = json.loads(urllib.request.urlopen(upload, timeout=60).read())
+        check(extracted['format'] == 'pdf' and extracted['coverage']['pages_with_text'] == pages_with_text,
+              f'PDF on the Chat route ({name}): {extracted.get("coverage")}')
+        staged = urllib.request.Request(root + '/api/agent/documents', data=data, method='POST', headers={
+            'X-Session-Token': token, 'X-Filename': name + '.pdf', 'X-Conversation': conversation,
+            'X-Local-Only': 'false', 'Content-Length': str(len(data))})
+        document = json.loads(urllib.request.urlopen(staged, timeout=60).read())['document']
+        check(document['format'] == 'pdf' and document['coverage']['pages_with_text'] == pages_with_text,
+              f'PDF on the agent route ({name}): {document.get("coverage")}')
+    check(extracted['coverage']['warnings'] == [{'code': 'no_text_layer', 'page': 2}], 'partial coverage warning')
+
+    # S25 (0.2.2): one scripted agent run that copies a passage to a draft, then revises that draft
+    conversation = agent('conversation', {})['conversation']['id']
+    data = b"Actions\nTom will review Hull's routes by 15 April.\n"
+    staged = urllib.request.Request(root + '/api/agent/documents', data=data, method='POST', headers={
+        'X-Session-Token': token, 'X-Filename': 'ops.txt', 'X-Conversation': conversation, 'X-Local-Only': 'false',
+        'Content-Length': str(len(data))})
+    urllib.request.urlopen(staged, timeout=30).read()
+    events = agent_run('agent-draft', 'copy and revise', [{'name': n} for n in
+                       ('aw_list_documents', 'aw_copy_to_draft', 'aw_revise_draft')])
+    final = events[-1]
+    check(final['stop_reason'] == 'answered' and [t['outcome'] for t in final['view']['trace']] == ['completed'] * 3
+          and len(final['view']['drafts']) == 2, f'agent copy and revise: {events}')
+    revised = final['view']['drafts'][-1]['id']
+    check(api('/api/agent/drafts/' + revised).read().rstrip(b'\n')
+          == b"Thomas will review Hull's routes by 15 April.", 'revised draft download')
 
     # S8: a second AgentWiz on the same workspace is refused with exit status 3
     second = subprocess.run([str(exe), "--no-browser"], capture_output=True, text=True, timeout=15)

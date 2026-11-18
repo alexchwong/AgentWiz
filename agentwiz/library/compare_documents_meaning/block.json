@@ -1,0 +1,94 @@
+{
+  "format_version": 4,
+  "name": "compare_documents_meaning",
+  "description": "List the substantive differences between two versions of a document.",
+  "inputs": {
+    "before": {
+      "contract": {
+        "format": "text",
+        "max_length": 20000
+      },
+      "local_only": false
+    },
+    "after": {
+      "contract": {
+        "format": "text",
+        "max_length": 20000
+      },
+      "local_only": false
+    }
+  },
+  "outputs": {
+    "differences": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "properties": {
+              "topic": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "before": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "after": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "significance": {
+                "type": "string",
+                "enum": [
+                  "minor",
+                  "material"
+                ]
+              }
+            },
+            "required": [
+              "topic",
+              "before",
+              "after",
+              "significance"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "local_only": false
+    },
+    "summary": {
+      "contract": {
+        "format": "text",
+        "max_length": 1500
+      },
+      "local_only": false
+    }
+  },
+  "steps": [
+    {
+      "id": "request",
+      "kind": "model",
+      "role": "fast",
+      "system": {
+        "file": "prompts/system.md"
+      },
+      "prompt": {
+        "file": "prompts/user.md"
+      },
+      "response_mode": "named_json",
+      "task": {
+        "max_tokens": 6144
+      },
+      "repair": {
+        "max_repairs": 2
+      }
+    }
+  ],
+  "budget": {
+    "max_seconds": 180
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "title": "Check against a checklist",
+  "group": "llm",
+  "summary": "Check a text against each item of a checklist.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "critique_against_checklist-1",
+      "version": 1,
+      "label": "letter",
+      "inputs": {
+        "text": "Applications close on 30 June. Contact Mei Lin with questions.",
+        "checklist": "[\"States the deadline\",\"Names a contact person\",\"Mentions the budget\"]"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "results",
+            "path": [
+              0,
+              "met"
+            ],
+            "operation": "equals",
+            "value_text": "\"yes\""
+          },
+          {
+            "output": "results",
+            "path": [
+              2,
+              "met"
+            ],
+            "operation": "equals",
+            "value_text": "\"no\""
+          },
+          {
+            "output": "results",
+            "path": [
+              2,
+              "item"
+            ],
+            "operation": "equals",
+            "value_text": "\"Mentions the budget\""
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "critique_against_checklist-2",
+      "version": 1,
+      "label": "one item",
+      "inputs": {
+        "text": "Budget: $5,000.",
+        "checklist": "[\"Mentions the budget\"]"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "results",
+            "path": [
+              0,
+              "met"
+            ],
+            "operation": "equals",
+            "value_text": "\"yes\""
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "critique_against_checklist-3",
+      "version": 1,
+      "label": "empty text",
+      "inputs": {
+        "text": "",
+        "checklist": "[\"States the deadline\",\"Names a contact person\"]"
+      },
+      "expectation": {
+        "kind": "fields",
+        "assertions": [
+          {
+            "output": "results",
+            "path": [
+              0,
+              "evidence"
+            ],
+            "operation": "equals",
+            "value_text": "\"\""
+          },
+          {
+            "output": "results",
+            "path": [
+              1,
+              "met"
+            ],
+            "operation": "equals",
+            "value_text": "\"no\""
+          }
+        ]
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "required_context": 32768,
+  "max_tokens": 4096,
+  "description": {
+    "sections": {
+      "use": "Review a draft against your checklist, item by item, with a quote as evidence for each.",
+      "exclusions": "It does not edit the text; use rewrite_for_audience or proofread for that.",
+      "limitations": "Needs a model context of at least 32,768 tokens (prompt, input, one repair and 4,096 output tokens). Results are model output: review them. Text up to 20,000 characters; 1 to 20 checklist items. Items are echoed exactly and in order, and evidence should be verbatim; the evaluation checks this.",
+      "missing_data": "Without supporting text, evidence is empty and met is no or unclear.",
+      "effects": "Sends its inputs to the model of its role (fast by default) and returns the result for review. With unrestricted ports and unrestricted data, that model may be remote; the Add dialog shows the destination. Label inputs Local only to keep them on this machine.",
+      "failures": "If the reply does not meet the output contract after two repairs, the step fails with located issues. A context or token limit is reported as such; shorten the input or use a larger context."
+    },
+    "port_summaries": {
+      "inputs": {
+        "text": "The text to check.",
+        "checklist": "The checklist items, a JSON list of 1 to 20 strings."
+      },
+      "outputs": {
+        "results": "One result per item: item, met (yes, no or unclear) and evidence.",
+        "overall": "A short overall assessment."
+      }
+    }
+  }
+}

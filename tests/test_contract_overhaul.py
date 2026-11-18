@@ -331,7 +331,7 @@ def _plan_save(ui, draft, expected=None):
 
 
 def _pinned_draft(ui, key, pin):
-    draft = _send(ui, "preview", starter="format_report", key=key)["draft"]
+    draft = _send(ui, "preview", starter="format_report", starter_version=2, key=key)["draft"]
     definition = jsonio.decode_exact(draft["definition_text"])
     definition["outputs"]["out"]["contract"] = pin
     draft["definition_text"] = jsonio.encode_exact(definition)

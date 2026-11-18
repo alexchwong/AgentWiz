@@ -152,7 +152,7 @@ class Run:
     history_state: str = HISTORY_INTACT
     prior_history_state: str | None = None      # captured at a deletion's reservation (R5-10)
     # --- 0.1.4 (10.2). Page runs keep the defaults. Block runs: `inputs` holds value views.
-    kind: str = "page"             # "page" | "block"
+    kind: str = "page"             # "page" | "block" | "agent" (0.2.2: one agentic Chat run)
     step_id: str = STEP_ID
     block: dict | None = None      # {"name", "revision", "files"}
     input_texts: dict | None = None
@@ -315,6 +315,33 @@ class AttemptStore:
                 raise Closed()
             self._runs[run.run_id] = run
         return run
+
+    def new_agent_run(self, *, save_runs: bool, token: CancelToken, handle: object) -> Run:
+        """An agentic Chat run's metadata (0.2.2, 4.8): one record per run, written once by its finaliser. The
+        loop owns `token` and `handle`; the store only holds the run for history and deletion. Raises Closed."""
+        now = utc_now()
+        run = Run(run_id=secrets.token_hex(6), source="agent", save_runs=save_runs, created_at=now, inputs={},
+                  contract=None, token=token, handle=handle, kind="agent", step_id="agent", started_at=now)
+        with self._lock:
+            if self.closed:
+                raise Closed()
+            self._runs[run.run_id] = run
+        return run
+
+    def discard_agent_run(self, run: Run) -> None:
+        """Remove an agent run that never started (its `attach` was refused): no record, nothing to save."""
+        with self._lock:
+            if not run.committed:
+                self._runs.pop(run.run_id, None)
+
+    def end_agent_run(self, run: Run, saving: bool) -> str:
+        """The agent run's commit: from now on nothing changes its record. 'pending' or 'not_requested'."""
+        with self._lock:
+            run.ended = True
+            run.committed = True
+            run.result_save_status = "pending" if saving else "not_requested"
+            self._prune_run_locked(run)
+            return run.result_save_status
 
     def reserve_attempt(self, run: Run) -> int:
         """The dispatch gate of a block model step (10.7): take the run's next attempt number and mark it
@@ -587,6 +614,8 @@ class AttemptStore:
         if run.kind == "block" and (not run.committed or run.result is not None
                                     or run.result_save_status == "pending"):
             return
+        if run.kind == "agent" and (not run.committed or run.result_save_status == "pending"):
+            return
         if (run.running is None and not run.pending and not run.held and run.protections == 0
                 and run.history_state != HISTORY_DELETING and self._runs.get(run.run_id) is run):
             del self._runs[run.run_id]
@@ -643,7 +672,7 @@ class AttemptStore:
                     self._history_reservations[run_id] = 'delete'
                 return None
             if (run.running is not None or run.pending or run.history_state == HISTORY_DELETING
-                    or (run.kind == "block" and (not run.committed or run.result_save_status == "pending"))
+                    or (run.kind in ("block", "agent") and (not run.committed or run.result_save_status == "pending"))
                     or run.protections > 0):
                 raise RunActive()
             run.prior_history_state = run.history_state

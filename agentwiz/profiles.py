@@ -3,7 +3,7 @@
 Call mutations from state.py under its lock. Shared defaults additionally use the
 permanent .profiles.lock, held only across a read/change/replace operation.
 
-Profile files are format version 3: a profile holds kind, model and provider. Older files are read;
+Profile files are format version 4: a profile holds kind, model and provider. Older files are read;
 their server URL and retired task settings are dropped on write.
 """
 from __future__ import annotations
@@ -17,12 +17,12 @@ from pathlib import Path
 from typing import Any
 
 from modelspell import ModelSpellError
-from .model_call import KINDS, RETIRED, ModelSettings, SettingsError, settings_from_body
+from .model_call import ROUTING_FIELDS, KINDS, RETIRED, ModelSettings, SettingsError, settings_from_body
 from .workspace import (NAME_RULE, Problem, InvalidDocument as _Invalid,
                         check_format_version as _format_version, read_document, valid_name, write_atomic)
 
 PROFILES_FILE = "profiles.json"
-PROFILES_FORMAT_VERSION = 3
+PROFILES_FORMAT_VERSION = 4
 PROFILE_FIELDS = ("kind", "model", "provider")
 _NEWER = f"written by a newer AgentWiz (format_version greater than {PROFILES_FORMAT_VERSION})"
 
@@ -39,7 +39,7 @@ def _check_profile(name: str, obj: Any) -> ModelSettings:
         if f in obj and not isinstance(obj[f], str):
             raise _Invalid(f"{where}.{f} must be a string")
     try:
-        return settings_from_body(ModelSettings(), {f: obj[f] for f in (*PROFILE_FIELDS, "base_url") if f in obj})
+        return settings_from_body(ModelSettings(), {f: obj[f] for f in (*PROFILE_FIELDS, *ROUTING_FIELDS, "base_url") if f in obj})
     except SettingsError as exc:  # AgentWiz's own messages; they name fields, never values
         raise _Invalid(f"{where}: {exc}") from None
     except ModelSpellError:
@@ -87,12 +87,12 @@ def profile_object(settings: ModelSettings, previous: Mapping | None = None) -> 
     retired fields dropped. ModelSettings holds no key (P6).
     """
     out = {k: v for k, v in previous.items() if k not in (*RETIRED, "base_url")} if isinstance(previous, Mapping) else {}
-    for f in PROFILE_FIELDS:
+    for f in (*PROFILE_FIELDS, *ROUTING_FIELDS):
         out[f] = getattr(settings, f)
     return out
 
 
-def version3(raw: Mapping[str, Any]) -> dict:
+def version4(raw: Mapping[str, Any]) -> dict:
     """Remove retired fields from every profile while retaining unknown metadata."""
     out = dict(raw)
     out["format_version"] = PROFILES_FORMAT_VERSION
@@ -104,8 +104,8 @@ def version3(raw: Mapping[str, Any]) -> dict:
 
 
 def write_profiles(folder: Path, raw: Mapping[str, Any]) -> None:
-    """Write profile format 3 without server or retired task settings."""
-    write_atomic(folder, PROFILES_FILE, version3(raw))
+    """Write profile format 4 without server or retired task settings."""
+    write_atomic(folder, PROFILES_FILE, version4(raw))
 
 
 def seed_workspace(folder: Path, library: "Library") -> None:

@@ -1,0 +1,81 @@
+{
+  "title": "Combine two texts",
+  "group": "tool",
+  "summary": "Join two texts with a blank line between them.",
+  "library_version": 1,
+  "examples": [
+    {
+      "id": "combine_two_texts-1",
+      "version": 1,
+      "label": "two paragraphs",
+      "inputs": {
+        "first": "Hello.",
+        "second": "Goodbye."
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"text\":\"Hello.\\n\\nGoodbye.\"}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "combine_two_texts-2",
+      "version": 1,
+      "label": "first empty",
+      "inputs": {
+        "first": "",
+        "second": "Only this."
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"text\":\"\\n\\nOnly this.\"}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    },
+    {
+      "id": "combine_two_texts-3",
+      "version": 1,
+      "label": "multi-line",
+      "inputs": {
+        "first": "# A\nx\n",
+        "second": "# B\ny\n"
+      },
+      "expectation": {
+        "kind": "whole_output",
+        "values": {
+          "out": "{\"text\":\"# A\\nx\\n\\n\\n# B\\ny\\n\"}"
+        }
+      },
+      "origin": "packaged_human_reviewed",
+      "verified": true,
+      "held_out": false
+    }
+  ],
+  "description": {
+    "sections": {
+      "use": "Join the outputs of two steps into one text, separated by a blank line, for example two sections into one report.",
+      "exclusions": "Exactly two parts and no headings; edit the block for more parts, a separator or headings.",
+      "limitations": "Up to 1 MiB in total.",
+      "missing_data": "An empty part is joined as it is, so the result starts or ends with the blank line.",
+      "effects": "Runs locally inside AgentWiz with no network access, files or model; it only returns a value. It has no destination, so it can run on Local only data; its output is restricted whenever an input is.",
+      "failures": "A refusal names a fixed code and, where it applies, a 1-based position (record, row or entry); the message never repeats your text. Check the input against the limits above and run again."
+    },
+    "port_summaries": {
+      "inputs": {
+        "first": "The first text.",
+        "second": "The second text."
+      },
+      "outputs": {
+        "out": "The combined text."
+      }
+    }
+  }
+}

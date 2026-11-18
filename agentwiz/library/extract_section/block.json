@@ -1,0 +1,89 @@
+{
+  "format_version": 4,
+  "name": "extract_section",
+  "description": "Return the part of a Markdown text under one heading.",
+  "inputs": {
+    "markdown": {
+      "contract": {
+        "format": "text",
+        "max_length": 1048576
+      },
+      "local_only": false
+    },
+    "heading": {
+      "contract": {
+        "format": "text",
+        "max_length": 500
+      },
+      "local_only": false
+    }
+  },
+  "outputs": {
+    "out": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "boolean"
+            },
+            "matches": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "section": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "level": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1,
+              "maximum": 6
+            },
+            "start_line": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "end_line": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "found",
+            "matches",
+            "section",
+            "level",
+            "start_line",
+            "end_line"
+          ]
+        }
+      },
+      "local_only": false
+    }
+  },
+  "steps": [
+    {
+      "id": "run",
+      "kind": "tool",
+      "builtin": "extract_section",
+      "output": "out",
+      "arguments": {
+        "markdown": "{{inputs.markdown}}",
+        "heading": "{{inputs.heading}}",
+        "include_subsections": true
+      }
+    }
+  ]
+}

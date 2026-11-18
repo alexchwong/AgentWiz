@@ -1,8 +1,9 @@
 {
-  "format_version": 3,
+  "format_version": 4,
   "name": "word_count",
-  "description": "Count the words in a text with a script.",
-  "inputs": {"text": {"contract": {"format": "text"}}},
-  "outputs": {"words": {"contract": {"format": "json", "schema": {"type": "integer", "minimum": 0}}}},
-  "steps": [{"id": "count", "kind": "script", "file": "scripts/count_words.py", "timeout_s": 30}]
+  "description": "Count the words in a text with a Python block.",
+  "inputs": {"text": {"contract": {"format": "text"}, "local_only": false}},
+  "outputs": {"words": {"contract": {"format": "json", "schema": {"type": "integer", "minimum": 0}}, "local_only": false}},
+  "steps": [{"id": "count", "kind": "python", "file": "scripts/count_words.py",
+             "engine": {"name": "scriptspell", "profile": "scriptspell-pure-v5", "codec": 2}}]
 }

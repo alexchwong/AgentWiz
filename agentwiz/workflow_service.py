@@ -66,7 +66,7 @@ class Workflows:
     @classmethod
     def block_view(cls, block):
         return {'kind': block.step.kind, 'role': block.step.role, 'tool': block.step.tool,
-                'server': block.step.server, 'context_local_only': block.context_local_only, **cls.block_ports(block)}
+                'server': block.step.server, 'builtin': getattr(block.step, 'builtin', None), 'context_local_only': block.context_local_only, **cls.block_ports(block)}
 
     @classmethod
     def effective_view(cls, graph, node):
@@ -334,7 +334,7 @@ class Workflows:
                 if opened is None:
                     continue
                 block, protected = opened.parsed.block, True
-            if block.step.kind not in ('model', 'tool'):
+            if not (block.step.kind == 'model' or block.step.mcp):
                 continue
             destination, missing = outbound_policy.config_destination(config, block.step)
             fact = outbound_policy.fact_view(state, destination, grants)

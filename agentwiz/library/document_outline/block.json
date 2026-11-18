@@ -1,0 +1,74 @@
+{
+  "format_version": 4,
+  "name": "document_outline",
+  "description": "List the headings of a Markdown text with levels and lines.",
+  "inputs": {
+    "markdown": {
+      "contract": {
+        "format": "text",
+        "max_length": 1048576
+      },
+      "local_only": false
+    }
+  },
+  "outputs": {
+    "out": {
+      "contract": {
+        "format": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "headings": {
+              "type": "array",
+              "maxItems": 2000,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "level": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 6
+                  },
+                  "text": {
+                    "type": "string",
+                    "maxLength": 1048576
+                  },
+                  "line": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "level",
+                  "text",
+                  "line"
+                ]
+              }
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "headings",
+            "truncated"
+          ]
+        }
+      },
+      "local_only": false
+    }
+  },
+  "steps": [
+    {
+      "id": "run",
+      "kind": "tool",
+      "builtin": "outline",
+      "output": "out",
+      "arguments": {
+        "markdown": "{{inputs.markdown}}"
+      }
+    }
+  ]
+}
