@@ -83,7 +83,9 @@ def assess_block(key, block, report, repo, excerpts=False):
     executed = [row for row in rows if row.get('outcome') in ('correct', 'incorrect')]
     correct = sum(row.get('outcome') == 'correct' for row in rows)
     critical_bad = sorted({clipped(row.get('case')) for row in rows
-                           if row.get('case') in critical and row.get('outcome') != 'correct'})
+                           if row.get('case') in critical and row.get('outcome') not in ('correct', 'blocked', 'evaluator_error')})
+    critical_blocked = sorted({clipped(row.get('case')) for row in rows
+                               if row.get('case') in critical and row.get('outcome') in ('blocked', 'evaluator_error')})
     hard_bad = any(row.get('hard_violation') is True for row in rows)
     hard_unknown = any(type(row.get('hard_violation')) is not bool for row in executed)
     rubric_rows = [row for row in rows if row.get('case') in rubric_ids or 'rubric' in row]
@@ -112,7 +114,7 @@ def assess_block(key, block, report, repo, excerpts=False):
         if field in saved_bar and saved_bar[field] != actual:
             issues.append('Stored bar differs from recomputation: ' + field)
     if block.get('verdict') not in (None, status):
-        issues.append('Stored verdict differs from recomputation; refresh the original report with --review.')
+        issues.append('Stored verdict differs from recomputation; inspect diagnostics and candidate fixtures.')
     if issues and status == 'passed':
         status = 'incomplete'
     failures = []
@@ -147,7 +149,8 @@ def assess_block(key, block, report, repo, excerpts=False):
                                    for case, trial in sorted(unique - expected, key=str)],
         'outcomes': counts(row.get('outcome') for row in rows),
         'contract_executions': len(executed), 'correct': correct,
-        'critical_cases_failed': critical_bad, 'hard_invariant_violation': hard_bad,
+        'critical_cases_failed': critical_bad, 'critical_cases_blocked': critical_blocked,
+        'hard_invariant_violation': hard_bad,
         'rubrics': {'total': len(rubric_rows), 'pending': rubric_pending, 'failed': rubric_failed},
         'pending_rubric_cases': sorted({clipped(row.get('case')) for row in rubric_rows
                                        if row.get('owner_mark') is not True and row.get('owner_mark') is not False}),
@@ -199,6 +202,12 @@ def summarize(report, repo, excerpts=False):
     missing = sorted(set(expected) - set(supplied))
     extra = sorted(set(supplied) - set(expected)) if expected else []
     statuses = [block['assessment'] for block in blocks.values()]
+    selected_statuses = list(statuses)
+    if report.get('execution') in ('running', 'interrupted'):
+        selected_statuses.append('incomplete')
+    if report.get('execution') == 'blocked':
+        selected_statuses.append('blocked')
+    selected_assessment = combine(selected_statuses)
     if missing or catalog_error or extra:
         statuses.append('incomplete')
     if report.get('execution') in ('running', 'interrupted'):
@@ -207,12 +216,14 @@ def summarize(report, repo, excerpts=False):
         statuses.append('blocked')
     overall = combine(statuses)
     reported = report.get('verdict')
-    disagreement = reported is not None and reported != overall
+    disagreement = reported is not None and reported != selected_assessment
     if disagreement and overall == 'passed':
         overall = 'incomplete'
     target = report.get('target') or {}
     summary = {
-        'summary_format': 1, 'assessment': overall, 'reported_verdict_disagrees': disagreement,
+        'summary_format': 1, 'assessment': overall, 'selected_blocks_assessment': selected_assessment,
+        'catalog_coverage_complete': not missing and not extra and not catalog_error,
+        'reported_verdict_disagrees': disagreement,
         'scope': 'Library qualification only; does not assess Chat, CI, installed-wheel or PDF gates.',
         'reported_verdict': report.get('verdict'), 'execution': report.get('execution', 'legacy_unspecified'),
         'reason': clipped(report.get('reason')) if report.get('reason') else None,
@@ -270,7 +281,8 @@ def main():
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
-        print('Assessment:', summary['assessment'])
+        print('Catalog assessment:', summary['assessment'])
+        print('Selected blocks:', summary['selected_blocks_assessment'])
         print('Block assessments:', json.dumps(summary['block_assessments']))
         print('Missing blocks:', ', '.join(summary['missing_blocks']) or 'none')
         print('Summary:', destination, '(' + str(len(data)) + ' bytes)')

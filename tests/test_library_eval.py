@@ -665,3 +665,131 @@ def test_summary_extracts_blank_diagnostics_from_existing_report_without_reply_t
     assert diagnostic['outcome'] == 'truncated_no_answer' and diagnostic['reasoning_characters'] == 17000
     assert 'PRIVATE-REASONING' not in json.dumps(result)
     assert result['assessment'] == 'incomplete'
+
+
+def summary_module():
+    spec = importlib.util.spec_from_file_location('summary', ROOT / 'scripts/summarize_library_eval.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def qualification_report(key):
+    fixture = cases(key)
+    rows = []
+    for case in fixture:
+        for trial in (1, 2, 3):
+            row = {'case': case['id'], 'trial': trial, 'outcome': 'correct', 'hard_violation': False,
+                   'inputs': case['inputs'], 'critical': bool(case.get('critical'))}
+            if case.get('rubric'):
+                row.update(rubric=case['rubric'], owner_mark=None,
+                           review_outputs={'corrected': 'Synthetic output for explicit owner review.'})
+            rows.append(row)
+    report = {'format_version': 2, 'trials': 3, 'set': 'all', 'execution': 'complete',
+              'blocks': {key: {'runs': rows, 'bar': library_eval.bar(rows, fixture, 3)}}}
+    library_eval.update_verdict(report)
+    return report
+
+
+@pytest.mark.parametrize('outcome,assessment', [('blocked', 'blocked'), ('evaluator_error', 'blocked'),
+                                              ('incorrect', 'failed')])
+def test_summary_distinguishes_blocked_critical_trials_from_wrong_answers(outcome, assessment):
+    report = qualification_report('table_from_text')
+    row = next(row for row in report['blocks']['table_from_text']['runs'] if row['critical'])
+    row['outcome'] = outcome
+    report['blocks']['table_from_text']['bar'] = library_eval.bar(
+        report['blocks']['table_from_text']['runs'], cases('table_from_text'), 3)
+    library_eval.update_verdict(report)
+    summary = summary_module().summarize(report, ROOT)
+    result = summary['blocks']['table_from_text']
+    assert result['assessment'] == assessment
+    assert summary['reported_verdict_disagrees'] is False
+    assert result['critical_cases_blocked'] == ([row['case']] if outcome != 'incorrect' else [])
+    assert result['critical_cases_failed'] == ([row['case']] if outcome == 'incorrect' else [])
+
+
+def test_summary_keeps_targeted_success_separate_from_full_catalog_coverage():
+    report = qualification_report('table_from_text')
+    result = summary_module().summarize(report, ROOT)
+    assert result['selected_blocks_assessment'] == 'passed'
+    assert result['assessment'] == 'incomplete' and result['catalog_coverage_complete'] is False
+    assert result['reported_verdict_disagrees'] is False
+    report['execution'] = 'interrupted'
+    report['verdict'] = 'incomplete'
+    assert summary_module().summarize(report, ROOT)['selected_blocks_assessment'] == 'incomplete'
+
+
+def test_case_pacing_adds_no_retries_and_keeps_all_outcomes(ui, server, monkeypatch):
+    target(ui, server)
+    fixture = [case for case in cases('classify_text') if 'stub' in case]
+    server.reply(*(block_answer(**case['stub']) for case in fixture))
+    pauses = []
+    monkeypatch.setattr(library_eval, 'pause_between_cases', pauses.append)
+    report = run(ui, case_delay=2)
+    assert pauses == [2, 2] and len(server.requests) == 3
+    assert [row['outcome'] for row in report['blocks']['classify_text']['runs']] == ['correct'] * 3
+    assert report['case_delay'] == 2
+
+
+def test_grouped_review_export_does_not_approve_and_import_applies_only_explicit_marks(tmp_path):
+    source = tmp_path / 'full.json'
+    destination = tmp_path / 'review.json'
+    source.write_text(json.dumps(qualification_report('proofread')))
+    before = source.read_bytes()
+    assert library_eval.main(['--export-review', str(source), '--report', str(destination)]) == 0
+    assert source.read_bytes() == before
+    review = json.loads(destination.read_text())
+    assert len(review['cases']) == 3 and all(case['owner_mark'] is None for case in review['cases'])
+    assert all(len(case['trials']) == 3 for case in review['cases'])
+    review['cases'][0]['owner_mark'] = True
+    destination.write_text(json.dumps(review))
+    assert library_eval.main(['--apply-review', str(destination), '--source-report', str(source)]) == 3
+    report = json.loads(source.read_text())
+    rubric = [row for row in report['blocks']['proofread']['runs'] if 'rubric' in row]
+    assert sum(row['owner_mark'] is True for row in rubric) == 3
+    assert sum(row['owner_mark'] is None for row in rubric) == 6
+    assert report['verdict'] == 'rubric_review_pending'
+
+
+@pytest.mark.parametrize('problem', ['stale', 'evidence', 'duplicate', 'invalid_mark', 'missing_output'])
+def test_review_import_refuses_stale_or_changed_evidence_without_touching_source(tmp_path, problem):
+    import library_reviews
+    source = tmp_path / 'full.json'
+    destination = tmp_path / 'review.json'
+    report = qualification_report('proofread')
+    if problem == 'missing_output':
+        min((row for row in report['blocks']['proofread']['runs'] if 'rubric' in row),
+            key=lambda row: (row['case'], row['trial']))['review_outputs'] = None
+    source.write_text(json.dumps(report))
+    library_reviews.export_review(source, destination)
+    review = json.loads(destination.read_text())
+    review['cases'][0]['owner_mark'] = True
+    if problem == 'stale':
+        source.write_text(source.read_text() + '\n')
+    elif problem == 'evidence':
+        review['cases'][0]['trials'][0]['outputs'] = {'corrected': 'Forged'}
+    elif problem == 'duplicate':
+        review['cases'][1] = review['cases'][0]
+    elif problem == 'invalid_mark':
+        review['cases'][0]['owner_mark'] = 1
+    destination.write_text(json.dumps(review))
+    before = source.read_bytes()
+    with pytest.raises(library_reviews.ReviewError):
+        library_reviews.apply_review(destination, source)
+    assert source.read_bytes() == before
+
+
+def test_individual_trial_review_can_override_a_group_decision(tmp_path):
+    import library_reviews
+    source = tmp_path / 'full.json'
+    destination = tmp_path / 'review.json'
+    source.write_text(json.dumps(qualification_report('proofread')))
+    library_reviews.export_review(source, destination)
+    review = json.loads(destination.read_text())
+    case = review['cases'][0]
+    case['owner_mark'] = True
+    case['trials'][0]['owner_mark'] = False
+    destination.write_text(json.dumps(review))
+    result, _, changed = library_reviews.apply_review(destination, source)
+    rows = [row for row in result['blocks']['proofread']['runs'] if row['case'] == case['case']]
+    assert changed == 3 and [row['owner_mark'] for row in rows] == [False, True, True]

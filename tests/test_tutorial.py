@@ -466,3 +466,46 @@ def test_tutorial_model_block_inherits_its_role_default_and_declares_two_outputs
     assert prepared["sources"]["temperature"] == "role_default"
     assert [o["name"] for o in prepared["outputs"]] == ["fields", "note"]
 
+
+
+def test_late_batch_response_cannot_replace_a_new_revision_saved_status(ui, open_page):
+    """Force the old poll to arrive after Save; no sleeps or longer assertion timeout."""
+    import json
+    import urllib.parse
+    page = open_page(ui)
+    tid(page, 'header-tutorial').click()
+    has(page, 'tutorial-status', 'data-state', 'ready')
+    tid(page, 'tutorial-jump').select_option('workshop-design')
+    has(page, 'tutorial-box', 'data-topic', 'workshop-design')
+    has(page, 'tutorial-status', 'data-state', 'ready')
+    dialog = tid(page, 'ws-dialog')
+    tid(page, 'ws-save-revision').click()
+    tid(dialog, 'ws-confirm').click()
+    has(page, 'ws-status', 'data-state', 'saved')
+    tid(page, 'ws-test').click()
+    held = []
+    batch_url = '**/api/workshop/batches/*'
+    page.route(batch_url, lambda route: held.append(route), times=1)
+    tid(page, 'ws-run-saved-examples').click()
+    with page.expect_request(batch_url):
+        tid(dialog, 'ws-confirm').click()
+    try:
+        child = ui.tutorial.child
+        path = urllib.parse.urlsplit(held[0].request.url).path
+        wait_until(lambda: request(child, path)['state'] != 'running')
+        completed = request(child, path)
+        tid(page, 'ws-design').click()
+        tid(page, 'ws-choice-count-unit').select_option('characters')
+        tid(page, 'ws-apply-parameters').click()
+        tid(page, 'ws-save-revision').click()
+        tid(dialog, 'ws-confirm').click()
+        has(page, 'ws-status', 'data-state', 'saved')
+        with page.expect_response(batch_url) as delivered:
+            held.pop().fulfill(status=200, content_type='application/json', body=json.dumps(completed))
+        delivered.value.finished()
+        # Flush rendering after delivery, without accessing page implementation state.
+        page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        has(page, 'ws-status', 'data-state', 'saved')
+    finally:
+        for route in held:
+            route.continue_()

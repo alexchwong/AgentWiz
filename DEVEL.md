@@ -357,6 +357,26 @@ then set its `owner_mark` to `true` or `false`. Refresh scores without any model
 python scripts/library_eval.py --review reports/library-openrouter.json
 ```
 
+For a smaller owner-review file, export the rubric cases, grouped with all three trial outputs:
+
+```bash
+python scripts/library_eval.py --export-review reports/library-openrouter.json --report reports/library-rubric-review.json
+```
+
+Review every displayed trial. Set each case's `owner_mark` to `true` only if all its trial outputs
+satisfy the rubric, or use individual trial `owner_mark` values for mixed results. Leave null to
+preserve existing marks. The current full catalog has 18 grouped cases covering 54 trial outputs;
+export and import make no model calls. Edit only those mark fields, then apply once:
+
+```bash
+python scripts/library_eval.py --apply-review reports/library-rubric-review.json --source-report reports/library-openrouter.json
+```
+
+Import validates the source hash and every evidence field, applies only explicit marks, and refreshes
+qualification. It cannot approve missing outputs or bypass numerical/critical checks. A nonzero exit
+can still mean marks were applied successfully while another block remains failed or pending. Export
+a fresh file if the source changed or if you want to continue reviewing after a partial import.
+
 **5. Run Agentic Chat cohorts and the five-scenario gate.** Use the same terminal and model exports:
 
 ```bash
@@ -383,8 +403,12 @@ After applying the minutes and table prompt/scoring fixes, rerun only those two 
 executions, plus any permitted repairs/probes). This uses the OpenRouter exports from step 1:
 
 ```bash
-python scripts/library_eval.py --route openrouter --profile openrouter-eval --block minutes_from_transcript --block table_from_text --trials 3 --set all --report reports/library-openrouter-minutes-table.json
+python scripts/library_eval.py --route openrouter --profile openrouter-eval --block minutes_from_transcript --block table_from_text --case-delay 2 --trials 3 --set all --report reports/library-openrouter-minutes-table.json
 ```
+
+`--case-delay 2` spaces case starts to reduce bursts; it does not retry requests, change provider,
+clear account quota limits or turn 429 into a pass. The default remains zero delay. If 429 persists,
+restore provider availability/account quota before repeating; do not rerun the unaffected catalog.
 
 The new evaluation uses fresh disposable installs, so it reads the changed library prompts. Existing
 installed blocks in personal workspaces are not automatically updated. The minutes evaluator accepts

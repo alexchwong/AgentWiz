@@ -4171,22 +4171,37 @@ async function wsAssist(initialAction,options={}){
   });
 }
 async function wsStart(action,request,done){
+  const loadGeneration=wsLoadGeneration;
   const bound=await wsPlan(action,request);if(!bound)return;
   const ticket=(await wsApi("tickets",{})).ticket;
   let op;
   try{op=await wsApi(action,{...bound,ticket});}catch(e){op=await wsApi("tickets/"+ticket);if(!op.operation_id)throw e;}
-  await wsFollow(op.operation_id,done);
+  await wsFollow(op.operation_id,done,loadGeneration);
 }
-async function wsFollow(id,done){
+async function wsFollow(id,done,loadGeneration=wsLoadGeneration){
+  if(loadGeneration!==wsLoadGeneration)return;
   const generation=++wsPoll;
+  const previous=activitySources.get("workshop");
+  if(previous&&previous.operation_id!==id)setActivity("workshop",null);
+  const current=()=>generation===wsPoll&&loadGeneration===wsLoadGeneration;
   while(generation===wsPoll){
-    ws.batch=await wsApi("batches/"+id);if(ws.batch.active_run){try{ws.batch.live=await api("/api/block_runs/"+ws.batch.active_run);}catch(e){/* child may already have ended */}}wsNote.dataset.state=ws.batch.state;delete wsNote.dataset.code;wsNote.textContent=ws.batch.state+" · "+ws.batch.rows.filter(r=>r.state==="terminal").length+" / "+ws.batch.rows.length;
-    if(ws.batch.state==="running")setActivity("workshop",{label:WS_BATCH_LABEL(ws.batch),source:"workshop",open:()=>{selectTab("workshop");}});
-    else setActivity("workshop",null);
-    wsResults();if(ws.batch.state!=="running"){if(done)await done(ws.batch);return;}
+    const batch=await wsApi("batches/"+id);
+    if(generation!==wsPoll)return;
+    if(current()&&batch.active_run){try{batch.live=await api("/api/block_runs/"+batch.active_run);}catch(e){/* child may already have ended */}}
+    if(generation!==wsPoll)return;
+    if(batch.state==="running")setActivity("workshop",{operation_id:id,label:WS_BATCH_LABEL(batch),source:"workshop",open:()=>{selectTab("workshop");}});
+    else if(activitySources.get("workshop")?.operation_id===id)setActivity("workshop",null);
+    // A changed selection detaches presentation, not ownership of the server run.
+    // Keep the activity indicator accurate until completion, without touching newer status/results.
+    if(current()){
+      ws.batch=batch;wsNote.dataset.state=batch.state;delete wsNote.dataset.code;wsNote.textContent=batch.state+" · "+batch.rows.filter(r=>r.state==="terminal").length+" / "+batch.rows.length;
+      wsResults();
+      if(batch.state!=="running"){if(done)await done(batch);return;}
+    }else if(batch.state!=="running")return;
     await new Promise(resolve=>setTimeout(resolve,250));
   }
 }
+
 function wsTrialArticle(row){
   const result=h("article",{"data-test":"ws-trial","data-outcome":row.outcome||row.state,"data-attempts":row.attempts??0,"data-correctness":row.correctness||"unreviewed","data-arm":row.arm},h("strong",{text:(row.arm===0?"Baseline":"Candidate")+(row.block_revision_number?" · revision "+row.block_revision_number:" · draft")+" · "+(row.example.label||row.example.id)+" · "+(row.outcome||row.state)}));
   for(const [name,v] of Object.entries(row.outputs||{}))result.append(h("h4",{text:name}),v.format==="json"?h("div",{},wsStructured(v.text),h("details",{},h("summary",{text:"Exact answer"}),h("pre",{"data-test":"ws-output","data-output":name,text:v.text}))):h("pre",{"data-test":"ws-output","data-output":name,text:v.text}),copyControl("ws-copy-output",()=>v.text,null));
@@ -4527,7 +4542,7 @@ TABS.workshop={async tutorialAssist(action){ws.view="design";ws.tutorialAction=a
     if(!ws.draft||ws.draft.key!==parts[1]){if(!await wsLeave()){wsRender();return;}ws.view=["design","test","compare"].includes(parts[2])?parts[2]:"design";await wsLoad({key:parts[1]},false);}
     else {ws.view=["design","test","compare"].includes(parts[2])?parts[2]:"design";wsRender();}
   }else wsRender();
-  const active=await wsApi("batches"),id=active.active||active.latest;if(id){const batch=await wsApi("batches/"+id);const source=batch.plan?.describe?null:batch.plan?.assistance?.draft||batch.plan?.candidates?.[0]?.draft;
+  const loadGeneration=wsLoadGeneration;const active=await wsApi("batches");if(loadGeneration!==wsLoadGeneration)return;const id=active.active||active.latest;if(id){const batch=await wsApi("batches/"+id);if(loadGeneration!==wsLoadGeneration)return;const source=batch.plan?.describe?null:batch.plan?.assistance?.draft||batch.plan?.candidates?.[0]?.draft;
     if(!ws.draft&&source?.key===parts[1]){ws.view="test";await wsLoad({draft:source},true);}
     if(source?.key===ws.draft?.key)wsFollow(id).catch(wsError);
   }
@@ -4622,7 +4637,7 @@ async function recoverActivity(){
   try{
     const batches=await wsApi("batches");
     if(batches?.active&&!activitySources.has("workshop")){const batch=await wsApi("batches/"+batches.active).catch(()=>null);
-      setActivity("workshop",{label:WS_BATCH_LABEL(batch),source:"workshop",open:()=>selectTab("workshop")});}
+      setActivity("workshop",{operation_id:batches.active,label:WS_BATCH_LABEL(batch),source:"workshop",open:()=>selectTab("workshop")});}
   }catch(e){/* the indicator stays as it was */}
 }
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)recoverActivity();});

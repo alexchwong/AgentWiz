@@ -102,8 +102,8 @@ judgement.
 2. Confirm the offline CI matrix passes on Ubuntu and macOS, Python 3.10 and 3.13. A Linux-only
    local pass covers Linux. See the owner sign-offs below for the 0.2.2 live evaluations.
 3. Run `python scripts/build_release.py --smoke` on the intended committed tree; require
-   RC1–RC3 and the installed-wheel smoke S1–S25 to pass. Run the installed-wheel page/tutorial
-   checks below as well; source-checkout browser results do not establish packaged UI behavior.
+   RC1–RC3 and the installed-wheel smoke S1–S25 to pass. The Tests workflow now runs installed-wheel page/library/tutorial checks on each main matrix job;
+   confirm those steps pass. Source-checkout browser results do not establish packaged UI behavior.
 4. Merge `devel` into `main` when authorized. The release workflow reruns tests and checks
    before publishing; inspect its result.
 
@@ -157,6 +157,8 @@ requires fresh evidence. Provider API and tool replay diagnostics belong in mode
    least 29/30 contract executions and 24/30 correct, every critical case correct on all three trials, the hard
    invariants in every run and the rubric cases passing the owner's review. Mark `owner_mark` true or false for
    each rubric and run `scripts/library_eval.py --review REPORT` to refresh the verdict without model calls.
+   Alternatively, use the grouped `--export-review` / `--apply-review` flow in DEVEL.md; all trial outputs
+   remain visible and no mark is inferred automatically.
    Keep passing evidence for every shipped model block. Remove any block still below the bar after three revision
    rounds from `index.json` and its shipping references, and name it in the handover.
 2. **Agent selection.** Run `scripts/agent_eval.py --cohorts tests/agent_eval/cohorts.json` in a disposable
@@ -166,9 +168,13 @@ requires fresh evidence. Provider API and tool replay diagnostics belong in mode
    prepare matching Chat/`fast` settings in that disposable workspace. Record the three rates and the five-scenario gate verdict. A passing scenario needs a
    finished answer, successful expected tool calls in order, valid arguments and the expected result. The README
    claims library support in Chat only once this gate passes on the target orchestrator.
-3. **PDF wheel matrix.** Confirm `pypdfium2` wheels install and run on Linux x86-64 and arm64, macOS arm64 and
-   x86-64, WSL2 and each supported Python, and that its licence notices are present in the installed wheel. A
-   target without a usable wheel moves PDF to an `agentwiz[pdf]` extra there.
+3. **PDF wheel matrix.** The Tests workflow's `pdf-wheels` job builds and installs the candidate wheel on
+   Linux x86-64/arm64 and macOS arm64/x86-64 with Python 3.10–3.13. It requires a binary pypdfium2
+   distribution, checks installed licence notices and extracts packaged fixtures through the real worker.
+   Require all matrix jobs green. WSL2 remains outside hosted CI; if claiming WSL2 PDF support, run
+   `python scripts/check_pdf_install.py` in that environment and retain its platform/version result.
+   A target without a usable wheel needs its support claim resolved before release; this automation
+   does not silently convert PDF to an optional extra or waive a platform failure.
 4. **PDF on macOS.** Accept, or decline, PDF on macOS without memory containment (Section 9, item 1).
 
 The Local only `deidentify_text` starter is deferred from the 0.2.2 catalog and wheel. Its source and cases are

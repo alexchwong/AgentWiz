@@ -43,10 +43,15 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 import eval_setup
 import eval_reports
+import library_reviews
 from eval_attempts import attempt_diagnostics
 sys.path.insert(0, str(CASES))
 
 import checks  # noqa: E402  (tests/library_eval/checks.py)
+
+def pause_between_cases(seconds):
+    time.sleep(seconds)
+
 
 class Refused(Exception):
     """The evaluation could not run with the selected setup."""
@@ -389,7 +394,7 @@ def update_verdict(report: dict) -> None:
 
 
 def evaluate(client: Client, *, profile: str, route: str | None, blocks: list[str], trials: int, which: str,
-             case_filter=None, progress=None, report=None, report_path=None) -> dict:
+             case_filter=None, progress=None, report=None, report_path=None, case_delay=0) -> dict:
     import agentwiz
     import modelspell
 
@@ -406,7 +411,8 @@ def evaluate(client: Client, *, profile: str, route: str | None, blocks: list[st
     save()
     target = prepare(client, profile, route, blocks)
     resolved = verify_route(client, target, blocks)
-    report.update(target=target, resolved=resolved)
+    report.update(target=target, resolved=resolved, case_delay=case_delay)
+    completed_cases = 0
     for key in blocks:
         data, cases = selected[key]
         runs = []
@@ -414,6 +420,10 @@ def evaluate(client: Client, *, profile: str, route: str | None, blocks: list[st
         report['blocks'][key] = block
         for trial in range(1, trials + 1):
             for case in cases:
+                if completed_cases and case_delay:
+                    report['active'] = {'block': key, 'case': case['id'], 'trial': trial, 'stage': 'pacing'}
+                    save()
+                    pause_between_cases(case_delay)
                 report['active'] = {'block': key, 'case': case['id'], 'trial': trial, 'stage': 'run'}
                 save()
                 try:
@@ -425,6 +435,7 @@ def evaluate(client: Client, *, profile: str, route: str | None, blocks: list[st
                 if case.get('rubric'):
                     row.update(rubric=case['rubric'], owner_mark=None)
                 runs.append(row)
+                completed_cases += 1
                 block['bar'] = bar(runs, cases, trials)
                 save()
                 if progress:
@@ -444,16 +455,42 @@ def main(argv=None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--profile", help="an evaluation profile (or an explicitly supplied default)")
     mode.add_argument("--review", type=Path, help="refresh an existing report after marking its rubrics")
+    mode.add_argument("--export-review", type=Path, help="export grouped rubric outputs from this report to --report")
+    mode.add_argument("--apply-review", type=Path, help="import explicit case marks into --source-report")
+    parser.add_argument("--source-report", type=Path, help="original report to update with --apply-review")
     parser.add_argument("--block", action="append", help="a catalog key; repeatable (default: every model block)")
     parser.add_argument("--trials", type=int, default=1)
     parser.add_argument("--set", dest="which", choices=["dev", "heldout", "all"], default="dev")
     parser.add_argument("--route", choices=("openrouter", "lmstudio", "openai_compat"),
                         help="assert the route of the selected profile (default: use the profile's route)")
+    parser.add_argument("--case-delay", type=float, default=0, help="seconds between cases (0-30); pacing only, never retries")
     parser.add_argument("--timeout", type=float, default=eval_setup.timeout_default())
     parser.add_argument("--profiles-dir", type=Path, default=None)
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--report", type=Path, default=Path("reports/library_eval_report.json"))
     args = parser.parse_args(argv)
+    if not 0 <= args.case_delay <= 30:
+        parser.error("--case-delay must be between 0 and 30 seconds")
+    if args.source_report and not args.apply_review:
+        parser.error("--source-report requires --apply-review")
+    if args.export_review:
+        try:
+            count = library_reviews.export_review(args.export_review, args.report)
+        except (library_reviews.ReviewError, OSError, ValueError) as exc:
+            parser.error(str(exc) if isinstance(exc, library_reviews.ReviewError) else type(exc).__name__)
+        print(f"Review {count} grouped cases in {args.report}; original report unchanged")
+        return 0
+    if args.apply_review:
+        if not args.source_report:
+            parser.error("--apply-review requires --source-report")
+        try:
+            reviewed, digest, count = library_reviews.apply_review(args.apply_review, args.source_report)
+            update_verdict(reviewed)
+            library_reviews.publish_review(args.source_report, reviewed, digest)
+        except (library_reviews.ReviewError, OSError, ValueError) as exc:
+            parser.error(str(exc) if isinstance(exc, library_reviews.ReviewError) else type(exc).__name__)
+        print(f"Applied {count} explicit rubric marks")
+        return write_report(args.source_report, reviewed, persist=False)
     if args.review:
         report = json.loads(args.review.read_text(encoding="utf-8"))
         if report.get("format_version") != 2 or not report.get("blocks"):
@@ -473,7 +510,7 @@ def main(argv=None) -> int:
         with tempfile.TemporaryDirectory(prefix="agentwiz-library-eval-") as tmp:
             with eval_setup.session(Path(tmp), args.profile, args.route, args.profiles_dir, args.config) as ui:
                 report = evaluate(Client(ui, args.timeout), profile=args.profile, route=args.route, blocks=blocks, trials=args.trials,
-                                  which=args.which, report=report, report_path=args.report, progress=lambda k, r: print(
+                                  which=args.which, report=report, report_path=args.report, case_delay=args.case_delay, progress=lambda k, r: print(
                                       f"{k} {r['case']} trial {r['trial']}: {r['outcome']}", flush=True))
     except KeyboardInterrupt:
         report.update(execution='interrupted', verdict='incomplete', reason='interrupted')
@@ -485,8 +522,9 @@ def main(argv=None) -> int:
     return write_report(args.report, report)
 
 
-def write_report(path: Path, report: dict) -> int:
-    eval_reports.checkpoint(path, report)
+def write_report(path: Path, report: dict, *, persist=True) -> int:
+    if persist:
+        eval_reports.checkpoint(path, report)
     for key, block in report["blocks"].items():
         b = block["bar"]
         print(f"{key}: {b['contract_executions']}/{b['scheduled']} executed, {b['correct']} correct, "

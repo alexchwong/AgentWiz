@@ -2,6 +2,8 @@
 
 ## 0.2.2
 
+- Late Workshop batch updates no longer replace a newer revision's save status or results.
+
 - Library minutes leave anonymous owners unassigned; table extraction represents unknown or missing cells as empty strings.
 
 - Workshop field assertions compare Text outputs literally instead of attempting to decode them as JSON.

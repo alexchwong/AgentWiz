@@ -1644,3 +1644,27 @@ the standalone `scripts/summarize_library_eval.py`. Diagnostic fields retain ori
 usage, effective task limits and answer/reasoning character counts. They contain no reply or reasoning
 body. The summarizer can derive these from an older report's saved attempts without model calls;
 qualification thresholds and automatic repair policy are unchanged.
+
+Workshop polling captures both the selected draft/revision generation and its poll generation. A
+new load invalidates their presentation; after each awaited batch/child fetch, the observer checks
+its identity before changing shared results or status. Detached polls track completion only for the
+operation-bound activity indicator; superseded observers do not cancel server runs.
+A delayed completion cannot replace a newer save status or repopulate a different selection's results.
+
+Library summary reports separate `critical_cases_blocked` from genuine critical failures. Selected
+block verdicts are distinct from full-catalog coverage; omitting other blocks in a targeted retest
+is not a stored-verdict discrepancy. `--case-delay` is explicit pacing between cases, never workload
+retry, rate-limit recovery, fallback or a change to acceptance thresholds.
+
+Grouped rubric review bundles hold a hash of the original full report and all evidence for every
+trial. Explicit case marks apply to its displayed trials; individual marks may override them.
+Unmarked entries preserve existing marks. Import rejects changed/stale evidence, duplicates,
+non-boolean marks and approval of absent outputs. Only owner marks and refreshed verdicts are
+published; raw trial outputs, execution evidence and qualification thresholds are unchanged.
+
+The Tests workflow validates packaged UI outside the checkout and PDF native wheels across the
+Linux/macOS CPU architectures and Python 3.10–3.13. `check_installed_ui.py` copies tests/scripts to a
+throwaway directory, verifies site-packages imports and runs existing page/library/tutorial checks.
+`check_pdf_install.py` checks installed notices and real worker extraction, including near-limit and
+partial fixtures. Neither check requires models. WSL2 is reported separately; macOS memory containment
+remains an owner disposition, not something these checks prove.
