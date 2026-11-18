@@ -17,8 +17,9 @@ A cases file is a JSON list. Each case:
      "expected_first_capability": "aw_search_documents",
      "expected_answer": {"contains": ["007", "7"]}}
 
-`expected_answer` takes "contains" (every string must appear) or "equals" (the whole answer, trimmed). The report
-keeps transport success, valid first calls and correct answers apart. This script is not shipped in the wheel.
+`expected_answer` takes "contains" (every string must appear), "equals" (the whole answer, trimmed), or
+"equals_casefold" (a trimmed, case-insensitive exact match). The report keeps transport success, valid first
+calls and correct answers apart. This script is not shipped in the wheel.
 
 Cohorts (starter blocks addendum, 7.2). The full library cannot be offered in one run (24 capabilities, 65,536
 definition bytes), so library selection is measured on small fixed cohorts instead:
@@ -31,9 +32,10 @@ With --url, use a disposable workspace with fast already bound; evaluation modif
 is added through the installer (plan, then add
 with the plan's confirmations) unless an installed copy of that entry already exists, and its capability name and
 revision are resolved from the inventory after install. A cohort offers at most 8 capabilities. Each case lists
-`expected_capabilities`, which must all appear in the run's trace (an empty list: no tool is needed). The report
-gives three rates separately (correct choice, valid arguments, successful use of the result) and the end-to-end
-gate's five scenarios, which must all pass before the README claims library support in Chat.
+`expected_capabilities`, which must complete in order (an empty list requires no calls). An optional
+`expected_summary_source` names the staged document whose full text must reach the summarisation block.
+The report gives three rates separately (correct choice, valid arguments, successful use of the result)
+and the end-to-end gate's five scenarios, which must all pass before the README claims library support in Chat.
 """
 from __future__ import annotations
 
@@ -101,6 +103,8 @@ def judge(answer: str | None, expected: dict) -> bool | None:
         return None if not isinstance(expected, dict) else False
     if "equals" in expected:
         return answer.strip() == str(expected["equals"]).strip()
+    if "equals_casefold" in expected:
+        return answer.strip().casefold() == str(expected["equals_casefold"]).strip().casefold()
     wanted = expected.get("contains", [])
     wanted = [wanted] if isinstance(wanted, str) else wanted
     return all(str(w) in answer for w in wanted)
@@ -231,6 +235,23 @@ def completed_in_order(trace: list[dict], expected: list[str]) -> bool:
     return all(name in successful for name in expected)
 
 
+def summary_source_matches(trace: list[dict], capability: str, source: str) -> bool:
+    expected = source.split()
+    found = False
+    for action in trace:
+        if action.get("capability") != capability or action.get("outcome") != "completed":
+            continue
+        try:
+            arguments = json.loads(action.get("arguments_text", ""))
+        except (TypeError, ValueError):
+            return False
+        text = arguments.get("text") if isinstance(arguments, dict) else None
+        if not isinstance(text, str) or text.split() != expected:
+            return False
+        found = True
+    return found
+
+
 def run_cohort_case(client: Client, case: dict, names: list[str], blocks: dict, timeout: float, target: dict) -> dict:
     started = time.monotonic()
     row = {"id": case["id"], "transport_ok": False, "stop_reason": None, "capabilities_used": None,
@@ -279,6 +300,9 @@ def run_cohort_case(client: Client, case: dict, names: list[str], blocks: dict, 
         row["valid_arguments"] = None if not trace else all(t.get("code") not in INVALID_CODES for t in trace)
         row["result_used"] = judge(final.get("answer"), case.get("expected_answer"))
         row["tools_completed"] = completed_in_order(trace, expected)
+        if "expected_summary_source" in case:
+            source = next(doc["text"] for doc in case["documents"] if doc["name"] == case["expected_summary_source"])
+            row["summary_source_correct"] = summary_source_matches(trace, mapping["library:summarise_document"], source)
         if "expected_draft" in case:
             drafts = view.get("drafts", [])
             row["draft_correct"] = False
@@ -287,7 +311,8 @@ def run_cohort_case(client: Client, case: dict, names: list[str], blocks: dict, 
                     row["draft_correct"] = judge(download.read().decode("utf-8"), case["expected_draft"])
         if row["transport_ok"]:
             passed = (row["stop_reason"] == "answered" and row["tools_completed"] and
-                      row["valid_arguments"] is not False and row["result_used"] and row.get("draft_correct", True))
+                      row["valid_arguments"] is not False and row["result_used"] and
+                      row.get("summary_source_correct", True) and row.get("draft_correct", True))
             row["verdict"] = "passed" if passed else "failed"
         else:
             row["error"] = view.get("stop_detail") or row["stop_reason"]
@@ -333,6 +358,11 @@ def validate_cohorts(spec):
                 raise EvaluationBlocked(f"{case['id']}: expected capability is not offered")
             if any(name in names for name in ('aw_read_document', 'aw_search_documents', 'aw_read_table')) and not case.get('documents'):
                 raise EvaluationBlocked(f"{case['id']}: document tools need a staged document")
+            if 'expected_summary_source' in case:
+                sources = [doc for doc in case.get('documents', []) if doc['name'] == case['expected_summary_source']]
+                sequence = iter(case.get('expected_capabilities', []))
+                if len(sources) != 1 or not all(name in sequence for name in ('aw_read_document', 'library:summarise_document')):
+                    raise EvaluationBlocked(f"{case['id']}: summary source checks require one named source and a read before summarisation")
 
 
 def run_cohorts(client: Client, spec: dict, timeout: float, target: dict, report=None, report_path=None) -> dict:

@@ -39,7 +39,7 @@ from .task_settings import TaskSettingError, parse_task
 
 SYSTEM_PROMPT = (Path(__file__).parent / "prompts" / "agent_system.md")
 SYSTEM_PROMPT_ID = "agent_system"
-SYSTEM_PROMPT_VERSION = 1
+SYSTEM_PROMPT_VERSION = 2
 RECORD_VERSION = 1
 # User-editable limits (4.6, F-14): (default, maximum).
 LIMITS = {"model_turns": (8, 20), "actions": (6, 20), "seconds": (300, 1800)}

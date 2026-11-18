@@ -27,6 +27,7 @@
       }
      ],
      "expected_capabilities": [
+      "aw_read_document",
       "library:summarise_document"
      ],
      "expected_answer": {
@@ -40,9 +41,7 @@
      "message": "In one word, what colour is a clear daytime sky?",
      "expected_capabilities": [],
      "expected_answer": {
-      "contains": [
-       "blue"
-      ]
+      "equals_casefold": "blue"
      },
      "documents": [
       {
@@ -61,6 +60,7 @@
     "library:extract_action_items",
     "library:summarise_document",
     "library:extract_entities",
+    "aw_list_documents",
     "aw_read_document",
     "aw_search_documents",
     "aw_current_datetime"
@@ -232,8 +232,10 @@
      }
     ],
     "expected_capabilities": [
+     "aw_read_document",
      "library:summarise_document"
     ],
+    "expected_summary_source": "ops.txt",
     "expected_answer": {
      "contains": [
       "12"
@@ -242,10 +244,11 @@
    },
    {
     "id": "gate-answer",
-    "message": "Using policy.txt, how many days do customers have to return unused items?",
+    "message": "Use the Answer from source block with policy.txt. How many days do customers have to return unused items?",
     "capabilities": [
      "library:answer_from_source",
      "library:summarise_document",
+     "aw_list_documents",
      "aw_read_document",
      "aw_search_documents"
     ],
@@ -302,6 +305,7 @@
     "id": "gate-table",
     "message": "Read scores.csv with read_table, then use the Sort and dedupe rows block to sort ascending with score as both the sort and deduplication key. Who is first?",
     "capabilities": [
+     "aw_list_documents",
      "aw_read_table",
      "library:sort_and_dedupe_rows",
      "library:rows_to_table",

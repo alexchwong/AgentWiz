@@ -472,12 +472,47 @@ def test_no_tool_cohort_offers_its_real_document_distractors(ui, server):
     client = agent_eval.Client(ui.url)
     cohort = COHORTS['cohorts'][0]
     case = next(c for c in cohort['cases'] if c['id'] == 'summarise-none')
-    server.reply(text_turn('blue'))
+    server.reply(text_turn('Blue'))
     spec = {'cohorts': [{**cohort, 'cases': [case]}]}
     result = agent_eval.run_cohorts(client, spec, 5, agent_eval.model_target(client.json('/api/state')))
     assert result['cohorts'][0]['cases'][0]['verdict'] == 'passed'
     assert result['counts'] == {'passed': 1, 'failed': 0, 'blocked': 0}
     assert result['cohorts'][0]['cases'][0]['trace'] == []
+
+
+@pytest.mark.parametrize('read_source, fabricated, verdict', [
+    (True, False, 'passed'),
+    (True, True, 'failed'),
+    (False, False, 'failed'),
+])
+def test_summary_gate_requires_a_read_and_the_staged_text(ui, server, monkeypatch, read_source, fabricated, verdict):
+    configure(ui, server, model='m')
+    save_profile(ui, 'target', model='m', kind='openai_compat', base_url=server.url + '/v1', provider='')
+    save_roles(ui, {'fast': 'target'})
+    client = agent_eval.Client(ui.url)
+    case = next(c for c in COHORTS['gate']['cases'] if c['id'] == 'gate-summarise')
+    source = case['documents'][0]['text']
+    original = agent_eval.resolve
+
+    def prepare_replies(names, inventory, blocks):
+        chosen, mapping = original(names, inventory, blocks)
+        replies = []
+        if read_source:
+            document = client.json('/api/agent/conversation')['conversation']['documents'][0]['id']
+            replies.append(tool_call('aw_read_document', {'document_id': document, 'start_line': 1}))
+        text = 'The server was offline for 12 hours.' if fabricated else ' '.join(source.split())
+        server.reply(*replies, tool_call(mapping['library:summarise_document'], {'text': text, 'length': 'short'}, 'c2'),
+                     block_answer(summary='A change of 12 percent.', key_points=[]), text_turn('12 percent.'))
+        return chosen, mapping
+
+    monkeypatch.setattr(agent_eval, 'resolve', prepare_replies)
+    result = agent_eval.run_cohorts(client, {'gate': {'cases': [case]}}, 5,
+                                   agent_eval.model_target(client.json('/api/state')))
+    row = result['gate']['cases'][0]
+    assert row['result_used'] is True
+    assert row['tools_completed'] is read_source, row['trace']
+    assert row['summary_source_correct'] is (not fabricated)
+    assert row['verdict'] == verdict
 
 
 def test_chat_failure_keeps_invalid_arguments_and_checkpoint(ui, server, tmp_path):

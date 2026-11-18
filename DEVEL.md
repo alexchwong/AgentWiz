@@ -386,6 +386,7 @@ python scripts/agent_eval.py --route openrouter --cohorts tests/agent_eval/cohor
 The report keeps `cohorts_verdict` and `gate.verdict` separate; overall success requires both.
 The Chat support claim is governed specifically by the five-scenario gate. A finished answer alone
 does not pass: expected tools must complete in order, arguments must be valid and results used.
+The summary gate also checks that the block received the staged source text.
 
 **Targeted follow-up for the library failures.** Extract blank-attempt outcomes, finish reasons,
 token usage and answer/reasoning lengths from an existing full report without model calls:

@@ -73,7 +73,7 @@ Paths in this table are relative to the repository root.
 | `agentwiz/agent_documents.py` | yes | **0.2.2.** Agentic Chat conversations: staged documents and drafts (`dir_fd`, `O_NOFOLLOW`/`O_EXCL`), labels, memory. No HTTP. |
 | `agentwiz/agent_capabilities.py` | yes | **0.2.2.** MCP tool classifications and the capability inventory with exclusions. No HTTP. |
 | `agentwiz/agent_loop.py` | yes | **0.2.2.** The agent loop: capture, plan, preflight, model turns through `complete_with_tools`, validation, approval binding, dispatch, labels, records; `Manager`. No HTTP. |
-| `agentwiz/prompts/agent_system.md` | yes | Packaged Agentic Chat system prompt (`agent_system`, version 1). |
+| `agentwiz/prompts/agent_system.md` | yes | Packaged Agentic Chat system prompt (`agent_system`, version 2). |
 | `agentwiz/executor.py` | yes | **0.1.4.** `execute_step` for model, tool, Python and built-in tool steps; token tally; step results. Called only by `runner.py`. No HTTP. |
 | `agentwiz/runner.py` | yes | **0.1.4.** `run_block`: input checks, admission, preparation, the executor, the one finaliser, the observer, timers (`make_timer`, `before_run_end`). No HTTP. |
 | `agentwiz/tutorial.py`, `agentwiz/tutorial_topics.py` | yes | The tutorial session manager (child UI, seeding, the pending session) and, **0.1.4**, the topic registry the server, page and tests read. |
