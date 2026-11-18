@@ -3902,7 +3902,12 @@ function wsDesign(){
       }
       params.mappings.forEach(mapping);area.append(wsButton("Add mapping",()=>mapping()));read=()=>({mappings:mappings.map(fn=>fn())});
     }
-    area.append(wsButton("Apply parameters",async()=>{await wsFlush();await wsLoad({draft:ws.draft,edit:{kind:"starter_parameters",parameters:read()}},true);}));
+    area.append(wsButton("Apply parameters",async()=>{
+      // Keep Save and revision changes unavailable until the edited draft is rendered.
+      wsBody.inert=true;wsNav.inert=true;wsRevisionPicker.inert=true;
+      try{await wsFlush();await wsLoad({draft:ws.draft,edit:{kind:"starter_parameters",parameters:read()}},true);}
+      finally{wsBody.inert=false;wsNav.inert=false;wsRevisionPicker.inert=false;}
+    }));
   }
   more.append(wsSource("Details · stable key",ws.draft.key));
 }

@@ -2663,8 +2663,18 @@ def test_page_restore_parameter_control_saves_its_choice(ui, open_page):
     page = open_page(ui)
     new_block(page, "restorer", "restore_placeholders")
     tid(page, "ws-restore-unknown").select_option("keep")
-    tid(page, "ws-apply-parameters").click()
-    expect(tid(page, "ws-restore-unknown")).to_have_value("keep")
+    held = []
+    preview_url = "**/api/workshop/preview"
+    page.route(preview_url, lambda route: held.append(route), times=1)
+    with page.expect_request(preview_url):
+        tid(page, "ws-apply-parameters").click()
+    try:
+        # The dropdown already says "keep", but the draft still holds "fail".
+        assert tid(page, "ws-save-revision").evaluate("button => Boolean(button.closest('[inert]'))")
+        assert len(held) == 1, "the parameter preview was not held"
+    finally:
+        for route in held:
+            route.continue_()
     definition = save_new_revision(page, ui, "restorer")
     assert definition["steps"][0]["parameters"] == {"unknown": "keep", "placeholder_syntax": "bracket_upper"}
 

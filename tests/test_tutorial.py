@@ -172,8 +172,11 @@ def drive_design(page):
     tid(page,"ws-test").click()
     tid(page,"ws-run-saved-examples").click()
     tid(tid(page,"ws-dialog"),"ws-confirm").click()
-    expect(tid(page,"ws-trial")).to_have_count(2)
-    expect(tid(page,"ws-trial").first).to_have_attribute("data-outcome","complete")
+    has(page,"ws-status","data-state","complete")
+    trials = tid(page,"ws-trial")
+    expect(trials).to_have_count(2)
+    for trial in trials.all():
+        expect(trial).to_have_attribute("data-outcome","complete")
     tid(page,"ws-design").click()
     tid(page,"ws-choice-count-unit").select_option("characters")
     tid(page,"ws-apply-parameters").click()
@@ -494,7 +497,7 @@ def test_late_batch_response_cannot_replace_a_new_revision_saved_status(ui, open
         # The route callback is dispatched on the page's next event pump, not when expect_request
         # returns, so take the path from the request the expectation reported.
         path = urllib.parse.urlsplit(poll.value.url).path
-        wait_until(lambda: request(child, path)['state'] != 'running')
+        assert wait_until(lambda: request(child, path)['state'] != 'running')
         completed = request(child, path)
         tid(page, 'ws-design').click()
         tid(page, 'ws-choice-count-unit').select_option('characters')
