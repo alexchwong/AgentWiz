@@ -4,12 +4,9 @@
 
 - Late Workshop batch updates no longer replace a newer revision's save status or results.
 
-- Library minutes leave anonymous owners unassigned; table extraction represents unknown or missing cells as empty strings.
-
 - Workshop field assertions compare Text outputs literally instead of attempting to decode them as JSON.
 
 - OpenRouter Automatic routing selects eligible providers across Chat, blocks, workflows and Python authoring; privacy requirements remain unchanged.
-- Manual provider pins remain strict; automatic selections persist through repairs and agent tool replay.
 
 - Agentic Chat: a Chat switch lets the model run one approved capability per turn.
 - Built-in tools list, search and read staged documents, create drafts, tell the time and calculate.
