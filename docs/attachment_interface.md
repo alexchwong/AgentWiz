@@ -207,8 +207,9 @@ AgentWiz keeps reading these text formats itself after docSpell arrives, so they
 | Limits | 16 MiB source (checked before the body is read), 300 pages, 16 MiB of text, 30 s wall clock; two workers at once (one on macOS), four waiters for 10 s |
 | Errors | `damaged_file` (damaged, truncated or encrypted), `extraction_failed`, `extraction_busy`, `pdf_unavailable`; a PDF with no text at all is refused by the consumer (`require_text`) as `no_extractable_text` |
 
-The worker contains crashes and hangs everywhere and memory only on Linux and WSL2 (`RLIMIT_AS` 128 MiB); it is not
-a sandbox. Text comes in PDFium's order without structure; there is no OCR.
+The worker contains crashes and hangs everywhere and memory only on Linux and WSL2 (`RLIMIT_AS` 256 MiB, headroom
+above the largest valid document's need while an allocation limit still applies); it is not a sandbox. Text comes
+in PDFium's order without structure; there is no OCR.
 
 ## 9. Questions left to docSpell's specification
 

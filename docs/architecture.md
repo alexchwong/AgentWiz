@@ -53,7 +53,7 @@ Paths in this table are relative to the repository root.
 | `agentwiz/jsonio.py` | yes | The one JSON writer (`encode`, `encode_line`); the file writer and strict reader for AgentWiz's own files (`encode_file`, `decode_file`); the exact-number reader and writer (`decode_exact`, `encode_exact(value, indent=None)`, `encode_file_exact`, `decode_file_exact`; `JSONSyntax` and `ExactLimit` are its only errors besides other `ValueError`s) and `encode_record_file` for run files. Standard library only. |
 | `agentwiz/attachments.py` | yes | The basic attachment reader (`.txt`, `.md`, `.csv`, `.json`; 0.2.2 adds `.tsv`, `.log`, `.yaml`, `.yml`), dispatch of `.pdf` to `pdf_reader`, `coverage()`, `require_text()` and `check_document`, implementing `docs/attachment_interface.md`. No HTTP. |
 | `agentwiz/pdf_reader.py` | yes | **0.2.2 (starter blocks).** The PDF reader on the parent side: `Admission` (`state.pdf`; two slots on Linux and WSL2, one on macOS; four waiters for 10 s), worker launch without a gap, capped pipes, the 30 s deadline, result validation, render with page markers, coverage. Never imports pypdfium2. No HTTP. |
-| `agentwiz/pdf_worker.py` | yes | **0.2.2 (starter blocks).** The worker (`python -I -m agentwiz.pdf_worker`): sets `RLIMIT_CPU` 30 s and, on Linux and WSL2, `RLIMIT_AS` 128 MiB, then imports pypdfium2 (the only module that does) and writes one JSON result. |
+| `agentwiz/pdf_worker.py` | yes | **0.2.2 (starter blocks).** The worker (`python -I -m agentwiz.pdf_worker`): sets `RLIMIT_CPU` 30 s and, on Linux and WSL2, `RLIMIT_AS` 256 MiB, then imports pypdfium2 (the only module that does) and writes one JSON result. |
 | `agentwiz/library_install.py` | yes | **0.2.2 (starter blocks).** The packaged block library (`agentwiz/library/<key>/`, `index.json`) and `Installer` (`state.block_library`): listing, plan, add with the binding digest and settings hold, Finish adding, provenance. No HTTP. |
 | `agentwiz/library/` | yes | Thirty library entries: `block.json`, `library.json` (title, group, summary, version, three examples, standard description) and prompts. |
 | `agentwiz/tutorial_support/pdf_fixtures.py` | yes | Repository-built PDF fixtures (text, multi-page, partial, no text, encrypted, truncated, over limit, near limit), used by tests and the installed smoke. |
@@ -1555,13 +1555,13 @@ order is manager, then conversation.
 **PDF boundary.** `pdf_reader` (parent) never imports pypdfium2; `pdf_worker` (child) is the only module that does.
 The worker is launched as `[sys.executable, "-I", "-m", "agentwiz.pdf_worker"]` with the environment
 `{"LC_ALL": "C.UTF-8"}`, `close_fds`, a new session and a fresh temporary directory. It sets `RLIMIT_CPU` (30 s) and,
-on Linux and WSL2, `RLIMIT_AS` (128 MiB, the smallest measured value under which every fixture extracts on Python
-3.13) before importing pypdfium2. A crash or hang costs one upload on every platform; memory containment holds on
-Linux and WSL2 only, because macOS does not enforce `RLIMIT_AS`. The worker is not a sandbox: it runs with the
-user's privileges. The parent reads the body in 64 KiB chunks within 60 s, admits through `state.pdf` (slots,
-waiters, `extraction_busy`), caps stdout at 24 MiB and stderr at 64 KiB, enforces the 30 s deadline, validates the
-result against the interface and renders it with page markers. Shutdown closes admission, cancels running workers
-and waits for the slots to drain.
+on Linux and WSL2, `RLIMIT_AS` (256 MiB, about twice the ~126 MiB `near_limit` needed on Python 3.13, so a valid
+PDF keeps headroom while an allocation limit still applies) before importing pypdfium2. A crash or hang costs one
+upload on every platform; memory containment holds on Linux and WSL2 only, because macOS does not enforce `RLIMIT_AS`.
+The worker is not a sandbox: it runs with the user's privileges. The parent reads the body in 64 KiB chunks
+within 60 s, admits through `state.pdf` (slots, waiters, `extraction_busy`), caps stdout at 24 MiB and stderr at
+64 KiB, enforces the 30 s deadline, validates the result against the interface and renders it with page markers.
+Shutdown closes admission, cancels running workers and waits for the slots to drain.
 
 **Library installer.** `Installer.plan` validates each packaged entry as a Workshop draft and returns its port
 labels, destination (for a model block, the role's current profile, endpoint, model and provider pin) and a

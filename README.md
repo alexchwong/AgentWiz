@@ -753,10 +753,11 @@ sent until you press **Send**.
   preview reports coverage: pages read, pages with text, and warnings such as a page without a text layer. A PDF
   with no text at all, an encrypted PDF and a damaged one are refused with a reason.
 - **The worker boundary.** A PDFium crash or hang costs one upload, not AgentWiz and the keys and conversation it
-  holds. On Linux and WSL2 the worker also runs under a 128 MiB address-space limit, so a runaway allocation costs
-  one upload. **macOS does not enforce that limit**: there a runaway allocation is bounded only by the 30-second
-  deadline, with one worker at a time. The worker is not a sandbox on any platform: it runs with your user's
-  permissions. It receives no credentials (its environment is a fixed minimal one).
+  holds. On Linux and WSL2 the worker also runs under a 256 MiB address-space limit: headroom for a valid PDF at
+  the limits above, while a runaway allocation still fails and costs one upload. **macOS does not enforce that
+  limit**: there a runaway allocation is bounded only by the 30-second deadline, with one worker at a time. The
+  worker is not a sandbox on any platform: it runs with your user's permissions. It receives no credentials (its
+  environment is a fixed minimal one).
 - The text formats are `.txt`, `.md`, `.csv`, `.tsv`, `.json`, `.log`, `.yaml` and `.yml`. Word and other formats
   need docSpell, which arrives in a later release.
 

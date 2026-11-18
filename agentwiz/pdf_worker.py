@@ -16,7 +16,7 @@ import re
 import sys
 
 CPU_SECONDS = 30
-ADDRESS_SPACE = 128 << 20         # Linux and WSL2 only (macOS does not enforce RLIMIT_AS); measured, see the handover
+ADDRESS_SPACE = 256 << 20         # Linux and WSL2 only (macOS does not enforce RLIMIT_AS); headroom above the largest fixture
 PAGE_LIMIT = 300
 RENDERED_LIMIT = 16 << 20          # bytes of rendered text, page markers included
 _CONTROLS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
