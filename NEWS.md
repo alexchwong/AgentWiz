@@ -2,6 +2,8 @@
 
 ## 0.2.2
 
+- Library minutes leave anonymous owners unassigned; table extraction represents unknown or missing cells as empty strings.
+
 - Workshop field assertions compare Text outputs literally instead of attempting to decode them as JSON.
 
 - OpenRouter Automatic routing selects eligible providers across Chat, blocks, workflows and Python authoring; privacy requirements remain unchanged.

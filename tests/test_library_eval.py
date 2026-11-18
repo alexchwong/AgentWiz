@@ -579,3 +579,89 @@ def test_shared_auth_failure_stops_library_without_discarding_attempt(ui, server
     assert len(rows) == 1 and rows[0]['model_error']['class'] == 'AuthError'
     assert rows[0]['attempts'] and report['execution'] == report['verdict'] == 'blocked'
     assert len(server.requests) == 1
+
+
+# Deadline equivalence is evaluation-only; a true date/qualifier/owner error must remain visible.
+@pytest.mark.parametrize('due,expected', [('2 May', 'correct'), ('by 2 May', 'correct'),
+                                         ('3 May', 'incorrect'), ('before 2 May', 'incorrect'),
+                                         ('after 2 May', 'incorrect')])
+def test_minutes_deadline_comparison_preserves_raw_outputs(ui, server, due, expected):
+    target(ui, server)
+    server.reply(block_answer(summary='Two actions.', decisions=[], action_items=[
+        {'task': 'book flights', 'owner': 'Ana', 'due': due},
+        {'task': 'draft the agenda', 'owner': 'Ben', 'due': None}]))
+    report = run(ui, blocks=['minutes_from_transcript'], case_filter=lambda key, c: c['id'].endswith('-7'))
+    row = report['blocks']['minutes_from_transcript']['runs'][0]
+    assert row['outcome'] == expected
+    assert json.loads(row['outputs']['action_items']['text'])[0]['due'] == due
+    assert bool(row['judgement_adjustments']) == (due == 'by 2 May')
+
+
+@pytest.mark.parametrize('word,owners', [('on', ['Ana', 'Ben']), ('by', ['Ben', 'Ana'])])
+def test_deadline_equivalence_does_not_apply_without_source_by_or_hide_wrong_owner(ui, server, monkeypatch, word, owners):
+    target(ui, server)
+    fixture = library_eval.load_cases('minutes_from_transcript')
+    fixture['cases'][6]['inputs']['transcript'] = f"Ana: I'll book flights {word} 2 May.\nBen: I'll draft the agenda."
+    monkeypatch.setattr(library_eval, 'load_cases', lambda key: fixture)
+    server.reply(block_answer(summary='Two actions.', decisions=[], action_items=[
+        {'task': 'book flights', 'owner': owners[0], 'due': 'by 2 May'},
+        {'task': 'draft the agenda', 'owner': owners[1], 'due': None}]))
+    report = run(ui, blocks=['minutes_from_transcript'], case_filter=lambda key, c: c['id'].endswith('-7'))
+    assert report['blocks']['minutes_from_transcript']['runs'][0]['outcome'] == 'incorrect'
+
+
+@pytest.mark.parametrize('key,output,expected', [
+    ('minutes_from_transcript', {'summary': 'Send slides.', 'decisions': [],
+        'action_items': [{'task': 'send slides', 'owner': 'Someone', 'due': None}]}, 'incorrect'),
+    ('minutes_from_transcript', {'summary': 'Send slides.', 'decisions': [],
+        'action_items': [{'task': 'send slides', 'owner': None, 'due': None}]}, 'correct'),
+    ('table_from_text', {'rows': [['Ana', '30'], ['Ben', 'unknown']]}, 'incorrect'),
+    ('table_from_text', {'rows': [['Ana', '30'], ['Ben', '']]}, 'correct'),
+])
+def test_critical_anonymous_owner_and_missing_cell_rules_remain_enforced(ui, server, key, output, expected):
+    target(ui, server)
+    server.reply(block_answer(**output))
+    report = run(ui, blocks=[key], case_filter=lambda key, c: c['id'].endswith('-4'))
+    row = report['blocks'][key]['runs'][0]
+    assert row['critical'] is True and row['outcome'] == expected
+
+
+@pytest.mark.parametrize('reasoning,finish,original_outcome', [
+    ('', 'stop', 'empty'), ('thinking', 'stop', 'reasoning_only'),
+    ('thinking', 'length', 'truncated_no_answer')])
+def test_blank_answer_diagnostics_retain_original_outcome_and_usage(ui, server, reasoning, finish, original_outcome):
+    from conftest import delta, DONE
+    target(ui, server)
+    server.reply(Reply(body=[delta(reasoning=reasoning), delta(finish=finish, usage={
+        'prompt_tokens': 100, 'completion_tokens': 2048, 'total_tokens': 2148,
+        'completion_tokens_details': {'reasoning_tokens': 2048}}), DONE],
+        headers={'Content-Type': 'text/event-stream'}))
+    report = run(ui, blocks=['summarise_document'], case_filter=lambda key, c: c['id'].endswith('-4'))
+    row = report['blocks']['summarise_document']['runs'][0]
+    diagnostic = row['attempt_diagnostics'][0]
+    assert row['outcome'] == 'contract_failed' and row['failure_reason'] == 'blank_answer'
+    assert diagnostic['outcome'] == original_outcome
+    assert diagnostic['finish_reason'] == finish and diagnostic['truncated'] == (finish == 'length')
+    assert diagnostic['answer_characters'] == 0
+    assert diagnostic['reasoning_characters'] == (len(reasoning) if reasoning else None)
+    assert diagnostic['usage']['output_tokens'] == 2048
+    assert diagnostic['usage']['reasoning_tokens'] == 2048
+    assert diagnostic['task']['max_tokens'] == 2048
+
+
+def test_summary_extracts_blank_diagnostics_from_existing_report_without_reply_text(tmp_path):
+    summary_spec = importlib.util.spec_from_file_location('summarize_library_eval', ROOT / 'scripts/summarize_library_eval.py')
+    summary = importlib.util.module_from_spec(summary_spec)
+    summary_spec.loader.exec_module(summary)
+    record = {'outcome': 'truncated_no_answer', 'check_skipped': 'blank_answer', 'task': {'max_tokens': 2048},
+              'result': {'text': '', 'reasoning': 'PRIVATE-REASONING' * 1000, 'finish_reason': 'length',
+                         'truncated': True, 'usage': {'output_tokens': 2048, 'reasoning_tokens': 2048}}}
+    report = {'format_version': 2, 'trials': 3, 'set': 'all', 'blocks': {'summarise_document': {
+        'runs': [{'case': 'summarise_document-4', 'trial': 1, 'outcome': 'contract_failed',
+                  'failure_reason': 'blank_answer', 'attempts': [record]}]}}}
+    result = summary.summarize(report, ROOT)
+    pattern = result['blocks']['summarise_document']['failure_patterns'][0]
+    diagnostic = pattern['attempt_diagnostics'][0]['attempts'][0]
+    assert diagnostic['outcome'] == 'truncated_no_answer' and diagnostic['reasoning_characters'] == 17000
+    assert 'PRIVATE-REASONING' not in json.dumps(result)
+    assert result['assessment'] == 'incomplete'

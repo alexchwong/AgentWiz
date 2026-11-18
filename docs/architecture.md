@@ -1631,3 +1631,16 @@ Chat reports retain synthetic answers and live argument/result traces, separate 
 status counts and unjudged counts for each rate. Overall success cannot hide a blocked cohort behind
 a passing gate. The table fixture uses the packaged block's ascending text sort with `score` as the
 sort/deduplication key; fixed two-digit scores give the same order as numeric sorting.
+
+Library qualification uses a narrow, evaluation-only deadline equivalence for minutes: a due value
+`by <expected>` can compare equal to `<expected>` only when that exact prefixed deadline appears in
+the transcript and the assertion targets `action_items[i].due`. It does not normalize other fields,
+change dates or erase `before`/`after` qualifiers. Judgement adjustments are recorded separately from
+unaltered raw outputs. This does not change Workshop's general exact comparison or runtime outputs.
+
+`scripts/eval_attempts.py` extracts compact diagnostics from attempt records for the live evaluator and
+the standalone `scripts/summarize_library_eval.py`. Diagnostic fields retain original outcomes
+(including `empty`, `reasoning_only`, `truncated_no_answer`), finish reason, truncation, available token
+usage, effective task limits and answer/reasoning character counts. They contain no reply or reasoning
+body. The summarizer can derive these from an older report's saved attempts without model calls;
+qualification thresholds and automatic repair policy are unchanged.

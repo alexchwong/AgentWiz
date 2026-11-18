@@ -367,6 +367,41 @@ The report keeps `cohorts_verdict` and `gate.verdict` separate; overall success 
 The Chat support claim is governed specifically by the five-scenario gate. A finished answer alone
 does not pass: expected tools must complete in order, arguments must be valid and results used.
 
+**Targeted follow-up for the library failures.** Extract blank-attempt outcomes, finish reasons,
+token usage and answer/reasoning lengths from an existing full report without model calls:
+
+```bash
+python scripts/summarize_library_eval.py reports/library-openrouter.json --repo . --include-excerpts --output reports/library-openrouter-diagnostics.json
+```
+
+The summarizer is standard-library-only and also supports reports written before compact attempt
+diagnostics were added. It does not change the original report or grant qualification. Share the
+small diagnostics file, not the full prompt/attempt report. Keep fixtures from the evaluated candidate
+when assessing coverage; these fixes leave fixture IDs and critical flags unchanged.
+
+After applying the minutes and table prompt/scoring fixes, rerun only those two blocks (60 scheduled
+executions, plus any permitted repairs/probes). This uses the OpenRouter exports from step 1:
+
+```bash
+python scripts/library_eval.py --route openrouter --profile openrouter-eval --block minutes_from_transcript --block table_from_text --trials 3 --set all --report reports/library-openrouter-minutes-table.json
+```
+
+The new evaluation uses fresh disposable installs, so it reads the changed library prompts. Existing
+installed blocks in personal workspaces are not automatically updated. The minutes evaluator accepts
+an optional literal `by ` prefix only for `action_items[i].due` when the transcript contains that exact
+`by <expected deadline>` phrase. Other fields, dates and qualifiers remain exact; raw outputs are retained.
+
+Summarisation's token budget remains unchanged until the blank-attempt diagnostics establish the cause.
+If you need fresh summarisation evidence after a justified prompt/settings change, run only that block:
+
+```bash
+python scripts/library_eval.py --route openrouter --profile openrouter-eval --block summarise_document --trials 3 --set all --report reports/library-openrouter-summary-retest.json
+```
+
+Keep the previous full report alongside targeted reports; targeted evidence does not qualify unselected
+blocks. The summarizer will list the omitted blocks when assessing a targeted report against the full
+catalog. Complete pending rubric reviews separately; `--review` refreshes marks, not prior machine scoring.
+
 **Read reports and exit codes.** Library exits: 0 passed; 1 qualification failed; 2 blocked;
 3 incomplete or rubric review pending. Cohort evaluation exits: 0 passed; 1 failed; 2 blocked;
 3 incomplete. A nonzero exit does not mean the process crashed. Do not chain these commands with

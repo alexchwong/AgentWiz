@@ -43,6 +43,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 import eval_setup
 import eval_reports
+from eval_attempts import attempt_diagnostics
 sys.path.insert(0, str(CASES))
 
 import checks  # noqa: E402  (tests/library_eval/checks.py)
@@ -269,7 +270,8 @@ def classify(result: dict, records: list[dict], expectation: dict, key: str, inp
     from agentwiz.workshop_service import judgement
     step = (result.get("steps") or [{}])[0]
     failure = step.get("failure")
-    row = {"failure_reason": failure, "violations": [], "hard_violation": False, "judgement": None}
+    row = {"failure_reason": failure, "violations": [], "hard_violation": False, "judgement": None,
+           "attempt_diagnostics": attempt_diagnostics(records)}
     if result.get("outcome") != "complete":
         errors = [r["error"] for r in records if r.get("error")]
         error = errors[-1] if errors else {}
@@ -288,7 +290,9 @@ def classify(result: dict, records: list[dict], expectation: dict, key: str, inp
             row["outcome"] = "contract_failed"
             row["failure_reason"] = failure or result.get("outcome")
         return row
-    row["judgement"] = judgement(result["outputs"], expectation, True)
+    judged_outputs, adjustments = checks.judgement_outputs(key, inputs, result["outputs"], expectation)
+    row["judgement_adjustments"] = adjustments
+    row["judgement"] = judgement(judged_outputs, expectation, True)
     row["violations"] = checks.check(key, inputs, decoded_outputs(result["outputs"]))
     row["hard_violation"] = bool(row["violations"]) and key in checks.HARD
     correct = row["judgement"] in ("correct", "unknown") and not row["violations"]
@@ -324,7 +328,7 @@ def run_case(client: Client, key: str, case: dict, destination: dict) -> dict:
                "diagnostic": eval_reports.error(exc, "scoring")}
     row.update(eval_reports.safe({"inputs": case["inputs"], "expectation": case["expectation"],
                                  "outputs": result.get("outputs"), "result": result,
-                                 "attempts": records}, client))
+                                 "attempts": records, "attempt_diagnostics": attempt_diagnostics(records)}, client))
     if case.get("rubric") and result.get("outcome") == "complete":
         from agentwiz.history import redact
 

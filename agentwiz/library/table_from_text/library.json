@@ -2,7 +2,7 @@
   "title": "Table from text",
   "group": "llm",
   "summary": "Extract rows for given columns from a text.",
-  "library_version": 1,
+  "library_version": 2,
   "examples": [
     {
       "id": "table_from_text-1",
@@ -94,7 +94,7 @@
       "use": "Pull a table out of prose or notes for the columns you name, then render it with rows_to_table using the same columns.",
       "exclusions": "No calculation or type conversion: values are copied as written.",
       "limitations": "Needs a model context of at least 32,768 tokens (prompt, input, one repair and 6,144 output tokens). Results are model output: review them. Text up to 20,000 characters; 1 to 12 columns; up to 100 rows. Each row should have one value per column; rows_to_table refuses a row of the wrong width (invalid_table).",
-      "missing_data": "A value the text does not state is an empty string; a text without rows gives an empty list.",
+      "missing_data": "Missing, unknown, unavailable or unstated cell values are empty strings. No extractable rows gives an empty list.",
       "effects": "Sends its inputs to the model of its role (fast by default) and returns the result for review. With unrestricted ports and unrestricted data, that model may be remote; the Add dialog shows the destination. Label inputs Local only to keep them on this machine.",
       "failures": "If the reply does not meet the output contract after two repairs, the step fails with located issues. A context or token limit is reported as such; shorten the input or use a larger context."
     },
@@ -104,7 +104,7 @@
         "columns": "The column names, a JSON list of 1 to 12 strings."
       },
       "outputs": {
-        "rows": "The rows, each a list of strings in column order."
+        "rows": "Rows in source order, with values in the requested column order and empty strings for missing values."
       }
     }
   }

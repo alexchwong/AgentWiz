@@ -15,6 +15,7 @@ and the offline tests.
 from __future__ import annotations
 
 import json
+import copy
 import re
 
 HARD = frozenset({"classify_text", "answer_from_source", "deidentify_text"})
@@ -30,6 +31,40 @@ def _json(value):
         except ValueError:
             return value
     return value
+
+
+def judgement_outputs(key, inputs, outputs, expectation):
+    """Evaluation-only equivalence for a deadline's optional literal 'by ' prefix.
+
+    Only minutes action_items[i].due is eligible, and only when the source contains
+    that exact 'by <expected date>' phrase. Raw outputs and all other fields remain untouched.
+    """
+    if key != 'minutes_from_transcript' or expectation.get('kind') != 'fields':
+        return outputs, []
+    adjusted = copy.deepcopy(outputs)
+    port = adjusted.get('action_items')
+    if not isinstance(port, dict) or port.get('format') != 'json':
+        return outputs, []
+    items = json.loads(port['text'])
+    changes = []
+    for assertion in expectation.get('assertions', []):
+        path = assertion.get('path', [])
+        if (assertion.get('output') != 'action_items' or assertion.get('operation') != 'equals'
+                or len(path) != 2 or type(path[0]) is not int or path[1] != 'due'):
+            continue
+        expected = json.loads(assertion['value_text'])
+        index = path[0]
+        if not isinstance(expected, str) or not 0 <= index < len(items):
+            continue
+        item = items[index]
+        if (isinstance(item, dict) and item.get('due') == 'by ' + expected
+                and re.search(r'(?<!\w)' + re.escape('by ' + expected) + r'(?!\w)',
+                              inputs.get('transcript', ''))):
+            item['due'] = expected
+            changes.append({'output': 'action_items', 'path': path, 'rule': 'optional_by_deadline_prefix'})
+    if changes:
+        port['text'] = json.dumps(items)
+    return adjusted, changes
 
 
 def _words(text: str) -> int:
