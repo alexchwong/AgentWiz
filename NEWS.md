@@ -1,13 +1,9 @@
 # NEWS
 
 ## 0.2.2
-
 - Late Workshop batch updates no longer replace a newer revision's save status or results.
-
 - Workshop field assertions compare Text outputs literally instead of attempting to decode them as JSON.
-
 - OpenRouter Automatic routing selects eligible providers across Chat, blocks, workflows and Python authoring; privacy requirements remain unchanged.
-
 - Agentic Chat: a Chat switch lets the model run one approved capability per turn.
 - Built-in tools list, search and read staged documents, create drafts, tell the time and calculate.
 - MCP tools stay disabled until classified for effects, local file reach and Local only results.
