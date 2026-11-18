@@ -43,7 +43,7 @@ Python (v3 script) blocks are retired. AgentWiz uses the pinned modelSpell 0.4.0
 
 ## Install
 
-This guide covers AgentWiz 0.2.1, which requires Python 3.10 or later.
+AgentWiz 0.2.2 requires Python 3.10 or later.
 
 ```bash
 curl -fsSL https://github.com/alexchwong/AgentWiz/releases/latest/download/install.sh | bash
@@ -60,16 +60,16 @@ files report `migration_required`. Recreate or deliberately rewrite them as exec
 and current Text/JSON contracts. Reusable contract references need exact revision pins. For model
 steps, update the reply instructions to match the [named JSON envelope](#named-outputs).
 
-If you have a locally built 0.2.1 wheel, or its published wheel once available, install it with:
+If you have a local copy of the 0.2.2 wheel, install it with:
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install ./agentwiz-0.2.1-py3-none-any.whl
+python -m pip install ./agentwiz-0.2.2-py3-none-any.whl
 ```
 
 For a published wheel, you can pass the URL with the `#sha256=…` fragment from the release notes
-to pip instead of the local filename. Both methods install the URL- and checksum-pinned modelSpell 0.4.0.
+to pip instead of the local filename. Both methods install the pinned modelSpell 0.4.0 and scriptSpell 0.3.0 wheels.
 
 **JSON Schema validation is required and installed automatically** (`jsonschema>=4.26,<5`).
 It brings `rpds-py`, a compiled package; a platform without a published wheel needs a Rust
@@ -489,9 +489,9 @@ already in the source fails the workflow before anything is sent. Tokens the rem
 does not know stay as they are and are listed. The Gate review is still yours: neither the model nor the scan can
 show that no identifier was missed.
 
-**Quality.** Release qualification tests the model blocks with the `fast` role on a specific OpenRouter or
-LM Studio profile. Results apply to the model and route used in that evaluation. The live Chat evaluation is
-pending. Use the blocks from Workshop and workflows.
+**Quality.** You can use library blocks from Workshop, workflows and Agentic Chat. For 0.2.2, the
+shipped model blocks passed live qualification and Agentic Chat passed its live evaluation with
+`openai/gpt-4.1-mini` on OpenRouter. Qualification results apply to the tested models and profiles.
 
 ## Workflows
 
@@ -754,8 +754,8 @@ sent until you press **Send**.
   with no text at all, an encrypted PDF and a damaged one are refused with a reason.
 - **The worker boundary.** A PDFium crash or hang costs one upload, not AgentWiz and the keys and conversation it
   holds. On Linux and WSL2 the worker also runs under a 256 MiB address-space limit: headroom for a valid PDF at
-  the limits above, while a runaway allocation still fails and costs one upload. **macOS does not enforce that
-  limit**: there a runaway allocation is bounded only by the 30-second deadline, with one worker at a time. The
+  the limits above, while a runaway allocation still fails and costs one upload. **The macOS worker has no
+  address-space limit.** It runs one PDF at a time with the same 30-second deadline. The
   worker is not a sandbox on any platform: it runs with your user's permissions. It receives no credentials (its
   environment is a fixed minimal one).
 - The text formats are `.txt`, `.md`, `.csv`, `.tsv`, `.json`, `.log`, `.yaml` and `.yml`. Word and other formats
@@ -1513,7 +1513,7 @@ Stopping the original AgentWiz process also closes its tutorial.
   checks pass. A second Ctrl-C exits immediately and skips cleanup. The tutorial doubles process budgets while it is open.
 - **The page** is checked in a headless Chromium by the developer tests; other browsers are covered
   only by the tour above.
-- **WSL2** is not checked by the automated tests.
+- **WSL2** is outside hosted CI. PDF extraction was checked manually for 0.2.2.
 
 ## License
 

@@ -241,11 +241,13 @@ ships in the release wheel.
 
 ## Live checks and evaluation quick starts
 
-These checks are optional and never part of the offline gate, which deselects them with `-m "not live"`.
-Run the Bash blocks from the repository root after developer setup: each activates `.venv` in a
-subshell, so activation and variables do not leak into the parent shell, and supplies default settings
-with `${VAR:-default}`, so an existing non-empty value takes precedence. Local servers must already be
-running with Qwen3.8-27B loaded; these commands do not download or start a model. Each backend's basic
+The live pytest checks are optional. The [release procedures](docs/releases.md) define owner sign-off
+for the library and Chat evaluations. Hosted offline CI exercises those runners against a scripted
+backend and deselects live pytest checks with `-m "not live"`.
+Run the Bash blocks from the repository root after developer setup. The basic checks use subshells;
+the evaluation quickstarts keep settings in the terminal for subsequent commands. Where a command
+uses `${VAR:-default}`, an existing non-empty value takes precedence. Start the local server and load
+the selected model before running an LM Studio check. Each backend's basic
 check makes one request; MCP and the Stop and checked-request tests are separate. Each check skips
 unless its variables are set (CI sets none), runs against a temporary workspace and prints one summary
 line; a skip because required variables are missing is not a successful check, so never record one as
@@ -329,15 +331,7 @@ potentially billable probes. Optionally pin a known tool-capable provider, with 
 Do not set `AGENTWIZ_LIVE_OPENROUTER_KEY` or `_URL`; use `OPENROUTER_API_KEY`. Do not combine backend
 target variables with `--profiles-dir` or `--config`; those are explicit external-configuration modes.
 
-**2. Check the previously crashing block first.** This runs all ten cases once, including the
-held-out Text assertion. It is a diagnostic run, so an `incomplete` verdict/exit 3 is expected;
-one trial cannot qualify a block. Model failures still appear individually.
-
-```bash
-python scripts/library_eval.py --route openrouter --profile openrouter-eval --block answer_from_source --trials 1 --set all --report reports/answer-openrouter-diagnostic.json
-```
-
-**3. Run full library qualification.** This runs three trials of all ten cases for every shipped
+**2. Run full library qualification.** This runs three trials of all ten cases for every shipped
 model block. With the current catalog that is 390 scheduled executions, plus permitted repairs
 and provider probes. The Local only `deidentify_text` block remains deferred.
 
@@ -350,7 +344,7 @@ one changed block, add `--block summarise_document` (repeat `--block` to select 
 a new filename. Separate reports are not automatically merged. A failed block still needs a fresh,
 complete qualification after changes; rerunning only a lucky case does not qualify it.
 
-**4. Review rubric outputs.** In the full JSON report, inspect each `rubric` and `review_outputs`,
+**3. Review rubric outputs.** In the full JSON report, inspect each `rubric` and `review_outputs`,
 then set its `owner_mark` to `true` or `false`. Refresh scores without any model calls:
 
 ```bash
@@ -377,7 +371,7 @@ qualification. It cannot approve missing outputs or bypass numerical/critical ch
 can still mean marks were applied successfully while another block remains failed or pending. Export
 a fresh file if the source changed or if you want to continue reviewing after a partial import.
 
-**5. Run Agentic Chat cohorts and the five-scenario gate.** Use the same terminal and model exports:
+**4. Run Agentic Chat cohorts and the five-scenario gate.** Use the same terminal and model exports:
 
 ```bash
 python scripts/agent_eval.py --route openrouter --cohorts tests/agent_eval/cohorts.json --report reports/chat-openrouter.json
@@ -388,7 +382,7 @@ The Chat support claim is governed specifically by the five-scenario gate. A fin
 does not pass: expected tools must complete in order, arguments must be valid and results used.
 The summary gate also checks that the block received the staged source text.
 
-**Targeted follow-up for the library failures.** Extract blank-attempt outcomes, finish reasons,
+**Diagnose a library evaluation.** Extract blank-attempt outcomes, finish reasons,
 token usage and answer/reasoning lengths from an existing full report without model calls:
 
 ```bash
@@ -397,31 +391,20 @@ python scripts/summarize_library_eval.py reports/library-openrouter.json --repo 
 
 The summarizer is standard-library-only and also supports reports written before compact attempt
 diagnostics were added. It does not change the original report or grant qualification. Share the
-small diagnostics file, not the full prompt/attempt report. Keep fixtures from the evaluated candidate
-when assessing coverage; these fixes leave fixture IDs and critical flags unchanged.
+small diagnostics file and keep fixtures from the evaluated candidate when assessing coverage.
 
-After applying the minutes and table prompt/scoring fixes, rerun only those two blocks (60 scheduled
-executions, plus any permitted repairs/probes). This uses the OpenRouter exports from step 1:
-
-```bash
-python scripts/library_eval.py --route openrouter --profile openrouter-eval --block minutes_from_transcript --block table_from_text --case-delay 2 --trials 3 --set all --report reports/library-openrouter-minutes-table.json
-```
-
-`--case-delay 2` spaces case starts to reduce bursts; it does not retry requests, change provider,
-clear account quota limits or turn 429 into a pass. The default remains zero delay. If 429 persists,
-restore provider availability/account quota before repeating; do not rerun the unaffected catalog.
-
-The new evaluation uses fresh disposable installs, so it reads the changed library prompts. Existing
-installed blocks in personal workspaces are not automatically updated. The minutes evaluator accepts
-an optional literal `by ` prefix only for `action_items[i].due` when the transcript contains that exact
-`by <expected deadline>` phrase. Other fields, dates and qualifiers remain exact; raw outputs are retained.
-
-Summarisation's token budget remains unchanged until the blank-attempt diagnostics establish the cause.
-If you need fresh summarisation evidence after a justified prompt/settings change, run only that block:
+After a block changes, run its full qualification in a fresh report. This example schedules 30
+executions for one block and uses the OpenRouter exports from step 1:
 
 ```bash
 python scripts/library_eval.py --route openrouter --profile openrouter-eval --block summarise_document --trials 3 --set all --report reports/library-openrouter-summary-retest.json
 ```
+
+`--case-delay 2` spaces case starts to reduce bursts; it does not retry requests, change provider,
+clear account quota limits or turn 429 into a pass. The default remains zero delay. If 429 persists,
+restore provider availability or account quota before repeating affected runs. Each evaluation uses
+fresh disposable installs and reads the current library prompts. Installed blocks in personal
+workspaces retain their saved prompts.
 
 Keep the previous full report alongside targeted reports; targeted evidence does not qualify unselected
 blocks. The summarizer will list the omitted blocks when assessing a targeted report against the full

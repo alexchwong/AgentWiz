@@ -105,7 +105,8 @@ judgement.
    RC1–RC3 and the installed-wheel smoke S1–S25 to pass. The Tests workflow now runs installed-wheel page/library/tutorial checks on each main matrix job;
    confirm those steps pass. Source-checkout browser results do not establish packaged UI behavior.
 4. Merge `devel` into `main` when authorized. The release workflow reruns tests and checks
-   before publishing; inspect its result.
+   before publishing. Verify that the tag points to the tested merge commit and that the release has
+   the wheel and installer. Compare the wheel's SHA-256 with the install line in the release notes.
 
 NEWS authoring and version-bump requirements are defined in `../DEVEL.md`.
 
@@ -160,7 +161,7 @@ requires fresh evidence. Provider API and tool replay diagnostics belong in mode
    Alternatively, use the grouped `--export-review` / `--apply-review` flow in DEVEL.md; all trial outputs
    remain visible and no mark is inferred automatically.
    Keep passing evidence for every shipped model block. Remove any block still below the bar after three revision
-   rounds from `index.json` and its shipping references, and name it in the handover.
+   rounds from `index.json` and its shipping references. Record deferrals in [the decision history](decisions.md).
 2. **Agent selection.** Run `scripts/agent_eval.py --cohorts tests/agent_eval/cohorts.json` in a disposable
    workspace prepared automatically by selecting `--route openrouter` or `--route lmstudio`. The runner
    selects its evaluation profile and binds `fast`; no UI setup is required. Use Automatic routing or an
@@ -175,7 +176,8 @@ requires fresh evidence. Provider API and tool replay diagnostics belong in mode
    `python scripts/check_pdf_install.py` in that environment and retain its platform/version result.
    A target without a usable wheel needs its support claim resolved before release; this automation
    does not silently convert PDF to an optional extra or waive a platform failure.
-4. **PDF on macOS.** Accept, or decline, PDF on macOS without memory containment (Section 9, item 1).
+4. **PDF on macOS.** Record the owner's decision on shipping without a worker address-space limit.
+   See the [0.2.2 close-out disposition](decisions.md#18-november-2026--022-release-close-out-disposition).
 
 The Local only `deidentify_text` starter is deferred from the 0.2.2 catalog and wheel. Its source and cases are
 available for future qualification. To qualify it in a source checkout, restore its index entry temporarily and

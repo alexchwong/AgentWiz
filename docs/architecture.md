@@ -557,6 +557,7 @@ rescanned.
   its cancel callback. A float at any depth fails the step (`float_output`). Admission takes one of four
   `state.python` slots. If scriptSpell reports that a worker's cleanup could not be confirmed,
   `state.python_cleanup_failed()` closes the budget and sets `python_restart_required` until restart.
+  The Overview reports the restart requirement. Slow worker cleanup under heavy load can trigger it.
   v4 Tool steps with `builtin` run `agent_tools` locally and take no MCP slot. v3 `script` steps load as
   unusable (`host_script_retired`); an engine other than the installed one loads as `engine_changed`
   (workflow snapshots load with `engine_check=False` and report it at readiness).
@@ -567,6 +568,9 @@ rescanned.
   arguments. Saved blocks run as child block runs through `runner` with `FrozenSource.parent_guard` and
   `before_tool`. Reading restricted material promotes the run; an untrusted destination then ends it with
   `restricted_result`. The deadline is a `runner.make_timer` timer.
+  `GET /api/agent/inventory` accepts an integer `revision` and JSON-encoded `task`, `capabilities` and
+  `limits` in its query. `GET /api/agent/drafts/<id>` accepts an optional `conversation` query
+  parameter and defaults to the live conversation.
 - **Roles.** `roles.json` through `roles.py`, under the state lock, with its own revision; a save
   refuses a profile that does not exist. Resolution is live, at preparation (`state.resolve_role`).
   Version 2 retains the string assignment map and adds `definitions`, keyed by role, each containing
