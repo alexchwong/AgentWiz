@@ -487,11 +487,13 @@ def test_late_batch_response_cannot_replace_a_new_revision_saved_status(ui, open
     batch_url = '**/api/workshop/batches/*'
     page.route(batch_url, lambda route: held.append(route), times=1)
     tid(page, 'ws-run-saved-examples').click()
-    with page.expect_request(batch_url):
+    with page.expect_request(batch_url) as poll:
         tid(dialog, 'ws-confirm').click()
     try:
         child = ui.tutorial.child
-        path = urllib.parse.urlsplit(held[0].request.url).path
+        # The route callback is dispatched on the page's next event pump, not when expect_request
+        # returns, so take the path from the request the expectation reported.
+        path = urllib.parse.urlsplit(poll.value.url).path
         wait_until(lambda: request(child, path)['state'] != 'running')
         completed = request(child, path)
         tid(page, 'ws-design').click()
@@ -500,6 +502,7 @@ def test_late_batch_response_cannot_replace_a_new_revision_saved_status(ui, open
         tid(page, 'ws-save-revision').click()
         tid(dialog, 'ws-confirm').click()
         has(page, 'ws-status', 'data-state', 'saved')
+        assert len(held) == 1, 'the first batch poll was not held'
         with page.expect_response(batch_url) as delivered:
             held.pop().fulfill(status=200, content_type='application/json', body=json.dumps(completed))
         delivered.value.finished()
