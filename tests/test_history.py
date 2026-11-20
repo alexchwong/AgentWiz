@@ -9,16 +9,12 @@ import pytest
 
 from agentwiz import history, jsonio, runs
 from agentwiz.workspace import open_workspace
-from conftest import (contract_pin, contract_token, DONE, KEY, TEXT_CONTRACT, Reply, add_server, answer, complete, configure, contract_item, delta,
+from conftest import (DONE, TEXT_CONTRACT, Reply, add_server, answer, complete, configure, delta,
                       failure_of, final_of, get_state, history_dir, iter_events, poll_attempt, read_run_files,
-                      read_until, record_of, repair_attempt, request, run_folders, save_contract, set_token,
+                      read_until, record_of, request, run_folders, save_contract, set_token,
                       status_of, switch_history, wait_until, write_ws_file)
 
 SSE = {"Content-Type": "text/event-stream"}
-
-
-def checked(ui, name="c", prompt="hi", **kw):
-    return complete(ui, prompt, source="checked_request", contract=contract_pin(ui, name), **kw)
 
 
 def held_chat(ui, **body):
@@ -31,51 +27,51 @@ def workspace_json(ui) -> dict:
 
 
 # 76 ---------------------------------------------------------------------------------------------
-def test_the_switch_is_read_when_the_run_is_created(ui, server):
-    save_contract(ui, "c", TEXT_CONTRACT)
+def repairing_block(ui, server):
+    """A saved-or-not block `b` whose first answer fails its check and whose one repair passes."""
+    from test_server_config import _repairing_block
     configure(ui, server)
-    assert get_state(ui)["history"]["save_runs"] is False
+    _repairing_block(ui)
 
+
+def start_block(ui):
+    from conftest import block_revision
+    return request(ui, "/api/blocks/run", {"name": "ask", "revision": block_revision(ui, "ask"),
+                                           "inputs": {"text": "pong"}}, raw=True)
+
+
+def held_failure():
+    return Reply(body=[delta('{"out":"nope"}')], headers=SSE, hold=True, after_release=[delta(finish="stop"), DONE])
+
+
+def test_the_switch_is_read_when_a_block_run_is_created(ui, server):
+    """0.2.3 port to a block run that repairs automatically, with its first reply held."""
+    repairing_block(ui, server)
+    assert get_state(ui)["history"]["save_runs"] is False
     # A run created while saving is off is never written, even if saving is turned on before it ends.
-    server.reply(Reply(body=[delta("nope")], headers=SSE, hold=True, after_release=[delta(finish="stop"), DONE]))
-    resp = request(ui, "/api/complete", {"source": "checked_request", "prompt": "hi", "system": "",
-                                         "revision": get_state(ui)["revision"],
-                                         "contract": dict(zip(("name", "revision", "digest"), contract_pin(ui, "c")))},
-                   raw=True)
-    it = iter_events(resp)
-    off_run = read_until(it, "text")[0]
+    server.reply(held_failure(), answer('{"out":"pong"}'))
+    resp = start_block(ui)
+    assert server.wait_holding(1)
     switch_history(ui, True)
     server.release.set()
-    first = final_of(list(it))
-    assert first["save_status"] == "not_requested" and first["record"]["save_run"] is False
-    assert first["record"]["check"]["overall"] == "fail"
-    server.release.clear()
-    # ... and its repair is not written either, although saving is now on.
-    server.reply(answer("pong"))
-    second = final_of(repair_attempt(ui, first["record"]["id"]))
-    assert second["save_status"] == "not_requested" and second["record"]["save_run"] is False
+    evs = [json.loads(line) for line in resp.read().splitlines() if line.strip()]
+    result = next(e for e in evs if e["type"] == "final")["result"]
+    attempts = result["steps"][0]["attempts"]
+    assert len(attempts) == 2
+    assert [poll_attempt(ui, a)["save_status"] for a in attempts] == ["not_requested"] * 2
     assert not history_dir(ui).exists() or run_folders(ui) == []
-
+    server.release.clear()
     # A run created while saving is on is written, even if saving is turned off before it ends.
-    server.reply(Reply(body=[delta("nope")], headers=SSE, hold=True, after_release=[delta(finish="stop"), DONE]))
-    resp = request(ui, "/api/complete", {"source": "checked_request", "prompt": "hi", "system": "",
-                                         "revision": get_state(ui)["revision"],
-                                         "contract": dict(zip(("name", "revision", "digest"), contract_pin(ui, "c")))},
-                   raw=True)
-    it = iter_events(resp)
-    started = read_until(it, "started")[-1]
-    read_until(it, "text")
+    server.reply(held_failure(), answer('{"out":"pong"}'))
+    resp = start_block(ui)
+    assert server.wait_holding(1)
     switch_history(ui, False)
     server.release.set()
-    evs = list(it)
-    done = final_of(evs)
-    assert done["save_status"] == "pending" and evs[-1]["type"] == "save" and evs[-1]["save_status"] == "saved"
-    server.release.clear()
-    server.reply(answer("pong"))
-    repaired = repair_attempt(ui, done["record"]["id"])                    # the repair of a saved run is saved
-    assert final_of(repaired)["record"]["save_run"] is True and repaired[-1]["save_status"] == "saved"
-    files = read_run_files(ui, started["run_id"])
-    assert sorted(files["attempts"]) == [1, 2]
+    evs = [json.loads(line) for line in resp.read().splitlines() if line.strip()]
+    result = next(e for e in evs if e["type"] == "final")["result"]
+    assert wait_until(lambda: len(run_folders(ui)) == 1)
+    folder = run_folders(ui)[0]
+    assert wait_until(lambda: sorted(p.name for p in folder.iterdir()) == ["request-1.json", "request-2.json", "result.json", "run.json"])
     # Turning saving off deleted nothing.
     assert get_state(ui)["history"]["save_runs"] is False and len(run_folders(ui)) == 1
 
@@ -219,27 +215,25 @@ def test_save_failure_when_runs_is_a_file(ui, server):
 
 
 def test_save_failure_when_the_folder_disappears(ui, server, monkeypatch):
-    save_contract(ui, "c", TEXT_CONTRACT)
+    """0.2.3 port to a Chat run: its folder is created before the attempt is written."""
     configure(ui, server)
     switch_history(ui, True)
-    server.reply(answer("nope"), answer("pong"))
-    first = checked(ui)
-    folder = run_folders(ui)[0]
-    assert (folder / "request-1.json").exists()
+    server.reply(answer("pong"))
     import shutil
-    calls = []
+    calls, folders = [], []
 
     def vanish():
         calls.append(1)
-        shutil.rmtree(folder)
+        folders.extend(run_folders(ui))
+        shutil.rmtree(folders[0])
 
     monkeypatch.setattr(history, "before_write", vanish)
-    repaired = repair_attempt(ui, record_of(first)["id"])
-    assert repaired[-1]["type"] == "save" and repaired[-1]["save_status"] == "failed"
-    assert repaired[-1]["reason"] == "the run's folder no longer exists"
-    assert not folder.exists() and run_folders(ui) == []                         # never recreated
+    evs = complete(ui, "hi")
+    assert evs[-1]["type"] == "save" and evs[-1]["save_status"] == "failed"
+    assert evs[-1]["reason"] == "the run's folder no longer exists"
+    assert not folders[0].exists() and run_folders(ui) == []                     # never recreated
     assert calls == [1]                                                          # exactly one write attempted
-    assert record_of(repaired)["outcome"] == "complete"                          # the record is unchanged
+    assert record_of(evs)["outcome"] == "complete"                               # the record is unchanged
 
 
 # 79 ---------------------------------------------------------------------------------------------
@@ -263,10 +257,11 @@ def test_listing_and_reading(ui, server, monkeypatch, clock):
     assert row["source"] == "chat" and row["attempts"] == 1 and row["outcome"] == "complete" and row["problem"] is None
     assert row["folder"].endswith(ids[2])
 
-    server.reply(answer("nope"), answer("pong"))
-    first = checked(ui)
-    checked_id = record_of(first)["run_id"]
-    repair_attempt(ui, record_of(first)["id"])
+    from test_server_config import _repairing_block
+    from conftest import block_answer, result_of, run_block
+    _repairing_block(ui)
+    server.reply(block_answer(out="nope"), block_answer(out="pong"))
+    checked_id = result_of(run_block(ui, "ask", {"text": "pong"}))["run_id"]
     opened = request(ui, f"/api/runs/{checked_id}")
     assert opened["run"]["run_id"] == checked_id and opened["problems"] == []
     assert [a["attempt"] for a in opened["attempts"]] == [1, 2]
@@ -361,13 +356,12 @@ class Held:
         monkeypatch.setattr(history, "remove_tree", remove)
 
 
-def repairable(ui, server, name="c"):
-    """A saved run whose latest attempt failed its check: repairable, with its run in memory."""
-    save_contract(ui, name, TEXT_CONTRACT)
+def saved_run(ui, server):
+    """One finished, saved Chat run, still in memory."""
     configure(ui, server)
     switch_history(ui, True)
-    server.reply(answer("nope"), answer("nope"), answer("nope"), answer("pong"))
-    first = record_of(checked(ui, name))
+    server.reply(answer("pong"))
+    first = record_of(complete(ui, "hi"))
     return first, next(p for p in run_folders(ui) if p.name.endswith(first["run_id"]))
 
 
@@ -383,44 +377,42 @@ def delete_in_thread(ui, run_id, out):
     return t
 
 
-def test_deletion_reservation_blocks_repairs_and_a_repair_blocks_deletion(ui, server, monkeypatch):
-    first, folder = repairable(ui, server)
+def test_deletion_reservation_settles_deleting_then_deleted(ui, server, monkeypatch):
+    """0.2.3 port of the reservation half: while the removal is held the run reads `deleting`, then `deleted`."""
+    first, folder = saved_run(ui, server)
     held = Held(monkeypatch)
     out = {}
     worker = delete_in_thread(ui, first["run_id"], out)
     assert held.entered.wait(10)
-    view = ui.state.store.run_view(first["run_id"])
-    assert view["history_state"] == "deleting"
-    before = (view["next_attempt"], ui.state.budget.in_flight, len(server.requests))
-    for path in ("/api/repair/preview", "/api/repair"):                       # refused, nothing reserved or queued
-        fail = failure_of(lambda: request(ui, path, {"attempt_id": first["id"]}))
-        assert (fail.status, fail.body["code"]) == (409, "run_active")
-    view = ui.state.store.run_view(first["run_id"])
-    assert (view["next_attempt"], ui.state.budget.in_flight, len(server.requests)) == before
+    assert ui.state.store.run_view(first["run_id"])["history_state"] == "deleting"
     held.proceed.set()
     worker.join(10)
     assert out["ok"] == {"deleted": first["run_id"]} and not folder.exists()
     assert ui.state.store.run_view(first["run_id"])["history_state"] == "deleted"
-    # A later repair runs; its save reports failed, and no folder is recreated.
-    repaired = repair_attempt(ui, first["id"])
-    assert record_of(repaired)["attempt"] == 2 and repaired[-1]["save_status"] == "failed"
-    assert repaired[-1]["reason"] == "the run's history was deleted" and run_folders(ui) == []
 
 
 def test_a_repair_admitted_first_blocks_the_deletion(ui, server):
-    first, folder = repairable(ui, server)
-    server.reply(Reply(body=[delta("par")], headers=SSE, hold=True, after_release=[delta("tial"), delta(finish="stop"), DONE]))
-    it = iter_events(repair_attempt(ui, first["id"], raw=True))
-    read_until(it, "text")
-    fail = failure_of(lambda: request(ui, "/api/runs/delete", {"run_id": first["run_id"]}))
+    """0.2.3 port to a saved block run whose automatic repair is held at the fake."""
+    from test_server_config import _repairing_block
+    configure(ui, server)
+    switch_history(ui, True)
+    _repairing_block(ui)
+    server.reply(answer('{"out":"nope"}'), Reply(body=[delta('{"out":')], headers=SSE, hold=True,
+                                                 after_release=[delta('"pong"}'), delta(finish="stop"), DONE]))
+    resp = start_block(ui)
+    assert server.wait_holding(1)
+    run_id = next(e for e in iter_events(resp) if e["type"] == "started")["run_id"]
+    folder = next(p for p in run_folders(ui) if p.name.endswith(run_id))
+    fail = failure_of(lambda: request(ui, "/api/runs/delete", {"run_id": run_id}))
     assert (fail.status, fail.body["code"]) == (409, "run_active")
     assert folder.exists() and (folder / "request-1.json").exists()          # untouched
     server.release.set()
-    list(it)
+    resp.read()
+    assert wait_until(lambda: (folder / "result.json").exists())
 
 
 def test_deletion_that_fails_before_removing_anything_leaves_the_history_usable(ui, server, monkeypatch):
-    first, folder = repairable(ui, server)
+    first, folder = saved_run(ui, server)
 
     def refuse(path):
         raise history.RemoveError("Permission denied", changed=False)
@@ -430,16 +422,15 @@ def test_deletion_that_fails_before_removing_anything_leaves_the_history_usable(
     fail = failure_of(lambda: request(ui, "/api/runs/delete", {"run_id": first["run_id"]}))
     assert (fail.status, fail.body["code"]) == (500, "delete_failed") and "Permission denied" in fail.body["error"]
     assert ui.state.store.run_view(first["run_id"])["history_state"] == "intact"       # restored
-    assert (folder / "request-1.json").exists()
-    repaired = repair_attempt(ui, first["id"])                                          # the history stays usable
-    assert repaired[-1]["save_status"] == "saved" and (folder / "request-2.json").exists()
+    opened = request(ui, f"/api/runs/{first['run_id']}")                                # the history stays usable
+    assert opened["problems"] == [] and [a["attempt"] for a in opened["attempts"]] == [1]
     monkeypatch.setattr(history, "remove_tree", held.real)
     assert status_of(lambda: request(ui, "/api/runs/delete", {"run_id": first["run_id"]})) == 200   # retry works
     assert not folder.exists()
 
 
 def test_a_partial_removal_marks_the_history_incomplete_until_a_deletion_succeeds(ui, server, monkeypatch):
-    first, folder = repairable(ui, server)
+    first, folder = saved_run(ui, server)
     real = history.remove_tree
 
     def partial(path):
@@ -460,13 +451,6 @@ def test_a_partial_removal_marks_the_history_incomplete_until_a_deletion_succeed
     fail = failure_of(lambda: request(ui, "/api/runs/delete", {"run_id": first["run_id"]}))
     assert (fail.status, fail.body["code"]) == (500, "delete_failed")
     assert ui.state.store.run_view(first["run_id"])["history_state"] == "history_incomplete"
-    assert request(ui, "/api/repair/preview", {"attempt_id": first["id"]})["attempt"] == 2   # no longer refused
-
-    # A permitted repair: its save fails naming the incomplete history; nothing is written or recreated.
-    after = sorted(p.name for p in folder.iterdir())
-    repaired = repair_attempt(ui, first["id"])
-    assert repaired[-1]["save_status"] == "failed" and "incomplete" in repaired[-1]["reason"]
-    assert sorted(p.name for p in folder.iterdir()) == after
     assert poll_attempt(ui, first["id"])["save_status"] == "saved"            # earlier statuses unchanged
     assert poll_attempt(ui, first["id"])["record"] == first
 
@@ -481,6 +465,24 @@ def test_a_partial_removal_marks_the_history_incomplete_until_a_deletion_succeed
     monkeypatch.setattr(history, "remove_tree", real)
     assert status_of(lambda: request(ui, "/api/runs/delete", {"run_id": first["run_id"]})) == 200
     assert ui.state.store.run_view(first["run_id"])["history_state"] == "deleted" and not folder.exists()
+
+
+def test_writes_after_deletion_or_a_partial_removal_fail_and_write_nothing(ui, server):
+    """After 0.2.3 no HTTP path reaches these branches (a run's history is deleted only after it ended); they stay
+    as defensive code, covered here directly."""
+    first, folder = saved_run(ui, server)
+    store = ui.state.store
+    run = store._runs[first["run_id"]]
+    record = poll_attempt(ui, first["id"])["record"]
+    for state, reason in ((runs.HISTORY_INCOMPLETE, "the run's history is incomplete after a failed deletion"),
+                          (runs.HISTORY_DELETED, "the run's history was deleted")):
+        with store._lock:
+            run.history_state = state
+        before = sorted(p.name for p in folder.iterdir())
+        assert ui.state.history.write_attempt(run, {**record, "attempt": 2, "id": first["run_id"] + "-2"}) == \
+            {"save_status": "failed", "reason": reason}
+        assert ui.state.history.write_result(run, {"outcome": "complete"}) == {"save_status": "failed", "reason": reason}
+        assert sorted(p.name for p in folder.iterdir()) == before
 
 
 def test_remove_tree_removes_without_following_links(tmp_path):

@@ -13,7 +13,6 @@ removal. Knows nothing of HTTP.
 """
 from __future__ import annotations
 
-import copy
 import datetime
 import re
 import secrets
@@ -177,12 +176,6 @@ class RunStopped(Exception):
     """`reserve_attempt` refused: the run's token is cancelled, or shutdown has begun."""
 
 
-class RepairRefused(Exception):
-    def __init__(self, status: int, code: str, message: str):
-        super().__init__(message)
-        self.status, self.code, self.message = status, code, message
-
-
 class NoSuchAttempt(Exception):
     pass
 
@@ -260,7 +253,7 @@ class AttemptStore:
                 pass
 
     def close(self) -> tuple[list[str], list[str]]:
-        """Refuse every later admission (`new_run`, `new_block_run`, `admit_repair`, `reserve_attempt`) and list
+        """Refuse every later admission (`new_run`, `new_block_run`, `reserve_attempt`) and list
         what is active now: (running page attempt IDs, active block run IDs). One decision under the lock, so no
         admission can slip between the flag and the listing."""
         with self._lock:
@@ -363,42 +356,6 @@ class AttemptStore:
                 if run.next_attempt == number + 1:
                     run.next_attempt = number
                 self._prune_run_locked(run)
-
-    def admit_repair(self, attempt_id_: str, reserve: bool = True) -> tuple[Run, dict, int]:
-        """Section 9.1: every check, and the reservation of the next attempt number, in one step under the
-        store's lock. Returns (run, the parent's committed record, the reserved number); with reserve=False
-        (the preview) nothing is reserved and the number is the one the next repair would take. Raises
-        NoSuchAttempt (404), RepairRefused."""
-        with self._lock:
-            if self.closed:
-                raise Closed()
-            att = self._attempts.get(attempt_id_)
-            if att is None:
-                raise NoSuchAttempt()
-            run = att.run
-            if att.state != "committed":
-                raise RepairRefused(409, "not_latest", "this attempt is still running")
-            if att.record is None or run.run_id not in self._runs:
-                raise RepairRefused(410, "not_held",
-                                    "This attempt is no longer held in memory; send the request again.")
-            if run.kind == "block":
-                raise RepairRefused(409, "not_repairable", "attempts of a block run are repaired automatically")
-            if run.token.cancelled:
-                raise RepairRefused(409, "run_stopped", "This run was stopped; send the request again.")
-            if run.history_state == HISTORY_DELETING:
-                raise RepairRefused(409, "run_active", "This run's history is being deleted; try again.")
-            if run.running is not None or att.number != run.latest:
-                raise RepairRefused(409, "not_latest", "a later attempt of this step exists or is running")
-            record = att.record
-            check = record.get("check")
-            if (record.get("outcome") not in ("complete", "truncated") or not isinstance(check, dict)
-                    or check.get("overall") != "fail"):
-                raise RepairRefused(409, "not_repairable", "only a failed check on a completed answer can be repaired")
-            number = run.next_attempt
-            if reserve:
-                run.next_attempt += 1
-                run.running = number
-            return run, record, number
 
     def start(self, run: Run, number: int, record: dict) -> str:
         """Register the attempt (its number was reserved) with its record, in the running state."""
@@ -514,16 +471,6 @@ class AttemptStore:
                 run.protections = max(0, run.protections - 1)
                 self._prune_run_locked(run)
 
-    def protect_run(self, run: Run) -> None:
-        """A script cleanup owner protects the run's folder from deletion (11.4)."""
-        with self._lock:
-            run.protections += 1
-
-    def unprotect_run(self, run: Run) -> None:
-        with self._lock:
-            run.protections = max(0, run.protections - 1)
-            self._prune_run_locked(run)
-
     def run_envelope(self, run_id: str) -> dict:
         """The polling envelope of a block run (10.9). Raises NotHeld (410) when the run, or its result, is no
         longer held."""
@@ -620,10 +567,6 @@ class AttemptStore:
                 and run.history_state != HISTORY_DELETING and self._runs.get(run.run_id) is run):
             del self._runs[run.run_id]
 
-    def release_run(self, run: Run) -> None:
-        with self._lock:
-            self._prune_run_locked(run)
-
     # --- polling (8.8) --------------------------------------------------------------------------------------
     def envelope(self, attempt_id_: str) -> dict:
         """The polling envelope. Raises NotHeld (410) when neither a record nor a summary is held."""
@@ -643,6 +586,24 @@ class AttemptStore:
             else:
                 out["summary"] = {**att.summary, "record_held": False, "save_status": att.save_status}
             return out
+
+    def compact(self, attempt_id_: str) -> dict:
+        """`GET /api/attempts/<id>?view=compact` (0.2.3, T-1): exactly the attempt number, outcome, check, repair
+        reason and where they came from, never record text. Raises NotHeld (410) as `envelope` does."""
+        with self._lock:
+            att = self._attempts.get(attempt_id_)
+            if att is None:
+                raise NotHeld()
+            if att.state == "running":
+                return {"attempt": att.number, "outcome": None, "check": None, "repair_reason": None,
+                        "availability": "running"}
+            if att.record is not None:
+                check = att.record.get("check")
+                return {"attempt": att.number, "outcome": att.record["outcome"],
+                        "check": check["overall"] if isinstance(check, dict) else None,
+                        "repair_reason": att.record.get("repair_reason"), "availability": "held"}
+            return {"attempt": att.number, "outcome": att.summary["outcome"], "check": att.summary["check"],
+                    "repair_reason": None, "availability": "summary"}
 
     def record_of(self, attempt_id_: str) -> dict | None:
         with self._lock:
@@ -697,8 +658,3 @@ class AttemptStore:
                 run.history_state = prior
             run.prior_history_state = None
             self._prune_run_locked(run)
-
-    # --- debugging aid for tests ---------------------------------------------------------------------------
-    def snapshot_record(self, attempt_id_: str) -> dict | None:
-        rec = self.record_of(attempt_id_)
-        return copy.deepcopy(rec) if rec is not None else None

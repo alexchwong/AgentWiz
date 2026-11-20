@@ -187,6 +187,11 @@ class SnapshotContracts:
         return ('ok', digest) if found is not None else (refused[0],)
 
 
+def publish_checkpoint(key, stage):
+    """No-op test seam (0.2.3, E-1): called after staging and before the commit identity check, like
+    `workshop_service.before_trial_dispatch`."""
+
+
 class Capture:
     def __init__(self, files, key, contracts, metadata=None, *, internal_contracts=False, validators=None,
                  engine_check=True):
@@ -548,8 +553,6 @@ class Assets:
                 fail('migration_required', 400) if parsed.problem.code == 'migration_required' else fail('unusable', 409)
             paths = set(parsed.paths)
             selected = metadata.get('support', []) if support is None else support
-            if parsed.kind == 'script' and not h and support is None:
-                fail('support_required', 409)
             if not isinstance(selected, list):
                 fail()
             paths.update(relative(p) for p in selected)
@@ -565,6 +568,26 @@ class Assets:
             return {'key': key, 'definition_text': files.pop('block.json').decode('utf-8'),
                     'files': wire_files(files), 'metadata': metadata,
                     'base_digest': self.identity(key)}
+        finally:
+            release()
+
+    def current(self, key):
+        """The raw saved files of an unmanaged block, read in one pinned read with the second-read `stale`
+        check `export` uses (0.2.3, S-1). Nothing is parsed into a draft, re-encoded or rewritten."""
+        from . import blocks
+        root = self.root(key)
+        if head(root) is not None:
+            fail('managed', 409)
+        physical, release = self.pin(key)
+        try:
+            parsed = blocks.parse_block(physical, key, self.contracts(), engine_check=False)
+            paths = set(parsed.paths) | {'block.json'}
+            files = {p: read(physical, p) for p in paths}
+            if sum(map(len, files.values())) > CAPTURE_LIMIT:
+                fail('too_large', 400)
+            if any(read(physical, p) != b for p, b in files.items()):
+                fail('stale', 409)
+            return files
         finally:
             release()
 
@@ -603,7 +626,10 @@ class Assets:
         return SavedGeneration(key, ident, row['revision_number'], row['revision_name'], metadata, files,
                                definition)
 
-    def identity(self, key):
+    def identity(self, key, engine_check=True):
+        """The Save token of the block's current saved files. With `engine_check=False` (0.2.3, E-1, an unmanaged
+        block's engine recovery only) a recorded engine that differs from the installed one is not a problem;
+        every other problem still refuses `unusable`."""
         root = self.path / key_name(key)
         if not root.exists():
             return None
@@ -617,7 +643,7 @@ class Assets:
             finally:
                 release()
         from . import blocks
-        parsed = blocks.parse_block(root, key, self.contracts())
+        parsed = blocks.parse_block(root, key, self.contracts(), engine_check=engine_check)
         if parsed.problem:
             fail('unusable', 409)
         return fingerprint({p: read(root, p) for p in parsed.paths})
@@ -641,8 +667,16 @@ class Assets:
             row['revision_name'] = row['metadata'].get('revision_name', '')
         return {'format_version': 1, 'current': h['current'], 'revisions': rows}
 
-    def publish(self, draft, expected, metadata, capture=None, overwrite_revision=None):
+    def publish(self, draft, expected, metadata, capture=None, overwrite_revision=None, recovery=None):
+        """`recovery` (0.2.3, E-1) is the server-held engine-recovery record of an unmanaged block: both identity
+        checks then compare the raw fingerprint read with the engine check deferred, and the first retained
+        revision is archived from the record's verified bytes instead of a fresh export."""
         key = key_name(draft['key'])
+
+        def current_identity():
+            if recovery is not None:
+                return self.identity(key, engine_check=False)
+            return self.identity(key)
         if self.state.workspace.read_only:
             fail('read_only', 409)
         writer = self.state.register_writer('Workshop save')
@@ -660,7 +694,7 @@ class Assets:
                     for pin in capture.parsed.contract_pins:
                         if live.resolve(pin.name, pin.revision, pin.digest)[0] is None:
                             fail('reference_invalid', 409)
-                if self.identity(key) != expected:
+                if current_identity() != expected:
                     fail('stale', 409)
                 check_root_sources()
                 self.path.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -684,7 +718,21 @@ class Assets:
                     (stage / '.owner').write_bytes(b'AgentWiz Workshop staging v1\n')
                     os.chmod(stage / '.owner', 0o600)
                     generations = []
-                    if expected is not None and old is None:
+                    if expected is not None and old is None and recovery is not None:
+                        # The record's bytes, which the identity check above has just shown still match disk.
+                        files = dict(recovery['files'])
+                        origin = {'key': key, 'definition_text': files.pop('block.json').decode('utf-8'),
+                                  'files': wire_files(files),
+                                  'metadata': {'format_version': 1, 'origin': 'manual', 'effects': 'unknown',
+                                               'support': list(recovery.get('support', []))}}
+                        with Capture(recovery['files'], key, self.contracts(), engine_check=False) as original:
+                            if original.parsed.block is None:
+                                fail('unusable', 409)
+                            contracts_map, pins = captured_maps(original.parsed.block)
+                        origin['metadata'].update(contracts=contracts_map, contract_pins=pins,
+                                                  contracts_digest=contract_maps_digest(contracts_map, pins))
+                        generations.append((secrets.token_hex(16), origin))
+                    elif expected is not None and old is None:
                         origin = self.export(key, support=metadata.get('support', []))
                         generations.append((secrets.token_hex(16), origin))
                     revision = secrets.token_hex(16)
@@ -720,7 +768,8 @@ class Assets:
                         if sum(map(len, files.values())) > CAPTURE_LIMIT:
                             fail('too_large', 400)
                         write_files(stage / ident, files)
-                    if self.identity(key) != expected:
+                    publish_checkpoint(key, 'staged')
+                    if current_identity() != expected:
                         fail('stale', 409)
                     check_root_sources()
                     h = {'format_version': 2, 'current': revision, 'retained': retained[:REVISION_LIMIT]}

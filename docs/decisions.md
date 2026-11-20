@@ -415,3 +415,13 @@ probe charges, retains explicit privacy policy, and never authorizes post-tool p
   profile. Its source and cases are retained for that evaluation.
 - Archived implementation context is available in the [baseline handover](https://github.com/alexchwong/AgentWiz/blob/6ad9b9cf54b7c10192f32150c59b16f731574164/AgentWiz_0.2.2_handover.md)
   and the [starter blocks handover](https://github.com/alexchwong/AgentWiz/blob/6ad9b9cf54b7c10192f32150c59b16f731574164/AgentWiz_0.2.2_starter_blocks_handover.md).
+
+
+## 0.2.3 (20 November 2026) · Script-verifiable trim
+
+Implements the 0.2.3 technical specification v15. Owner decisions: OD-1 keep Documents (PDF to Workshop input,
+checked by D-1); OD-2 retire Checked request and manual repair, keeping automatic repair and saved history;
+OD-3 accept losing browser monitoring of script-started runs (headless poll and Stop stay). OD-5: no gating live
+test; LV-1 is optional. OD-6: a committed 0.2.2 workspace fixture with its regeneration recipe. OD-4: Stage 6 ended
+in outcome **F-b**: the List additions (L-1, L-2, the remedy resolver) shipped and the canvas stays for 0.2.4.
+Accepted losses: the manual repair preview and the Saved block runs screen.

@@ -1,40 +1,29 @@
-"""Bounded workspace editor references and historical script provenance."""
+"""Bounded workspace editor references and their design-protection lineage."""
 from __future__ import annotations
 
-import hashlib
 import secrets
 from collections import OrderedDict
 from dataclasses import dataclass
 
 from . import jsonio
-from .workshop import WorkshopError
-from .workshop_assets import decode_files, document, fail, head, read
+from .workshop_assets import fail
 
-GENERATED = ('llm_generated', 'derived_from_llm')
 LIMIT = 512
 
 
 @dataclass(frozen=True)
 class Lineage:
-    script_origin: str | None
     protection: str | None
     generation: str | None
-    source_hash: str | None = None
 
     @classmethod
     def of(cls, draft, generation=None):
         definition = jsonio.decode_exact(draft['definition_text'])
-        step = next(iter(definition.get('steps', [])), {})
         metadata = draft.get('metadata', {})
-        origin = None
-        if step.get('kind') == 'script':
-            origin = metadata.get('script_origin', metadata.get('origin', 'manual'))
-            if metadata.get('origin') in GENERATED:
-                origin = 'derived_from_llm'
         protection = None
         if definition.get('context_local_only') is True:
             protection = 'manual' if metadata.get('protection_origin') == 'manual' else 'inherited'
-        return cls(origin, protection, generation, main_source_hash(draft) if origin else None)
+        return cls(protection, generation)
 
 
 class References:
@@ -51,11 +40,6 @@ class References:
         draft['draft_ref'] = ident
         return draft
 
-    def generated(self, source_hash):
-        with self.lock:
-            return any(record.source_hash == source_hash and record.script_origin in GENERATED
-                       for record in self.records.values())
-
     def get(self, ident):
         if not isinstance(ident, str):
             fail('draft_expired', 409)
@@ -66,39 +50,3 @@ class References:
                 return record
         fail('draft_expired', 409)
 
-
-def generated_fingerprint(root, source_hash):
-    """Consult durable exact generations. The current pointer does not identify an older source."""
-    if not root.exists():
-        return False
-    for directory in root.iterdir():
-        if not directory.is_dir() or directory.is_symlink():
-            continue
-        try:
-            managed = head(directory)
-        except WorkshopError:
-            continue
-        if managed is None:
-            continue
-        for ident in managed['retained']:
-            path = directory / '.workshop' / 'revisions' / ident
-            try:
-                metadata = document(path, 'workshop.json')
-                if not any(metadata.get(field) in GENERATED for field in ('origin', 'script_origin')):
-                    continue
-                definition = jsonio.decode_file_exact(read(path, 'block.json'))
-                step = next(iter(definition.get('steps', [])), {})
-                if step.get('kind') == 'script' and metadata.get('assets', {}).get(step.get('file')) == source_hash:
-                    return True
-            except (ValueError, OSError, WorkshopError):
-                continue
-    return False
-
-
-def main_source_hash(draft):
-    definition = jsonio.decode_exact(draft['definition_text'])
-    step = next(iter(definition.get('steps', [])), {})
-    if step.get('kind') != 'script':
-        return None
-    data = decode_files(draft.get('files', {})).get(step.get('file'))
-    return hashlib.sha256(data).hexdigest() if data is not None else None

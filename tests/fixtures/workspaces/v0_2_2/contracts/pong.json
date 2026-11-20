@@ -1,0 +1,21 @@
+{
+  "format_version": 2,
+  "name": "pong",
+  "family": "General",
+  "latest": 1,
+  "revisions": [
+    {
+      "revision": 1,
+      "label": "",
+      "created_at": "2026-11-19T21:53:45Z",
+      "origin": "manual",
+      "digest": "sha256:5a9f7569992d6d6fbbcc7b21eb8f99d769efe0859e4ffd18e9cabc05c20a2934",
+      "contract": {
+        "format": "text",
+        "contains": [
+          "pong"
+        ]
+      }
+    }
+  ]
+}

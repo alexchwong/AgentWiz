@@ -32,9 +32,6 @@ class Writer:
     def release(self) -> None:
         self._barrier._release(self)
 
-    def inherit(self, label: str) -> "Writer":
-        return self._barrier._add(label, force=True)
-
     def __enter__(self) -> "Writer":
         return self
 
@@ -50,11 +47,8 @@ class WriterBarrier:
         self._next = 0
 
     def register(self, label: str) -> Writer:
-        return self._add(label, force=False)
-
-    def _add(self, label: str, force: bool) -> Writer:
         with self._cond:
-            if self.closing and not force:
+            if self.closing:
                 raise WritersClosed()
             self._next += 1
             self._labels[self._next] = label

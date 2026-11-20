@@ -1,0 +1,50 @@
+{
+  "format_version": 4,
+  "profiles": {
+    "private": {
+      "kind": "openai_compat",
+      "model": "private-deid",
+      "provider": "",
+      "routing_mode": "managed",
+      "routing_preset": "balanced",
+      "routing_zdr": null,
+      "routing_data_collection": ""
+    },
+    "private-summary": {
+      "kind": "openai_compat",
+      "model": "private-summary",
+      "provider": "",
+      "routing_mode": "managed",
+      "routing_preset": "balanced",
+      "routing_zdr": null,
+      "routing_data_collection": ""
+    },
+    "risk": {
+      "kind": "openai_compat",
+      "model": "release-risk",
+      "provider": "",
+      "routing_mode": "managed",
+      "routing_preset": "balanced",
+      "routing_zdr": null,
+      "routing_data_collection": ""
+    },
+    "cloud": {
+      "kind": "openrouter",
+      "model": "private-summary",
+      "provider": "",
+      "routing_mode": "managed",
+      "routing_preset": "balanced",
+      "routing_zdr": null,
+      "routing_data_collection": ""
+    },
+    "fast": {
+      "kind": "openai_compat",
+      "model": "fixture-model",
+      "provider": "",
+      "routing_mode": "managed",
+      "routing_preset": "balanced",
+      "routing_zdr": null,
+      "routing_data_collection": ""
+    }
+  }
+}

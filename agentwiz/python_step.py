@@ -82,10 +82,6 @@ def _issues(result: Mapping) -> list[dict]:
     return out
 
 
-class CleanupFailed(Exception):
-    """scriptSpell could not confirm a worker's cleanup; the Python budget is closed for this process."""
-
-
 def run(source: str, values: Mapping[str, Any], output_names: tuple[str, ...], *, token: Any,
         on_cleanup_failed: Callable[[], None]) -> dict:
     """Run one Python step to its end. Returns {"outcome": "ok"|"failed"|"stopped", "failure", "operation",

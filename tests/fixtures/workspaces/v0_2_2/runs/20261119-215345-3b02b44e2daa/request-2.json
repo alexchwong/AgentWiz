@@ -1,0 +1,112 @@
+{
+  "record_version": 1,
+  "id": "3b02b44e2daa-2",
+  "run_id": "3b02b44e2daa",
+  "step_id": "request",
+  "attempt": 2,
+  "parent_id": "3b02b44e2daa-1",
+  "source": "checked_request",
+  "accepted_at": "2026-11-19T21:53:45.260Z",
+  "profile": {
+    "name": "fast",
+    "modified": false
+  },
+  "endpoint": {
+    "kind": "openai_compat",
+    "base_url": "http://127.0.0.1:35047/v1"
+  },
+  "model": "fixture-model",
+  "provider": "",
+  "task": {},
+  "settings_sources": null,
+  "input_messages": [
+    {
+      "role": "system",
+      "content": "=== AgentWiz output protocol (generated; do not edit) ===\nReturn plain text directly, not a JSON string or output-name wrapper.\nValue requirements:\nText; literal comparisons and lengths use the decoded string without normalization.\nRequired literal: \"pong\"\n=== end output protocol ==="
+    },
+    {
+      "role": "user",
+      "content": "Say pong"
+    }
+  ],
+  "messages_sent": [
+    {
+      "role": "system",
+      "content": "=== AgentWiz output protocol (generated; do not edit) ===\nReturn plain text directly, not a JSON string or output-name wrapper.\nValue requirements:\nText; literal comparisons and lengths use the decoded string without normalization.\nRequired literal: \"pong\"\n=== end output protocol ==="
+    },
+    {
+      "role": "user",
+      "content": "Say pong"
+    },
+    {
+      "role": "assistant",
+      "content": "nope"
+    },
+    {
+      "role": "user",
+      "content": "The previous answer did not satisfy the required output contract.\n\nProblems found (1 in total):\n- answer: value violates text.contains[0]\n\nReply again with the complete corrected output, as plain text."
+    }
+  ],
+  "contract": {
+    "name": "pong",
+    "revision": 1,
+    "digest": "sha256:5a9f7569992d6d6fbbcc7b21eb8f99d769efe0859e4ffd18e9cabc05c20a2934",
+    "text": "{\n  \"format\": \"text\",\n  \"contains\": [\n    \"pong\"\n  ]\n}",
+    "policy": "user"
+  },
+  "output_plan": null,
+  "role": null,
+  "fills": [],
+  "repair_reason": "check_failed",
+  "save_run": true,
+  "agentwiz_version": "0.2.2",
+  "modelspell_version": "0.4.0",
+  "routing": {
+    "format_version": 1,
+    "routing_mode": "managed",
+    "routing_preset": "balanced",
+    "routing_zdr": null,
+    "routing_data_collection": "",
+    "requested_slug": null,
+    "selected_slug": null,
+    "policy": {},
+    "selection": "not probed",
+    "probe_usage": "not applicable"
+  },
+  "ended_at": "2026-11-19T21:53:45.265Z",
+  "model_called": true,
+  "outcome": "complete",
+  "result": {
+    "text": "pong",
+    "reasoning": null,
+    "usage": null,
+    "cost": null,
+    "finish_reason": "stop",
+    "truncated": false,
+    "model": null,
+    "provider": null,
+    "response_id": null,
+    "transport": "chat_completions",
+    "reasoning_details": null,
+    "raw_usage": null
+  },
+  "partial": null,
+  "error": null,
+  "cancel_reason": null,
+  "stop_requested_at": null,
+  "stop_mode": null,
+  "sent": null,
+  "check": {
+    "overall": "pass",
+    "checks": [
+      {
+        "check": "text.contains[0]",
+        "result": "pass"
+      }
+    ],
+    "issues": [],
+    "issue_count": 0,
+    "notes": []
+  },
+  "redacted": false
+}

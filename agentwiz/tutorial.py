@@ -277,8 +277,3 @@ class Tutorial:
             return
         pending.state.shutdown(wait=True)
         pending.finish()
-
-    def shutdown_all(self):
-        """`Tutorial.shutdown_all()` (14.5): both halves."""
-        self.finish(self.begin_shutdown())
-

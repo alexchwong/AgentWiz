@@ -221,9 +221,8 @@ def test_renderer_uses_captured_rules_descriptions_and_exact_schema():
         output_protocol.Spec('out', '', changed)])
     exact = checks.parse_internal_contract({'format': 'json', 'schema': {'type': 'number',
         'minimum': Decimal('9007199254740993.0000000000000000001')}})
-    rendered = output_protocol.single_value_instructions(exact)
+    rendered = output_protocol.instructions([output_protocol.Spec('out', '', exact)])
     assert '9007199254740993.0000000000000000001' in rendered
-    assert 'top-level keys' not in rendered
     blank = output_protocol.describe(output_protocol.Spec('value', '', checks.parse_contract({'format': 'json'})))
     assert 'Purpose:' not in blank and 'no description was given' not in blank
     assert 'Any JSON — no field validation' in blank

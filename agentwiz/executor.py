@@ -110,6 +110,9 @@ class StepContext:
     repair_dispatch: Any = None
     attempt_gate: Any = None
     parent_guard: Any = None                     # agent parent: Stop, deadline, configuration (0.2.2, 5.6)
+    # Workshop trials (0.2.3, G-1): server_check(parent_record) raises SettingsError when the configured model
+    # server differs from the one the failed attempt used. Checked before a repair's reservation.
+    server_check: Callable[[dict], None] | None = None
     tool_authorize: Any = None                   # agent parent: the MCP send-gate check of its approval (5.5)
     on_python_cleanup_failed: Any = None
     produced: dict = field(default_factory=dict)  # output name -> value view, filled when the step is ok
@@ -188,6 +191,12 @@ def _execute_model(ctx: StepContext) -> dict:
                 dispatch.check()
             if ctx.parent_guard:
                 ctx.parent_guard()
+            if parent is not None and ctx.server_check is not None:
+                from .model_call import SettingsError
+                try:
+                    ctx.server_check(parent)
+                except SettingsError:
+                    raise outbound_policy.Refused('server_changed') from None
         except outbound_policy.Refused as exc:
             return _failed(result, str(exc))
         try:

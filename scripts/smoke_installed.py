@@ -1,7 +1,7 @@
 # Adapted from modelSpell scripts/smoke_installed.py at commit 1759c6e3c28a637731434a73c46088048583e358
 # (MIT, Copyright (c) 2026 Alex Wong), per AgentWiz techspec 11.2 (0.1.0), 11.1 (0.1.1), 13.1 (0.1.2), 16.1 (0.1.3)
 # and 18.1 (0.1.4).
-"""Smoke check against the installed AgentWiz wheel (steps S1-S25). Run with the environment's
+"""Smoke check against the installed AgentWiz wheel (steps S1-S26). Run with the environment's
 `python -I`; it creates its own scratch working directory. Every step checks behaviour; none reads a file's contents.
 The launch's default workspace (./workspaces/default) is validated by AgentWiz itself and checked
 through /api/state."""
@@ -130,6 +130,15 @@ class Stub(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
             for c in agent_turn(received[-1]):
+                self.wfile.write(c)
+                self.wfile.flush()
+            return
+        if received[-1].get("model") == "block":
+            # S11 (0.2.3): a model block's named envelope.
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            for c in (chunk('{"out":"po'), chunk('ng"}'), chunk(finish="stop"), b"data: [DONE]\n\n"):
                 self.wfile.write(c)
                 self.wfile.flush()
             return
@@ -263,7 +272,8 @@ try:
     check(edited['description'] == 'Smoke value' and edited['digest'] != projected['digest'],
           f'contract edit: {edited}')
 
-    # S11 (0.1.3): save a text contract, then a Checked request against it passes.
+    # S11 (0.1.3; 0.2.3): save a text contract, then a v4 model block pinning it runs through /api/blocks/run and its
+    # answer passes the pinned contract.
     saved_contract = json.loads(api("/api/contracts/save", {
         "format_version": 2, "name": "smoke", "family": "General", "expected_file_token": None,
         "definition_text": '{"format": "text", "contains": ["pong"]}', "label": "Smoke"}).read())
@@ -280,11 +290,28 @@ try:
     except urllib.error.HTTPError as exc:
         refusal = json.loads(exc.read())
         check(exc.code == 409 and refusal.get("code") == "role_unresolved", f"synthesis setup refusal: {refusal}")
-    events = [json.loads(line) for line in api("/api/complete", {
-        "source": "checked_request", "prompt": "ping", "system": "", "revision": state["revision"],
-        "contract": ref}).read().splitlines() if line]
+    state = json.loads(api("/api/profiles/save", {"name": "smoke-block", "kind": "openai_compat", "model": "block",
+                                                  "provider": "", "revision": state["revision"]}).read())
+    state = json.loads(api("/api/roles/save", {"roles": {"fast": "smoke-block"},
+                                               "revision": state["roles"]["revision"]}).read())
+    pinned_dir = Path(expected_path) / "blocks" / "smoke_pinned"
+    pinned_dir.mkdir(parents=True)
+    (pinned_dir / "block.json").write_text(json.dumps({
+        "format_version": 4, "name": "smoke_pinned",
+        "inputs": {"text": {"contract": {"format": "text"}, "local_only": False}},
+        "outputs": {"out": {"contract": ref, "local_only": False}},
+        "steps": [{"id": "request", "kind": "model", "role": "fast", "system": {"text": ""},
+                   "prompt": {"text": "{{inputs.text}}"}, "response_mode": "named_json",
+                   "repair": {"max_repairs": 0}}]}))
+    row = next(b for b in json.loads(api("/api/blocks").read())["blocks"] if b["name"] == "smoke_pinned")
+    check(row["problem"] is None, f"pinned block: {row}")
+    events = [json.loads(line) for line in api("/api/blocks/run", {
+        "name": "smoke_pinned", "revision": row["revision"], "inputs": {"text": "ping"}}).read().splitlines() if line]
     end = events[-1]
-    check(end["type"] == "final" and end["record"]["check"]["overall"] == "pass", f"checked request: {events}")
+    attempts = [e for e in events if e["type"] == "attempt"]
+    check(end["type"] == "final" and end["outcome"] == "complete" and len(attempts) == 1
+          and attempts[0]["check"] == "pass", f"pinned block run: {events}")
+    state = json.loads(api("/api/state").read())
 
     # S12 (0.1.3): Stop reaches a request that is still waiting for response headers, from the installed wheel:
     # the handle modelSpell 0.3.0 provides works here. The stub reads the request, so it was sent.
@@ -632,6 +659,34 @@ try:
     revised = final['view']['drafts'][-1]['id']
     check(api('/api/agent/drafts/' + revised).read().rstrip(b'\n')
           == b"Thomas will review Hull's routes by 15 April.", 'revised draft download')
+
+    # S26 (0.2.3): routes retired in 0.2.3 refuse a request that was well formed for 0.2.2, by their router's own
+    # not-found body (never the old handlers' codes), and the Checked request source is refused on the source rule.
+    def refusal(path, body):
+        try:
+            api(path, body).read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
+        return 200, None
+    state = json.loads(api("/api/config", {"revision": json.loads(api("/api/state").read())["revision"],
+                                           "kind": "openai_compat", "model": "pong"}).read())
+    sent = len(received)
+    chat = [json.loads(line) for line in api("/api/complete", {
+        "source": "chat", "prompt": "ping", "system": "", "revision": state["revision"]}).read().splitlines() if line]
+    attempt = next(e for e in chat if e["type"] == "final")["record"]["id"]
+    for path in ("/api/repair/preview", "/api/repair"):
+        got = refusal(path, {"attempt_id": attempt})
+        check(got == (404, {"error": "not found"}), f"{path}: {got}")
+    got = refusal("/api/contracts/instructions", {"format_version": 2, **ref})
+    check(got == (404, {"error": "not found"}), f"/api/contracts/instructions: {got}")
+    got = refusal("/api/workshop/synthesis-inline", {"format_version": 1, "draft": {}, "proposal_id": "0" * 12,
+                                                    "side": "outputs", "port": "out", "definition_text": None})
+    check(got == (404, {"code": "missing"}), f"synthesis-inline: {got}")
+    state = json.loads(api("/api/state").read())
+    got = refusal("/api/complete", {"source": "checked_request", "prompt": "ping", "system": "",
+                                    "revision": state["revision"], "contract": ref})
+    check(got[0] == 400 and "source" in got[1]["error"], f"checked request: {got}")
+    check(len(received) == sent + 1, "a retired route reached the model server")
 
     # S8: a second AgentWiz on the same workspace is refused with exit status 3
     second = subprocess.run([str(exe), "--no-browser"], capture_output=True, text=True, timeout=15)

@@ -102,7 +102,7 @@ judgement.
 2. Confirm the offline CI matrix passes on Ubuntu and macOS, Python 3.10 and 3.13. A Linux-only
    local pass covers Linux. See the owner sign-offs below for the 0.2.2 live evaluations.
 3. Run `python scripts/build_release.py --smoke` on the intended committed tree; require
-   RC1–RC3 and the installed-wheel smoke S1–S25 to pass. The Tests workflow now runs installed-wheel page/library/tutorial checks on each main matrix job;
+   RC1–RC3 and the installed-wheel smoke S1–S26 to pass. The Tests workflow now runs installed-wheel page/library/tutorial checks on each main matrix job;
    confirm those steps pass. Source-checkout browser results do not establish packaged UI behavior.
 4. Merge `devel` into `main` when authorized. The release workflow reruns tests and checks
    before publishing. Verify that the tag points to the tested merge commit and that the release has
@@ -190,3 +190,18 @@ to a throwaway clone and commit only there, then run the normal release command 
 Keep build output separate from old `dist/` artifacts. Copy the tests, including their fixtures,
 outside the checkout for installed-wheel page/tutorial checks. Confirm the intended committed
 candidate with the normal release command before publishing.
+
+
+## 0.2.3 installed-wheel gate
+
+- **Smoke.** S11 now runs a v4 model block pinning the saved contract through `/api/blocks/run` (complete, check
+  `pass`). S26 sends previously valid requests to the retired routes and requires their router's not-found body,
+  and the `checked_request` source refused 400, with nothing reaching the model stub.
+- **Installed command.** `python scripts/check_installed_ui.py --expect-version X.Y.Z --workflow-outcome
+  {f-a,f-b,removal}`. Both arguments are required (exit 2 without). It refuses a non-site-packages import or another
+  version, checks the installed `workflows.js` shape (exit 3 on a mismatch; `--shape-only` stops there), runs its
+  module list with `--junitxml`, and requires every `REQUIRED` row to match exactly one passed JUnit case.
+- **Setting.** `scripts/installed_gate.json` holds the Stage 6 outcome (`f-b` for 0.2.3). The `tests.yml` step reads
+  the version from `agentwiz/_version.py` and the outcome from the setting, runs the command, then requires exit 3
+  for each other outcome with `--shape-only`. `release.yml` reuses that workflow unchanged.
+- **Candidate wheels.** Build from a disposable clone holding the tracked working tree, committed only there.

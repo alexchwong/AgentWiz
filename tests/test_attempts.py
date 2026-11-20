@@ -1,7 +1,6 @@
 """Runs, attempts, Stop, polling and repair through HTTP: techspec 0.1.3 tests #68-#72, #74 and #75
 (Part B, 8, 9). Every ordering is forced with the fake backend's holds and the code's hooks, never timing."""
 import json
-import os
 import socket
 import threading
 
@@ -9,24 +8,12 @@ import pytest
 
 from agentwiz import history, model_step, runs
 from agentwiz.ui import server as server_module
-from conftest import (contract_pin, contract_token, DONE, JSON_CONTRACT, JSON_CONTRACT_NO_SCHEMA, TEXT_CONTRACT, Reply, answer, complete, configure, contract_item,
-                      delta, failure_of, file_stat, final_of, get_state, iter_events, json_answer, poll_attempt,
-                      read_run_files, read_until, record_of, repair_attempt, request, run_folders, save_contract,
+from conftest import (contract_pin, DONE, TEXT_CONTRACT, Reply, answer, complete, configure,
+                      delta, failure_of, final_of, get_state, iter_events, poll_attempt,
+                      read_run_files, read_until, record_of, request, run_folders, save_contract,
                       status_of, stop_attempt, switch_history, wait_until)
 
 SSE = {"Content-Type": "text/event-stream"}
-
-
-def checked(ui, name, prompt="hi", **kw):
-    return complete(ui, prompt, source="checked_request", contract=contract_pin(ui, name), **kw)
-
-
-def start_checked(ui, name, prompt="hi", **kw):
-    """The open stream of a Checked request, for tests that act while it runs."""
-    rev = get_state(ui)["revision"]
-    return request(ui, "/api/complete", {"source": "checked_request", "prompt": prompt, "system": "", "revision": rev,
-                                         "contract": dict(zip(("name", "revision", "digest"), contract_pin(ui, name))),
-                                         **kw}, raw=True)
 
 
 def start_chat(ui, prompt="hi", **kw):
@@ -44,53 +31,6 @@ def new_folder(ui, known):
 
 
 # 68 ---------------------------------------------------------------------------------------------
-def test_identity_and_run_files(ui, server):
-    save_contract(ui, "needs_numbers", JSON_CONTRACT)          # ratio has maximum 1: a structural rule
-    configure(ui, server)
-    switch_history(ui, True)
-    good = '{"id": 9007199254740993, "ratio": 0.10000000000000000001}'
-    server.reply(json_answer('{"id": 1, "ratio": 2}'), json_answer('{"id": 2, "ratio": 3}'), json_answer(good, fenced=True))
-    first = checked(ui, "needs_numbers")
-    started = first[0]
-    run_id = started["run_id"]
-    assert started == {"type": "started", "run_id": run_id, "step_id": "request", "attempt": 1,
-                       "attempt_id": f"{run_id}-1"}
-    one = record_of(first)
-    assert one["check"]["overall"] == "fail" and one["parent_id"] is None
-    folder = run_folders(ui)[0]
-    stats = {"request-1.json": file_stat(folder / "request-1.json")}
-
-    second = repair_attempt(ui, one["id"])
-    assert second[0]["attempt"] == 2 and second[0]["attempt_id"] == f"{run_id}-2" and second[0]["run_id"] == run_id
-    two = record_of(second)
-    assert two["parent_id"] == f"{run_id}-1" and two["check"]["overall"] == "fail"
-    stats["request-2.json"] = file_stat(folder / "request-2.json")
-    third = repair_attempt(ui, two["id"])
-    assert third[0]["attempt_id"] == f"{run_id}-3"
-    three = record_of(third)
-    assert three["parent_id"] == f"{run_id}-2" and three["check"]["overall"] == "pass"
-    assert (one["step_id"], two["step_id"], three["step_id"]) == ("request",) * 3
-    assert [r["attempt"] for r in (one, two, three)] == [1, 2, 3]
-
-    files = read_run_files(ui, run_id)
-    assert sorted(f.name for f in files["folder"].iterdir()) == ["request-1.json", "request-2.json", "request-3.json",
-                                                                 "run.json"]
-    assert files["run"]["run_id"] == run_id and files["run"]["steps"] == ["request"]
-    assert files["run"]["contract"] == {"name": "needs_numbers", "revision": one["contract"]["revision"],
-                                        "digest": one["contract"]["digest"]}
-    for name, before in stats.items():
-        assert file_stat(files["folder"] / name) == before                  # each file written once
-    for number in (1, 2, 3):
-        saved = files["attempts"][number]
-        assert saved["id"] == f"{run_id}-{number}" and saved["redacted"] is False
-        assert saved["contract"]["text"] == one["contract"]["text"]         # the same captured definition
-        assert saved["contract"]["digest"] == one["contract"]["digest"] and saved["contract"]["policy"] == "user"
-    assert files["attempts"][3]["check"]["overall"] == "pass"
-    assert all(oct(os.stat(files["folder"] / n).st_mode & 0o777) == "0o600" for n in files["attempts"] and
-               ("run.json", "request-1.json"))
-    assert oct(os.stat(files["folder"]).st_mode & 0o777) == "0o700"
-
-
 def test_ids_are_random_and_routes_check_their_form(ui, server):
     server.reply(answer("ok"))
     configure(ui, server)
@@ -99,8 +39,6 @@ def test_ids_are_random_and_routes_check_their_form(ui, server):
     assert len(ids) == 2 and all(len(i) == 12 and i == i.lower() for i in ids)
     for bad in ("", "nope", "abc-1", "0" * 12 + "-0", "0" * 12 + "-01", "0" * 12 + "-1234567", "G" * 12 + "-1"):
         assert status_of(lambda: stop_attempt(ui, bad)) == 400, bad
-        assert status_of(lambda: request(ui, "/api/repair/preview", {"attempt_id": bad})) == 400
-        assert status_of(lambda: request(ui, "/api/repair", {"attempt_id": bad})) == 400
     assert status_of(lambda: request(ui, "/api/complete/stop", {})) == 400
     assert status_of(lambda: request(ui, "/api/attempts/nope")) == 400
 
@@ -190,9 +128,10 @@ def test_stop_repeats_and_after_the_commit(ui, server, monkeypatch):
 
 
 def test_stop_arriving_after_the_answer_finished(ui, server, monkeypatch):
-    save_contract(ui, "c", TEXT_CONTRACT)
+    """0.2.3 port to a Chat attempt. No repair after such a Stop is
+    test_runner.py::test_a_stop_after_a_failing_answer_makes_no_repair."""
     configure(ui, server)
-    server.reply(answer("nope"))
+    server.reply(answer("pong"))
     entered, proceed = threading.Event(), threading.Event()
 
     def block():
@@ -200,7 +139,7 @@ def test_stop_arriving_after_the_answer_finished(ui, server, monkeypatch):
         assert proceed.wait(10)
 
     monkeypatch.setattr(model_step, "before_end_point", block)
-    it = iter_events(start_checked(ui, "c"))
+    it = iter_events(start_chat(ui))
     started = read_until(it, "started")[-1]
     assert entered.wait(10)
     assert stop_attempt(ui, started["attempt_id"]) == {"status": "stopping"}
@@ -208,11 +147,6 @@ def test_stop_arriving_after_the_answer_finished(ui, server, monkeypatch):
     proceed.set()
     rec = final_of(list(it))["record"]
     assert rec["outcome"] == "complete" and rec["stop_requested_at"] is not None and rec["stop_mode"] is None
-    assert rec["check"]["overall"] == "fail"
-    fail = failure_of(lambda: repair_attempt(ui, rec["id"]))                          # the run is closed to repairs
-    assert (fail.status, fail.body["code"]) == (409, "run_stopped")
-    fail = failure_of(lambda: request(ui, "/api/repair/preview", {"attempt_id": rec["id"]}))
-    assert (fail.status, fail.body["code"]) == (409, "run_stopped")
 
 
 def test_stop_just_before_a_backend_error_is_a_stop(ui, server, monkeypatch):
@@ -237,67 +171,35 @@ def test_stop_just_before_a_backend_error_is_a_stop(ui, server, monkeypatch):
 
 
 def test_stop_between_the_end_point_and_the_commit(ui, server, monkeypatch):
-    save_contract(ui, "c", TEXT_CONTRACT)
+    """0.2.3 port to a Chat attempt: the window is held with a call-through wrapper on AttemptStore.commit,
+    entered after the end point (the original held it with a slow contract check)."""
     configure(ui, server)
     switch_history(ui, True)
     server.reply(answer("pong"))
-    from agentwiz import checks
-    real = checks.check_answer_value
+    real = runs.AttemptStore.commit
     entered, proceed = threading.Event(), threading.Event()
 
-    def slow(contract, text):
+    def slow(self, attempt_id_, record, saving):
         entered.set()
         assert proceed.wait(10)
-        return real(contract, text)
+        return real(self, attempt_id_, record, saving)
 
-    monkeypatch.setattr(checks, "check_answer_value", slow)
-    it = iter_events(start_checked(ui, "c"))
+    monkeypatch.setattr(runs.AttemptStore, "commit", slow)
+    it = iter_events(start_chat(ui))
     started = read_until(it, "started")[-1]
     assert entered.wait(10)
     assert stop_attempt(ui, started["attempt_id"]) == {"status": "already_finished"}   # past its end point
     proceed.set()
     evs = list(it)
     rec = final_of(evs)["record"]
-    assert rec["outcome"] == "complete" and rec["stop_requested_at"] is None and rec["check"]["overall"] == "pass"
+    assert rec["outcome"] == "complete" and rec["stop_requested_at"] is None
     files = read_run_files(ui, started["run_id"])
     assert list(files["attempts"]) == [1]                                             # the run file is written once
 
 
-def test_stop_addresses_one_attempt(ui, server):
-    save_contract(ui, "c", TEXT_CONTRACT)
-    configure(ui, server)
-    server.reply(answer("nope"), Reply(body=[delta("pong")], headers=SSE, hold=True,
-                                       after_release=[delta(" more"), delta(finish="stop"), DONE]))
-    first = record_of(checked(ui, "c"))
-    run_id = first["run_id"]
-    assert first["check"]["overall"] == "fail"
-    it = iter_events(repair_attempt(ui, first["id"], raw=True))
-    second = read_until(it, "started")[-1]
-    read_until(it, "text")
-    # (k) Stop for the ended attempt 1 cancels nothing; the repair completes normally.
-    assert stop_attempt(ui, first["id"]) == {"status": "already_finished"}
-    server.release.set()
-    rec2 = final_of(list(it))["record"]
-    assert rec2["outcome"] == "complete" and rec2["stop_requested_at"] is None
-    assert stop_attempt(ui, second["attempt_id"]) == {"status": "already_finished"}   # and for the finished repair
-    assert poll_attempt(ui, second["attempt_id"])["record"] == rec2
-
-    # (l) In a fresh run, Stop for the repair while it is held cancels the run.
-    server.release.clear()
-    server.reply(answer("nope"), Reply(body=[delta("par")], headers=SSE, hold=True, after_release=[DONE]))
-    first = record_of(checked(ui, "c"))
-    it = iter_events(repair_attempt(ui, first["id"], raw=True))
-    started = read_until(it, "started")[-1]
-    read_until(it, "text")
-    assert stop_attempt(ui, started["attempt_id"]) == {"status": "stopping"}
-    rec = final_of(list(it))["record"]
-    assert rec["outcome"] == "stopped" and rec["stop_mode"] == "immediate" and rec["partial"]["text"] == "par"
-    server.release.set()
-
-
 def test_atomic_stop_with_a_held_dispatch(ui, server, monkeypatch):
-    """(j) Stop's publication happens before its dispatch, in one decision with the store's lock."""
-    save_contract(ui, "c", TEXT_CONTRACT)
+    """(j) Stop's publication happens before its dispatch, in one decision with the store's lock. 0.2.3: on a
+    Chat attempt."""
     configure(ui, server)
     server.reply(Reply(status=500, body=b"{}", headers={"Content-Type": "application/json"}))
     reached, proceed = threading.Event(), threading.Event()
@@ -316,7 +218,7 @@ def test_atomic_stop_with_a_held_dispatch(ui, server, monkeypatch):
         assert go.wait(10)
 
     monkeypatch.setattr(model_step, "before_end_point", block)
-    it = iter_events(start_checked(ui, "c"))
+    it = iter_events(start_chat(ui))
     started = read_until(it, "started")[-1]
     assert enter.wait(10)                                                             # the error has been raised
     stopper = threading.Thread(target=lambda: stop_attempt(ui, started["attempt_id"]))
@@ -326,8 +228,6 @@ def test_atomic_stop_with_a_held_dispatch(ui, server, monkeypatch):
     go.set()                                                                           # the attempt reaches its end point
     rec = final_of(list(it))["record"]
     assert rec["outcome"] == "stopped" and rec["error"] is not None and rec["cancel_reason"] == "user_stop"
-    fail = failure_of(lambda: repair_attempt(ui, rec["id"]))
-    assert (fail.status, fail.body["code"]) == (409, "run_stopped")
     proceed.set()
     stopper.join(10)
 
@@ -357,11 +257,9 @@ def test_page_closed_commits_a_stopped_attempt(ui, server):
 # 71 ---------------------------------------------------------------------------------------------
 @pytest.mark.parametrize("error", [OSError("broken pipe"), TimeoutError("timed out")])
 def test_event_write_failures(ui, server, monkeypatch, error):
-    save_contract(ui, "c", TEXT_CONTRACT)
     configure(ui, server)
     switch_history(ui, True)
-    server.reply(answer("nope"), answer("pong"))
-    first = record_of(checked(ui, "c"))
+    server.reply(answer("pong"))
     known = set(run_folders(ui))
     real = server_module.Handler.write_event
 
@@ -387,16 +285,6 @@ def test_event_write_failures(ui, server, monkeypatch, error):
     rec = jsonio.decode_file_exact((newest / "request-1.json").read_bytes())
     assert rec["outcome"] == "stopped" and rec["cancel_reason"] == "page_closed"
     assert rec["model_called"] is False and rec["sent"] is False
-
-    # (2) the same for a repair; the parent stays repairable.
-    try:
-        repair_attempt(ui, first["id"], raw=True).read()
-    except Exception:
-        pass
-    assert wait_until(lambda: ui.state.budget.in_flight == 0)
-    assert len(server.requests) == before
-    env = poll_attempt(ui, f"{first['run_id']}-2")
-    assert env["record"]["outcome"] == "stopped" and env["record"]["cancel_reason"] == "page_closed"
 
     # (3) final fails: the record is unaffected, the attempt file is written once, the budget is released once.
     monkeypatch.setattr(server_module.Handler, "write_event", failing("final"))
@@ -473,173 +361,21 @@ def test_polling_envelope_for_unknown_attempts(ui):
 
 
 # 74 ---------------------------------------------------------------------------------------------
-def test_repair_preview_and_send(ui, server):
-    save_contract(ui, "c", JSON_CONTRACT)
-    configure(ui, server, kind="openai_compat", model="the-model")
-    good = '{"id": 9007199254740993, "ratio": 0.10000000000000000001}'
-    server.reply(json_answer('{"id": 1, "ratio": 2}'), json_answer('{"id": 3, "ratio": 4}'), json_answer(good))
-    first = record_of(complete(ui, "extract", system="be exact", source="checked_request",
-                               contract=contract_pin(ui, "c"), task={"temperature": 0.25}))
-    assert first["check"]["overall"] == "fail"
-    preview = request(ui, "/api/repair/preview", {"attempt_id": first["id"]})
-    assert preview["parent_id"] == first["id"] and preview["attempt"] == 2
-    assert [m["role"] for m in preview["messages"]] == ["system", "user", "assistant", "user"]
-    assert preview["messages"][2]["content"] == first["result"]["text"]
-    assert preview["messages"][3]["content"] == preview["repair_message"]
-    assert preview["repair_message"].startswith("The previous answer did not satisfy the required output contract.")
-    assert "$.ratio" in preview["repair_message"]
-    assert preview["settings"] == {"kind": "openai_compat", "base_url": server.url + "/v1", "model": "the-model",
-                                   "provider": "", "task": {"temperature": 0.25}}
-    assert preview["contract"] == {"name": "c", "revision": first["contract"]["revision"],
-                                   "digest": first["contract"]["digest"]}
-    assert request(ui, "/api/repair/preview", {"attempt_id": first["id"]}) == preview      # nothing was reserved
-
-    # Everything the screen could change is changed; the repair still uses the captured settings.
-    configure(ui, server, model="another-model")
-    request(ui, "/api/task_settings/save", {"task": {"temperature": 0.9}, "revision": get_state(ui)["task"]["revision"]})
-    save_contract(ui, "c", JSON_CONTRACT_NO_SCHEMA, contract_token(ui, "c"))      # appends revision 2
-    assert contract_item(ui, "c")["latest"] == 2
-    second = record_of(repair_attempt(ui, first["id"], raw=False))
-    sent = server.requests[-1]["body"]
-    assert sent["model"] == "the-model" and sent["temperature"] == 0.25
-    assert sent["messages"] == preview["messages"] and second["messages_sent"] == preview["messages"]
-    assert second["input_messages"] == first["input_messages"] and second["parent_id"] == first["id"]
-    assert second["contract"] == first["contract"] and second["check"]["overall"] == "fail"   # the captured contract
-
-    # Two successive repairs send only input, the latest answer and the latest repair message.
-    preview2 = request(ui, "/api/repair/preview", {"attempt_id": second["id"]})
-    assert [m["role"] for m in preview2["messages"]] == ["system", "user", "assistant", "user"]
-    assert preview2["messages"][2]["content"] == second["result"]["text"] != first["result"]["text"]
-    third = record_of(repair_attempt(ui, second["id"]))
-    assert third["check"]["overall"] == "pass" and len(third["messages_sent"]) == 4
-
-
-def test_repair_refusals(ui, server):
-    save_contract(ui, "c", TEXT_CONTRACT)
-    configure(ui, server)
-
-    def code(attempt_id, path="/api/repair"):
-        fail = failure_of(lambda: request(ui, path, {"attempt_id": attempt_id}))
-        return fail.status, fail.body["code"]
-
-    server.reply(answer("pong"))
-    passing = record_of(checked(ui, "c"))
-    assert code(passing["id"]) == (409, "not_repairable") and code(passing["id"], "/api/repair/preview") == (409, "not_repairable")
-    server.reply(answer(""))
-    assert code(record_of(checked(ui, "c"))["id"]) == (409, "not_repairable")                     # an empty outcome
-    server.reply(Reply(status=500, body=b"{}", headers={"Content-Type": "application/json"}))
-    assert code(record_of(checked(ui, "c"))["id"]) == (409, "not_repairable")                     # an error outcome
-    save_contract(ui, "schemaless", '{"format": "json"}')
-    server.reply(answer("not json at all"))
-    failed_parse = record_of(checked(ui, "schemaless"))
-    assert failed_parse["check"]["overall"] == "fail"                                              # parse fails: repairable
-    server.reply(answer("9" * 5000))
-    incomplete = record_of(checked(ui, "schemaless"))
-    assert incomplete["check"]["overall"] == "incomplete" and code(incomplete["id"]) == (409, "not_repairable")
-    chat = record_of(complete(ui, "hi"))
-    assert code(chat["id"]) == (409, "not_repairable")                                             # no contract, no check
-
-    # Only the latest attempt: an older one is refused.
-    server.reply(answer("nope"), answer("still nope"))
-    first = record_of(checked(ui, "c"))
-    second = record_of(repair_attempt(ui, first["id"]))
-    assert code(first["id"]) == (409, "not_latest")
-    assert request(ui, "/api/repair/preview", {"attempt_id": second["id"]})["attempt"] == 3
-    assert code("f" * 12 + "-3") == (404, "no_such_attempt")
-
-
-def test_concurrent_repairs_give_one_stream_and_one_409(ui, server):
-    save_contract(ui, "c", TEXT_CONTRACT)
-    configure(ui, server)
-    server.reply(answer("nope"), Reply(body=[delta("pong")], headers=SSE, hold=True,
-                                       after_release=[delta(finish="stop"), DONE]))
-    first = record_of(checked(ui, "c"))
-    results = {}
-
-    def attempt(n):
-        try:
-            resp = repair_attempt(ui, first["id"], raw=True)
-            it = iter_events(resp)
-            results[n] = ("stream", read_until(it, "started")[-1], it)
-        except Exception as exc:   # HTTPFailure
-            results[n] = ("refused", exc)
-
-    threads = [threading.Thread(target=attempt, args=(n,)) for n in range(2)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(10)
-    kinds = sorted(v[0] for v in results.values())
-    assert kinds == ["refused", "stream"]
-    refused = next(v[1] for v in results.values() if v[0] == "refused")
-    assert (refused.status, refused.body["code"]) == (409, "not_latest")
-    server.release.set()
-    stream = next(v for v in results.values() if v[0] == "stream")
-    assert final_of(list(stream[2]))["record"]["outcome"] == "complete"
-
-
-def test_repair_is_refused_when_the_budget_is_full(make_ui, server):
-    ui = make_ui(request_limit=1)
-    save_contract(ui, "c", TEXT_CONTRACT)
-    configure(ui, server)
-    server.reply(answer("nope"), Reply(body=[delta("x")], headers=SSE, hold=True, after_release=[DONE]))
-    first = record_of(checked(ui, "c"))
-    holder = start_chat(ui)
-    it = iter_events(holder)
-    read_until(it, "text")
-    fail = failure_of(lambda: repair_attempt(ui, first["id"]))
-    assert (fail.status, fail.body["code"]) == (503, "busy")
-    server.release.set()
-    list(it)
-    assert wait_until(lambda: ui.state.budget.in_flight == 0)
-    again = repair_attempt(ui, first["id"])                                                       # the number was given back
-    assert again[0]["attempt"] == 2
-
-
-def test_repair_after_a_stopped_attempt(ui, server):
-    save_contract(ui, "c", TEXT_CONTRACT)
-    configure(ui, server)
-    server.reply(Reply(body=[delta("par")], headers=SSE, hold=True, after_release=[DONE]))
-    it = iter_events(start_checked(ui, "c"))
-    started = read_until(it, "started")[-1]
-    read_until(it, "text")
-    stop_attempt(ui, started["attempt_id"])
-    rec = final_of(list(it))["record"]
-    assert rec["outcome"] == "stopped"
-    fail = failure_of(lambda: repair_attempt(ui, rec["id"]))
-    assert fail.status == 409 and fail.body["code"] in ("run_stopped", "not_repairable")
-    server.release.set()
-
-
 # 75 ---------------------------------------------------------------------------------------------
 def test_check_on_outcomes(ui, server):
-    save_contract(ui, "c", TEXT_CONTRACT)
+    """Chat has no contract, so no check and no `check_skipped`. The block outcomes are
+    test_runner.py::test_block_check_on_outcomes."""
     configure(ui, server)
-    server.reply(answer("pong"))
-    rec = record_of(checked(ui, "c"))
-    assert rec["outcome"] == "complete" and rec["check"]["overall"] == "pass" and "check_skipped" not in rec
-    server.reply(Reply(body=[delta("pon"), delta(finish="length"), DONE], headers=SSE))
-    rec = record_of(checked(ui, "c"))
-    assert rec["outcome"] == "truncated" and rec["check"]["overall"] == "fail"                 # truncated is checked
-    server.reply(answer(""))
-    rec = record_of(checked(ui, "c"))
-    assert rec["outcome"] == "empty" and rec["check"] is None and rec["check_skipped"] == "blank_answer"
-    server.reply(Reply(body=[delta("", reasoning="thinking"), delta(finish="stop"), DONE], headers=SSE))
-    rec = record_of(checked(ui, "c"))
-    assert rec["outcome"] == "reasoning_only" and rec["check_skipped"] == "blank_answer"
-    server.reply(Reply(body=[delta("", reasoning="thinking"), delta(finish="length"), DONE], headers=SSE))
-    rec = record_of(checked(ui, "c"))
-    assert rec["outcome"] == "truncated_no_answer" and rec["check_skipped"] == "blank_answer"
-    server.reply(Reply(status=500, body=b"{}", headers={"Content-Type": "application/json"}))
-    rec = record_of(checked(ui, "c"))
-    assert rec["outcome"] == "error" and rec["check"] is None and rec["check_skipped"] == "not_completed"
-    # Chat has no contract, so no check and no `check_skipped`.
     server.reply(answer("pong"))
     rec = record_of(complete(ui, "hi"))
     assert rec["contract"] is None and rec["check"] is None and "check_skipped" not in rec
 
 
 def test_source_and_contract_rules_refuse_before_anything_is_created(ui, server):
+    """0.2.3: `checked_request` is retired. Every such body is refused 400 on the source rule, with or without a
+    valid pin (the former 404 and 409 cases included); Chat with any `contract` member stays 400. Nothing is
+    sent, and no run or runs folder is created. Block pins are
+    test_runner.py::test_a_block_pinning_a_damaged_contract_is_refused_and_runs_once_restored."""
     save_contract(ui, "c", TEXT_CONTRACT)
     configure(ui, server)
     rev = get_state(ui)["revision"]
@@ -647,109 +383,74 @@ def test_source_and_contract_rules_refuse_before_anything_is_created(ui, server)
 
     def post(**body):
         fail = failure_of(lambda: request(ui, "/api/complete", {"prompt": "hi", "revision": rev, **body}))
-        return fail.status
+        return fail.status, fail.body
 
-    assert post(source="chat", contract=ref) == 400
-    assert post(source="chat", contract=None) == 400
-    assert post(source="checked_request") == 400
-    assert post(source="checked_request", contract=None) == 400
-    assert post(source="checked_request", contract="c") == 400
-    assert post(source="checked_request", contract={"name": "c"}) == 400
-    assert post(source="checked_request", contract={"name": "c", "revision": "1"}) == 400
-    assert post(source="checked_request", contract={"name": "c", "revision": True}) == 400
-    assert post(source="checked_request", contract={"name": "../c", "revision": 1}) == 400
-    assert post(source="checked_request", contract={"name": "c", "revision": 1}) == 400          # no digest
-    assert post(source="checked_request", contract={**ref, "revision": "latest"}) == 400        # never "latest"
-    assert post(source="checked_request", contract={**ref, "digest": "sha256:XYZ"}) == 400
-    assert post(source="checked_request", contract={**ref, "extra": 1}) == 400
-    assert post(source="nope") == 400 and post() == 400
+    for contract in (ref, None, "c"):
+        assert post(source="chat", contract=contract)[0] == 400
+    for body in ({}, {"contract": None}, {"contract": "c"}, {"contract": {"name": "c"}},
+                 {"contract": {"name": "c", "revision": 1}}, {"contract": {**ref, "revision": "latest"}},
+                 {"contract": {**ref, "digest": "sha256:XYZ"}}, {"contract": {**ref, "extra": 1}},
+                 {"contract": ref}, {"contract": {**ref, "name": "missing"}},
+                 {"contract": {**ref, "revision": ref["revision"] + 99}},
+                 {"contract": {**ref, "digest": "sha256:" + "0" * 64}}):
+        status, failure = post(source="checked_request", **body)
+        assert status == 400 and "source" in failure["error"], (body, failure)
+    assert post(source="nope")[0] == 400 and post()[0] == 400
     assert server.requests == [] and ui.state.store.running_count() == 0 and ui.state.budget.in_flight == 0
-    # Missing contracts and revisions; a selected digest that no longer matches.
-    assert post(source="checked_request", contract={**ref, "name": "missing"}) == 404
-    assert post(source="checked_request", contract={**ref, "revision": ref["revision"] + 99}) == 404
-    assert post(source="checked_request", contract={**ref, "digest": "sha256:" + "0" * 64}) == 409
-    assert server.requests == [] and not (ui.workspace.path / "runs").exists()
-    # Appending a newer revision does not invalidate the reviewed older pin (spec 13.1).
-    save_contract(ui, "c", '{"format": "text", "contains": ["other"]}', contract_token(ui, "c"))
-    server.reply(answer("pong"))
-    rec = record_of(complete(ui, "hi", source="checked_request", contract=tuple(ref.values())))
-    assert rec["contract"]["revision"] == ref["revision"] == 1 and rec["check"]["overall"] == "pass"
-    assert "pong" in rec["contract"]["text"] and "AgentWiz output protocol" in rec["messages_sent"][0]["content"]
-
-
-def test_a_damaged_contract_is_refused_and_usable_after_repair(ui, server):
-    save_contract(ui, "c", TEXT_CONTRACT)
-    configure(ui, server)
-    good_digest = contract_pin(ui, "c")[2]
-    path = ui.workspace.path / "contracts" / "c.json"
-    good = path.read_bytes()
-    path.write_bytes(b"{ damaged")
-    os.utime(path, ns=(os.stat(path).st_mtime_ns + 5_000_000_000,) * 2)
-    pin = ("c", 1, good_digest)
-    fail = failure_of(lambda: complete(ui, "hi", source="checked_request", contract=pin))
-    assert (fail.status, fail.body["code"]) == (409, "contract_unusable")
-    assert server.requests == [] and ui.state.store.running_count() == 0
-    path.write_bytes(good)
-    os.utime(path, ns=(os.stat(path).st_mtime_ns + 10_000_000_000,) * 2)
-    server.reply(answer("pong"))
-    rec = record_of(complete(ui, "hi", source="checked_request", contract=pin))
-    assert rec["check"]["overall"] == "pass"
-
-
-def test_repair_refuses_a_malformed_snapshot_identity_and_never_needs_the_live_file(ui, server):
-    """R3 through HTTP: a captured pin whose identity was altered or dropped refuses preview and repair with
-    snapshot_incomplete before any dispatch; the intact capture repairs after the live contract is gone."""
-    save_contract(ui, "c", TEXT_CONTRACT)
-    configure(ui, server)
-    server.reply(answer("nope"))
-    rec = record_of(checked(ui, "c"))
-    assert rec["check"]["overall"] == "fail" and rec["contract"]["name"] == "c"
-    held = ui.state.store.record_of(rec["id"])
-    good = dict(held["contract"])
-    damaged = [{**good, "name": "../not-a-name"}, {**good, "revision": True}, {**good, "revision": 0},
-               {**good, "revision": "1"}, {**good, "name": None}, {**good, "revision": None},
-               {k: v for k, v in good.items() if k != "name"}, {k: v for k, v in good.items() if k != "revision"}]
-    for bad in damaged:
-        held["contract"] = bad
-        for route in ("/api/repair/preview", "/api/repair"):
-            fail = failure_of(lambda: request(ui, route, {"attempt_id": rec["id"]}))
-            assert (fail.status, fail.body["code"]) == (409, "snapshot_incomplete"), (route, bad)
-    assert len(server.requests) == 1 and ui.state.store.running_count() == 0         # nothing was dispatched
-    held["contract"] = good
-    (ui.workspace.path / "contracts" / "c.json").unlink()                              # the live file is gone
-    server.reply(answer("pong"))
-    repaired = record_of(repair_attempt(ui, rec["id"]))
-    assert repaired["check"]["overall"] == "pass"
-    assert (repaired["contract"]["name"], repaired["contract"]["revision"], repaired["contract"]["digest"]) == \
-        (good["name"], good["revision"], good["digest"])
+    assert not (ui.workspace.path / "runs").exists()
 
 
 # 99 ---------------------------------------------------------------------------------------------
-def test_checked_request_repair_reason(ui, server):
-    """0.1.4, 12.2: a repair of a truncated answer carries the truncation message and `repair_reason`."""
-    from agentwiz import checks
-    save_contract(ui, "c", TEXT_CONTRACT)
+# --- R-7 server part (0.2.3 spec v15, 4.2 T-1): the compact attempt view -------------------------------------------
+COMPACT_KEYS = {"attempt", "outcome", "check", "repair_reason", "availability"}
+
+
+def compact(ui, attempt_id, query="?view=compact"):
+    return request(ui, f"/api/attempts/{attempt_id}{query}")
+
+
+def test_compact_attempt_view(ui, server, monkeypatch):
+    from conftest import block_answer, result_of, run_block
+    from test_server_config import _repairing_block
     configure(ui, server)
-    # a truncated answer whose check passes: outcome truncated, check pass, and no repair
-    server.reply(Reply(body=[delta("pong"), delta(finish="length"), DONE], headers=SSE))
-    rec = record_of(checked(ui, "c"))
-    assert rec["outcome"] == "truncated" and rec["check"]["overall"] == "pass" and rec["repair_reason"] is None
-    fail = failure_of(lambda: repair_attempt(ui, rec["id"]))
-    assert fail.status == 409 and fail.body["code"] == "not_repairable"
-    # a truncated answer whose check fails: the preview, the repair's messages and its record all say `truncated`
-    server.reply(Reply(body=[delta("pon"), delta(finish="length"), DONE], headers=SSE), answer("pong"))
-    rec = record_of(checked(ui, "c"))
-    assert rec["outcome"] == "truncated" and rec["check"]["overall"] == "fail"
-    preview = request(ui, "/api/repair/preview", {"attempt_id": rec["id"]})
-    assert preview["repair_reason"] == "truncated"
-    contract = checks.contract_from_text(TEXT_CONTRACT)
-    assert preview["repair_message"] == checks.repair_message(contract, rec["check"], truncated=True)
-    repaired = record_of(repair_attempt(ui, rec["id"]))
-    assert repaired["repair_reason"] == "truncated" and repaired["messages_sent"] == preview["messages"]
-    assert repaired["role"] is None and repaired["fills"] == []
-    # a complete answer that fails its check: `check_failed`
-    server.reply(answer("nope"), answer("pong"))
-    rec = record_of(checked(ui, "c"))
-    assert request(ui, "/api/repair/preview", {"attempt_id": rec["id"]})["repair_reason"] == "check_failed"
-    assert record_of(repair_attempt(ui, rec["id"]))["repair_reason"] == "check_failed"
-    assert rec["repair_reason"] is None and rec["role"] is None and rec["fills"] == []
+    _repairing_block(ui)
+    server.reply(block_answer(out="nope"), block_answer(out="pong"))
+    result = result_of(run_block(ui, "ask", {"text": "pong"}))
+    first, second = result["steps"][0]["attempts"]
+    held = [compact(ui, first), compact(ui, second)]
+    assert held == [{"attempt": 1, "outcome": "complete", "check": "fail", "repair_reason": None, "availability": "held"},
+                    {"attempt": 2, "outcome": "complete", "check": "pass", "repair_reason": "check_failed",
+                     "availability": "held"}]
+    # Without `view`, with or without an unrelated parameter (the token parameter included), today's envelope.
+    envelope = poll_attempt(ui, first)
+    assert request(ui, f"/api/attempts/{first}?other=1") == envelope
+    assert request(ui, f"/api/attempts/{first}?t={ui.token}") == envelope
+    # Refusals: another view, view twice, a malformed ID; 410 when neither a record nor a summary is held.
+    for query in ("?view=full", "?view=compact&view=compact", "?view="):
+        assert failure_of(lambda: compact(ui, first, query)).status == 400
+    assert failure_of(lambda: compact(ui, "not-an-id")).status == 400
+    assert failure_of(lambda: compact(ui, "0" * 12 + "-1")).status == 410
+    # A Chat attempt: no check recorded.
+    server.reply(answer("pong"))
+    chat = record_of(complete(ui, "ping"))
+    assert compact(ui, chat["id"]) == {"attempt": 1, "outcome": "complete", "check": None, "repair_reason": None,
+                                       "availability": "held"}
+    # Running: null fields.
+    server.reply(Reply(body=[delta("po")], hold=True, headers=SSE, after_release=[delta(finish="stop"), DONE]))
+    stream = start_chat(ui, "ping")
+    started = read_until(iter_events(stream), "started")[-1]
+    assert compact(ui, started["attempt_id"]) == {"attempt": 1, "outcome": None, "check": None, "repair_reason": None,
+                                                  "availability": "running"}
+    server.release.set()
+    stream.read()
+    # A summary only: records evicted by lowering the record limit.
+    monkeypatch.setattr(runs, "RECORD_LIMIT", 0)
+    server.release.clear()
+    server.reply(answer("pong"))
+    record_of(complete(ui, "ping"))
+    summarised = compact(ui, second)
+    assert set(summarised) == COMPACT_KEYS
+    assert summarised == {"attempt": 2, "outcome": "complete", "check": "pass", "repair_reason": None,
+                          "availability": "summary"}
+    for view in held + [summarised]:
+        assert set(view) == COMPACT_KEYS and len(json.dumps(view)) < 1024

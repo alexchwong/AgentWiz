@@ -53,14 +53,25 @@ def restricted_history(ui, server):
     return first, second
 
 
+def current_selection(ui, key):
+    """0.2.3 S-1: the clean current selection of a saved block, at its effective revision."""
+    rows = {r['name']: r for r in request(ui, '/api/blocks')['blocks']}
+    return {'key': key, 'expected_revision': rows[key]['revision']}
+
+
 def test_acknowledged_retained_labels_stop_restricting_but_examples_stay_restricted(ui, server):
+    """R-4(l) (0.2.3): every `test` and `batches` plan is also sent as a clean current selection
+    `{key, expected_revision}`, with the same refusals and zero backend requests."""
     first, second = restricted_history(ui, server)
     body = {'key': 'history', 'inputs': {'text': 'value'}}
-    refused = failure_of(lambda: send(ui, 'plans', action='test', request=body))
-    assert refused.body['code'] == 'destination_untrusted'
-    sources = refused.body['issues'][0]['restriction_sources']
-    assert {'code': 'retained_label', 'input': 'text', 'revision_number': 1} in sources
-    assert refused.body['issues'][0]['eligible'] is True and refused.body['issues'][0]['trusted'] is False
+    current = {**current_selection(ui, 'history'), 'inputs': {'text': 'value'}}
+    for selection in (body, current):
+        refused = failure_of(lambda: send(ui, 'plans', action='test', request=selection))
+        assert refused.body['code'] == 'destination_untrusted'
+        sources = refused.body['issues'][0]['restriction_sources']
+        assert {'code': 'retained_label', 'input': 'text', 'revision_number': 1} in sources
+        assert refused.body['issues'][0]['eligible'] is True and refused.body['issues'][0]['trusted'] is False
+    assert not server.requests
     # An example saved while the label is retained keeps its restriction after acknowledgement.
     examples = [{'id': 'kept', 'version': 1, 'inputs': {'text': 'captured'},
                  'expectation': {'kind': 'review', 'criterion': 'review'}}]
@@ -78,14 +89,35 @@ def test_acknowledged_retained_labels_stop_restricting_but_examples_stay_restric
     acknowledged = put_review(ui, {'expected_revision': None, 'acknowledged': pair})
     assert acknowledged['pairs'][0]['acknowledged'] is True
 
-    plan = send(ui, 'plans', action='test', request=body)
-    assert not any(c.get('protected') for c in plan['descriptor']['candidates'])
-    with_example = {'candidates': [{'key': 'history'}], 'examples': examples}
-    assert failure_of(lambda: send(ui, 'plans', action='batches', request=with_example)).body['code'] == 'destination_untrusted'
+    for selection in (body, current):
+        plan = send(ui, 'plans', action='test', request=selection)
+        assert not any(c.get('protected') for c in plan['descriptor']['candidates'])
+    for candidate in ({'key': 'history'}, current_selection(ui, 'history')):
+        with_example = {'candidates': [candidate], 'examples': examples}
+        assert failure_of(lambda: send(ui, 'plans', action='batches', request=with_example)).body['code'] == 'destination_untrusted'
     assert not server.requests
     # Clearing the record restores the retained restriction.
     put_review(ui, {'expected_revision': acknowledged['revision'], 'acknowledged': []})
-    assert failure_of(lambda: send(ui, 'plans', action='test', request=body)).body['code'] == 'destination_untrusted'
+    for selection in (body, current):
+        assert failure_of(lambda: send(ui, 'plans', action='test', request=selection)).body['code'] == 'destination_untrusted'
+    assert not server.requests
+
+
+def test_clean_current_compare_keeps_saved_example_restriction(ui, server):
+    """R-4(m) (0.2.3): a clean current Compare that selects an example saved while the label was retained is
+    refused with the `example_restriction` source after acknowledgement, and nothing is sent."""
+    first, second = restricted_history(ui, server)
+    examples = [{'id': 'kept', 'version': 1, 'inputs': {'text': 'captured'},
+                 'expectation': {'kind': 'review', 'criterion': 'review'}}]
+    http_method(ui, 'blocks/history/examples', 'PUT', {'expected_revision': None, 'examples': examples})
+    put_review(ui, {'expected_revision': None, 'acknowledged': [{'revision': first['durable_id'], 'input': 'text'}]})
+    body = {'candidates': [{'key': 'history', 'revision': first['durable_id']}, current_selection(ui, 'history')],
+            'examples': examples}
+    refused = failure_of(lambda: send(ui, 'plans', action='batches', request=body))
+    assert refused.body['code'] == 'destination_untrusted'
+    sources = [s['code'] for issue in refused.body['issues'] for s in issue.get('restriction_sources', [])]
+    assert 'example_restriction' in sources, refused.body
+    assert not server.requests
 
 
 def test_overwrite_cannot_replace_a_labelled_revision_from_a_standalone_draft(ui, server):

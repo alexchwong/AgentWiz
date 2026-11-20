@@ -1,0 +1,187 @@
+{
+  "record_version": 1,
+  "id": "14e888bc9fba-1",
+  "run_id": "14e888bc9fba",
+  "step_id": "run",
+  "attempt": 1,
+  "parent_id": null,
+  "source": "block",
+  "accepted_at": "2026-11-19T21:53:44.672Z",
+  "profile": {
+    "name": "private",
+    "modified": false
+  },
+  "endpoint": {
+    "kind": "openai_compat",
+    "base_url": "http://127.0.0.1:33517/v1"
+  },
+  "model": "private-deid",
+  "provider": "",
+  "task": {},
+  "settings_sources": {
+    "temperature": "backend_default",
+    "reasoning": "backend_default"
+  },
+  "input_messages": [
+    {
+      "role": "system",
+      "content": "=== AgentWiz output protocol (generated; do not edit) ===\nReturn exactly one JSON object and nothing else: no words before or after it, and no Markdown fence around it.\nIts top-level keys are exactly these output names, in any order, one value each:\n  \"redacted_text\"\n  \"mapping\"\nEvery key must be present. Do not add keys, rename them, or nest one output inside another, and do not split one output across several keys.\nPlace each output's complete value directly under its own key. A value may be empty only where its schema allows that.\n\nOutput \"redacted_text\" (text)\nValue: a JSON string holding the complete text. Escape quotes, backslashes and line breaks as JSON requires, and put any formatting the task asks for inside that string. Do not send an object or an array here.\nValue requirements:\nText; literal comparisons and lengths use the decoded string without normalization.\n\nOutput \"mapping\" (JSON array)\nValue: the array itself, placed directly under its key \u2014 not a string containing JSON.\nValue requirements:\nSchema (JSON Schema 2020-12); the value must satisfy it exactly:\n{\"type\":\"array\",\"maxItems\":1000,\"items\":{\"type\":\"object\",\"properties\":{\"placeholder\":{\"type\":\"string\"},\"original\":{\"type\":\"string\"}},\"required\":[\"placeholder\",\"original\"],\"additionalProperties\":false}}\n\n=== end output protocol ==="
+    },
+    {
+      "role": "user",
+      "content": "Document:\n<<<\nJane Example reported fatigue on 3 March. Record TEST-123.\n>>>"
+    }
+  ],
+  "messages_sent": [
+    {
+      "role": "system",
+      "content": "=== AgentWiz output protocol (generated; do not edit) ===\nReturn exactly one JSON object and nothing else: no words before or after it, and no Markdown fence around it.\nIts top-level keys are exactly these output names, in any order, one value each:\n  \"redacted_text\"\n  \"mapping\"\nEvery key must be present. Do not add keys, rename them, or nest one output inside another, and do not split one output across several keys.\nPlace each output's complete value directly under its own key. A value may be empty only where its schema allows that.\n\nOutput \"redacted_text\" (text)\nValue: a JSON string holding the complete text. Escape quotes, backslashes and line breaks as JSON requires, and put any formatting the task asks for inside that string. Do not send an object or an array here.\nValue requirements:\nText; literal comparisons and lengths use the decoded string without normalization.\n\nOutput \"mapping\" (JSON array)\nValue: the array itself, placed directly under its key \u2014 not a string containing JSON.\nValue requirements:\nSchema (JSON Schema 2020-12); the value must satisfy it exactly:\n{\"type\":\"array\",\"maxItems\":1000,\"items\":{\"type\":\"object\",\"properties\":{\"placeholder\":{\"type\":\"string\"},\"original\":{\"type\":\"string\"}},\"required\":[\"placeholder\",\"original\"],\"additionalProperties\":false}}\n\n=== end output protocol ==="
+    },
+    {
+      "role": "user",
+      "content": "Document:\n<<<\nJane Example reported fatigue on 3 March. Record TEST-123.\n>>>"
+    }
+  ],
+  "contract": null,
+  "output_plan": {
+    "mode": "named_json",
+    "renderer": 2,
+    "digest": "8a5973a0f3791ef1dbe19d0b68580db30617a66da378ce2972290cc776b6f5c5",
+    "outputs": [
+      {
+        "name": "redacted_text",
+        "description": "",
+        "contract": {
+          "name": null,
+          "revision": null,
+          "digest": "sha256:fed9b2422ab2ba97002fb66293f22a137be694bb3a9afaa5a2d25966239fabe0",
+          "text": "{\n  \"format\": \"text\"\n}",
+          "policy": "user"
+        },
+        "revision": null,
+        "text": "{\n  \"format\": \"text\"\n}",
+        "policy": "user"
+      },
+      {
+        "name": "mapping",
+        "description": "",
+        "contract": {
+          "name": null,
+          "revision": null,
+          "digest": "sha256:89ccc0127a72d41ca1cba835a1cb02386166649cffc230a8d39dd59e0c713a3f",
+          "text": "{\n  \"format\": \"json\",\n  \"schema\": {\n    \"type\": \"array\",\n    \"maxItems\": 1000,\n    \"items\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"placeholder\": {\n          \"type\": \"string\"\n        },\n        \"original\": {\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"placeholder\",\n        \"original\"\n      ],\n      \"additionalProperties\": false\n    }\n  }\n}",
+          "policy": "user"
+        },
+        "revision": null,
+        "text": "{\n  \"format\": \"json\",\n  \"schema\": {\n    \"type\": \"array\",\n    \"maxItems\": 1000,\n    \"items\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"placeholder\": {\n          \"type\": \"string\"\n        },\n        \"original\": {\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"placeholder\",\n        \"original\"\n      ],\n      \"additionalProperties\": false\n    }\n  }\n}",
+        "policy": "user"
+      }
+    ]
+  },
+  "role": "tutorial_private",
+  "fills": [
+    {
+      "where": "prompt",
+      "placeholder": "{{inputs.text}}",
+      "source": "inputs.text",
+      "sha256": "67779ec40fc87f6ceb81c9f72bea04105357f11570246e0cc0222aa9904dae4e"
+    }
+  ],
+  "repair_reason": null,
+  "save_run": false,
+  "agentwiz_version": "0.2.2",
+  "modelspell_version": "0.4.0",
+  "routing": {
+    "format_version": 1,
+    "routing_mode": "managed",
+    "routing_preset": "balanced",
+    "routing_zdr": null,
+    "routing_data_collection": "",
+    "requested_slug": null,
+    "selected_slug": null,
+    "policy": {},
+    "selection": "not probed",
+    "probe_usage": "not applicable"
+  },
+  "ended_at": "2026-11-19T21:53:44.679Z",
+  "model_called": true,
+  "outcome": "complete",
+  "result": {
+    "text": "{\"redacted_text\":\"[PERSON_1] reported fatigue on 3 March. Record [RECORD_1].\",\"mapping\":[{\"placeholder\":\"[PERSON_1]\",\"original\":\"Jane Example\"},{\"placeholder\":\"[RECORD_1]\",\"original\":\"TEST-123\"}]}",
+    "reasoning": null,
+    "usage": {
+      "input_tokens": 12,
+      "output_tokens": 8,
+      "total_tokens": 20,
+      "reasoning_tokens": null,
+      "cached_input_tokens": null,
+      "cache_write_tokens": null
+    },
+    "cost": null,
+    "finish_reason": "stop",
+    "truncated": false,
+    "model": "stub",
+    "provider": null,
+    "response_id": "stub-1",
+    "transport": "chat_completions",
+    "reasoning_details": null,
+    "raw_usage": {
+      "prompt_tokens": 12,
+      "completion_tokens": 8,
+      "total_tokens": 20
+    }
+  },
+  "partial": null,
+  "error": null,
+  "cancel_reason": null,
+  "stop_requested_at": null,
+  "stop_mode": null,
+  "sent": null,
+  "check": {
+    "overall": "pass",
+    "checks": [
+      {
+        "check": "parse",
+        "result": "pass"
+      },
+      {
+        "check": "outputs.redacted_text",
+        "result": "pass"
+      },
+      {
+        "check": "outputs.mapping",
+        "result": "pass"
+      }
+    ],
+    "issues": [],
+    "issue_count": 0,
+    "notes": [],
+    "outputs": {
+      "redacted_text": {
+        "overall": "pass",
+        "checks": [],
+        "issues": [],
+        "issue_count": 0,
+        "notes": []
+      },
+      "mapping": {
+        "overall": "pass",
+        "checks": [
+          {
+            "check": "parse",
+            "result": "pass"
+          },
+          {
+            "check": "schema",
+            "result": "pass"
+          }
+        ],
+        "issues": [],
+        "issue_count": 0,
+        "notes": [
+          "value given already parsed"
+        ]
+      }
+    }
+  }
+}

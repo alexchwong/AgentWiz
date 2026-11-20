@@ -31,7 +31,7 @@ AgentWiz 0.2.2 includes:
   revision's standard description with its own `write_block_description` role, reviewed before Save description.
 - **Contracts:** a Workshop section for reusable Text and JSON contracts with append-only revisions, a readable
   editor (advanced source optional), sample checks, Used by and reviewable model-drafted proposals.
-- **Workbench:** Chat, Documents, MCP tools and Checked request remain independent utilities.
+- **Workbench:** Chat, Documents and MCP tools remain independent utilities.
 - **History:** saved runs, checks, attempts and source attribution, with saving off by default.
 - **Workflows:** exact captured block revisions, a palette/canvas/inspector editor and a full-form List view,
   destination trust, built-in transforms and explicit human-reviewed Release Gates.
@@ -137,7 +137,6 @@ workspace management. The tutorial opens as a help panel at the side, over the p
 | Workbench: Chat | `#chat` | Send a system prompt and input; see reasoning and answer stream in. |
 | Workbench: Documents | `#documents` | Preview a text document and copy it. |
 | Workbench: MCP tools | `#mcp-tools` | Discover and call tools, with labelled arguments or an explicit advanced editor. |
-| Workbench: Checked request | `#checked-request` | Check an answer and explicitly send a repair. |
 | History | `#history` | Read saved runs and attempts, copy evidence or delete a run. |
 
 A reload preserves validated navigation identifiers. Unknown fragments open Workshop. Keyboard arrows,
@@ -498,7 +497,9 @@ shipped model blocks passed live qualification and Agentic Chat passed its live 
 In **Workshop → Workflows**, create a named workflow, add inputs and outputs, then add
 nodes from exact v4 block revisions. **Design** combines a searchable palette, canvas and
 inspector. Connect compatible ports by dragging, tapping or keyboard; use **List view** for
-the whole binding form over the same draft. A binding can select an object field or an array
+the whole binding form over the same draft. In List view each bound input and Output source has
+**Insert Release Gate** and a **Restriction** disclosure explaining why its value is restricted; an
+**Add Release Gate** remedy opens the connection a finding names, or asks you to choose when several qualify. A binding can select an object field or an array
 index. **Undo** and **Redo** cover graph edits until Save. Validation explains what stays
 local and the expected destinations; it does not replace Run's readiness check. Create a
 block or Restore placeholders from Design and return without discarding the unsaved graph.
@@ -731,6 +732,8 @@ of this section. Files must be UTF-8 (with or without a byte-order mark) or UTF-
 a byte-order mark; anything else, including Latin-1 and UTF-32, is refused with a message asking for
 a UTF-8 copy. Line endings become `\n`. The file is kept as it is: CSV is not turned into a table
 and JSON is not reformatted.
+Copied text carries no privacy label: to use private document text in a block, paste it into a **Local only**
+input of a block whose role resolves to a trusted local destination.
 
 The preview shows exactly what **Copy** will put on the clipboard: a provenance line such as
 `[file "report.md"]`, then the file's text. Beside it are its characters, an estimated token count
@@ -943,46 +946,18 @@ schema; and an empty extraction list must not stand for an input that failed to 
 workflows exist, run those checks as separate script blocks or example assertions — a structurally valid
 but wrong value passes its contract and only an example expectation or review rejects it.
 
-## Checked requests and repair
-
-The **Checked request** tab is Chat with a contract. Choose a saved contract (only usable ones are
-listed; Send stays disabled, with the reason, until one is chosen) and a revision: **Latest** shows the
-concrete revision number and digest it currently means, or choose a numbered revision. **Preview contract
-instructions** shows the exact generated section that will be appended to the system prompt for that
-revision. Type a system prompt and an input, and press **Send**. The request carries the exact revision and
-digest shown; if that revision has since been changed or removed the request is refused before sending,
-while a newer appended revision does not affect it. When the answer completes, it is checked, and the tab shows the overall result, each
-check, and the first 20 issues.
-
-- **What is checked.** Only answers whose outcome is *Complete* or *Truncated answer*. Blank,
-  stopped and failed requests are not checked; the tab says why.
-- **Runs and attempts.** Each Send starts a **run**; the first send and each repair are numbered
-  **attempts** of it. The tab lists them with their outcomes and check results.
-- **Repair** is offered when the latest attempt's check *failed*. It is not offered after a pass,
-  an incomplete or `contract_error` result (neither is the model's fault), a blank or failed
-  answer (send again, usually with a higher token cap), for an attempt that is not the latest, or
-  once the run has been stopped (send again). The button says which, and an attempt that has dropped
-  out of memory cannot be repaired.
-- **Preview repair** shows exactly what **Send repair** will send: the original messages, the failed
-  answer as an assistant message, then a fixed request listing the problems and asking for the whole
-  corrected output. Only the latest answer and repair message are sent, not earlier failed attempts.
-  The preview and the send cannot differ.
-- **Settings are the captured ones.** A repair uses the model, endpoint, provider pin, task settings
-  and contract copy of the attempt it repairs, not what the screen shows now. Changing the input,
-  profile or contract means starting a new run with **Send**. The API key is looked up again when you
-  send the repair; if you cleared it, the backend's refusal is an ordinary error.
-  If its captured endpoint differs from the configured server, repair is refused before sending;
-  start a new request instead. Historical records are not rewritten.
-- **LM Studio with reasoning off** uses LM Studio's native route, which flattens a conversation into
-  one text. Repair still works, but the roles are lost.
-- A repair counts toward the limit of 8 model requests in progress.
-
 ## Blocks
 
 A block lives directly under `<workspace>/blocks/<key>/`. An unmanaged block has an executable
 v3 `block.json` with a matching `name`. A Workshop-managed root has a v2 `block.json` that points
 to its saved generations. Edit managed blocks through Workshop so the captured assets stay intact.
-The saved-block inspector retains Reload and the run, Stop and trace controls.
+Run a saved block from Workshop (**Test** and **Compare**) or through the headless block API
+(`/api/blocks/run`); 0.2.3 removed the separate Saved block runs screen. An unedited block is tested at
+the revision Workshop showed: if its files, or a contract revision it pins, changed on disk since, Test
+is refused `stale` with nothing sent, your inputs are kept, and **Reload** reopens it. Workshop shows
+why a hand-written block cannot run (its file and the first 20 located issues) and keeps Test disabled;
+a Python block whose only problem is a changed scriptSpell engine offers **Open as draft**, which writes
+the installed engine into an edited draft and keeps the original as the first saved revision on Save.
 
 The table describes the executable v3 definition. Unknown keys are refused with their locations.
 
@@ -1060,23 +1035,18 @@ This step fragment requires your own `scripts/clean.py` and output declarations 
 - **File references** are relative paths inside the block folder (`prompts/` for prompts, `scripts/`
   and ending in `.py` for scripts). A symbolic link, a missing file or an oversized one (4 MiB; 1 MiB
   for `block.json`) is a problem. Only referenced files matter; helper files beside them are ignored.
-- **The Blocks tab** lists each block with its step kind and revision, or its problem (file, code and
-  located issues). A block with a problem can be opened and read, but not run. Opening a block shows
-  `block.json` and each referenced file as exact text with its SHA-256 and a **Copy** button, and the
-  contracts it uses as exact text with their names and revisions.
-- **The input form** comes from the input contracts: a text area for a `text` input; for a `json`
-  input, a generated form when its schema is a simple object schema (numbers are kept exactly as you
-  type them), otherwise a JSON editor. Values travel as text.
 - **Revisions.** Each block has a revision that changes when its files change, or when a revision it
-  pins changes, disappears or becomes unusable (a newer appended revision does not count). The page runs a block only at the revision it showed. If the block changed since, the run is
-  refused (`stale`), the tab reloads the block and keeps the input texts whose names still exist, and
-  nothing is sent. Run again.
-- **The trace** shows the run's state and outcome, the step, each attempt with its outcome, check and
-  repair reason, the fills with their provenance, the tool call or script operation, truncated
-  attempts and the token cap, reported usage against the allowance, the input and output check
-  results, and the outputs, each with a **Copy** button.
+  pins changes, disappears or becomes unusable (a newer appended revision does not count). A run, from
+  Workshop or the headless API, uses only the revision that was shown; a changed block is refused
+  `stale` and nothing is sent.
+- **Attempts.** Each finished Workshop trial has an **Attempts** list: every attempt's outcome, check
+  and repair reason, read only when you open it. An attempt no longer held in memory reads "details no
+  longer held".
 - **History.** Saved block runs appear in the History tab with `run.json`, each attempt and
-  `result.json`. A block run is never loaded back into the Blocks tab.
+  `result.json`. Checked request runs saved by earlier versions still open there.
+- **Activity indicator.** While a Workshop Test or Compare runs, the header indicator reopens it from any
+  tab, also after a reload, and its **Stop** stops it directly. A run of a saved block reopens read-only
+  until it ends; **Open block** then loads the block.
 
 ## Roles
 
@@ -1114,7 +1084,7 @@ other. This constrains the endpoint AgentWiz contacts, not what a server might f
 
 Each role may carry a default **Temperature** and **Reasoning level**; leave either as *Backend default*
 to set none. They apply to every model block and Workshop assistance call that uses the role, unless the block
-overrides or resets that setting ([Named outputs](#named-outputs)), and never to Chat or Checked request,
+overrides or resets that setting ([Named outputs](#named-outputs)), and never to Chat,
 which use the active profile. Zero is a default, not an absent one. An assignment-only save keeps existing
 definitions and defaults.
 
@@ -1122,8 +1092,8 @@ Unconfigured roles can be used while drafting, but cannot run. Missing profiles,
 location mismatches are shown with reasons. Existing version-1 assignments remain usable without
 automatic reassignment; saving through the editor adds explicit location definitions. Files written
 with definitions use format version 3 (versions 1 and 2 are still read) and require this version of
-AgentWiz or newer. **Chat and
-Checked request keep using the active profile**, not these roles. Role resolution uses saved profile
+AgentWiz or newer. **Chat
+keeps using the active profile**, not these roles. Role resolution uses saved profile
 settings when preparing a run; already captured Workshop trials retain their reviewed snapshots.
 
 ## Templates
@@ -1263,7 +1233,7 @@ gets a 503 `busy` that names it; nothing queues.
 
 ## Stop
 
-**Stop** (on Chat, Checked request and MCP tools) asks AgentWiz's server to end the request. For a
+**Stop** (on Chat and MCP tools) asks AgentWiz's server to end the request. For a
 model request this works at any stage: while connecting, while waiting for the first token, or in the
 middle of an answer. The request normally ends within about a second, the outcome is **Stopped**, and
 the page keeps showing the text that had arrived.

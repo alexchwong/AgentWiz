@@ -22,7 +22,7 @@ from test_runner import setup_model
 
 SSE = {"Content-Type": "text/event-stream"}
 FAST = {"idle_timeout_s": 60, "call_deadline_s": 60, "discovery_deadline_s": 60}
-FRAGS = ["chat", "documents", "mcp-tools", "contracts", "checked-request", "history", "blocks"]
+FRAGS = ["chat", "documents", "mcp-tools", "contracts", "history"]
 WAIT = 20_000          # only bounds a failing test
 
 
@@ -173,12 +173,21 @@ def test_page_tabs(ui, open_page):
     page.keyboard.press("ArrowLeft")
     has(page, "tab-documents", "aria-selected", "true")
     page.keyboard.press("End")
-    has(page, "tab-checked-request", "aria-selected", "true")
+    has(page, "tab-mcp-tools", "aria-selected", "true")
     page.keyboard.press("Home")
     has(page, "tab-chat", "aria-selected", "true")
     assert page.evaluate("location.hash") == "#chat"
     page.keyboard.press("ArrowRight")
     assert page.evaluate("location.hash") == "#documents"            # the fragment follows the selection
+
+
+@pytest.mark.parametrize("fragment", ["checked-request", "blocks"])
+def test_page_retired_screen_fragments_open_workshop(ui, open_page, fragment):
+    """N-1 (0.2.3): a retired screen's fragment opens Workshop under the unknown-fragment rule."""
+    page = open_page(ui, fragment)
+    has(page, "tab-workshop", "aria-selected", "true")
+    expect(tid(page, "tab-" + fragment)).to_have_count(0)
+    expect(tid(page, "panel-" + fragment)).to_have_count(0)
 
 
 # 81 --------------------------------------------------------------------------------------------------
@@ -745,60 +754,6 @@ def test_page_contract_synthesis_apply_save_and_inline_attachment_are_separate(u
 
 
 # 86 --------------------------------------------------------------------------------------------------
-def test_page_checked_request_repair(ui, server, open_page):
-    save_contract(ui, "c", JSON_CONTRACT)                       # ratio has maximum 1: a structural failure
-    server.reply(json_answer('{"id": 9007199254740993, "ratio": 1.5}'),
-                 json_answer('{"id": 9007199254740993, "ratio": 0.10000000000000000001}'))
-    configure(ui, server)
-    page = open_page(ui, "checked-request")
-    tid(page, "checked-contract").select_option("c")
-    say(page, "checked", "give the fields")
-    has(page, "checked-status", "data-state", "done")
-    has(page, "checked-check", "data-check", "fail")
-    has(page, "checked-repair", "data-repair", "allowed")
-    first = tid(page, "checked-status").get_attribute("data-attempt-id")
-    tid(page, "checked-repair-preview-btn").click()
-    preview = tid(page, "checked-repair-preview")
-    expect(preview).to_contain_text("Problems found", timeout=WAIT)
-    assert '"ratio": 1.5' in preview.text_content()                  # the failed answer goes back whole
-    tid(page, "checked-repair-send").click()
-    has(page, "checked-check", "data-check", "pass")
-    second = tid(page, "checked-status").get_attribute("data-attempt-id")
-    assert second != first and second.rsplit("-", 1)[0] == first.rsplit("-", 1)[0] and second.endswith("-2")
-    attempts = page.locator('[data-test="checked-attempt"]')
-    expect(attempts).to_have_count(2)
-    assert [attempts.nth(i).get_attribute("data-repair-reason") for i in range(2)] == ["", "check_failed"]   # #86
-    has(page, "checked-repair", "data-repair", "not_repairable")
-    sent = server.requests[-1]["body"]["messages"]
-    assert [m["role"] for m in sent] == ["system", "user", "assistant", "user"]      # the generated contract section
-    assert "AgentWiz output protocol" in sent[0]["content"]
-    assert server.requests[0]["body"]["messages"][0] == sent[0]                     # the repair reuses the capture
-
-
-def test_page_checked_request_dispatches_the_reviewed_numbered_revision(ui, server, open_page):
-    """Spec 13.1 / C17: Latest shows its concrete number; an explicit older revision is what is previewed and sent."""
-    first = save_contract(ui, "c", JSON_CONTRACT)
-    save_contract(ui, "c", JSON_CONTRACT_NO_SCHEMA, token=first["file_token"])            # revision 2: Any JSON
-    server.reply(json_answer('{"id": 1, "ratio": 0.5}'))
-    configure(ui, server)
-    page = open_page(ui, "checked-request")
-    tid(page, "checked-contract").select_option("c")
-    expect(tid(page, "checked-revision")).to_have_value("latest")
-    has(page, "checked-pin", "data-revision", "2")                                    # the concrete latest is shown
-    tid(page, "checked-revision").select_option("1")
-    has(page, "checked-pin", "data-revision", "1")
-    has(page, "checked-pin", "data-digest", first["digest"])
-    tid(page, "checked-contract-preview").click()
-    preview = tid(page, "checked-contract-instructions")
-    expect(preview).to_have_attribute("data-revision", "1")
-    section = preview.text_content()
-    assert "AgentWiz output protocol" in section and '"maximum":1' in section and "Any JSON" not in section
-    say(page, "checked", "give the fields")
-    has(page, "checked-status", "data-state", "done")
-    system = server.requests[-1]["body"]["messages"][0]["content"]
-    assert section.split("\n\n", 1)[1] in system                                      # exactly the previewed section
-
-
 # 87 --------------------------------------------------------------------------------------------------
 def test_page_history(ui, server, open_page):
     server.reply(answer("saved answer"))
@@ -909,132 +864,9 @@ def profile_and_role(ui, server):
     save_roles(ui, {"fast": "p"})
 
 
-def input_of(page, name):
-    return page.locator(f'[data-test="blocks-input"][data-input="{name}"]')
-
-
-def pick(page, block):
-    page.locator(f'[data-test="blocks-row"][data-block="{block}"]').click()
-    expect(page.locator('[data-test="blocks-file"]').first).to_be_visible()
-
-
 # 108 -----------------------------------------------------------------------------------------------------
-def test_page_blocks(ui, server, open_page):
-    profile_and_role(ui, server)
-    write_block(ui, "b", OBJ_BLOCK, OBJ_FILES)
-    server.reply(answer("not json at all"), json_answer('{"out":{"id": 9007199254740993, "ratio": 0.10000000000000000001}}'))
-    page = open_page(ui, "blocks")
-    row = page.locator('[data-test="blocks-row"][data-block="b"]')
-    expect(row).to_have_count(1)
-    assert row.get_attribute("data-problem") == ""
-    pick(page, "b")
-    assert sorted(f.get_attribute("data-path") for f in page.locator('[data-test="blocks-file"]').all()) == [
-        "block.json", "prompts/system.md", "prompts/user.md"]
-    assert input_of(page, "text").evaluate("e => e.tagName") == "TEXTAREA"                 # a text field
-    assert input_of(page, "obj").evaluate("e => e.tagName") == "TEXTAREA"                  # a JSON editor
-    expect(tid(page, "blocks-run")).to_be_enabled()
-    input_of(page, "text").fill("hello")
-    input_of(page, "obj").fill('{"id": 9007199254740993}')
-    tid(page, "blocks-run").click()
-    has(page, "blocks-status", "data-state", "done")
-    has(page, "blocks-status", "data-outcome", "complete")
-    attempts = page.locator('[data-test="blocks-attempt"]')
-    expect(attempts).to_have_count(2)
-    assert [a.get_attribute("data-check") for a in attempts.all()] == ["fail", "pass"]
-    assert [a.get_attribute("data-repair-reason") for a in attempts.all()] == ["", "check_failed"]
-    has(page, "blocks-trace", "data-attempts", "2")
-    assert server.requests[0]["body"]["messages"][1]["content"] == "Say hello for 9007199254740993"   # exact number
-    copied = copy_of(page, "blocks-copy-output")
-    assert jsonio.decode_exact(copied) == jsonio.decode_exact(EXACT)
-    # a run held at the backend: the Blocks tab says it is running while another tab is shown
-    server.reply(Reply(hold_headers=True, body=[delta('{"id":1}'), delta(finish="stop"), DONE],
-                       headers=SSE))
-    tid(page, "blocks-run").click()
-    has(page, "tab-blocks", "data-state", "running")
-    has(page, "blocks-status", "data-state", "running")
-    expect(tid(page, "blocks-run")).to_be_disabled()
-    tid(page, "ws-workbench").click()
-    has(page, "tab-blocks", "data-state", "running")
-    has(page, "panel-blocks", "data-state", "running")
-    server.release.set()
-    tid(page, "tab-workshop").click()
-    tid(page, "tab-blocks").click()
-    has(page, "blocks-status", "data-state", "done")
-    has(page, "tab-blocks", "data-state", "idle")
-
-
 # 109 -----------------------------------------------------------------------------------------------------
-def test_page_blocks_stop_and_reattach(ui, server, open_page):
-    # Stop a running Python block from the page (0.2.2: host scripts are retired).
-    write_block(ui, "sc", python_block("sc", inputs={"a": {"format": "text"}}),
-                {"scripts/go.py": "def transform(inputs):\n    n = 0\n    while True:\n        n += 1\n"})
-    page = open_page(ui, "blocks")
-    pick(page, "sc")
-    input_of(page, "a").fill("go")
-    tid(page, "blocks-run").click()
-    assert wait_until(lambda: ui.state.python.in_flight == 1)
-    has(page, "blocks-status", "data-state", "running")
-    tid(page, "blocks-stop").click()
-    has(page, "blocks-status", "data-outcome", "stopped")
-    assert wait_until(lambda: ui.state.python.in_flight == 0)
-    # a held model block run, reattached after a reload
-    setup_model(ui, server)
-    server.reply(Reply(hold_headers=True, body=[delta('{"out":"fine"}'), delta(finish="stop"), DONE], headers=SSE))
-    it = iter_events(run_block(ui, "b", {"text": "x"}, raw=True))
-    run_id = read_until(it, "started")[-1]["run_id"]
-    page = open_page(ui, "blocks")
-    active = page.locator('[data-test="blocks-active-run"]')
-    expect(active).to_have_count(1)
-    assert active.get_attribute("data-run-id") == run_id
-    tid(page, "blocks-reattach").click()
-    has(page, "blocks-status", "data-state", "polling")
-    has(page, "blocks-status", "data-run-id", run_id)
-    server.release.set()
-    has(page, "blocks-status", "data-state", "done")
-    has(page, "blocks-status", "data-outcome", "complete")
-    list(it)
-
-
 # 110 -----------------------------------------------------------------------------------------------------
-def test_page_blocks_stale_and_problem(ui, server, open_page):
-    profile_and_role(ui, server)
-    saved = save_contract(ui, "tc", '{"format": "text"}')
-    pin = {"name": "tc", "revision": 1, "digest": saved["digest"]}
-    block = {**OBJ_BLOCK, "inputs": {"text": {"contract": pin}, "obj": {"contract": {"format": "json"}}}}
-    folder = write_block(ui, "b", block, OBJ_FILES)
-    write_block(ui, "broken", "{ this is not json")
-    server.reply(json_answer('{"out":'+EXACT+'}'))
-    page = open_page(ui, "blocks")
-    expect(page.locator('[data-test="blocks-row"][data-problem]:not([data-problem=""])')).to_have_count(1)
-    pick(page, "b")
-    input_of(page, "text").fill("hello")
-    input_of(page, "obj").fill('{"id": 1}')
-    (folder / "prompts" / "user.md").write_text("Edited: {{inputs.text}} {{inputs.obj.id}}")      # after it was shown
-    tid(page, "blocks-run").click()
-    has(page, "blocks-status", "data-state", "stale")
-    assert server.requests == []                                                     # nothing was resent
-    expect(input_of(page, "text")).to_have_value("hello")                           # the input texts are kept
-    tid(page, "blocks-run").click()
-    has(page, "blocks-status", "data-outcome", "complete")
-    assert server.requests[0]["body"]["messages"][1]["content"] == "Edited: hello 1"
-    # a newer revision of the saved contract does not move the block's pin; an explicit new pin makes the shown
-    # form stale, and the reloaded form reflects the newly pinned revision
-    newer = save_contract(ui, "tc", '{"format": "text", "contains": ["X"]}', saved["file_token"])
-    block["inputs"]["text"]["contract"] = {"name": "tc", "revision": newer["revision"], "digest": newer["digest"]}
-    write_block(ui, "b", block, OBJ_FILES | {"prompts/user.md": "Edited: {{inputs.text}} {{inputs.obj.id}}"})
-    tid(page, "blocks-run").click()
-    has(page, "blocks-status", "data-state", "stale")
-    assert len(server.requests) == 1
-    assert "contains" in page.locator('[data-test="blocks-contract"][data-section="inputs"][data-name="text"]').text_content()
-    tid(page, "blocks-run").click()
-    has(page, "blocks-status", "data-outcome", "rejected")                          # "hello" lacks the X
-    assert len(server.requests) == 1
-    # a block with a problem can be read but not run
-    page.locator('[data-test="blocks-row"][data-block="broken"]').click()
-    expect(tid(page, "blocks-problem")).to_be_visible()
-    expect(tid(page, "blocks-run")).to_be_disabled()
-
-
 # 111 -----------------------------------------------------------------------------------------------------
 def test_page_roles_flags_missing_defaults(ui, server, open_page):
     from test_contract_overhaul import setup_role
@@ -2824,3 +2656,785 @@ def test_page_describe_python_generates_checks_and_applies_examples(ui, server, 
     has(page, "ws-python-status", "data-requests", "2")
     tid(page.locator('[data-test="ws-dialog"]'), "ws-apply").click()
     expect(tid(page, "ws-python-source")).to_have_value(source)
+
+
+# --- 0.2.3 (spec v15) Stage 0: D-1 and N-2 -------------------------------------------------------------------
+def private_model_block(ui, name="private_note"):
+    """A managed v4 model block whose Text input is Local only, at role `fast`."""
+    from test_workshop import plan_save
+    definition = {"format_version": 4, "name": name, "description": "Summarise a private note",
+                  "inputs": {"text": {"contract": {"format": "text"}, "local_only": True}},
+                  "outputs": {"out": {"contract": {"format": "text"}, "local_only": True}},
+                  "steps": [{"id": "request", "kind": "model", "role": "fast", "system": {"text": ""},
+                             "prompt": {"text": "Summarise: {{inputs.text}}"}, "response_mode": "named_json",
+                             "repair": {"max_repairs": 0}}]}
+    return plan_save(ui, {"key": name, "definition_text": jsonio.encode_exact(definition), "files": {}, "metadata": {}})
+
+
+def trust_destination(ui, url, model):
+    from test_workshop import send
+    grants = request(ui, "/api/workshop/destination-trust")
+    send(ui, "destination-trust", expected_revision=grants["revision"], trusted=True,
+         destination={"kind": "openai_compat", "url": url, "model": model, "provider": ""})
+
+
+def test_page_documents_pdf_to_local_only_block_input(ui, server, open_page, tmp_path):
+    """D-1: Documents → PDF text → Copy → a Local only Workshop input on a trusted local destination; the same
+    run with an untrusted destination is refused and sends nothing."""
+    from agentwiz.tutorial_support import pdf_fixtures
+    configure(ui, server)
+    save_profile(ui, "p", model="m", kind="openai_compat", base_url=server.url + "/v1", provider="")
+    save_profile(ui, "q", model="untrusted", kind="openai_compat", base_url=server.url + "/v1", provider="")
+    save_roles(ui, {"fast": "p"})
+    trust_destination(ui, server.url + "/v1", "m")
+    private_model_block(ui)
+    path = tmp_path / "partial.pdf"
+    path.write_bytes(pdf_fixtures.partial())
+    page = open_page(ui, "documents")
+    tid(page, "documents-file").set_input_files(str(path))
+    has(page, "documents-preview", "data-state", "ready")
+    has(page, "documents-coverage", "data-state", "partial")
+    has(page, "documents-coverage", "data-pages-with-text", "2")
+    warning = page.locator('[data-test="documents-coverage-warning"]')
+    expect(warning).to_have_count(1)
+    expect(warning).to_have_attribute("data-code", "no_text_layer")
+    expect(warning).to_have_attribute("data-page", "2")
+    copied = copy_of(page, "documents-preview-copy")
+    assert copied.split("\n", 1)[0] == '[file "partial.pdf"]'
+    assert "First page text." in copied
+    server.reply(answer(jsonio.encode_exact({"out": "A summary."})))
+    page.goto(ui.url + "#workshop")
+    tid(page, "ws-list").select_option("private_note")
+    tid(page, "ws-test").click()
+    tid(page, "ws-field-text").fill(copied)
+    tid(page, "ws-run-test").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    has(page, "ws-trial", "data-outcome", "complete")
+    assert len(server.requests) == 1
+    user = server.requests[0]["body"]["messages"][-1]["content"]
+    assert copied in user
+    save_roles(ui, {"fast": "q"})
+    tid(page, "ws-run-test").click()
+    expect(page.locator('[data-code="destination_untrusted"]').first).to_be_attached()
+    assert len(server.requests) == 1
+
+
+def test_page_startup_initialises_every_screen(ui, open_page, context):
+    """N-2: the whole startup chain ran: no page error, an empty banner, Contracts, Workflows, the Trusted
+    destinations dialog, and no stray `null` text in the Workshop sidebar."""
+    errors = []
+    page = context.new_page()
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(ui.url + "#workshop")
+    page.wait_for_function("document.getElementById('version').textContent !== ''", timeout=WAIT)
+    expect(tid(page, "contracts-search")).to_be_attached()
+    expect(tid(page, "wf-picker")).to_be_attached()
+    banner = page.locator("#banner")
+    expect(banner).to_be_hidden()
+    assert banner.text_content() == ""
+    tid(page, "ws-settings").click()
+    tid(page, "header-workflow-settings").click()
+    expect(page.get_by_role("dialog", name="Trusted destinations")).to_be_visible()
+    assert not page.evaluate("""() => [...document.querySelectorAll('.ws-layout aside')].some(aside =>
+        [...aside.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim() === 'null'))""")
+    assert errors == []
+
+
+# --- 0.2.3 Stage 3a: R-1 and R-7 (T-1, the trial's Attempts disclosure) -----------------------------------------
+def workshop_test_obj_block(ui, server, page):
+    profile_and_role(ui, server)
+    write_block(ui, "b", OBJ_BLOCK, OBJ_FILES)
+    server.reply(answer("not json at all"), json_answer('{"out":{"id": 9007199254740993, "ratio": 0.10000000000000000001}}'))
+    page.goto(ui.url + "#workshop")
+    tid(page, "ws-list").select_option("b")
+    tid(page, "ws-test").click()
+    tid(page, "ws-field-text").fill("hello")
+    tid(page, "ws-field-obj").fill('{"id": 9007199254740993}')
+    tid(page, "ws-run-test").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    has(page, "ws-trial", "data-outcome", "complete")
+
+
+def attempt_values(page, attribute):
+    return [a.get_attribute(attribute) for a in page.locator('[data-test="ws-attempt"]').all()]
+
+
+def test_page_workshop_trial_attempts_show_check_and_repair_reason(ui, server, open_page):
+    """R-1: the Saved block runs attempt display, re-homed in a Workshop trial through T-1."""
+    page = open_page(ui)
+    workshop_test_obj_block(ui, server, page)
+    has(page, "ws-trial", "data-attempts", "2")
+    tid(page, "ws-attempts").locator("summary").click()
+    expect(page.locator('[data-test="ws-attempt"]')).to_have_count(2)
+    assert attempt_values(page, "data-check") == ["fail", "pass"]
+    assert attempt_values(page, "data-repair-reason") == ["", "check_failed"]
+    assert attempt_values(page, "data-state") == ["held", "held"]
+    assert server.requests[0]["body"]["messages"][1]["content"] == "Say hello for 9007199254740993"
+    copied = copy_of(page, "ws-copy-output")
+    assert jsonio.decode_exact(copied) == jsonio.decode_exact(EXACT)
+
+
+def test_page_workshop_trial_attempts_after_eviction(ui, server, open_page, monkeypatch):
+    """R-1, second case: evicted records show a summary or 'not held', never a repair reason."""
+    from agentwiz import runs
+    page = open_page(ui)
+    workshop_test_obj_block(ui, server, page)
+    monkeypatch.setattr(runs, "RECORD_LIMIT", 0)
+    server.reply(answer("pong"))
+    from conftest import complete
+    complete(ui, "evict")
+    tid(page, "ws-attempts").locator("summary").click()
+    expect(page.locator('[data-test="ws-attempt"]')).to_have_count(2)
+    assert set(attempt_values(page, "data-state")) <= {"summary", "not_held"}
+    assert attempt_values(page, "data-repair-reason") == ["", ""]
+
+
+def test_page_workshop_compare_loads_attempts_only_on_demand(ui, server, open_page):
+    """R-7 page part: a large Compare reads no attempt record until one trial's Attempts is opened, and then only
+    compact views, one per attempt; reopening makes no further request."""
+    from test_workshop import plan_save, send, start_planned, completed
+    profile_and_role(ui, server)
+    definition = {"format_version": 4, "name": "big", "description": "big answers",
+                  "inputs": {"text": {"contract": {"format": "text"}, "local_only": False}},
+                  "outputs": {"out": {"contract": {"format": "text"}, "local_only": False}},
+                  "steps": [{"id": "request", "kind": "model", "role": "fast", "system": {"text": ""},
+                             "prompt": {"text": "{{inputs.text}}"}, "response_mode": "named_json",
+                             "repair": {"max_repairs": 0}}]}
+    draft = {"key": "big", "definition_text": jsonio.encode_exact(definition), "files": {}, "metadata": {}}
+    first = plan_save(ui, draft)
+    definition["description"] = "big answers, again"
+    reopened = send(ui, "preview", key="big")["draft"]
+    reopened["definition_text"] = jsonio.encode_exact(definition)
+    second = plan_save(ui, reopened, reopened["base_digest"])
+    server.reply(answer(jsonio.encode_exact({"out": "x" * (512 * 1024)})))
+    examples = [{"id": f"e{n}", "version": 1, "label": f"e{n}", "inputs": {"text": str(n)},
+                 "expectation": {"kind": "review", "criterion": ""}, "verified": False} for n in range(20)]
+    started = start_planned(ui, "batches", {"candidates": [{"key": "big", "revision": first["durable_id"]},
+                                                           {"key": "big", "revision": second["durable_id"]}],
+                                            "examples": examples})
+    seen = []
+    page = open_page(ui)
+    page.on("request", lambda r: seen.append(r.url) if "/api/attempts/" in r.url else None)
+    page.goto(ui.url + "#workshop/big/compare")
+    assert completed(ui, started["batch_id"])["state"] == "complete"
+    trials = page.locator('[data-test="ws-trial"]')
+    expect(trials).to_have_count(40)
+    expect(page.locator('[data-test="ws-trial"][data-outcome="complete"]')).to_have_count(40)
+    assert seen == []
+    trial = trials.first
+    tid(trial, "ws-attempts").locator("summary").click()
+    expect(trial.locator('[data-test="ws-attempt"]')).to_have_count(1)
+    assert len(seen) == 1 and all(url.endswith("?view=compact") for url in seen)
+    tid(trial, "ws-attempts").locator("summary").click()
+    tid(trial, "ws-attempts").locator("summary").click()
+    expect(trial.locator('[data-test="ws-attempt"]')).to_have_count(1)
+    assert len(seen) == 1
+
+
+# --- 0.2.3 Stage 4: R-2 to R-5 (S-1, B-1, E-1, A-1) ------------------------------------------------------------
+def held_block_reply():
+    return Reply(body=[delta('{"out":')], headers=SSE, hold=True, after_release=[delta('"fine"}'), delta(finish="stop"), DONE])
+
+
+def managed_text_block(ui, key="managed"):
+    from test_workshop import plan_save
+    definition = {"format_version": 4, "name": key, "description": "a managed block",
+                  "inputs": {"text": {"contract": {"format": "text"}, "local_only": False}},
+                  "outputs": {"out": {"contract": {"format": "text"}, "local_only": False}},
+                  "steps": [{"id": "request", "kind": "model", "role": "fast", "system": {"text": ""},
+                             "prompt": {"text": "Say {{inputs.text}}"}, "response_mode": "named_json",
+                             "repair": {"max_repairs": 0}}]}
+    return plan_save(ui, {"key": key, "definition_text": jsonio.encode_exact(definition), "files": {}, "metadata": {}})
+
+
+def open_block_test(page, ui, key):
+    page.goto(ui.url + "#workshop")
+    tid(page, "ws-list").select_option(key)
+    tid(page, "ws-test").click()
+
+
+def run_test(page, text="x"):
+    tid(page, "ws-field-text").fill(text)
+    tid(page, "ws-run-test").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+
+
+def active_batch(ui):
+    assert wait_until(lambda: request(ui, "/api/workshop/batches")["active"] is not None)
+    return request(ui, "/api/workshop/batches")["active"]
+
+
+def held_test_then_reload(page, ui, server, key="managed"):
+    managed_text_block(ui, key)
+    server.reply(held_block_reply())
+    open_block_test(page, ui, key)
+    run_test(page)
+    assert server.wait_holding(1)
+    batch = active_batch(ui)
+    page.goto(ui.url + "#chat")
+    page.reload()
+    page.wait_for_function("document.getElementById('version').textContent !== ''", timeout=WAIT)
+    expect(tid(page, "header-activity")).to_be_visible()
+    return batch
+
+
+def test_page_indicator_stop_after_reload(ui, server, open_page):
+    """R-2(a): after Test → Chat → reload, the indicator's own Stop ends the held trial; nothing more is sent."""
+    profile_and_role(ui, server)
+    page = open_page(ui)
+    batch = held_test_then_reload(page, ui, server)
+    tid(page, "header-activity-stop").click()
+    assert wait_until(lambda: request(ui, "/api/workshop/batches/" + batch)["state"] != "running")
+    assert request(ui, "/api/workshop/batches/" + batch)["rows"][0]["outcome"] == "stopped"
+    assert len(server.requests) == 1
+    expect(tid(page, "header-activity")).to_be_hidden()
+
+
+def test_page_indicator_reattaches_clean_run_read_only(ui, server, open_page):
+    """R-2(b): a clean current run of a managed block reattaches read-only after a reload: the recorded rating
+    shows, no review or run control is offered, and only GETs and the one Stop are sent until Open block."""
+    from conftest import block_answer, switch_history
+    profile_and_role(ui, server)
+    switch_history(ui, True)
+    managed_text_block(ui)
+    server.reply(block_answer(out="first"), held_block_reply())
+    examples = [{"id": f"e{n}", "version": 1, "label": f"e{n}", "inputs": {"text": str(n)},
+                 "expectation": {"kind": "review", "criterion": ""}, "verified": False} for n in (1, 2)]
+    from test_workshop import http_method
+    http_method(ui, "blocks/managed/examples", "PUT", {"expected_revision": None, "examples": examples})
+    page = open_page(ui)
+    open_block_test(page, ui, "managed")
+    tid(page, "ws-run-saved-examples").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    assert server.wait_holding(1)
+    batch = active_batch(ui)
+    expect(page.locator('[data-test="ws-trial"][data-outcome="complete"]')).to_have_count(1)
+    page.locator('[data-test="ws-trial"][data-outcome="complete"]').get_by_role("button", name="Mark correct").click()
+    expect(page.locator('[data-test="ws-trial"][data-correctness="correct"]')).to_have_count(1)
+    plan = request(ui, "/api/workshop/batches/" + batch)["plan"]["candidates"][0]
+    assert plan["selection"] == "current"
+    page.goto(ui.url + "#chat")
+    page.reload()
+    page.wait_for_function("document.getElementById('version').textContent !== ''", timeout=WAIT)
+    sent = []
+    page.on("request", lambda r: sent.append((r.method, r.url)) if "/api/" in r.url else None)
+    tid(page, "header-activity").click()
+    attached = tid(page, "ws-attached")
+    expect(attached).to_have_attribute("data-operation-id", batch)
+    arm = tid(page, "ws-attached-arm")
+    expect(arm).to_have_attribute("data-source", "current")
+    expect(arm).to_have_attribute("data-key", "managed")
+    expect(arm).to_have_attribute("data-expected-revision", str(plan["expected_revision"]))
+    trials = page.locator('[data-test="ws-trial"]')
+    expect(trials.nth(0)).to_have_attribute("data-correctness", "correct")
+    expect(trials.nth(1)).to_have_attribute("data-outcome", "dispatch_pending")
+    view = request(ui, "/api/workshop/batches/" + batch)
+    assert request(ui, "/api/block_runs/" + view["active_run"])["state"] == "running"
+    for name in ("ws-mark-correct", "ws-mark-incorrect", "ws-run-test", "ws-compare-versions", "ws-save-revision"):
+        expect(tid(attached, name)).to_have_count(0)
+    expect(attached.get_by_role("button", name="Mark correct")).to_have_count(0)
+    expect(tid(page, "ws-attached-open")).to_be_disabled()
+    tid(page, "ws-attached-stop").click()
+    expect(trials.nth(1)).to_have_attribute("data-outcome", "stopped")
+    expect(trials.nth(0)).to_have_attribute("data-outcome", "complete")
+    assert [m for m, _ in sent if m != "GET"] == ["POST"]
+    assert [u for m, u in sent if m == "POST"][0].endswith(f"/api/workshop/batches/{batch}/stop")
+    assert len(server.requests) == 2
+    tid(page, "ws-attached-open").click()
+    expect(page.locator('[data-test="ws-trial"]')).to_have_count(2)
+    expect(page.locator('[data-test="ws-trial"]').nth(0).get_by_role("button", name="Mark correct")).to_have_count(1)
+
+
+def test_page_indicator_reattaches_explicit_revision(ui, server, open_page):
+    """R-2(b2): an explicit retained revision chosen in the picker reattaches as `revision` with its ID and number."""
+    profile_and_role(ui, server)
+    first = managed_text_block(ui)
+    page = open_page(ui)
+    open_block_test(page, ui, "managed")
+    page.locator('[data-test="ws-revision-picker"] select, [data-test="ws-choice-block-revision"]').first.select_option(first["durable_id"])
+    server.reply(held_block_reply())
+    run_test(page)
+    assert server.wait_holding(1)
+    batch = active_batch(ui)
+    plan = request(ui, "/api/workshop/batches/" + batch)["plan"]["candidates"][0]
+    page.goto(ui.url + "#chat")
+    page.reload()
+    page.wait_for_function("document.getElementById('version').textContent !== ''", timeout=WAIT)
+    tid(page, "header-activity").click()
+    arm = tid(page, "ws-attached-arm")
+    expect(arm).to_have_attribute("data-source", "revision")
+    expect(arm).to_have_attribute("data-revision-id", plan["block_revision_id"])
+    expect(arm).to_have_attribute("data-revision-number", str(plan["block_revision_number"]))
+    tid(page, "ws-attached-stop").click()
+    assert wait_until(lambda: request(ui, "/api/workshop/batches/" + batch)["state"] != "running")
+
+
+def edited_held_test(page, ui, server):
+    managed_text_block(ui)
+    open_block_test(page, ui, "managed")
+    tid(page, "ws-design").click()
+    page.locator('[data-test="ws-field-purpose"], textarea[aria-label="Purpose"]').first.fill("edited purpose")
+    has(page, "ws-unsaved-state", "data-state", "unsaved")
+    tid(page, "ws-test").click()
+    server.reply(held_block_reply())
+    run_test(page)
+    assert server.wait_holding(1)
+    return active_batch(ui)
+
+
+def test_page_indicator_reattaches_edited_draft(ui, server, open_page):
+    """R-2(b3): an edited draft reloads through Preview with its reference and follows the batch."""
+    profile_and_role(ui, server)
+    page = open_page(ui)
+    batch = edited_held_test(page, ui, server)
+    page.goto(ui.url + "#chat")
+    page.reload()
+    page.wait_for_function("document.getElementById('version').textContent !== ''", timeout=WAIT)
+    tid(page, "header-activity").click()
+    has(page, "ws-choice-block-revision", "data-dirty", "true")
+    expect(tid(page, "ws-attached")).to_have_count(0)
+    tid(page, "header-activity-stop").click()
+    assert wait_until(lambda: request(ui, "/api/workshop/batches/" + batch)["state"] != "running")
+    assert request(ui, "/api/workshop/batches/" + batch)["rows"][0]["outcome"] == "stopped"
+    assert len(server.requests) == 1
+
+
+def test_page_indicator_falls_back_when_draft_ref_evicted(ui, server, open_page):
+    """R-2(b4): with the draft reference evicted, the click shows the attached run (`draft`), and Stop works."""
+    profile_and_role(ui, server)
+    page = open_page(ui)
+    batch = edited_held_test(page, ui, server)
+    page.goto(ui.url + "#chat")
+    page.reload()
+    page.wait_for_function("document.getElementById('version').textContent !== ''", timeout=WAIT)
+    with ui.state.workshop.lock:
+        ui.state.workshop.drafts.records.clear()
+    tid(page, "header-activity").click()
+    expect(tid(page, "ws-attached-arm")).to_have_attribute("data-source", "draft")
+    tid(page, "ws-attached-stop").click()
+    assert wait_until(lambda: request(ui, "/api/workshop/batches/" + batch)["state"] != "running")
+    assert len(server.requests) == 1
+
+
+def test_page_indicator_reattaches_after_leaving_without_reload(ui, server, open_page):
+    """R-2(b5): leave the block while the poller keeps publishing the indicator; Open still reattaches by ID."""
+    profile_and_role(ui, server)
+    managed_text_block(ui, "other")
+    page = open_page(ui)
+    batches = []
+    page.on("request", lambda r: batches.append(r.url) if "/api/workshop/batches/" in r.url else None)
+    managed_text_block(ui)
+    server.reply(held_block_reply())
+    open_block_test(page, ui, "managed")
+    run_test(page)
+    assert server.wait_holding(1)
+    batch = active_batch(ui)
+    tid(page, "ws-list").select_option("other")
+    page.wait_for_timeout(600)                     # the poller keeps the indicator published meanwhile
+    tid(page, "ws-workbench").click()
+    tid(page, "header-activity").click()
+    expect(tid(page, "ws-attached")).to_have_attribute("data-operation-id", batch)
+    expect(tid(page, "ws-attached-arm")).to_have_attribute("data-key", "managed")
+    tid(page, "ws-attached-stop").click()
+    assert wait_until(lambda: request(ui, "/api/workshop/batches/" + batch)["state"] != "running")
+
+
+def test_page_indicator_open_keeps_own_draft(ui, server, open_page):
+    """R-2(b6): never left the block: Open shows the same draft following the batch, with no prompt."""
+    profile_and_role(ui, server)
+    page = open_page(ui)
+    batch = edited_held_test(page, ui, server)
+    tid(page, "ws-workbench").click()
+    tid(page, "header-activity").click()
+    expect(tid(page, "ws-dialog")).to_be_hidden()
+    expect(tid(page, "ws-attached")).to_have_count(0)
+    has(page, "ws-choice-block-revision", "data-dirty", "true")
+    tid(page, "header-activity-stop").click()
+    assert wait_until(lambda: request(ui, "/api/workshop/batches/" + batch)["state"] != "running")
+    assert len(server.requests) == 1
+
+
+def test_page_indicator_stop_when_block_deleted(ui, server, open_page):
+    """R-2(c): the block's folder is gone before the reload; the indicator's Stop still stops the batch."""
+    import shutil
+    profile_and_role(ui, server)
+    page = open_page(ui)
+    batch = held_test_then_reload(page, ui, server)
+    shutil.rmtree(ui.workspace.path / "blocks" / "managed")
+    page.reload()
+    page.wait_for_function("document.getElementById('version').textContent !== ''", timeout=WAIT)
+    tid(page, "header-activity-stop").click()
+    assert wait_until(lambda: request(ui, "/api/workshop/batches/" + batch)["state"] != "running")
+    assert len(server.requests) == 1
+
+
+def test_page_indicator_clears_when_batch_completes(ui, server, open_page):
+    """R-2(d): without Stop, releasing the fake completes the trial and the indicator clears."""
+    profile_and_role(ui, server)
+    page = open_page(ui)
+    batch = held_test_then_reload(page, ui, server)
+    server.release.set()
+    assert wait_until(lambda: request(ui, "/api/workshop/batches/" + batch)["state"] != "running")
+    assert request(ui, "/api/workshop/batches/" + batch)["rows"][0]["outcome"] == "complete"
+    expect(tid(page, "header-activity")).to_be_hidden()
+
+
+def test_page_workshop_stops_looping_python_block(ui, open_page):
+    """R-3: Workshop Test of a looping Python block; Stop; `stopped`; the Python slot is released."""
+    write_block(ui, "sc", python_block("sc", inputs={"a": {"format": "text"}}),
+                {"scripts/go.py": "def transform(inputs):\n    n = 0\n    while True:\n        n += 1\n"})
+    page = open_page(ui)
+    open_block_test(page, ui, "sc")
+    tid(page, "ws-field-a").fill("go")
+    tid(page, "ws-run-test").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    assert wait_until(lambda: ui.state.python.in_flight == 1)
+    batch = active_batch(ui)
+    tid(page, "header-activity-stop").click()
+    has(page, "ws-trial", "data-outcome", "stopped")
+    assert request(ui, "/api/workshop/batches/" + batch)["rows"][0]["outcome"] == "stopped"
+    assert wait_until(lambda: ui.state.python.in_flight == 0)
+
+
+def unmanaged_prompt_block(ui, local_only=False, role="fast"):
+    block = {**OBJ_BLOCK, "format_version": 4,
+             "inputs": {"text": {"contract": {"format": "text"}, "local_only": local_only}},
+             "outputs": {"out": {"contract": {"format": "text"}, "local_only": False}}}
+    block["steps"] = [{**OBJ_BLOCK["steps"][0], "role": role}]
+    return write_block(ui, "b", block, {**OBJ_FILES, "prompts/user.md": "Say {{inputs.text}}"}), block
+
+
+def test_page_workshop_stale_saved_block_keeps_inputs(ui, server, open_page):
+    """R-4(a): a disk edit after opening answers `stale` with zero requests and the inputs kept; Reload, then
+    Test sends the edited prompt."""
+    profile_and_role(ui, server)
+    folder, _ = unmanaged_prompt_block(ui)
+    page = open_page(ui)
+    open_block_test(page, ui, "b")
+    tid(page, "ws-field-text").fill("hello")
+    (folder / "prompts" / "user.md").write_text("Edited: {{inputs.text}}")
+    tid(page, "ws-run-test").click()
+    expect(page.locator('[data-code="stale"]').first).to_be_attached()
+    assert server.requests == []
+    expect(tid(page, "ws-field-text")).to_have_value("hello")
+    tid(page, "ws-reload").click()
+    expect(tid(page, "ws-field-text")).to_have_value("hello")
+    server.reply(answer('{"out":"fine"}'))
+    tid(page, "ws-run-test").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    has(page, "ws-trial", "data-outcome", "complete")
+    assert server.requests[0]["body"]["messages"][1]["content"] == "Edited: hello"
+
+
+def test_page_workshop_stale_local_only_change_then_refused(ui, server, open_page):
+    """R-4(b): the input marked Local only on disk after opening gives `stale`; after Reload the Local only rule
+    refuses the cloud role, with zero cloud requests."""
+    from conftest import KEY
+    save_profile(ui, "remote", model="remote", kind="openrouter", base_url=server.url + "/v1", provider="", api_key=KEY)
+    save_roles(ui, {"cloud": "remote"})
+    folder, block = unmanaged_prompt_block(ui, role="cloud")
+    page = open_page(ui)
+    open_block_test(page, ui, "b")
+    tid(page, "ws-field-text").fill("hello")
+    block["inputs"]["text"]["local_only"] = True
+    write_block(ui, "b", block, {**OBJ_FILES, "prompts/user.md": "Say {{inputs.text}}"})
+    tid(page, "ws-run-test").click()
+    expect(page.locator('[data-code="stale"]').first).to_be_attached()
+    tid(page, "ws-reload").click()
+    tid(page, "ws-run-test").click()
+    has(page, "ws-readiness", "data-code", "destination_ineligible")     # a cloud role is never eligible
+    expect(page.locator('[data-code="declared_label"]').first).to_be_attached()
+    assert server.requests == []
+
+
+def test_page_workshop_edited_draft_ignores_disk_edit(ui, server, open_page):
+    """R-4(c): an edited draft runs as shown, whatever changed on disk."""
+    profile_and_role(ui, server)
+    folder, _ = unmanaged_prompt_block(ui)
+    page = open_page(ui)
+    open_block_test(page, ui, "b")
+    tid(page, "ws-design").click()
+    page.locator('[data-test="ws-field-purpose"], textarea[aria-label="Purpose"]').first.fill("edited")
+    has(page, "ws-unsaved-state", "data-state", "unsaved")
+    (folder / "prompts" / "user.md").write_text("Disk: {{inputs.text}}")
+    tid(page, "ws-test").click()
+    server.reply(answer('{"out":"fine"}'))
+    run_test(page, "hello")
+    has(page, "ws-trial", "data-outcome", "complete")
+    assert server.requests[0]["body"]["messages"][1]["content"] == "Say hello"
+
+
+def test_page_workshop_explicit_revision_stays_selected(ui, server, open_page):
+    """R-4(f): an older retained revision runs after a newer one is saved elsewhere, and stays selected."""
+    profile_and_role(ui, server)
+    first = managed_text_block(ui)
+    page = open_page(ui)
+    open_block_test(page, ui, "managed")
+    page.locator('[data-test="ws-choice-block-revision"]').first.select_option(first["durable_id"])
+    from test_workshop import plan_save, send
+    current = send(ui, "preview", key="managed")["draft"]
+    current["metadata"]["display_name"] = "newer"
+    plan_save(ui, current, current["base_digest"])
+    server.reply(answer('{"out":"fine"}'))
+    run_test(page)
+    has(page, "ws-trial", "data-outcome", "complete")
+    batch = request(ui, "/api/workshop/batches")["latest"]
+    arm = request(ui, "/api/workshop/batches/" + batch)["plan"]["candidates"][0]
+    assert arm["block_revision_id"] == first["durable_id"] and arm.get("selection") != "current"
+    expect(page.locator('[data-test="ws-choice-block-revision"]').first).to_have_value(first["durable_id"])
+
+
+def indented_python_block(ui, engine_changed=False):
+    from agentwiz.python_step import engine
+    block = python_block("pyb", inputs={"text": {"format": "text"}}, outputs={"out": {"format": "text"}})
+    if engine_changed:
+        block["steps"][0]["engine"] = {**engine(), "codec": 999}
+    return write_block(ui, "pyb", block, {"scripts/go.py": "def transform(inputs):\n    return {'out': inputs['text']}\n"})
+
+
+def folder_bytes(folder):
+    return {str(p.relative_to(folder)): p.read_bytes() for p in sorted(folder.rglob("*")) if p.is_file()}
+
+
+def test_page_workshop_clean_indented_python_block_runs(ui, open_page):
+    """R-4(i): an unchanged indented unmanaged Python block runs as a clean current selection, its bytes unchanged,
+    with the outcome /api/blocks/run gives; a later script edit is `stale` with nothing sent."""
+    from conftest import result_of
+    folder = indented_python_block(ui)
+    before = folder_bytes(folder)
+    page = open_page(ui)
+    open_block_test(page, ui, "pyb")
+    run_test(page, "pong")
+    has(page, "ws-trial", "data-outcome", "complete")
+    batch = request(ui, "/api/workshop/batches")["latest"]
+    assert request(ui, "/api/workshop/batches/" + batch)["plan"]["candidates"][0]["selection"] == "current"
+    assert folder_bytes(folder) == before
+    assert result_of(run_block(ui, "pyb", {"text": "pong"}))["outcome"] == "complete"
+    (folder / "scripts" / "go.py").write_text("def transform(inputs):\n    return {'out': 'edited'}\n")
+    tid(page, "ws-run-test").click()
+    expect(page.locator('[data-code="stale"]').first).to_be_attached()
+
+
+def test_page_workshop_clean_indented_model_block_runs(ui, server, open_page):
+    """R-4(j): the same for an indented unmanaged model block."""
+    from conftest import result_of
+    profile_and_role(ui, server)
+    folder, _ = unmanaged_prompt_block(ui)
+    before = folder_bytes(folder)
+    server.reply(answer('{"out":"fine"}'))
+    page = open_page(ui)
+    open_block_test(page, ui, "b")
+    run_test(page, "hello")
+    has(page, "ws-trial", "data-outcome", "complete")
+    assert folder_bytes(folder) == before
+    assert result_of(run_block(ui, "b", {"text": "hello"}))["outcome"] == "complete"
+
+
+def test_page_workshop_engine_recovery_open_as_draft_and_save(ui, open_page):
+    """R-4(k), browser part: an engine mismatch is shown by B-1 with Open as draft; the draft carries the installed
+    engine and is marked edited; Test runs it; disk is unchanged until Save, which makes the block managed."""
+    from agentwiz import python_step
+    folder = indented_python_block(ui, engine_changed=True)
+    before = folder_bytes(folder)
+    page = open_page(ui)
+    page.goto(ui.url + "#workshop")
+    tid(page, "ws-list").select_option("pyb")
+    problem = tid(page, "ws-block-problem")
+    expect(problem).to_be_visible()
+    tid(page, "ws-open-engine-draft").click()
+    has(page, "ws-unsaved-state", "data-state", "unsaved")
+    tid(page, "ws-test").click()
+    run_test(page, "pong")
+    has(page, "ws-trial", "data-outcome", "complete")
+    assert folder_bytes(folder) == before
+    tid(page, "ws-design").click()
+    tid(page, "ws-save-revision").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    has(page, "ws-status", "data-state", "saved")
+    assert (folder / ".workshop").is_dir()
+    from test_workshop import send
+    current = send(ui, "preview", key="pyb")["draft"]
+    assert jsonio.decode_exact(current["definition_text"])["steps"][0]["engine"] == python_step.engine()
+
+
+def test_page_workshop_shows_located_block_problem(ui, open_page):
+    """R-5: an unmanaged block with an unknown step key shows its located problems; Test is disabled."""
+    block = {**OBJ_BLOCK}
+    block["steps"] = [{**OBJ_BLOCK["steps"][0], "extra": 1, "other": 2}]
+    write_block(ui, "b", block, OBJ_FILES)
+    page = open_page(ui)
+    page.goto(ui.url + "#workshop")
+    tid(page, "ws-list").select_option("b")
+    problem = tid(page, "ws-block-problem")
+    expect(problem).to_have_attribute("data-code", "invalid")
+    locations = [i.get_attribute("data-location") for i in problem.locator('[data-test="ws-block-problem-issue"]').all()]
+    assert {"steps[0].extra", "steps[0].other"} <= set(locations)
+    expect(tid(page, "ws-run-test")).to_be_disabled()
+    expect(tid(page, "ws-open-engine-draft")).to_have_count(0)
+
+
+# --- 0.2.3 Stage 6a: W-1, W-2, W-5 (List view Insert Release Gate, Restriction, the remedy resolver) -------------
+def open_design_list(page, name):
+    page.get_by_role("tab", name="Workflows").click()
+    tid(page, "wf-picker").select_option(name)
+    tid(page, "wf-design").click()
+    if tid(page, "wf-list").count() == 0:
+        tid(page, "wf-list-view").click()
+    expect(tid(page, "wf-list")).to_be_visible()
+    has(page, "wf-validation", "data-state", "checked")
+
+
+def list_gate(page, target):
+    return page.locator(f'[data-test="wf-list-insert-gate"][data-target="{target}"]')
+
+
+def test_workflow_list_insert_gate_on_a_connection_undoes_in_one_step(ui, open_page, make_server):
+    """W-1: List's Insert Release Gate on cloud_summary.text keeps the edge contract, suggests the sibling map
+    without binding it; one Undo restores the edge, Redo the Gate; Save keeps run inputs; nothing is sent."""
+    from test_core_v3 import cloud_chain
+    local, cloud = make_server(), make_server()
+    cloud_chain(ui, local, cloud, gate_node=False)
+    page = open_page(ui)
+    open_workflow_run(page, "chain")
+    tid(page, "wf-document").fill("Jane Example")
+    open_design_list(page, "chain")
+    list_gate(page, "node:cloud_summary:text").click()
+    expect(page.locator('[data-test="wf-list-node"][data-node="gate"]')).to_have_count(1)
+    has(page, "wf-validation", "data-state", "checked")
+    expect(page.locator('[data-test="wf-list-node"][data-node="gate"] [data-test="wf-scan-state"]').first).to_have_attribute("data-state", "suggested")
+    tid(page, "wf-undo").click()
+    expect(page.locator('[data-test="wf-list-node"][data-node="gate"]')).to_have_count(0)
+    tid(page, "wf-redo").click()
+    expect(page.locator('[data-test="wf-list-node"][data-node="gate"]')).to_have_count(1)
+    tid(page, "wf-save").click()
+    tid(page.get_by_role("dialog", name="Review workflow save"), "ws-confirm").click()
+    expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+    saved = request(ui, "/api/workshop/workflows/chain")["editor"]["nodes"]
+    assert jsonio.decode_exact(saved["gate"]["gate"]["contract"]) == {"format": "text"}
+    assert saved["gate"]["bindings"]["value"]["node"] == "deid" and "scan" not in saved["gate"]["bindings"]
+    assert saved["cloud_summary"]["bindings"]["text"]["node"] == "gate"
+    tid(page, "wf-run-view").click()
+    expect(tid(page, "wf-document")).to_have_value("Jane Example")
+    assert local.requests == cloud.requests == []
+
+
+def test_workflow_list_restriction_explains_each_value(ui, open_page, make_server):
+    """W-2: the cloud step's input reads `restricted` with its cause; after the Gate it reads `released`; the
+    disclosure updates after an edit without a reload."""
+    from test_core_v3 import cloud_chain
+    local, cloud = make_server(), make_server()
+    cloud_chain(ui, local, cloud, gate_node=False)
+    page = open_page(ui)
+    open_design_list(page, "chain")
+    restriction = lambda: page.locator('[data-test="wf-list-node"][data-node="cloud_summary"] [data-test="wf-list-restriction"]').first  # noqa: E731
+    restriction().locator("summary").first.click()
+    expect(restriction().locator('[data-test="wf-why-value"]')).to_have_attribute("data-state", "restricted")
+    expect(restriction().locator("li").first).to_be_attached()
+    list_gate(page, "node:cloud_summary:text").click()
+    has(page, "wf-validation", "data-state", "checked")
+    restriction().locator("summary").first.click()
+    expect(restriction().locator('[data-test="wf-why-value"]')).to_have_attribute("data-state", "released")
+    expect(page.locator('[data-test="wf-list-restriction"][data-value="input.document"]')).to_have_count(2)   # the input, and deid's binding
+    assert local.requests == cloud.requests == []
+
+
+def two_input_chain(ui, local, cloud):
+    """cloud_chain extended so the cloud node `send` has inputs `a` and `b`, both from the protected step."""
+    from test_core_v3 import KEY, model_draft, node, plan_save, port, private_summary, save_definition, send
+    from test_core_v3 import save_profile as sp, save_roles as sr, one_repair
+    sp(ui, 'local', model='local', kind='openai_compat', base_url=local.url + '/v1', provider='')
+    sp(ui, 'remote', model='remote', kind='openrouter', base_url=cloud.url + '/v1', provider='', api_key=KEY)
+    sr(ui, {'local': 'local', 'cloud': 'remote'})
+    grants = request(ui, '/api/workshop/destination-trust')
+    send(ui, 'destination-trust', expected_revision=grants['revision'], trusted=True,
+         destination={'kind': 'openai_compat', 'url': local.url + '/v1', 'model': 'local', 'provider': ''})
+    deid = plan_save(ui, one_repair(model_draft('deid', 'local', {'text': port()},
+                                               {'redacted_text': port(), 'notes': port(),
+                                                'mapping': {**private_summary.MAPPING, 'local_only': True}})))
+    sender = plan_save(ui, model_draft('sender', 'cloud', {'a': port(), 'b': port()}, {'summary': port()}))
+    definition = {'name': 'pair', 'purpose': '', 'inputs': {'document': port(restricted=True)}, 'constants': {},
+                  'nodes': {'deid': {'bindings': {'text': {'kind': 'input', 'port': 'document'}}},
+                            'send': {'bindings': {'a': node('deid', 'redacted_text'), 'b': node('deid', 'notes')}}},
+                  'outputs': {'result': {**port(), 'binding': node('send', 'summary')}}}
+    examples = [{'id': 'one', 'version': 1, 'label': 'one', 'inputs': {'document': 'Jane Example'},
+                 'expectation': {'kind': 'review', 'criterion': ''}}]
+    save_definition(ui, definition, {'deid': {'key': 'deid', 'revision': deid['durable_id']},
+                                     'send': {'key': 'sender', 'revision': sender['durable_id']}}, examples)
+
+
+def choose_b_and_save(page, ui):
+    expect(tid(page, "wf-gate-choice")).to_have_text("Choose the connection to gate")
+    for p_ in ("a", "b"):
+        expect(list_gate(page, f"node:send:{p_}")).to_have_attribute("data-gate-candidate", "true")
+    list_gate(page, "node:send:b").click()
+    tid(page, "wf-save").click()
+    tid(page.get_by_role("dialog", name="Review workflow save"), "ws-confirm").click()
+    expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+    nodes = request(ui, "/api/workshop/workflows/pair")["editor"]["nodes"]
+    gate_id = next(k for k, v in nodes.items() if v.get("gate"))
+    assert nodes["send"]["bindings"]["b"]["node"] == gate_id and nodes["send"]["bindings"]["b"]["port"] == "released"
+    assert (nodes[gate_id]["bindings"]["value"]["node"], nodes[gate_id]["bindings"]["value"]["port"]) == ("deid", "notes")
+    assert (nodes["send"]["bindings"]["a"]["node"], nodes["send"]["bindings"]["a"]["port"]) == ("deid", "redacted_text")
+
+
+@pytest.mark.parametrize("case", ["single", "node_level", "node_level_example", "named", "named_example"])
+def test_workflow_add_release_gate_selects_the_finding_connection(ui, open_page, make_server, case):
+    """W-5: the readiness finding's Add Release Gate lands in List with the finding's connection selected (one
+    restricted input), offers every candidate for a node-level finding (also from a saved example), and selects
+    exactly a named input although the other is restricted too. Inserting rewires only the chosen connection;
+    nothing reaches either fake."""
+    import re
+    from test_core_v3 import cloud_chain
+    local, cloud = make_server(), make_server()
+    page = open_page(ui)
+    if case == "single":
+        cloud_chain(ui, local, cloud, gate_node=False)
+        open_workflow_run(page, "chain")
+        tid(page, "wf-document").fill("Jane Example")
+        tid(page, "wf-preflight").click()
+        has(page, "wf-readiness-state", "data-state", "blocked")
+        tid(page.locator('[data-test="wf-finding"][data-remedy="add_release_gate"]'), "wf-finding-add-gate").click()
+        has(page, "wf-inspector", "data-selection", "edge")
+        has(page, "wf-inspector", "data-target", "node:cloud_summary:text")
+        list_gate(page, "node:cloud_summary:text").click()
+        tid(page, "wf-save").click()
+        tid(page.get_by_role("dialog", name="Review workflow save"), "ws-confirm").click()
+        expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+        assert request(ui, "/api/workshop/workflows/chain")["editor"]["nodes"]["cloud_summary"]["bindings"]["text"]["port"] == "released"
+        assert local.requests == cloud.requests == []
+        return
+    two_input_chain(ui, local, cloud)
+    if case.startswith("named"):
+        prefix = "examples[0]." if case.endswith("example") else ""
+
+        def relocate(route):
+            response = route.fetch()
+            body = response.json()
+            for issue in body.get("descriptor", {}).get("issues", []):
+                if re.match(r"^(examples\[\d+\]\.)?nodes\.send", issue.get("location", "")):
+                    issue["location"] = prefix + "nodes.send.inputs.b"
+            route.fulfill(response=response, json=body)
+        page.route("**/api/workshop/plans", relocate)
+    open_workflow_run(page, "pair")
+    if case.endswith("example"):
+        page.get_by_role("checkbox", name="one").first.check()
+    else:
+        tid(page, "wf-document").fill("Jane Example")
+    tid(page, "wf-preflight").click()
+    has(page, "wf-readiness-state", "data-state", "blocked")
+    page.locator('[data-test="wf-finding"] [data-test="wf-finding-add-gate"]').first.click()
+    expect(tid(page, "wf-list")).to_be_visible()
+    if case.startswith("named"):
+        has(page, "wf-inspector", "data-selection", "edge")
+        has(page, "wf-inspector", "data-target", "node:send:b")
+        page.unroute("**/api/workshop/plans")
+        list_gate(page, "node:send:b").click()
+        tid(page, "wf-save").click()
+        tid(page.get_by_role("dialog", name="Review workflow save"), "ws-confirm").click()
+        expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+        nodes = request(ui, "/api/workshop/workflows/pair")["editor"]["nodes"]
+        assert nodes["send"]["bindings"]["b"]["port"] == "released" and nodes["send"]["bindings"]["a"]["node"] == "deid"
+    else:
+        has(page, "wf-inspector", "data-selection", "node")
+        choose_b_and_save(page, ui)
+    assert local.requests == cloud.requests == []

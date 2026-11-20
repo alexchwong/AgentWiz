@@ -1,0 +1,21 @@
+{
+  "record_version": 1,
+  "run_id": "3b02b44e2daa",
+  "source": "checked_request",
+  "created_at": "2026-11-19T21:53:45.250Z",
+  "steps": [
+    "request"
+  ],
+  "inputs": {
+    "system": "=== AgentWiz output protocol (generated; do not edit) ===\nReturn plain text directly, not a JSON string or output-name wrapper.\nValue requirements:\nText; literal comparisons and lengths use the decoded string without normalization.\nRequired literal: \"pong\"\n=== end output protocol ===",
+    "prompt": "Say pong"
+  },
+  "contract": {
+    "name": "pong",
+    "revision": 1,
+    "digest": "sha256:5a9f7569992d6d6fbbcc7b21eb8f99d769efe0859e4ffd18e9cabc05c20a2934"
+  },
+  "agentwiz_version": "0.2.2",
+  "modelspell_version": "0.4.0",
+  "redacted": false
+}

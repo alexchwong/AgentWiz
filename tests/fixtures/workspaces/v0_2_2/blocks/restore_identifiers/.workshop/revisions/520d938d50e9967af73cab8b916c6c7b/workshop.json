@@ -1,0 +1,35 @@
+{
+  "display_name": "restore_identifiers",
+  "origin": "starter",
+  "effects": "read-only",
+  "created_at": "2026-11-19T21:53:44.616797+00:00",
+  "parent": null,
+  "contracts_validated_at_save": true,
+  "format_version": 1,
+  "starter": "restore_placeholders",
+  "starter_version": 2,
+  "parameters": {
+    "unknown": "fail",
+    "placeholder_syntax": "bracket_upper"
+  },
+  "contracts": {
+    "inputs": {
+      "text": "{\n  \"format\": \"text\"\n}",
+      "pairs": "{\n  \"format\": \"json\"\n}"
+    },
+    "outputs": {
+      "out": "{\n  \"format\": \"text\"\n}"
+    }
+  },
+  "contract_pins": {
+    "inputs": {},
+    "outputs": {}
+  },
+  "contracts_digest": "a47d2fc5758b854c074175dc936b3019d50c97042f8f425ab48dffdc84a52038",
+  "asset_digest": "5ac25faf96e13c1dda724c66198f01571fb909170df136d07146c5189fc8d548",
+  "assets": {
+    "block.json": "b8c5787c944886f052b16242ab4b74cdf558dbf3ca2403a28c3544be0169668b"
+  },
+  "revision_number": 1,
+  "revision_name": ""
+}

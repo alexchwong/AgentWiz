@@ -171,10 +171,6 @@ class WorkspaceGate:
                 self._admin = False
                 self._condition.notify_all()
 
-    def active_readers(self) -> int:
-        with self._condition:
-            return self._readers
-
     def close(self) -> None:
         with self._condition:
             self._closed = True
@@ -675,8 +671,6 @@ class Handler(BaseHTTPRequestHandler):
         except (contract_service.ValidationUnavailable, checks.ValidationUnavailable):
             self._reply_safely(503, {'code': 'validation_unavailable',
                                      'message': 'repair the AgentWiz validator installation'})
-        except runs.RepairRefused as exc:
-            self._reply_safely(exc.status, {"error": exc.message, "code": exc.code})
         except runs.NoSuchAttempt:
             self._reply_safely(404, {"error": "no such attempt", "code": "no_such_attempt"})
         except runs.NotHeld:
@@ -811,8 +805,8 @@ class Handler(BaseHTTPRequestHandler):
                   "/api/tutorial/exit": self._tutorial_exit,
                   "/api/config": self._config, "/api/openrouter-key": self._openrouter_key, "/api/models": self._models,
                   "/api/providers": self._providers, "/api/complete": self._complete,
-                  "/api/complete/stop": self._complete_stop, "/api/repair/preview": self._repair_preview,
-                  "/api/repair": self._repair, "/api/history/switch": self._history_switch,
+                  "/api/complete/stop": self._complete_stop,
+                  "/api/history/switch": self._history_switch,
                   "/api/runs/delete": self._runs_delete,
                   "/api/profiles/save": self._profile_save, "/api/profiles/select": self._profile_select,
                   "/api/profiles/delete": self._profile_delete,
@@ -823,7 +817,6 @@ class Handler(BaseHTTPRequestHandler):
                   "/api/contracts/check": self._contract_check, "/api/contracts/family": self._contract_family,
                   "/api/contracts/restore": self._contract_restore,
                   "/api/contracts/project": self._contract_project, "/api/contracts/edit": self._contract_edit,
-                  "/api/contracts/instructions": self._contract_instructions,
                   "/api/contracts/synthesis/plan": self._synthesis_plan,
                   "/api/contracts/synthesis/start": self._synthesis_start,
                   "/api/contracts/synthesis/apply": self._synthesis_apply,
@@ -995,8 +988,6 @@ class Handler(BaseHTTPRequestHandler):
             result = update(self.server.state, body)
         elif path == 'publish-inline':
             result = service.publish_inline(body)
-        elif path == 'synthesis-inline':
-            result = service.inline_synthesis(body)
         elif path == 'input-value':
             from ..workshop_editor import input_value
             result = {'text':jsonio.encode_exact(input_value(body['value']))}
@@ -1283,10 +1274,6 @@ class Handler(BaseHTTPRequestHandler):
         return body
 
     @staticmethod
-    def _contract_draft_body(body, fields):
-        Handler._v2(body, fields)
-
-    @staticmethod
     def _name_field(body):
         if not wsmod.valid_name(body.get('name')):
             raise contracts.StoreError('invalid', 400, 'name must follow the name rule')
@@ -1354,19 +1341,6 @@ class Handler(BaseHTTPRequestHandler):
         self._v2(body, {'definition_text', 'value_text'})
         self._send(200, {'format_version': 2, 'label': 'Contract check',
                          **contract_service.check(body['definition_text'], body['value_text'])})
-
-    def _contract_instructions(self, body: dict) -> None:
-        """The exact direct-value section a Checked request would append for this pinned revision (spec 8, 13.1).
-        Resolved like the send itself, so a missing revision or changed digest refuses here too."""
-        self._v2(body, {'name', 'revision', 'digest'})
-        name, revision, digest = self._name_field(body), body['revision'], body['digest']
-        if type(revision) is not int or revision < 1:
-            raise contracts.StoreError('invalid', 400, 'revision must be a positive integer')
-        if not isinstance(digest, str) or contracts.DIGEST_RE.match(digest) is None:
-            raise contracts.StoreError('invalid', 400, 'digest must be a sha256 contract digest')
-        found = self.server.state.contract_for_request(name, revision, digest)
-        self._send(200, {'format_version': 2, 'name': name, 'revision': found.revision, 'digest': found.digest,
-                         'text': output_protocol.single_value_instructions(found.contract)})
 
     # --- contract synthesis (overhaul spec 14.3) ------------------------------------------------------
     _SYNTHESIS = ('task_description', 'output_name', 'definition_text', 'role')
@@ -1734,33 +1708,18 @@ class Handler(BaseHTTPRequestHandler):
         state = self.server.state
         system, prompt = _optional_str(body, "system"), _optional_str(body, "prompt")
         source = body.get("source")
-        if source not in ("chat", "checked_request"):
-            raise BodyError('source must be "chat" or "checked_request"')
+        # 0.2.3: Checked request is retired. Its saved records stay readable in History.
+        if source != "chat":
+            raise BodyError('source must be "chat"')
+        if "contract" in body:
+            raise BodyError("a Chat request takes no contract")
         revision = _revision(body)
-        contract_ref = None
-        if source == "chat":
-            if "contract" in body:
-                raise BodyError("a Chat request takes no contract")
-        else:
-            ref = body.get("contract")
-            # The concrete pin the page reviewed: never "latest" (spec 13.1).
-            if (not isinstance(ref, dict) or set(ref) != {"name", "revision", "digest"}
-                    or not wsmod.valid_name(ref.get("name"))
-                    or type(ref.get("revision")) is not int or ref["revision"] < 1
-                    or not isinstance(ref.get("digest"), str) or contracts.DIGEST_RE.match(ref["digest"]) is None):
-                raise BodyError("a Checked request needs contract: {name, revision, digest}")
-            contract_ref = (ref["name"], ref["revision"], ref["digest"])
         snapshot = state.snapshot(revision)                     # 409 on a stale revision
         if snapshot.model.strip() == "":
             raise SettingsError("choose a model in Model settings")
         task = parse_task(body.get("task"))
         arguments = model_call.task_arguments(task, snapshot.kind, snapshot.provider)
         model_call.validate_request(snapshot, arguments)
-        copy_ = None
-        if contract_ref is not None:
-            found = state.contract_for_request(*contract_ref)   # 404, 409 digest_mismatch / contract_unusable
-            copy_ = model_step.ContractCopy.reference(contract_ref[0], found.revision, found.digest, found.contract)
-            checks.require_validation([copy_.parsed])
         writer = state.register_writer(f"{source} attempt")      # 503 once shutdown has begun (10.10)
         try:
             budget = state.budget
@@ -1769,7 +1728,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 prepared = model_step.prepare_first(state.store, snapshot=snapshot, system=system, prompt=prompt,
                                                     task=task, arguments=arguments, source=source,
-                                                    save_runs=state.save_runs_now(), contract=copy_)
+                                                    save_runs=state.save_runs_now())
                 if prepared.run.save_runs:
                     try:
                         state.history.start_run(prepared.run)       # run.json, before the first attempt starts
@@ -1843,43 +1802,17 @@ class Handler(BaseHTTPRequestHandler):
     def _complete_stop(self, body: dict) -> None:
         self._send(200, {"status": self.server.state.store.stop(self._attempt_id(body))})
 
-    def _repair_preview(self, body: dict) -> None:
-        _run, record, number = self.server.state.store.admit_repair(self._attempt_id(body), reserve=False)
-        self.server.state.key_for(record["endpoint"]["kind"], record["endpoint"]["base_url"])
-        plan = model_step.repair_plan(record)
-        contract = plan["contract"]
-        self._send(200, {"parent_id": record["id"], "attempt": number, "messages": plan["messages"],
-                         "settings": plan["settings"],
-                         "contract": {"name": contract.name, "revision": contract.revision,
-                                      "digest": contract.digest},
-                         "repair_message": plan["repair_message"], "repair_reason": plan["repair_reason"]})
-
-    def _repair(self, body: dict) -> None:
-        state = self.server.state
-        attempt_id = self._attempt_id(body)
-        writer = state.register_writer("repair attempt")         # 503 once shutdown has begun (10.10)
-        try:
-            run, parent, number = state.store.admit_repair(attempt_id)
-            budget = state.budget
-            if not budget.try_acquire():
-                state.store.abandon_run(run, number)
-                return self._busy()
-            try:
-                try:
-                    prepared = model_step.prepare_repair(run, number, parent, state.key_for)
-                except BaseException:
-                    state.store.abandon_run(run, number)
-                    raise
-                self._run_stream(prepared)
-            finally:
-                budget.release()
-        finally:
-            writer.release()
-
     def _attempt_poll(self, attempt_id: str) -> None:
+        """The polling envelope; with `?view=compact` only, the five-field compact view (0.2.3, T-1). Without
+        `view`, other query parameters are ignored as before."""
         if not runs.valid_attempt_id(attempt_id):
             raise BodyError("attempt_id must be an attempt ID")
-        self._send(200, self.server.state.store.envelope(attempt_id))
+        view = parse_qs(urlparse(self.path).query, keep_blank_values=True).get("view")
+        if view is None:
+            return self._send(200, self.server.state.store.envelope(attempt_id))
+        if view != ["compact"]:
+            raise BodyError("view must be compact")
+        self._send(200, self.server.state.store.compact(attempt_id))
 
     # --- run history (techspec 10) ----------------------------------------------------------------------
     def _history_switch(self, body: dict) -> None:

@@ -142,7 +142,6 @@ dialog.wide-dialog{max-width:96vw}
 <style>
 .ws-layout{grid-template-columns:minmax(0,1fr)}
 .ws-layout aside{grid-template-columns:minmax(8rem,14rem) minmax(10rem,20rem) auto minmax(10rem,20rem);align-items:start;justify-content:start}
-.ws-layout aside #tab-blocks{grid-column:1/-1}
 .ws-design-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1.6fr) minmax(0,1fr);grid-template-areas:"ports prompts settings";gap:1rem;align-items:start}
 .ws-variables{grid-area:ports}.ws-instructions{grid-area:prompts}.ws-misc{grid-area:settings}
 .ws-identity-bar{position:sticky;top:0;z-index:4;background:var(--bg);display:flex;flex-wrap:wrap;gap:.6rem;align-items:end;padding:.4rem 0;border-bottom:1px solid var(--line);margin-bottom:.6rem}
@@ -235,16 +234,12 @@ dialog.wide-dialog{max-width:96vw}
   <button role="tab" id="tab-chat" data-test="tab-chat" aria-controls="panel-chat" aria-selected="false" tabindex="-1" data-state="idle" data-frag="chat">Chat<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-documents" data-test="tab-documents" aria-controls="panel-documents" aria-selected="false" tabindex="-1" data-state="idle" data-frag="documents">Documents<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-mcp-tools" data-test="tab-mcp-tools" aria-controls="panel-mcp-tools" aria-selected="false" tabindex="-1" data-state="idle" data-frag="mcp-tools">MCP tools<span class="mark" aria-hidden="true">●</span></button>
-  <button role="tab" id="tab-checked-request" data-test="tab-checked-request" aria-controls="panel-checked-request" aria-selected="false" tabindex="-1" data-state="idle" data-frag="checked-request">Checked request<span class="mark" aria-hidden="true">●</span></button>
   <button role="tab" id="tab-history" data-test="tab-history" aria-controls="panel-history" aria-selected="false" tabindex="-1" data-state="idle" data-frag="history">History<span class="mark" aria-hidden="true">●</span></button>
-  <button role="tab" id="tab-blocks" data-test="tab-blocks" aria-controls="panel-blocks" aria-selected="false" tabindex="-1" data-state="idle" data-frag="blocks">Saved block runs<span class="mark" aria-hidden="true">●</span></button>
 </div>
 <section role="tabpanel" id="panel-chat" data-test="panel-chat" aria-labelledby="tab-chat" hidden></section>
 <section role="tabpanel" id="panel-documents" data-test="panel-documents" aria-labelledby="tab-documents" hidden></section>
 <section role="tabpanel" id="panel-mcp-tools" data-test="panel-mcp-tools" aria-labelledby="tab-mcp-tools" hidden></section>
-<section role="tabpanel" id="panel-checked-request" data-test="panel-checked-request" aria-labelledby="tab-checked-request" hidden></section>
 <section role="tabpanel" id="panel-history" data-test="panel-history" aria-labelledby="tab-history" hidden></section>
-<section role="tabpanel" id="panel-blocks" data-test="panel-blocks" aria-labelledby="tab-blocks" data-state="idle" hidden></section>
 
 <dialog id="servers-dialog">
   <h3 style="margin:4px 0">MCP servers</h3>
@@ -380,7 +375,7 @@ dialog.wide-dialog{max-width:96vw}
 <script>
 const TOKEN = new URLSearchParams(location.search).get("t") || "";
 // The shared contract components (overhaul spec 15.4): one packaged script behind the same session token,
-// awaited before the contract screen, port editors or the Checked request selector are built.
+// awaited before the contract screen and the port editors are built.
 function loadPageScript(name) { return new Promise((resolve, reject) => {
   const script = document.createElement("script");
   script.src = "/assets/"+name+".js?t=" + encodeURIComponent(TOKEN);
@@ -403,7 +398,7 @@ const LABELS = { complete: "Complete", empty: "Empty answer", reasoning_only: "R
                  stopped: "Stopped", error: "Error" };
 const DISCLOSURE = "Saved as given, except that credentials AgentWiz has held, if at least 8 characters long, are replaced with ***. " +
   "Shorter credentials are not replaced. Text you paste into a request, including copied documents and tool results, is saved with it.";
-const FRAGS = ["workshop","chat", "documents", "mcp-tools", "contracts", "workflows", "checked-request", "history", "blocks"];
+const FRAGS = ["workshop","chat", "documents", "mcp-tools", "contracts", "workflows", "history"];
 const POLL_MS = 2000;
 let state = {};
 const modelContexts = {};       // model id -> context length, from the dialog's last Load models
@@ -678,7 +673,7 @@ function fragFromHash() {
   return FRAGS.includes(f) ? f : "workshop";
 }
 
-const NOT_WORKBENCH = ["workshop", "contracts", "workflows", "history", "blocks"];
+const NOT_WORKBENCH = ["workshop", "contracts", "workflows", "history"];
 function selectTab(frag, opts = {}) {
   activeFrag = frag;
   $("tablist").hidden = NOT_WORKBENCH.includes(frag);
@@ -1131,32 +1126,14 @@ $("save-as-profile").onclick = () => {
   saveProfile(name);
 };
 
-// --- the request tabs: Chat and Checked request (Sections 5.2, 8.6–8.8, 9, 11.2) ------------------------------
-// One controller per tab, built from the same code. Every asynchronous update is correlated by attempt ID, so a
-// `save` event, a polling answer or a pending Stop for an earlier attempt never changes a newer request's display.
-const REPAIR_REASONS = {
-  none: "Send a request first.",
-  running: "A request is running.",
-  run_stopped: "This run was stopped; send the request again.",
-  not_repairable: "A repair is offered only for a completed answer that failed its checks.",
-  not_held: "This attempt is no longer held in memory; send the request again.",
-  not_latest: "Only the latest attempt of a run can be repaired.",
-};
+// History shows why a saved attempt was not checked (Checked request runs saved by earlier versions included).
 const SKIPPED = { blank_answer: "Not checked: the answer was blank.", not_completed: "Not checked: the request did not complete." };
 
-function repairPreviewText(plan) {
-  const s = plan.settings, lines = [
-    `Repair of ${plan.parent_id} (next attempt: ${plan.attempt})`,
-    `Settings: ${s.kind} · ${s.base_url || "(default URL)"} · model ${s.model || "(none)"}${s.provider ? " · provider " + s.provider : ""}`,
-    `Task settings: ${JSON.stringify(s.task)}`,
-    `Contract: ${plan.contract.name} (revision ${plan.contract.revision})`,
-    "", "Messages:"];
-  for (const m of plan.messages) lines.push("", `[${m.role}]`, m.content);
-  return lines.join("\n");
-}
-
+// --- the Chat request tab (Sections 5.2, 8.6–8.8, 9, 11.2) --------------------------------------------------------
+// Every asynchronous update is correlated by attempt ID, so a `save` event, a polling answer or a pending Stop
+// for an earlier attempt never changes a newer request's display.
 function makeRequestTab(frag, source) {
-  const prefix = frag === "chat" ? "chat" : "checked", checked = source === "checked_request";
+  const prefix = frag;
   const panel = $("panel-" + frag);
   const task = makeTaskPanel(prefix);
   const system = h("textarea", { id: prefix + "-system", rows: 2, "data-test": prefix + "-system" });
@@ -1187,36 +1164,14 @@ function makeRequestTab(frag, source) {
         " · Local-only data: " + (eligible ? "Eligible" : "Not eligible") + " · " + (p.trusted ? "Trusted" : "Not trusted");
     }).catch(() => {});
   }
-  const checkResult = checkBox(prefix);
-  const structured=h("div",{"data-test":prefix+"-structured-preview"});
-  let active = null, shown = null, rows = [], override = null;
+  let active = null, shown = null;
 
-  // checked only
-  // The shared pinned selector (contracts.js) is attached once that script has loaded.
-  const contractHost = h("div", { "data-test": "checked-contract-host" });
-  let contractPicker = null, contractSignature = "";
-  const instructionsBtn = h("button", { type: "button", "data-test": "checked-contract-preview", text: "Preview contract instructions" });
-  const instructionsOut = outPanel("checked", "contract-instructions", "Generated contract section (appended to the system prompt)");
-  instructionsOut.el.classList.add("hidden");
-  const sendReason = h("span", { class: "note", "data-test": "checked-send-reason" });
-  const attemptsEl = h("ul", { class: "list", "data-test": "checked-attempts" });
-  const repairReason = h("span", { class: "note", "data-test": "checked-repair-reason" });
-  const previewBtn = h("button", { type: "button", "data-test": "checked-repair-preview-btn", text: "Preview repair" });
-  const repairSend = h("button", { type: "button", "data-test": "checked-repair-send", text: "Send repair" });
-  const repairBox = h("div", { class: "row", "data-test": "checked-repair", "data-repair": "none" }, previewBtn, repairSend, repairReason);
-  const previewOut = outPanel("checked", "repair-preview", "Repair preview (exactly what a repair would send)");
-  previewOut.el.classList.add("hidden");
-
-  const intro = checked
-    ? "Checked request: send a prompt, check the answer against a saved contract, then preview and send a repair."
-    : "Chat: send a prompt to the model and watch the answer stream. Stop ends a request at any stage.";
+  const intro = "Chat: send a prompt to the model and watch the answer stream. Stop ends a request at any stage.";
   put(panel, h("p", { class: "panel-intro", text: intro }),
-    checked ? [contractHost, h("div", { class: "row" }, instructionsBtn), instructionsOut.el] : null,
     h("label", { for: prefix + "-system", text: "System prompt (optional)" }), system,
     h("label", { for: prefix + "-prompt", text: "Input" }), prompt, task.el,
-    h("div", { class: "row" }, send, stop, statusEl, attemptEl, sendReason), destination,
+    h("div", { class: "row" }, send, stop, statusEl, attemptEl), destination,
     output.el,
-    checked ? [structured,checkResult.el, h("label", { text: "Attempts of this run" }), attemptsEl, repairBox, previewOut.el] : null,
     // Troubleshooting (UI-CD v3 CD10): the reasoning stream and the exact final event, folded below the answer.
     h("details", { class: "ws-troubleshooting", "data-test": prefix + "-troubleshooting" }, h("summary", { text: "Troubleshooting · reasoning and raw final event" }),
       reasoning.el, final.el));
@@ -1225,65 +1180,15 @@ function makeRequestTab(frag, source) {
   const display = (state_, text, style = "") => { statusEl.dataset.state = state_; statusEl.textContent = text; statusEl.className = "status " + style; };
   const displays = (req) => req === active || (req.attemptId !== null && req.attemptId === shown);
 
-  // The concrete pin this page shows: name, numbered revision and digest (never a literal "latest", spec 13.1).
-  function selectedContract() {
-    const pin = contractPicker && contractPicker.pin();
-    return pin && pin.digest ? pin : null;
-  }
-
-  function repairCode() {
-    if (override) return override;
-    if (active) return "running";
-    const last = rows[rows.length - 1];
-    if (!last) return "none";
-    const rec = last.record;
-    if (!rec) return "not_held";
-    if (rec.stop_requested_at) return "run_stopped";
-    if (!(rec.outcome === "complete" || rec.outcome === "truncated") || !rec.check || rec.check.overall !== "fail") return "not_repairable";
-    return "allowed";
-  }
-
   function refreshControls() {
-    const busy = !!active;
-    const noContract = checked && !selectedContract();
-    send.disabled = busy || noContract;
+    send.disabled = !!active;
     stop.disabled = !(active && !active.final);
-    if (checked) {
-      sendReason.textContent = noContract && !busy ? "Choose a usable contract first." : "";
-      const code = repairCode();
-      repairBox.dataset.repair = code;
-      previewBtn.disabled = repairSend.disabled = code !== "allowed";
-      repairReason.textContent = code === "allowed" ? "" : (REPAIR_REASONS[code] || code);
-    }
-  }
-
-  function renderRows() {
-    attemptsEl.replaceChildren();
-    for (const r of rows) {
-      const li = h("li", { "data-test": "checked-attempt", "data-attempt-id": r.id,
-        text: `${r.attempt}. ${r.outcome ? (LABELS[r.outcome] || r.outcome) : "running"} · check: ${r.check || "not checked"}${r.save && r.save !== "not_requested" ? " · save: " + r.save : ""}` });
-      li.dataset.repairReason = (r.record && r.record.repair_reason) || "";
-      if (r.outcome) li.dataset.outcome = r.outcome;
-      if (r.check) li.dataset.check = r.check;
-      if (r.save) li.dataset.save = r.save;
-      attemptsEl.append(li);
-    }
-  }
-
-  function upsertRow(id, patch) {
-    if (!checked) return;
-    let row = rows.find((r) => r.id === id);
-    if (!row) { row = { id, attempt: Number(id.slice(id.lastIndexOf("-") + 1)) }; rows.push(row); }
-    Object.assign(row, patch);
-    renderRows();
   }
 
   function clearDisplay() {
     reasoning.pre.textContent = ""; output.pre.textContent = ""; final.pre.textContent = "";
-    checkResult.clear();structured.replaceChildren();
     for (const name of ["outcome", "attemptId", "save", "error"]) delete statusEl.dataset[name];
     attemptEl.textContent = "";
-    if (checked) { previewOut.el.classList.add("hidden"); previewOut.pre.textContent = ""; }
   }
 
   function release(req) {
@@ -1307,11 +1212,6 @@ function makeRequestTab(frag, source) {
     final.pre.textContent = line;
     if (output.pre.textContent === "") output.pre.textContent = (record.result && record.result.text) || (record.partial && record.partial.text) || "";
     if (reasoning.pre.textContent === "") reasoning.pre.textContent = (record.result && record.result.reasoning) || (record.partial && record.partial.reasoning) || "";
-    if (checked) {
-      if (record.contract?.text&&record.result?.text)structured.replaceChildren(h("h4",{text:"Structured answer preview"}),wsStructured(record.result.text,record.contract.text));
-      if (record.check) checkResult.show(record.check);
-      else checkResult.note(SKIPPED[record.check_skipped] || "Not checked.");
-    }
   }
 
   function onFinal(req, ev, line) {
@@ -1319,11 +1219,8 @@ function makeRequestTab(frag, source) {
     if (!record || typeof record !== "object" || req.final) return;
     req.final = ev;
     if (req.attemptId === null) req.attemptId = record.id;
-    upsertRow(record.id, { outcome: record.outcome, check: record.check ? record.check.overall : null,
-                           save: ev.save_status, record });
     if (displays(req)) showRecord(req, record, line, ev.save_status, req.live ? seconds(req.started) : null);
     if (ev.save_status !== "pending") req.saveSettled = true;
-    override = null;
     release(req);
     refreshControls();
   }
@@ -1331,7 +1228,6 @@ function makeRequestTab(frag, source) {
   function onSave(req, ev) {
     if (ev.attempt_id !== req.attemptId) return;
     req.saveSettled = true;
-    upsertRow(req.attemptId, { save: ev.save_status });
     showSave(req, ev.save_status, ev.reason);
   }
 
@@ -1347,7 +1243,6 @@ function makeRequestTab(frag, source) {
     if (status === 409 && code === "stale_revision") { text = STALE_SEND; display("stale", text, "warn"); reloadAfterStale(); }
     else display("idle", text, status === 503 || status === 409 ? "warn" : "error");
     if (code) mark("error", code);
-    if (checked && req.isRepair && ["run_stopped", "not_latest", "not_repairable", "not_held"].includes(code)) override = code;
     release(req);
     refreshControls();
   }
@@ -1376,7 +1271,6 @@ function makeRequestTab(frag, source) {
     if (ev.type === "started" && typeof ev.attempt_id === "string") {
       req.attemptId = ev.attempt_id; req.live = true; shown = ev.attempt_id;
       mark("attemptId", ev.attempt_id); attemptEl.textContent = ev.attempt_id;
-      upsertRow(ev.attempt_id, { outcome: null, check: null, save: null, record: null });
       if (!req.stopRequested) display("running", "waiting for first token…");
       if (req.pendingStop) sendStop(req);
     } else if ((ev.type === "reasoning" || ev.type === "text") && typeof ev.text === "string") {
@@ -1395,7 +1289,6 @@ function makeRequestTab(frag, source) {
                        save_status: env.save_status }, text);
       } else if (env.summary) {
         req.final = { summary: env.summary };
-        upsertRow(req.attemptId, { outcome: env.summary.outcome, check: env.summary.check || null, save: env.save_status, record: null });
         if (displays(req)) {
           display("done", `${LABELS[env.summary.outcome] || env.summary.outcome} · Full result no longer held`, "warn");
           mark("outcome", env.summary.outcome); mark("save", env.save_status);
@@ -1406,7 +1299,6 @@ function makeRequestTab(frag, source) {
     }
     if (env.save_status && env.save_status !== "pending") {
       req.saveSettled = true;
-      upsertRow(req.attemptId, { save: env.save_status });
       showSave(req, env.save_status, env.reason);
     } else if (env.save_status === "pending" && displays(req)) mark("save", "pending");
     refreshControls();
@@ -1463,13 +1355,12 @@ function makeRequestTab(frag, source) {
     startPolling(req);
   }
 
-  async function begin(path, payloadText, isRepair) {
+  async function begin(path, payloadText) {
     if (active) return;                              // one active request per tab
     const req = { attemptId: null, pendingStop: false, stopRequested: false, final: null, polling: false,
-                  saveSettled: false, started: performance.now(), isRepair, live: false };
-    active = req; shown = null; override = null;
+                  saveSettled: false, started: performance.now(), live: false };
+    active = req; shown = null;
     clearDisplay();
-    if (!isRepair) { rows = []; renderRows(); }
     setTabRunning(frag, true);
     display("running", "waiting for first token…");
     refreshControls();
@@ -1497,87 +1388,31 @@ function makeRequestTab(frag, source) {
     const t = task.requestTask();
     if (t.errors.length) { display("idle", "Correct the marked task settings before sending.", "error"); return; }
     const body = { source, prompt: prompt.value, system: system.value, revision: state.revision, task: t.task };
-    if (checked) {
-      const c = selectedContract();
-      if (!c) { display("idle", "Choose a usable contract first.", "error"); return; }
-      // The concrete numbered revision and digest this page shows; never a literal "latest" (spec 13.1).
-      body.contract = { name: c.name, revision: c.revision, digest: c.digest };
-    }
     const payload = JSON.stringify(body);
     if (state.limits && new TextEncoder().encode(payload).length > state.limits.request_bytes) {
       display("idle", `This request is larger than ${state.limits.request_bytes} bytes and cannot be sent. Copy a smaller part of the file.`, "error");
       return;
     }
-    begin("/api/complete", payload, false);
+    begin("/api/complete", payload);
   }
 
   send.onclick = submit;
   stop.onclick = doStop;
 
-  if (checked) {
-    instructionsBtn.onclick = async () => {
-      const c = selectedContract();
-      if (!c) { display("idle", "Choose a usable contract first.", "error"); return; }
-      try {
-        const r = await api("/api/contracts/instructions", { format_version: 2, name: c.name, revision: c.revision, digest: c.digest });
-        const still = selectedContract();
-        if (!still || still.digest !== r.digest || still.revision !== r.revision) return;   // a newer selection wins
-        instructionsOut.pre.textContent = `Contract ${r.name} · revision ${r.revision} · ${r.digest}\n\n${r.text}`;
-        instructionsOut.pre.dataset.revision = String(r.revision); instructionsOut.pre.dataset.digest = r.digest;
-        instructionsOut.el.classList.remove("hidden");
-      } catch (e) {
-        instructionsOut.el.classList.add("hidden");
-        display("idle", CW ? CW.errorText(e) : e.message, "error");
-      }
-    };
-    previewBtn.onclick = async () => {
-      const last = rows[rows.length - 1];
-      if (!last) return;
-      try {
-        const plan = await api("/api/repair/preview", { attempt_id: last.id });
-        previewOut.pre.textContent = repairPreviewText(plan);
-        previewOut.el.classList.remove("hidden");
-      } catch (e) {
-        previewOut.el.classList.add("hidden");
-        if (["run_stopped", "not_latest", "not_repairable", "not_held"].includes(e.code)) override = e.code;
-        refreshControls();
-        if (!REPAIR_REASONS[e.code]) repairReason.textContent = e.message;
-      }
-    };
-    repairSend.onclick = () => {
-      const last = rows[rows.length - 1];
-      if (!last || active) return;
-      begin("/api/repair", JSON.stringify({ attempt_id: last.id }), true);
-    };
-  }
-
   TABS[frag] = {
     tutorialPrepare(text, preserveTask = false) {
       if (active) throw new Error("Stop the running request first.");
-      rows = []; clearDisplay();
+      clearDisplay();
       display("idle", "", "");
       prompt.value = text; system.value = "";
       if (!preserveTask) panel.querySelector(`[data-test="${prefix}-task-reset"]`).click();
       refreshControls();
-      if (checked && contractPicker) return contractPicker.select("fields").then(refreshControls);
-    },
-    attachContracts() {
-      if (!checked || !CW || contractPicker) return;
-      contractPicker = CW.picker({ test: "checked", latestOption: true, onChange: () => {
-        instructionsOut.el.classList.add("hidden"); instructionsOut.pre.textContent = ""; refreshControls();
-      } });
-      contractHost.replaceChildren(contractPicker.el);
     },
     submit,
     task,
     onState() {
       task.render();
       refreshDestination();
-      if (checked && contractPicker) {
-        // Re-read the selected contract only when the library changed; "Latest" then shows the new number.
-        const signature = JSON.stringify((state.contracts && state.contracts.items) || []);
-        if (signature !== contractSignature) { contractSignature = signature; contractPicker.refresh(); }
-      }
       refreshControls();
     },
   };
@@ -1585,7 +1420,6 @@ function makeRequestTab(frag, source) {
 }
 
 makeRequestTab("chat", "chat");
-makeRequestTab("checked-request", "checked_request");
 
 // --- agentic Chat (0.2.2, 4.1): one live conversation, one run, AgentWiz decides what may run ----------------------
 function makeAgentPanel() {
@@ -2289,7 +2123,6 @@ function initContracts(components) {
     open: library.open,
     tutorialPrepare: (text, sample, name) => library.tutorialPrepare(text, sample, name),
   };
-  TABS["checked-request"].attachContracts();
 }
 
 // --- History (Section 10.5, 11.2) ---------------------------------------------------------------------------------------
@@ -2509,494 +2342,6 @@ function initContracts(components) {
       warning.textContent = shortCredentialWarning();
     },
   };
-})();
-
-// --- Blocks (techspec 0.1.4, Section 13.1) -------------------------------------------------------------------------
-// Runs one saved single-step block. Input values travel as text; the server describes the forms, so a schema's
-// numbers never pass through this page's JavaScript (P14).
-const BLOCK_STALE = "The block changed (its files or a contract it names). It has been reloaded; your input texts were kept where the input still exists. Check them and run again.";
-const BLOCK_OUTCOMES = { complete: "Complete", rejected: "Rejected before any work", failed: "Failed", stopped: "Stopped",
-  budget_exceeded: "Budget exceeded", unknown: "Unknown (a tool call may have run)" };
-
-(function blocksTab() {
-  const panel = $("panel-blocks");
-  let listing = null, detail = null, selected = null, loadingDetail = 0, selecting = 0;
-  let runCtl = null, runId = null, pendingStop = false, polling = false, finalSeen = false, stopRequested = false;
-  let rows = [];                                   // the trace's attempts: {id, attempt, outcome, check, repair_reason}
-  const inputs = new Map();                         // input name -> {get(): text|null, set(text), el}
-
-  const listEl = h("ul", { class: "list", "data-test": "blocks-list" });
-  const countEl = h("span", { class: "note", "data-test": "blocks-count" });
-  const pathEl = h("span", { class: "note", "data-test": "blocks-path" });
-  const reload = h("button", { type: "button", "data-test": "blocks-reload", text: "Reload" });
-  const activeEl = h("div", { class: "note", "data-test": "blocks-active" });
-  const defEl = h("div", { "data-test": "blocks-definition" });
-  const formEl = h("div", { class: "fields", "data-test": "blocks-form" });
-  const runBtn = h("button", { class: "primary", type: "button", disabled: true, "data-test": "blocks-run", text: "Run" });
-  const stopBtn = h("button", { type: "button", disabled: true, "data-test": "blocks-stop", text: "Stop" });
-  const status = h("span", { class: "note", "data-test": "blocks-status", "data-state": "idle" });
-  const noteEl = h("div", { class: "note", "data-test": "blocks-note" });
-  const traceEl = h("div", { "data-test": "blocks-trace", "data-attempts": "0", "data-truncated": "0" });
-  const attemptsEl = h("ul", { class: "list", "data-test": "blocks-attempts" });
-  const usageEl = h("div", { class: "note", "data-test": "blocks-usage" });
-  const stepEl = h("div", { class: "note", "data-test": "blocks-step" });
-  const detailsEl = h("div", { "data-test": "blocks-details" });
-  const outputsEl = h("div", { "data-test": "blocks-outputs" });
-  panel.append(h("p", { class: "panel-intro", text: "Blocks: run a saved single-step block (a model, tool or script step) from the workspace's blocks folder, and see exactly what it did." }),
-    h("div", { class: "row" }, reload, countEl), pathEl, listEl, activeEl, defEl,
-    h("h4", { text: "Inputs" }), formEl,
-    h("div", { class: "row" }, runBtn, stopBtn, status), noteEl, traceEl, outputsEl, detailsEl);
-  traceEl.append(stepEl, attemptsEl, usageEl);
-
-  const say = (state_, text, outcome, save) => {
-    status.dataset.state = state_; status.textContent = text || "";
-    if (outcome) status.dataset.outcome = outcome; else delete status.dataset.outcome;
-    if (save) status.dataset.save = save; else if (state_ !== "done") delete status.dataset.save;
-    if (runId) status.dataset.runId = runId; else delete status.dataset.runId;
-  };
-  const busy = () => !!runCtl || polling;
-  const usable = () => !!detail && !detail.problem && selected === detail.name;
-
-  function controls() {
-    runBtn.disabled = busy() || !usable();
-    stopBtn.disabled = !busy() || finalSeen || stopRequested && !runId;
-    setTabRunning("blocks", busy());
-  }
-
-  // --- the list ---------------------------------------------------------------------------------------------
-  function problemText(p) { return p ? `${p.file}: ${p.code}${p.issues && p.issues.length ? " · " + p.issues[0].location + ": " + p.issues[0].message : ""}` : ""; }
-
-  function renderList() {
-    listEl.replaceChildren();
-    if (!listing) return;
-    countEl.textContent = listing.total > listing.shown ? `${listing.shown} of ${listing.total} shown` : `${listing.total} ${listing.total === 1 ? "block" : "blocks"}`;
-    countEl.dataset.shown = String(listing.shown); countEl.dataset.total = String(listing.total);
-    pathEl.textContent = "Blocks folder: " + (listing.path || "");
-    if (!listing.blocks.length) listEl.append(h("li", { class: "muted", text: "No blocks. Put a block folder (block.json and its files) in the folder above, then Reload." }));
-    for (const b of listing.blocks) {
-      const li = h("li", { class: "pick" + (b.name === selected ? " current" : ""), "data-test": "blocks-row", "data-block": b.name,
-        "data-problem": b.problem ? b.problem.code : "",
-        text: b.problem ? `${b.name} · PROBLEM: ${problemText(b.problem)}`
-          : `${b.name} · ${b.kind || "?"} step · revision ${b.revision}${b.description ? " · " + b.description : ""}` });
-      li.onclick = () => select(b.name);
-      listEl.append(li);
-    }
-    renderActive();
-  }
-
-  function renderActive() {
-    activeEl.replaceChildren();
-    const runs = (listing && listing.active_runs) || [];
-    activeEl.dataset.count = String(runs.length);
-    if (!runs.length) return;
-    activeEl.append(h("div", { text: "Block runs still running:" }));
-    for (const r of runs) {
-      const attach = h("button", { type: "button", "data-test": "blocks-reattach", text: "Follow", disabled: busy() });
-      attach.onclick = () => follow(r.run_id, r.block);
-      const stop = h("button", { type: "button", "data-test": "blocks-active-stop", text: "Stop" });
-      stop.onclick = async () => {
-        try { await api("/api/blocks/stop", { run_id: r.run_id }); noteEl.textContent = `Stopping run ${r.run_id}…`; }
-        catch (e) { noteEl.textContent = e.message; }
-      };
-      activeEl.append(h("div", { class: "row", "data-test": "blocks-active-run", "data-run-id": r.run_id },
-        `${r.block || "?"} · ${r.run_id} · started ${r.started_at}`, attach, stop));
-    }
-  }
-
-  async function loadListing(forceReload) {
-    try {
-      listing = await api("/api/blocks" + (forceReload ? "?reload=1" : ""));
-      renderList();
-      if (selected && !listing.blocks.some((b) => b.name === selected)) { selected = null; detail = null; defEl.replaceChildren(); formEl.replaceChildren(); inputs.clear(); }
-      controls();
-    } catch (e) { noteEl.textContent = e.message; }
-  }
-
-  // --- the definition and the inputs ----------------------------------------------------------------------------
-  function fileBlock(f) {
-    const pre = h("pre", { class: "exact", text: f.text === null ? `(unavailable: ${f.unavailable})` : f.text });
-    return h("div", { "data-test": "blocks-file", "data-path": f.path },
-      h("div", { class: "panelhead" }, h("label", { text: `${f.path}${f.sha256 ? " · sha256 " + f.sha256 : ""}` }),
-        f.text === null ? null : copyControl("blocks-copy-file", () => f.text, () => pre)), pre);
-  }
-
-  function renderDefinition() {
-    defEl.replaceChildren();
-    if (!detail) return;
-    defEl.append(h("h4", { text: `${detail.name} · revision ${detail.revision}${detail.description ? " · " + detail.description : ""}` }));
-    if (detail.problem) {
-      defEl.append(h("div", { class: "warn-text", "data-test": "blocks-problem", text: "This block cannot be run: " + problemText(detail.problem) }));
-      const list = h("ul", { "data-test": "blocks-problem-issues" });
-      for (const i of detail.problem.issues || []) list.append(h("li", { text: `${i.location}: ${i.message}` }));
-      if (detail.problem.total > (detail.problem.issues || []).length) list.append(h("li", { class: "muted", text: `… and ${detail.problem.total - detail.problem.issues.length} more` }));
-      defEl.append(list);
-    }
-    if (detail.step) defEl.append(h("div", { class: "note", "data-test": "blocks-step-def" },
-      `Step ${detail.step.id}: ${detail.step.kind}` + (detail.step.role ? ` · role ${detail.step.role}` : "") +
-      (detail.step.server ? ` · ${detail.step.server}.${detail.step.tool}` : "") + (detail.step.file ? ` · script ${detail.step.file}` : "")));
-    if (detail.budget) defEl.append(h("div", { class: "note", "data-test": "blocks-budget",
-      text: `Budget: ${detail.budget.max_seconds} s` + (detail.budget.max_model_tokens === null ? "" : `, about ${detail.budget.max_model_tokens} model tokens (a soft allowance)`) }));
-    for (const n of detail.notes || []) defEl.append(h("div", { class: "note", text: n }));
-    const files = h("details", { open: true }, h("summary", { text: "Files (exact text)" }));
-    for (const f of detail.files) files.append(fileBlock(f));
-    defEl.append(files);
-    const contractsBox = h("details", {}, h("summary", { text: "Contracts (exact text)" }));
-    for (const section of ["inputs", "outputs"])
-      for (const [name, c] of Object.entries(detail.contracts[section] || {})) {
-        const pre = h("pre", { class: "exact", text: c.text });
-        contractsBox.append(h("div", { "data-test": "blocks-contract", "data-section": section, "data-name": name },
-          h("div", { class: "panelhead" }, h("label", { text: `${section === "inputs" ? "input" : "output"} ${name} · ${c.name ? "saved contract " + c.name + " revision " + c.revision : "inline"}` }),
-            copyControl("blocks-copy-contract", () => c.text, () => pre)), pre));
-      }
-    defEl.append(contractsBox);
-  }
-
-  function textControl(d, raw) {
-    const el = h("textarea", { rows: 4, spellcheck: "false", "data-test": "blocks-input", "data-input": d.name, "data-mode": "raw" });
-    return { el, get: () => el.value, set: (t) => { el.value = t; } };
-  }
-
-  function formControl(d) {
-    const box = h("div", { class: "fields", "data-test": "blocks-input", "data-input": d.name, "data-mode": "form" });
-    const raw = h("textarea", { rows: 5, spellcheck: "false", class: "hidden", "data-test": "blocks-input-raw", "data-input": d.name });
-    const edit = h("button", { type: "button", "data-test": "blocks-edit-json", "data-input": d.name, text: "Edit as JSON" });
-    const wrap = h("div", {}, box, raw, edit);
-    let rawMode = false;
-    for (const f of d.form.fields) {
-      let input;
-      if (f.enum || f.type === "boolean") {
-        input = document.createElement("select");
-        if (!f.required) input.add(new Option("(unset)", ""));
-        const values = f.enum || ["true", "false"];
-        for (const v of values) input.add(new Option(v, v));
-        if (f.default !== null && f.default !== undefined) input.value = String(f.default);
-        else input.value = f.required ? values[0] : "";
-      } else {
-        input = document.createElement("input");
-        if (f.default !== null && f.default !== undefined) input.value = String(f.default);
-      }
-      input.dataset.name = f.name;
-      input.setAttribute("data-test", `blocks-field-${d.name}-${f.name}`);
-      const cell = h("div", {}, h("label", { text: (f.title || f.name) + (f.required ? " *" : "") }), input);
-      if (f.description) cell.append(h("span", { class: "note", text: f.description }));
-      box.append(cell);
-    }
-    function build() {
-      const parts = [], errors = [];
-      for (const f of d.form.fields) {
-        const input = box.querySelector(`[data-name="${CSS.escape(f.name)}"]`);
-        input.classList.remove("invalid");
-        const v = input.value;
-        if (v === "" || (f.type !== "string" && v.trim() === "")) {
-          if (f.required) { input.classList.add("invalid"); errors.push(f.name); }
-          continue;
-        }
-        let text;
-        if (f.type === "string") text = JSON.stringify(v);
-        else if (f.type === "boolean") text = v === "true" ? "true" : "false";
-        else {
-          const s = v.trim();
-          if (!(f.type === "integer" ? INTEGER_RE : NUMBER_RE).test(s)) { input.classList.add("invalid"); errors.push(f.name); continue; }
-          text = s;                                // numbers stay exactly as typed
-        }
-        parts.push(`${JSON.stringify(f.name)}:${text}`);
-      }
-      return errors.length ? { errors } : { text: "{" + parts.join(",") + "}" };
-    }
-    const toRaw = (text) => { rawMode = true; raw.value = text; raw.classList.remove("hidden"); box.classList.add("hidden"); edit.disabled = true; box.dataset.mode = "raw"; };
-    edit.onclick = () => { const b = build(); toRaw(b.text || "{}"); };
-    return { el: wrap, get: () => { if (rawMode) return raw.value; const b = build(); return b.text === undefined ? null : b.text; },
-      set: (t) => toRaw(t), errors: () => (rawMode ? [] : build().errors || []) };
-  }
-
-  function renderForm(keep = {}) {
-    formEl.replaceChildren(); inputs.clear();
-    if (!detail || !detail.inputs.length) { if (detail) formEl.append(h("div", { class: "muted", text: "This block has no inputs." })); return; }
-    for (const d of detail.inputs) {
-      const control = d.form ? formControl(d) : textControl(d);
-      inputs.set(d.name, control);
-      const cell = h("div", { "data-test": "blocks-input-cell", "data-input-cell": d.name },
-        h("label", { text: `${d.name} (${d.format || "?"})${d.description ? " · " + d.description : ""}` }), control.el);
-      for (const n of d.form_notes || []) cell.append(h("div", { class: "note", text: n }));
-      formEl.append(cell);
-      if (Object.prototype.hasOwnProperty.call(keep, d.name)) control.set(keep[d.name]);
-    }
-  }
-
-  function currentTexts() {
-    const out = {};
-    for (const [name, c] of inputs) { const t = c.get(); if (t !== null) out[name] = t; }
-    return out;
-  }
-
-  async function select(name, keep = {}) {
-    selected = name;
-    const ticket = ++loadingDetail;
-    selecting++;
-    try {
-      const d = await api("/api/blocks/" + encodeURIComponent(name));
-      if (ticket !== loadingDetail) return;
-      detail = d;
-      renderDefinition(); renderForm(keep); renderList();
-    } catch (e) {
-      if (ticket !== loadingDetail) return;
-      detail = null; selected = null; defEl.replaceChildren(); formEl.replaceChildren(); inputs.clear();
-      noteEl.textContent = e.message;
-      await loadListing(false);
-    } finally { selecting--; }
-    controls();
-  }
-
-  // --- the trace --------------------------------------------------------------------------------------------------
-  function clearRun() {
-    rows = []; finalSeen = false; stopRequested = false; pendingStop = false;
-    attemptsEl.replaceChildren(); usageEl.textContent = ""; stepEl.textContent = ""; noteEl.textContent = "";
-    detailsEl.replaceChildren(); outputsEl.replaceChildren();
-    traceEl.dataset.attempts = "0"; traceEl.dataset.truncated = "0";
-  }
-
-  function renderRows() {
-    attemptsEl.replaceChildren();
-    for (const r of rows) {
-      const li = h("li", { "data-test": "blocks-attempt", "data-attempt": String(r.attempt), "data-check": r.check || "",
-        "data-outcome": r.outcome || "", "data-repair-reason": r.repair_reason || "",
-        text: `${r.attempt}. ${r.outcome ? (LABELS[r.outcome] || r.outcome) : "running"} · check: ${r.check || "not checked"}${r.repair_reason ? " · repair (" + r.repair_reason + ")" : ""}` });
-      attemptsEl.append(li);
-    }
-    traceEl.dataset.attempts = String(rows.length);
-  }
-
-  function upsert(attempt, patch) {
-    let row = rows.find((r) => r.attempt === attempt);
-    if (!row) { row = { attempt }; rows.push(row); rows.sort((a, b) => a.attempt - b.attempt); }
-    Object.assign(row, patch);
-    renderRows();
-  }
-
-  function attemptNumber(id) { return Number(id.slice(id.lastIndexOf("-") + 1)); }
-
-  function showOperation(kind, op, running) {
-    for (const old of detailsEl.querySelectorAll('[data-test="blocks-operation"]')) old.remove();
-    const text = op ? JSON.stringify(op, null, 2) : "";
-    const box = h("div", { "data-test": "blocks-operation", "data-kind": kind, "data-outcome": op ? op.outcome : (running ? "running" : "") });
-    if (op) {
-      const p = outPanel("blocks", "operation-record", `${kind === "tool" ? "Tool call" : "Script"}: ${op.outcome}`);
-      p.pre.textContent = text; box.append(p.el);
-    } else box.append(h("div", { class: "note", text: kind === "tool" ? "Tool call running…" : "Script running…" }));
-    detailsEl.append(box);
-  }
-
-  function usageText(u) {
-    if (!u) return "";
-    let t = `Reported usage: ${u.reported_tokens} tokens`;
-    if (u.limit !== null && u.limit !== undefined) t += ` of a soft allowance of ${u.limit}`;
-    if (u.over_by) t += ` (over by ${u.over_by})`;
-    if (u.unreported_attempts && u.unreported_attempts.length) t += `; no usage reported for attempt${u.unreported_attempts.length === 1 ? "" : "s"} ${u.unreported_attempts.join(", ")}`;
-    return t;
-  }
-
-  function renderFinal(result, saveStatus) {
-    finalSeen = true;
-    const step = (result.steps || [])[0] || null;
-    if (step) {
-      stepEl.textContent = `Step ${step.step_id}: ${step.kind}` + (step.role ? ` · role ${step.role} (profile ${step.profile || "?"}, model ${step.model || "?"})` : "")
-        + ` · ${step.outcome}${step.failure ? " (" + step.failure + ")" : ""}`;
-      if (step.kind === "model") {
-        const known = new Set(rows.map((r) => r.attempt));
-        for (const id of step.attempts || []) if (!known.has(attemptNumber(id))) rows.push({ attempt: attemptNumber(id) });
-        rows.sort((a, b) => a.attempt - b.attempt);
-        renderRows();
-        traceEl.dataset.truncated = String(step.truncated_attempts || 0);
-        if (step.truncated_attempts) stepEl.textContent += ` · ${step.truncated_attempts} truncated (cap ${step.max_tokens === null ? "backend default" : step.max_tokens})`;
-      }
-      if (step.operation) showOperation(step.kind, step.operation, false);
-      if (step.fills && step.fills.length) {
-        const p = outPanel("blocks", "fills", "Fills (where each inserted value came from)");
-        p.pre.textContent = JSON.stringify(step.fills, null, 2); detailsEl.append(p.el);
-      }
-    }
-    usageEl.textContent = usageText(result.usage);
-    const checks = Object.entries(result.input_checks || {}).map(([n, c]) => `input ${n}\n${checkText(c)}`)
-      .concat(Object.entries((step && step.output_checks) || {}).map(([n, c]) => `output ${n}\n${checkText(c)}`));
-    if (checks.length) { const p = outPanel("blocks", "checks", "Check results"); p.pre.textContent = checks.join("\n\n"); detailsEl.append(p.el); }
-    if ((result.issues || []).length) {
-      const p = outPanel("blocks", "issues", "Issues");
-      p.pre.textContent = result.issues.map((i) => `${i.location}: ${i.message}`).join("\n"); detailsEl.append(p.el);
-    }
-    outputsEl.replaceChildren();
-    for (const [name, out] of Object.entries(result.outputs || {})) {
-      const pre = h("pre", { class: "exact", "data-test": "blocks-output", "data-output": name, text: out.text });
-      const copy = copyControl("blocks-copy-output", () => out.text, () => pre);
-      copy.querySelector("button").dataset.output = name;
-      outputsEl.append(h("div", {}, h("div", { class: "panelhead" }, h("label", { text: `Output ${name} (${out.format})` }), copy), pre));
-    }
-    const full = outPanel("blocks", "result", "result.json");
-    full.pre.textContent = JSON.stringify(result, null, 2); detailsEl.append(full.el);
-    say("done", `${BLOCK_OUTCOMES[result.outcome] || result.outcome}`, result.outcome, saveStatus);
-    if (saveStatus) status.dataset.save = saveStatus;
-    controls();
-  }
-
-  // --- running ----------------------------------------------------------------------------------------------------
-  function onEvent(ev) {
-    if (ev.type === "started") {
-      runId = ev.run_id; status.dataset.runId = runId;
-      if (!stopRequested) say("running", `Running ${ev.block} (${ev.kind} step)…`);
-      stepEl.textContent = `Step ${ev.step_id}: ${ev.kind}`;
-      if (pendingStop) sendStop();
-    } else if (ev.type === "attempt") {
-      upsert(ev.attempt, { id: ev.attempt_id, outcome: ev.outcome, check: ev.check, repair_reason: ev.repair_reason });
-    } else if (ev.type === "operation") {
-      showOperation(ev.kind, null, true);
-    } else if (ev.type === "final") {
-      renderFinal(ev.result, ev.save_status);
-    } else if (ev.type === "save") {
-      status.dataset.save = ev.save_status;
-    }
-  }
-
-  async function sendStop() {
-    pendingStop = false;
-    try { await api("/api/blocks/stop", { run_id: runId }); }
-    catch (e) { noteEl.textContent = "Stop failed: " + e.message; }
-  }
-
-  function doStop() {
-    if (!busy() || finalSeen) return;
-    stopRequested = true;
-    say("stopping", "Stopping…");
-    if (runId === null) { pendingStop = true; controls(); return; }
-    sendStop(); controls();
-  }
-
-  async function run() {
-    if (busy() || !usable()) return;
-    const texts = {};
-    for (const [name, c] of inputs) {
-      const t = c.get();
-      if (t === null) { noteEl.textContent = `Correct the marked fields of ${name}.`; return; }
-      texts[name] = t;
-    }
-    const payload = JSON.stringify({ name: detail.name, revision: detail.revision, inputs: texts });
-    if (state.limits && new TextEncoder().encode(payload).length > state.limits.request_bytes) {
-      noteEl.textContent = "The inputs are larger than a request may be."; return;
-    }
-    clearRun();
-    runId = null;
-    runCtl = new AbortController();
-    say("running", "Starting…");
-    controls();
-    let outcomeSeen = false;
-    try {
-      const fresh=await api("/api/blocks/"+encodeURIComponent(detail.name));
-      if(fresh.revision!==detail.revision){
-        const keep=currentTexts();await select(detail.name,keep);await loadListing(false);say("stale",BLOCK_STALE);outcomeSeen=true;return;
-      }
-      const body={key:detail.name,inputs:texts};
-      let plan;
-      try{plan=await wsApi("plans",{action:"test",request:body});}
-      catch(e){
-        if(e.code!=="support_required")throw e;
-        const info=await wsApi("blocks/"+encodeURIComponent(detail.name)+"/support"),box=h("div"),files=[];
-        for(const p of info.candidates){const c=h("input",{type:"checkbox"});files.push([p.path,c]);box.append(h("label",{},c,p.path));}
-        if(await wsDialog("Confirm script support files",box,["Use selection","Cancel"])!=="Use selection"){say("idle","Cancelled.");outcomeSeen=true;return;}
-        body.support=files.filter(([,c])=>c.checked).map(([p])=>p);
-        plan=await wsApi("plans",{action:"test",request:body});
-      }
-      if(plan.required_confirmations.length&&await wsDialog("Review run",wsShowValue(plan.required_confirmations),["Confirm","Cancel"])!=="Confirm"){say("idle","Cancelled.");outcomeSeen=true;return;}
-      const ticket=(await wsApi("tickets",{})).ticket;
-      let accepted;try{accepted=await wsApi("test",{...body,ticket,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations.map(({kind,digest})=>({kind,digest}))});}
-      catch(e){accepted=await wsApi("tickets/"+ticket);if(!accepted.operation_id)throw e;}
-      for(;;){
-        const batch=await wsApi("batches/"+accepted.operation_id);
-        const child=batch.active_run||batch.rows[0]?.run_id;
-        if(child&&!runId){onEvent({type:"started",run_id:child,block:detail.name,step_id:detail.step.id,kind:detail.step.kind});if(detail.step.kind!=="model")showOperation(detail.step.kind,null,true);}
-        if(batch.state!=="running"){
-          if(child){
-            const env=await api("/api/block_runs/"+child);
-            for(const step of env.result.steps||[])for(const id of step.attempts||[]){
-              const held=await api("/api/attempts/"+id);const a=held.record||held.summary;
-              if(a)upsert(attemptNumber(id),{id,outcome:a.outcome,check:a.check?.overall||a.check,repair_reason:a.repair_reason});
-            }
-            renderFinal(env.result,env.save_status);
-          }else say("done",batch.reason||batch.state,batch.state);
-          outcomeSeen=true;break;
-        }
-        await new Promise(resolve=>setTimeout(resolve,100));
-      }
-    } catch (e) {
-      if(runId&&!finalSeen)startPolling();else{say("idle",e.message);outcomeSeen=true;}
-    } finally {
-      runCtl = null;
-      if (!finalSeen && !polling && !outcomeSeen && status.dataset.state !== "idle" && status.dataset.state !== "stale")
-        say("done", "The connection ended before a final result was received.", "unknown");
-      controls();
-      loadListing(false);
-    }
-  }
-
-  // --- polling and reattaching (10.9) ---------------------------------------------------------------------------
-  function startPolling() {
-    if (polling || runId === null) return;
-    polling = true; controls();
-    if (!finalSeen) say("polling", "Connection lost; asking AgentWiz for the outcome…");
-    let failures = 0;
-    const tick = async () => {
-      if (!polling) return;
-      let res;
-      try { res = await apiText(`/api/block_runs/${runId}`); } catch (e) { res = null; }
-      if (!res || (!res.ok && res.status !== 410)) {
-        if (++failures >= 15) { polling = false; if (!finalSeen) say("done", "Outcome unknown: AgentWiz could not be reached.", "unknown"); controls(); return; }
-      } else if (res.status === 410) {
-        polling = false;
-        if (!finalSeen) say("done", "This outcome is no longer held.", "unknown");
-        controls(); return;
-      } else if (res.json && res.json.state === "running") {
-        failures = 0;
-        for (const a of res.json.attempts || []) upsert(a.attempt, { id: a.id, outcome: a.outcome, check: a.check });
-        if (res.json.stop_requested_at && status.dataset.state !== "stopping") say("stopping", "Stopping…");
-        else if (status.dataset.state === "polling" || status.dataset.state === "idle") say("polling", "Run in progress; following it…");
-      } else if (res.json && res.json.state === "ended") {
-        failures = 0;
-        if (!finalSeen) renderFinal(res.json.result, res.json.save_status);
-        else if (res.json.save_status) status.dataset.save = res.json.save_status;
-        if (res.json.save_status !== "pending") { polling = false; controls(); return; }
-      }
-      setTimeout(tick, POLL_MS);
-    };
-    tick();
-  }
-
-  function follow(id, blockName) {
-    if (busy()) return;
-    clearRun();
-    runId = id;
-    say("polling", `Following ${blockName || "block"} run ${id}…`);
-    startPolling();
-  }
-
-  runBtn.onclick = run;
-  stopBtn.onclick = doStop;
-  reload.onclick = async () => {
-    const keep = currentTexts();
-    await loadListing(true);
-    if (selected) await select(selected, keep);
-  };
-
-  TABS.blocks = {
-    // Showing the tab never starts a second load of a block that is being loaded (a newer, keep-less load would
-    // discard the texts the first one was asked to fill in).
-    async onShow() { await loadListing(false); if (selected && !detail && !selecting) await select(selected); },
-    onState() { controls(); },
-    submit: run,
-    // The tutorial: choose a block and fill its inputs.
-    async tutorialPrepare(name, texts) {
-      if (busy()) throw new Error("Stop the running block first.");
-      await loadListing(true);
-      await select(name, texts || {});
-    },
-  };
-  controls();
 })();
 
 // --- the Roles dialog (techspec 0.1.4, Section 13.2) -------------------------------------------------------------
@@ -3330,7 +2675,16 @@ function wsErrorText(e){
   const issues=(e.body?.issues||[]).map(i=>i.location+": "+i.message).join("; ");
   return (e.code==="block_invalid"?"The block definition needs correction.":messages[e.code]||e.message||String(e))+(issues?" "+issues:"")+(e.code?" ["+e.code+"]":"");
 }
-function wsError(e){wsNote.dataset.state="error";wsNote.dataset.code=e.code||"error";wsNote.textContent=wsErrorText(e);if(["stale","proposal_expired"].includes(e.code))wsNote.append(". Your draft is kept. Reload or request assistance again when ready.");}
+function wsError(e){wsNote.dataset.state="error";wsNote.dataset.code=e.code||"error";wsNote.textContent=wsErrorText(e);if(["stale","proposal_expired"].includes(e.code))wsNote.append(". Your draft is kept. Reload or request assistance again when ready.");
+  // S-1 (0.2.3): a clean saved block changed on disk since it was shown. Inputs, examples and revision choices stay.
+  if(e.code==="stale"&&ws.draft&&!ws.dirty){wsNote.dataset.state="stale";wsNote.append(" ",wsButton("Reload",wsReloadKeeping,"ws-reload"));}}
+async function wsReloadKeeping(){
+  const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};
+  const explicit=ws.explicitRevision;
+  // Reload reopens only an arm that followed the current version; an explicit retained revision stays selected.
+  await wsLoad(explicit?{key:ws.draft.key,revision:ws.selectedRevision}:{key:ws.draft.key},false);
+  Object.assign(ws,keep);wsRender();wsNote.dataset.state="reloaded";delete wsNote.dataset.code;wsNote.textContent="Reloaded from disk";
+}
 function wsButton(label,fn,id){
   return h("button",{type:"button","data-test":id || "ws-"+label.toLowerCase().replace(/[^a-z0-9]+/g,"-"),text:label,
     onclick:async e=>{const button=e.currentTarget;button.disabled=true;try{await fn();}catch(error){wsError(error);}finally{button.disabled=false;}}});
@@ -3421,9 +2775,8 @@ async function wsPlan(action,request){
     if(d.authoring_protected)disclosure.append(h("p",{class:"warn-text","data-test":"ws-assist-protection",
       text:"Applying this proposal permanently protects this block's design. The block must also run on a trusted local destination."}));
   } else if(d.assistance)disclosure.append(wsShowValue({action:d.assistance.action,task:d.assistance.task,stage:d.assistance.stage,sections:d.assistance.sections,evidence:d.assistance.evidence}));
-  const reviewed=plan.required_confirmations.some(c=>c.kind==="generated_source"||c.kind==="support_set");
   for(const draft of [d.draft,...(d.candidates||[]).map(c=>c.draft)].filter(Boolean)){
-    const source=h("details",{open:reviewed},h("summary",{text:"Complete selected source · "+draft.key}));
+    const source=h("details",{},h("summary",{text:"Complete selected source · "+draft.key}));
     source.append(wsSource("Executable definition",draft.definition_text));
     for(const [path,encoded] of Object.entries(draft.files||{})){
       let text=encoded;
@@ -3456,18 +2809,14 @@ async function wsRefresh(){
 function wsFilter(){wsList.replaceChildren(new Option("Choose a saved block",""),...wsBlocks.filter(b=>(b.name+" "+b.display_name).toLowerCase().includes(wsSearch.value.toLowerCase())).map(b=>new Option((b.display_name||b.name)+" · "+(b.kind||"unavailable"),b.name)));if(ws.draft&&!wsBlocks.some(b=>b.name===ws.draft.key))wsList.add(new Option((ws.draft.metadata.display_name||ws.draft.key)+" · Unsaved draft",ws.draft.key));wsList.value=ws.draft?.key||"";}
 async function wsLoad(source,dirty){
   const generation=++wsLoadGeneration;
+  ws.attached=null;ws.problemRow=null;ws.problemOnly=null;
   const keep=source.draft&&source.draft.key===ws.draft?.key?{examples:ws.examples,revision:ws.revision,inputs:ws.inputs,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample}:null;
-  let preview;
-  try{preview=await wsApi("preview",source);}catch(e){
-    if(e.code!=="support_required")throw e;
-    const support=await wsApi("blocks/"+encodeURIComponent(source.key)+"/support"),box=h("div"),checks=[];
-    for(const p of support.candidates){const c=h("input",{type:"checkbox"});checks.push([p.path,c]);box.append(h("label",{},c,p.path));}
-    if(await wsDialog("Select script support files",box,["Use selection","Cancel"])!=="Use selection")return;
-    preview=await wsApi("preview",{...source,support:checks.filter(([,c])=>c.checked).map(([p])=>p)});
-  }
+  const preview=await wsApi("preview",source);
   if(generation!==wsLoadGeneration)return;
   const sameBlock=ws.draft?.key===preview.draft.key;
   ws.draft=preview.draft;ws.projection=preview;ws.dirty=dirty;wsPending=null;
+  // S-1: the effective revision of exactly the bytes shown, and whether the user chose a retained revision.
+  ws.effectiveRevision=preview.effective_revision??null;ws.explicitRevision=!!source.revision;
   const versions=ws.draft.base_digest?await wsApi("blocks/"+encodeURIComponent(ws.draft.key)+"/revisions"):{current:null,revisions:[]};
   if(generation!==wsLoadGeneration)return;
   ws.revisionRows=versions.revisions;ws.currentRevision=versions.current;
@@ -3481,17 +2830,9 @@ async function wsLoad(source,dirty){
   const collection=await wsApi("blocks/"+encodeURIComponent(ws.draft.key)+"/examples");
   if(generation!==wsLoadGeneration)return;
   ws.examples=collection.examples;ws.revision=collection.revision;
-  ws.examplesDirty=false;ws.selectedExample="";ws.inputs={};if(keep)Object.assign(ws,keep);if(ws.batch?.plan?.candidates?.[0]?.draft?.key!==ws.draft.key)ws.batch=null;wsRender();
-}
-async function wsSupport(){
-  await wsFlush();const key=ws.draft.key,info=await wsApi("blocks/"+key+"/support"),box=h("div"),replacements=[],removals=[];
-  for(const x of info.candidates){const c=h("input",{type:"checkbox"});replacements.push([x.path,c]);box.append(h("label",{},c," Use root copy · "+x.path));}
-  for(const x of info.captured_details){const c=h("input",{type:"checkbox"});removals.push([x.path,c]);box.append(h("label",{},c," Remove captured "+x.path+" · root "+x.root_copy));}
-  if(await wsDialog("Update support files",box,["Preview","Cancel"])!=="Preview")return;
-  const selection=await wsApi("blocks/"+key+"/support/preview",{draft:ws.draft,replace:replacements.filter(x=>x[1].checked).map(x=>x[0]),remove:removals.filter(x=>x[1].checked).map(x=>x[0])});
-  if(await wsDialog("Review selected support",wsShowValue({files:selection.support,digest:selection.source_digest}),["Apply","Cancel"])==="Apply"){
-    await wsLoad({draft:selection.draft},true);
-  }
+  ws.examplesDirty=false;ws.selectedExample="";ws.inputs={};if(keep)Object.assign(ws,keep);if(ws.batch?.plan?.candidates?.[0]?.draft?.key!==ws.draft.key)ws.batch=null;
+  const row=wsBlocks.find(b=>b.name===ws.draft.key);ws.problemRow=row?.problem&&!dirty?row:null;
+  wsRender();
 }
 // `starter` preselects a starter, for Workflow Design's Create block… and Restore placeholders (UI-CD v3 CD1.12).
 async function wsNew(starter){
@@ -3585,13 +2926,30 @@ function wsRender(){
   wsBody.replaceChildren();wsNav.replaceChildren();wsRevisionPicker.replaceChildren();wsPending=null;
   wsNav.after(wsNote);
   wsHeading.textContent=(ws.draft?.metadata?.display_name||ws.draft?.key||"Block Workshop")+(ws.dirty?" · Unsaved":"");
+  if(ws.attached){wsRenderAttached();return;}
+  if(ws.problemOnly){wsBody.append(wsProblemPanel(ws.problemOnly,true));return;}
   if(!ws.draft){wsBody.append(h("p",{text:"Choose a saved block or create one to design and test it."}));return;}
   if(activeFrag==="workshop")history.replaceState(null,"","#workshop/"+encodeURIComponent(ws.draft.key)+"/"+ws.view);
   for(const view of ["design","test","compare"]){const b=wsButton(view[0].toUpperCase()+view.slice(1),()=>wsView(view));b.setAttribute("aria-pressed",String(ws.view===view));wsNav.append(b);}
   wsNav.append(wsButton("Assist",wsAssist),wsButton("Revision actions",wsRevisions));
   wsPicker();
   wsNav.after(wsRevisionPicker);
+  if(ws.problemRow)wsBody.append(wsProblemPanel(ws.problemRow,false));
   if(ws.view==="design")wsDesign();else wsTrials(ws.view==="compare");
+}
+// B-1 (0.2.3): why a saved block cannot run, from its /api/blocks row: file, code and the first 20 located issues.
+// Test and Compare stay disabled. An unmanaged block whose only issues are engine_changed offers Open as draft (E-1).
+function wsProblemPanel(row,alone){
+  const problem=row.problem,issues=(problem.issues||[]).slice(0,20);
+  const box=h("section",{class:"warn-text","data-test":"ws-block-problem","data-code":problem.code,"data-block":row.name},
+    h("h3",{text:"This block cannot run"}),h("p",{"data-test":"ws-block-problem-file",text:problem.file||""}));
+  const list=h("ul",{class:"list"});
+  for(const issue of issues)list.append(h("li",{"data-test":"ws-block-problem-issue","data-location":issue.location||"",text:(issue.location?issue.location+": ":"")+issue.message}));
+  box.append(list);
+  if(issues.length&&issues.every(i=>String(i.message||"").startsWith("engine_changed")))
+    box.append(wsButton("Open as draft",async()=>{try{ws.problemOnly=null;await wsLoad({key:row.name,engine_recovery:true},true);}catch(e){wsError(e);}},"ws-open-engine-draft"));
+  if(alone)for(const [label,id] of [["Test","ws-run-test"],["Compare","ws-compare-versions"]]){const b=wsButton(label,()=>{},id);b.disabled=true;box.append(b);}
+  return box;
 }
 // The revision selector, common to Design, Test and Compare. Selecting a retained revision opens a clean saved
 // selection (the default pointer stays where it is); Revision actions → Restore to draft enters draft mode.
@@ -3615,7 +2973,13 @@ function wsPicker(){
 }
 // A clean managed selection runs through its explicit saved selector; edits use the existing draft path.
 function wsClean(){return !ws.dirty&&!!ws.saved&&ws.saved.selector.key===ws.draft?.key&&ws.saved.selector.revision===ws.selectedRevision;}
-function wsSourceOf(extra){return wsClean()?{key:ws.draft.key,revision:ws.selectedRevision,...extra}:{draft:ws.draft,...extra};}
+// S-1 (0.2.3): an unedited block at its current version is sent as {key, expected_revision}; the server captures
+// the raw saved bytes and refuses `stale` if they changed. An explicit retained revision and an edited draft keep
+// their own selections.
+function wsFollowsCurrent(){return !ws.dirty&&!!ws.draft&&ws.effectiveRevision!=null&&!ws.explicitRevision&&(!ws.saved||ws.selectedRevision===ws.currentRevision);}
+function wsSourceOf(extra){
+  if(wsFollowsCurrent())return {key:ws.draft.key,expected_revision:ws.effectiveRevision,...extra};
+  return wsClean()?{key:ws.draft.key,revision:ws.selectedRevision,...extra}:{draft:ws.draft,...extra};}
 function wsSelectionLabel(){return ws.saved?("Revision "+ws.saved.number+(ws.saved.name?" — "+ws.saved.name:"")+(ws.dirty?" · Unsaved edits":"")):"Unsaved draft";}
 // UI-AB v2 §0.2: destination facts are shown as three separate statements.
 const WS_INELIGIBLE={hostname:"uses a host name; local-only data needs a literal loopback address such as 127.0.0.1",remote:"is a remote endpoint",proxied:"is routed through a proxy",provider:"is a provider restricted data is never sent to",address:"has an unsupported address"};
@@ -4194,27 +3558,61 @@ async function wsFollow(id,done,loadGeneration=wsLoadGeneration){
     if(generation!==wsPoll)return;
     if(current()&&batch.active_run){try{batch.live=await api("/api/block_runs/"+batch.active_run);}catch(e){/* child may already have ended */}}
     if(generation!==wsPoll)return;
-    if(batch.state==="running")setActivity("workshop",{operation_id:id,label:WS_BATCH_LABEL(batch),source:"workshop",open:()=>{selectTab("workshop");}});
+    if(batch.state==="running")setActivity("workshop",wsActivity(id,batch));
     else if(activitySources.get("workshop")?.operation_id===id)setActivity("workshop",null);
     // A changed selection detaches presentation, not ownership of the server run.
     // Keep the activity indicator accurate until completion, without touching newer status/results.
     if(current()){
       ws.batch=batch;wsNote.dataset.state=batch.state;delete wsNote.dataset.code;wsNote.textContent=batch.state+" · "+batch.rows.filter(r=>r.state==="terminal").length+" / "+batch.rows.length;
       wsResults();
+      if(ws.attached&&ws.attached.id===id){ws.attached.batch=batch;wsRenderAttachedControls();}
       if(batch.state!=="running"){if(done)await done(batch);return;}
     }else if(batch.state!=="running")return;
     await new Promise(resolve=>setTimeout(resolve,250));
   }
 }
 
-function wsTrialArticle(row){
+// A terminal trial's attempts (0.2.3, T-1): read on demand from the compact attempt view, one at a time, and
+// cached for the batch shown. Only the five compact fields are kept; the full envelope is never requested.
+let wsAttemptCache={batch:null,items:new Map(),open:new Set()};
+function wsAttemptItem(item){
+  const held=item.availability==="held";
+  return h("li",{"data-test":"ws-attempt","data-attempt":String(item.attempt),"data-outcome":item.outcome||"","data-check":item.check||"",
+    "data-repair-reason":held?(item.repair_reason||""):"","data-state":item.availability,
+    text:"Attempt "+item.attempt+(held||item.availability==="summary"?" · "+(item.outcome||"")+" · check "+(item.check||"none")+(held&&item.repair_reason?" · repair: "+item.repair_reason:""):" · details no longer held")});
+}
+function wsAttemptsDisclosure(row){
+  const batchId=ws.batch?.id;
+  if(wsAttemptCache.batch!==batchId)wsAttemptCache={batch:batchId,items:new Map(),open:new Set()};
+  const ids=(row.steps||[]).flatMap(s=>Array.isArray(s.attempts)?s.attempts:[]);
+  const list=h("ol",{"data-test":"ws-attempt-list"});
+  const box=h("details",{"data-test":"ws-attempts"},h("summary",{text:"Attempts ("+(row.attempts??ids.length)+")"}),list);
+  let loading=null;
+  const load=()=>loading||(loading=(async()=>{
+    for(const [index,id] of ids.entries()){
+      let item=wsAttemptCache.items.get(id);
+      if(!item){
+        try{const c=await api("/api/attempts/"+encodeURIComponent(id)+"?view=compact");item={attempt:c.attempt,outcome:c.outcome,check:c.check,repair_reason:c.repair_reason,availability:c.availability};}
+        catch(e){if(e.status!==410)throw e;item={attempt:index+1,outcome:null,check:null,repair_reason:null,availability:"not_held"};}
+        if(wsAttemptCache.batch===batchId)wsAttemptCache.items.set(id,item);
+      }
+      list.append(wsAttemptItem(item));
+    }
+  })());
+  box.addEventListener("toggle",()=>{if(wsAttemptCache.batch!==batchId)return;if(box.open){wsAttemptCache.open.add(row.trial_id);load();}else wsAttemptCache.open.delete(row.trial_id);});
+  if(wsAttemptCache.open.has(row.trial_id))box.open=true;   // a re-render keeps an opened disclosure open
+  return box;
+}
+// `readOnly` (0.2.3, A-1): every display stays, including recorded ratings; the review buttons, its only writes, go.
+function wsTrialArticle(row,{readOnly=false}={}){
   const result=h("article",{"data-test":"ws-trial","data-outcome":row.outcome||row.state,"data-attempts":row.attempts??0,"data-correctness":row.correctness||"unreviewed","data-arm":row.arm},h("strong",{text:(row.arm===0?"Baseline":"Candidate")+(row.block_revision_number?" · revision "+row.block_revision_number:" · draft")+" · "+(row.example.label||row.example.id)+" · "+(row.outcome||row.state)}));
   for(const [name,v] of Object.entries(row.outputs||{}))result.append(h("h4",{text:name}),v.format==="json"?h("div",{},wsStructured(v.text),h("details",{},h("summary",{text:"Exact answer"}),h("pre",{"data-test":"ws-output","data-output":name,text:v.text}))):h("pre",{"data-test":"ws-output","data-output":name,text:v.text}),copyControl("ws-copy-output",()=>v.text,null));
   if(row.output_checks)result.append(wsShowValue(row.output_checks));
   if(typeof row.raw_answer==="string")result.append(h("details",{},h("summary",{text:"Raw model answer (not accepted output)"}),h("pre",{"data-test":"ws-raw-answer",text:row.raw_answer}),copyControl("ws-copy-raw-answer",()=>row.raw_answer,null)));
   result.append(wsShowValue({execution:row.outcome||row.state,checks:row.final_check||row.check||row.steps?.map(s=>s.check)||"Unknown",correctness:row.correctness||"unreviewed",machine_judgement:row.machine_judgement,human_rating:row.human_rating,evidence:row.evidence_available===false?"Unavailable":row.preview_incomplete?"Partial":"Available",saving:ws.batch.saving?"Saved":"Session only"}),h("p",{text:"Correctness · "+(row.correctness||"unreviewed")}),wsSource("Checks and trace",JSON.stringify(row.steps||[],null,2)));
+  if(row.state==="terminal")result.append(wsAttemptsDisclosure(row));
   // Correctness review stays with the exact result it rates.
-  if(row.outcome==="complete"&&!row.preview_incomplete)for(const rating of ["correct","incorrect"])result.append(wsButton("Mark "+rating,async()=>{
+  if(!readOnly&&row.outcome==="complete"&&!row.preview_incomplete)for(const rating of ["correct","incorrect"])result.append(wsButton("Mark "+rating,async()=>{
     const history=ws.batch.saving?await api("/api/runs/"+row.run_id):null;
     const review=await wsPut("reviews/"+row.run_id,{context:{snapshot_id:row.snapshot_id,example_id:row.example.id,example_version:row.example.version,result_digest:row.result_digest},judgement:rating,expected_revision:history?.current_review?.revision||wsRatings[row.run_id]||0,persist:ws.batch.saving});
     wsRatings[row.run_id]=review.revision;ws.batch=await wsApi("batches/"+ws.batch.id);wsResults();
@@ -4236,11 +3634,11 @@ function wsResults(){
     pairs.forEach((pair,index)=>{
       const box=h("section",{class:"ws-pair","data-test":"ws-example-pair","data-example":pair.id,"data-current":String((ws.compareCurrent??0)===index)},
         h("h3",{text:"Example "+(index+1)+" of "+pairs.length+" · "+pair.label}));
-      const columns=h("div",{class:"ws-pair-columns"});for(const row of pair.rows)columns.append(wsTrialArticle(row));
+      const columns=h("div",{class:"ws-pair-columns"});for(const row of pair.rows)columns.append(wsTrialArticle(row,{readOnly:!!ws.attached}));
       box.append(columns);panel.append(box);
     });
     wsCompareStatus?.();
-  }else for(const row of ws.batch.rows)panel.append(wsTrialArticle(row));
+  }else for(const row of ws.batch.rows)panel.append(wsTrialArticle(row,{readOnly:!!ws.attached}));
   panel.prepend(wsShowValue({persistence:ws.batch.saving?"Saved":"Session only",state:ws.batch.state,save_error:ws.batch.save_error,trial_order:ws.batch.rows.map(r=>({example:r.example.id,arm:r.arm,state:r.state}))}));
   if(ws.batch.metrics)panel.append(h("details",{},h("summary",{text:"Comparison totals"}),wsShowValue(ws.batch.metrics)));
 }
@@ -4429,7 +3827,7 @@ function wsTrials(compare){
     form.append(inputArea,selectedInfo,h("div",{class:"ws-readiness-box"},h("h3",{text:"Readiness"}),readiness,wsButton("Check readiness",check,"ws-check-readiness")),toolbar,examplesArea,recent);
     layout.append(form,right);
   }
-  for(const button of form.querySelectorAll('[data-test="ws-run-test"], [data-test="ws-run-saved-examples"], [data-test="ws-compare-versions"], [data-test="ws-save-as-example"], [data-test="ws-edit-selected-example"]'))if(!valid)button.disabled=true;
+  for(const button of form.querySelectorAll('[data-test="ws-run-test"], [data-test="ws-run-saved-examples"], [data-test="ws-compare-versions"], [data-test="ws-save-as-example"], [data-test="ws-edit-selected-example"]'))if(!valid||(ws.problemRow&&!ws.dirty))button.disabled=true;
   wsResults();
 }
 async function wsRecords(){
@@ -4540,7 +3938,9 @@ async function libraryOpen(){
   };
   try{await load();}catch(e){status.textContent=e.message;dialog.dataset.state="error";}
 }
-wsSearch.oninput=wsFilter;wsList.onchange=async()=>{const key=wsList.value;try{if(key&&await wsLeave())await wsLoad({key},false);else wsFilter();}catch(e){wsError(e);}};
+wsSearch.oninput=wsFilter;wsList.onchange=async()=>{const key=wsList.value;ws.problemOnly=null;try{if(key&&await wsLeave())await wsLoad({key},false);else wsFilter();}catch(e){
+  const row=wsBlocks.find(b=>b.name===key);
+  if(row?.problem&&["unusable","migration_required","invalid"].includes(e.code)){ws.draft=null;ws.attached=null;ws.problemOnly=row;wsRender();}else wsError(e);}};
 wsPanel.append(wsHeading,h("div",{class:"ws-layout"},h("aside",{},wsSearch,wsList,wsButton("New block",wsNew),wsButton("Add from library",()=>libraryOpen().catch(wsError),"library-open"),wsRevisionPicker),h("div",{},wsNav,wsNote,wsBody)));
 TABS.workshop={async tutorialAssist(action){ws.view="design";ws.tutorialAction=action;if(action==="describe"){await wsLoad({key:"tutorial_described"},false);return;}await wsLoad({key:"tutorial_extractor",starter:"extract_fields",role:"fast"},true);}, async tutorialPrepare(key,inputs){ws.view="test";await wsLoad({key,support:[]},false);ws.inputs=inputs;ws.batch=null;wsRender();},async tutorialCreate(){ws.view="design";await wsLoad({starter:"count_text",starter_version:2,key:"tutorial_counter"},true);ws.examples=(await wsApi("starters")).starters.find(s=>s.id==="count_text").examples;wsRender();},async onShow(){try{await wsFlush();await wsRefresh();const parts=location.hash.slice(1).split("/");
   if(parts[1]&&wsBlocks.some(b=>b.name===parts[1])){
@@ -4555,7 +3955,6 @@ TABS.workshop={async tutorialAssist(action){ws.view="design";ws.tutorialAction=a
 
 $("main-nav").append($("tab-history"));
 $("ws-workbench").onclick=()=>selectTab("chat");
-wsPanel.querySelector("aside").append($("tab-blocks"));
 $("main-nav").setAttribute("role","tablist");
 $("main-nav").addEventListener("keydown",e=>{
   const buttons=[...$("main-nav").querySelectorAll("button")],i=buttons.indexOf(document.activeElement);
@@ -4624,13 +4023,74 @@ for(const id of ["open-settings","open-openrouter-key","open-servers","open-role
 
 // --- activity indicator (UI-CD v3 CD9): one in-page state fed by the Workshop follower and the workflow poller ---------
 const activityEl=h("button",{type:"button",id:"header-activity","data-test":"header-activity",class:"activity",hidden:true,"data-state":"idle"});
+// A-1 (0.2.3): Stop sits beside the indicator (which is itself a button) and stops the batch directly, even when its
+// block is missing, unusable or another dirty draft is open.
+const activityStopEl=h("button",{type:"button",id:"header-activity-stop","data-test":"header-activity-stop",hidden:true,text:"Stop"});
 const activitySources=new Map();
 function setActivity(source,info){
   if(info)activitySources.set(source,info);else activitySources.delete(source);
   const current=activitySources.get("workflow")||activitySources.get("workshop");
   activityEl.hidden=!current;activityEl.dataset.state=current?current.state||"running":"idle";activityEl.dataset.source=current?current.source||source:"";
+  if(current?.operation_id)activityEl.dataset.operationId=current.operation_id;else delete activityEl.dataset.operationId;
   activityEl.replaceChildren(...(current?[h("span",{class:"spinner","aria-hidden":"true"}),h("span",{text:" "+current.label})]:[]));
-  activityEl.onclick=current?()=>current.open():null;   // reopens the operation's own view; never starts anything
+  activityEl.onclick=current?()=>Promise.resolve(current.open()).catch(e=>wsError(e)):null;   // reopens the operation's own view; never starts anything
+  activityStopEl.hidden=!(current&&current.stop);activityStopEl.onclick=current&&current.stop?()=>current.stop():null;
+}
+// The one Workshop indicator action (A-1), published by recoverActivity and by every wsFollow poll.
+function wsActivity(id,batch){
+  return {operation_id:id,label:WS_BATCH_LABEL(batch),source:"workshop",open:()=>wsReattach(),
+          stop:()=>wsApi("batches/"+encodeURIComponent(id)+"/stop",{}).catch(e=>wsError(e))};
+}
+// After a reload nothing follows the batch until it is opened: keep the indicator accurate until the batch ends.
+async function wsWatch(id){
+  while(activitySources.get("workshop")?.operation_id===id){
+    await new Promise(resolve=>setTimeout(resolve,250));
+    let batch;try{batch=await wsApi("batches/"+encodeURIComponent(id));}catch(e){return;}
+    if(batch.state!=="running"){if(activitySources.get("workshop")?.operation_id===id)setActivity("workshop",null);return;}
+  }
+}
+function wsBatchKey(batch){const c=batch?.plan?.candidates?.[0];return c?.key||c?.draft?.key||batch?.plan?.assistance?.draft?.key||null;}
+// Open reattaches by batch ID, resolved when clicked. It never plans, takes a ticket or starts a run.
+async function wsReattach(){
+  const list=await wsApi("batches");const id=list.active;
+  if(!id){setActivity("workshop",null);selectTab("workshop");return;}
+  const batch=await wsApi("batches/"+encodeURIComponent(id));
+  const key=wsBatchKey(batch);
+  if(ws.draft&&ws.draft.key===key&&!ws.attached){         // 0. already its block: today's switch-and-follow
+    ws.view="test";selectTab("workshop");wsRender();wsFollow(id).catch(wsError);return;}
+  if(!await wsLeave())return;                              // 1. the user may keep their draft; Stop still works
+  ws.view="test";
+  const edited=(batch.plan?.candidates||[]).find(c=>c.draft?.draft_ref);
+  if(edited){                                              // 2. an edited draft reloads through Preview
+    try{selectTab("workshop");await wsLoad({draft:edited.draft},true);wsFollow(id).catch(wsError);return;}
+    catch(e){if(e.code!=="draft_expired")throw e;}         // 4. evicted reference: the attached run instead
+  }
+  ws.attached={id,batch,expired:!!edited};ws.draft=null;ws.problemOnly=null;ws.batch=batch;   // 3. a clean selection
+  selectTab("workshop");wsRender();wsFollow(id).catch(wsError);
+}
+function wsArmSource(c,expired){return c.selection==="current"?"current":c.block_revision_id?"revision":"draft";}
+function wsRenderAttached(){
+  const a=ws.attached,batch=a.batch;
+  const box=h("section",{"data-test":"ws-attached","data-operation-id":a.id},h("h3",{text:WS_BATCH_LABEL(batch)+" · attached run (read-only)"}));
+  (batch.plan?.candidates||[]).forEach((c,index)=>{
+    const attrs={"data-test":"ws-attached-arm","data-arm":String(index),"data-key":c.key||c.draft?.key||"","data-source":wsArmSource(c)};
+    if(c.block_revision_id){attrs["data-revision-id"]=c.block_revision_id;attrs["data-revision-number"]=String(c.block_revision_number);}
+    if(c.selection==="current")attrs["data-expected-revision"]=String(c.expected_revision);
+    box.append(h("p",{...attrs,text:(index===0?"Baseline":"Candidate")+" · "+(c.key||c.draft?.key||"")+" · "+attrs["data-source"]+(c.block_revision_number?" · revision "+c.block_revision_number:"")}));
+  });
+  const controls=h("div",{class:"row","data-test":"ws-attached-controls"});
+  box.append(controls,h("div",{id:"ws-results"}));
+  wsBody.append(box);wsRenderAttachedControls();wsResults();
+}
+function wsRenderAttachedControls(){
+  const controls=document.querySelector('[data-test="ws-attached-controls"]');if(!controls||!ws.attached)return;
+  const a=ws.attached,running=a.batch.state==="running";
+  const stop=wsButton("Stop",()=>wsApi("batches/"+encodeURIComponent(a.id)+"/stop",{}).catch(wsError),"ws-attached-stop");stop.disabled=!running;
+  const open=wsButton("Open block",async()=>{
+    const c=a.batch.plan.candidates[0],key=c.key||c.draft?.key;ws.attached=null;ws.view="test";
+    await wsLoad(c.block_revision_id?{key,revision:c.block_revision_id}:{key},false);ws.view="test";wsRender();wsFollow(a.id).catch(wsError);
+  },"ws-attached-open");open.disabled=running;
+  controls.replaceChildren(stop,open);
 }
 const WS_BATCH_LABEL=batch=>batch?.plan?.describe||batch?.plan?.assistance?"Assistance":(batch?.plan?.candidates?.length>1?"Compare":"Test");
 async function recoverActivity(){
@@ -4642,14 +4102,14 @@ async function recoverActivity(){
   try{
     const batches=await wsApi("batches");
     if(batches?.active&&!activitySources.has("workshop")){const batch=await wsApi("batches/"+batches.active).catch(()=>null);
-      setActivity("workshop",{operation_id:batches.active,label:WS_BATCH_LABEL(batch),source:"workshop",open:()=>selectTab("workshop")});}
+      setActivity("workshop",wsActivity(batches.active,batch));wsWatch(batches.active);}
   }catch(e){/* the indicator stays as it was */}
 }
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)recoverActivity();});
 function arrangeHeader(){
   // Wide design target: AgentWiz · activity · spacer · Save runs · workspace · Settings · Tutorial (CD9).
   const header=document.querySelector("header");
-  const order=[header.querySelector("h1"),activityEl,h("span",{class:"header-spacer"}),$("save-runs-control"),$("saving"),$("workspace"),$("open-workspaces"),settingsGroup,$("open-tutorial"),$("switch-msg")];
+  const order=[header.querySelector("h1"),activityEl,activityStopEl,h("span",{class:"header-spacer"}),$("save-runs-control"),$("saving"),$("workspace"),$("open-workspaces"),settingsGroup,$("open-tutorial"),$("switch-msg")];
   for(const el of order)if(el)header.append(el);
 }
 $("open-roles").textContent="Models & roles";

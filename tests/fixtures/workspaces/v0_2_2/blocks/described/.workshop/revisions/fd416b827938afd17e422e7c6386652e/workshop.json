@@ -1,0 +1,41 @@
+{
+  "display_name": "described",
+  "origin": "llm_generated",
+  "effects": "read-only",
+  "created_at": "2026-11-19T21:53:45.718470+00:00",
+  "parent": null,
+  "contracts_validated_at_save": true,
+  "format_version": 1,
+  "authoring": {
+    "scriptspell_version": "0.3.0",
+    "name": "scriptspell",
+    "profile": "scriptspell-pure-v5",
+    "codec": 2,
+    "prompt_version": "scriptspell-0.3.0",
+    "destination": {
+      "kind": "openai_compat",
+      "url": "http://127.0.0.1:35047/v1",
+      "model": "fixture-model"
+    }
+  },
+  "contracts": {
+    "inputs": {
+      "text": "{\n  \"format\": \"text\"\n}"
+    },
+    "outputs": {
+      "out": "{\n  \"format\": \"text\"\n}"
+    }
+  },
+  "contract_pins": {
+    "inputs": {},
+    "outputs": {}
+  },
+  "contracts_digest": "d7488c9f513ab61002487e8a922350b3373bfe86a60531e614cd0986c19ea8ea",
+  "asset_digest": "3b5a991803e725a3ebdf86090c88afcd291b0e674302c00e72b9dc80d12fee2e",
+  "assets": {
+    "scripts/main.py": "a01c921611411c2f35a8b82a50125be49c39861f63f18637e22bb4d2d5b7e9fd",
+    "block.json": "41eb2d8385e9cf35ddd4af27aa3bc87d5477480e82f6999b00d82d66dbb08a6a"
+  },
+  "revision_number": 1,
+  "revision_name": ""
+}

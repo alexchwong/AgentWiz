@@ -1,0 +1,151 @@
+{
+  "record_version": 1,
+  "id": "9ff5f9c913a0-1",
+  "run_id": "9ff5f9c913a0",
+  "step_id": "run",
+  "attempt": 1,
+  "parent_id": null,
+  "source": "block",
+  "accepted_at": "2026-11-19T21:53:45.191Z",
+  "profile": {
+    "name": "cloud",
+    "modified": false
+  },
+  "endpoint": {
+    "kind": "openrouter",
+    "base_url": "http://127.0.0.1:46237/v1"
+  },
+  "model": "private-summary",
+  "provider": "",
+  "task": {},
+  "settings_sources": {
+    "temperature": "backend_default",
+    "reasoning": "backend_default"
+  },
+  "input_messages": [
+    {
+      "role": "system",
+      "content": "=== AgentWiz output protocol (generated; do not edit) ===\nReturn exactly one JSON object and nothing else: no words before or after it, and no Markdown fence around it.\nIts top-level keys are exactly these output names, in any order, one value each:\n  \"summary\"\nEvery key must be present. Do not add keys, rename them, or nest one output inside another, and do not split one output across several keys.\nPlace each output's complete value directly under its own key. A value may be empty only where its schema allows that.\n\nOutput \"summary\" (text)\nValue: a JSON string holding the complete text. Escape quotes, backslashes and line breaks as JSON requires, and put any formatting the task asks for inside that string. Do not send an object or an array here.\nValue requirements:\nText; literal comparisons and lengths use the decoded string without normalization.\n\n=== end output protocol ==="
+    },
+    {
+      "role": "user",
+      "content": "Document:\n<<<\n[PERSON_1] reported fatigue on 3 March. Record [RECORD_1].\n>>>"
+    }
+  ],
+  "messages_sent": [
+    {
+      "role": "system",
+      "content": "=== AgentWiz output protocol (generated; do not edit) ===\nReturn exactly one JSON object and nothing else: no words before or after it, and no Markdown fence around it.\nIts top-level keys are exactly these output names, in any order, one value each:\n  \"summary\"\nEvery key must be present. Do not add keys, rename them, or nest one output inside another, and do not split one output across several keys.\nPlace each output's complete value directly under its own key. A value may be empty only where its schema allows that.\n\nOutput \"summary\" (text)\nValue: a JSON string holding the complete text. Escape quotes, backslashes and line breaks as JSON requires, and put any formatting the task asks for inside that string. Do not send an object or an array here.\nValue requirements:\nText; literal comparisons and lengths use the decoded string without normalization.\n\n=== end output protocol ==="
+    },
+    {
+      "role": "user",
+      "content": "Document:\n<<<\n[PERSON_1] reported fatigue on 3 March. Record [RECORD_1].\n>>>"
+    }
+  ],
+  "contract": null,
+  "output_plan": {
+    "mode": "named_json",
+    "renderer": 2,
+    "digest": "627fd74af25db556aee4186705d208c09ed111a432cbe9857f2be626057b3353",
+    "outputs": [
+      {
+        "name": "summary",
+        "description": "",
+        "contract": {
+          "name": null,
+          "revision": null,
+          "digest": "sha256:fed9b2422ab2ba97002fb66293f22a137be694bb3a9afaa5a2d25966239fabe0",
+          "text": "{\n  \"format\": \"text\"\n}",
+          "policy": "user"
+        },
+        "revision": null,
+        "text": "{\n  \"format\": \"text\"\n}",
+        "policy": "user"
+      }
+    ]
+  },
+  "role": "tutorial_cloud",
+  "fills": [
+    {
+      "where": "prompt",
+      "placeholder": "{{inputs.text}}",
+      "source": "inputs.text",
+      "sha256": "e74dc90b0468b4de0c2c4a19762a3ff83743e774e9a3c621e3161200bddfcb85"
+    }
+  ],
+  "repair_reason": null,
+  "save_run": false,
+  "agentwiz_version": "0.2.2",
+  "modelspell_version": "0.4.0",
+  "routing": {
+    "format_version": 1,
+    "routing_mode": "managed",
+    "routing_preset": "balanced",
+    "routing_zdr": null,
+    "routing_data_collection": "",
+    "requested_slug": null,
+    "selected_slug": null,
+    "policy": {},
+    "selection": "not probed",
+    "probe_usage": "not applicable"
+  },
+  "ended_at": "2026-11-19T21:53:45.197Z",
+  "model_called": true,
+  "outcome": "complete",
+  "result": {
+    "text": "{\"summary\":\"[PERSON_1] reported fatigue on 3 March.\"}",
+    "reasoning": null,
+    "usage": {
+      "input_tokens": 12,
+      "output_tokens": 8,
+      "total_tokens": 20,
+      "reasoning_tokens": null,
+      "cached_input_tokens": null,
+      "cache_write_tokens": null
+    },
+    "cost": null,
+    "finish_reason": "stop",
+    "truncated": false,
+    "model": "stub",
+    "provider": null,
+    "response_id": "stub-1",
+    "transport": "chat_completions",
+    "reasoning_details": null,
+    "raw_usage": {
+      "prompt_tokens": 12,
+      "completion_tokens": 8,
+      "total_tokens": 20
+    }
+  },
+  "partial": null,
+  "error": null,
+  "cancel_reason": null,
+  "stop_requested_at": null,
+  "stop_mode": null,
+  "sent": null,
+  "check": {
+    "overall": "pass",
+    "checks": [
+      {
+        "check": "parse",
+        "result": "pass"
+      },
+      {
+        "check": "outputs.summary",
+        "result": "pass"
+      }
+    ],
+    "issues": [],
+    "issue_count": 0,
+    "notes": [],
+    "outputs": {
+      "summary": {
+        "overall": "pass",
+        "checks": [],
+        "issues": [],
+        "issue_count": 0,
+        "notes": []
+      }
+    }
+  }
+}

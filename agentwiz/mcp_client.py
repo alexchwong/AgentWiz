@@ -578,10 +578,6 @@ class MCPClient:
             if session in self._all_sessions:
                 self._all_sessions.remove(session)
 
-    def sessions_snapshot(self) -> list[Session]:
-        with self.session_lock:
-            return list(self._all_sessions)
-
     # --- transport --------------------------------------------------------------------------------
     def _headers(self, snap: Snapshot, *, era: str, method: str, version: str | None = None,
                  session: Session | None = None, extra: Mapping[str, str] | None = None) -> dict:

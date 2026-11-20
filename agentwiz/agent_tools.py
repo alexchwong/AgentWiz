@@ -158,10 +158,6 @@ def enc(text: str) -> int:
     return total
 
 
-def _string_size(text: str) -> int:
-    return enc(text) + 2
-
-
 def _strings_size(values: list[str]) -> int:
     """Encoded size of a JSON array of strings."""
     return 2 + sum(enc(v) + 2 for v in values) + max(0, len(values) - 1)

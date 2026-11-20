@@ -1,0 +1,120 @@
+{
+  "record_version": 1,
+  "run_id": "9ff5f9c913a0",
+  "source": "block",
+  "block": {
+    "name": "cloud_summarize",
+    "revision": 1,
+    "files": {
+      "block.json": "d874d432c5bf390974c970325616666368f9cde1b10094e7658b61f1e843ec93"
+    }
+  },
+  "started_at": "2026-11-19T21:53:45.190Z",
+  "ended_at": "2026-11-19T21:53:45.198Z",
+  "outcome": "complete",
+  "stop_requested_at": null,
+  "cancel_reason": null,
+  "cancelled_at": null,
+  "input_texts": {
+    "text": "[PERSON_1] reported fatigue on 3 March. Record [RECORD_1]."
+  },
+  "inputs": {
+    "text": {
+      "format": "text",
+      "text": "[PERSON_1] reported fatigue on 3 March. Record [RECORD_1]."
+    }
+  },
+  "contracts": {
+    "inputs": {
+      "text": {
+        "name": null,
+        "revision": null,
+        "digest": "sha256:fed9b2422ab2ba97002fb66293f22a137be694bb3a9afaa5a2d25966239fabe0",
+        "text": "{\n  \"format\": \"text\"\n}",
+        "policy": "user"
+      }
+    },
+    "outputs": {
+      "summary": {
+        "name": null,
+        "revision": null,
+        "digest": "sha256:fed9b2422ab2ba97002fb66293f22a137be694bb3a9afaa5a2d25966239fabe0",
+        "text": "{\n  \"format\": \"text\"\n}",
+        "policy": "user"
+      }
+    }
+  },
+  "input_checks": {
+    "text": {
+      "overall": "pass",
+      "checks": [],
+      "issues": [],
+      "issue_count": 0,
+      "notes": []
+    }
+  },
+  "outputs": {
+    "summary": {
+      "format": "text",
+      "text": "[PERSON_1] reported fatigue on 3 March."
+    }
+  },
+  "issues": [],
+  "steps": [
+    {
+      "step_id": "run",
+      "kind": "model",
+      "outcome": "ok",
+      "failure": null,
+      "role": "tutorial_cloud",
+      "profile": "cloud",
+      "endpoint": {
+        "kind": "openrouter",
+        "base_url": "http://127.0.0.1:46237/v1"
+      },
+      "model": "private-summary",
+      "fills": [
+        {
+          "where": "prompt",
+          "placeholder": "{{inputs.text}}",
+          "source": "inputs.text",
+          "sha256": "e74dc90b0468b4de0c2c4a19762a3ff83743e774e9a3c621e3161200bddfcb85"
+        }
+      ],
+      "attempts": [
+        "9ff5f9c913a0-1"
+      ],
+      "accepted_attempt": "9ff5f9c913a0-1",
+      "max_repairs": 1,
+      "repairs_used": 0,
+      "truncated_attempts": 0,
+      "max_tokens": null,
+      "operation": null,
+      "output_checks": {
+        "summary": {
+          "overall": "pass",
+          "checks": [],
+          "issues": [],
+          "issue_count": 0,
+          "notes": []
+        }
+      }
+    }
+  ],
+  "budget": {
+    "max_seconds": 1800,
+    "max_model_tokens": null
+  },
+  "usage": {
+    "reported_tokens": 20,
+    "limit": null,
+    "over_by": null,
+    "unreported_attempts": []
+  },
+  "protected": false,
+  "workshop": {
+    "workflow_node": "cloud_summary"
+  },
+  "agentwiz_version": "0.2.2",
+  "modelspell_version": "0.4.0"
+}

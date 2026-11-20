@@ -133,11 +133,6 @@ def test_eviction_leaves_summaries_then_nothing(small):
     assert evicted["state"] == "committed" and evicted["record_held"] is False and "record" not in evicted
     assert evicted["summary"]["outcome"] == "complete" and evicted["summary"]["record_held"] is False
     assert store.envelope(ids[7])["record_held"] is True
-    with pytest.raises(runs.RepairRefused) as caught:                               # repairing an evicted attempt
-        store.admit_repair(ids[3])
-    assert caught.value.status == 410 and caught.value.code == "not_held"
-    with pytest.raises(runs.NoSuchAttempt):
-        store.admit_repair(ids[0])
 
 
 def test_record_over_the_byte_budget_is_not_kept(monkeypatch):
@@ -194,7 +189,7 @@ def test_evicted_parent_does_not_take_a_running_repair_with_it(small):
     store = runs.AttemptStore()
     run = new_run(store)
     parent = run_one(store, run, 1)
-    _run, _rec, number = store.admit_repair(parent)
+    number = store.reserve_attempt(run)                                            # the automatic repair's gate
     repair = store.start(run, number, {"id": runs.attempt_id(run.run_id, number)})
     for _ in range(8):                                                              # evict the parent's record
         run_one(store, new_run(store), 1)
@@ -220,9 +215,9 @@ def test_a_long_repair_chain_keeps_numbers_monotonic_and_metadata_bounded(monkey
     run = new_run(store)
     ids, parent = [run_one(store, run, 1)], None
     for expected in range(2, 21):
-        _run, rec, number = store.admit_repair(ids[-1])
+        number = store.reserve_attempt(run)
         assert number == expected                                                    # no gap and no reuse
-        ids.append(run_one(store, run, number, parent=rec["id"]))
+        ids.append(run_one(store, run, number, parent=ids[-1]))
     for gone in ids[:15]:
         with pytest.raises(runs.NotHeld):
             store.envelope(gone)                                                     # 410 for the early ones
@@ -231,55 +226,20 @@ def test_a_long_repair_chain_keeps_numbers_monotonic_and_metadata_bounded(monkey
     assert view["next_attempt"] == 21 and view["latest"] == 20 and view["running"] is None
     assert view["attempts"] == [16, 17, 18, 19, 20]                                  # no entry for a forgotten attempt
     assert view["held"] == [18, 19, 20]
-    store.admit_repair(ids[-1], reserve=False)                                       # the latest stays repairable
 
 
-def test_repair_admission_refusals():
+def test_stop_addresses_one_attempt_of_a_run():
+    """0.2.3 port of test_attempts.py::test_stop_addresses_one_attempt, on the store both Stop routes use:
+    Stop for a committed attempt cancels nothing; Stop for the running one cancels the run."""
     store = runs.AttemptStore()
     run = new_run(store)
     first = run_one(store, run, 1)
-    _r, _rec, n = store.admit_repair(first)
-    with pytest.raises(runs.RepairRefused) as caught:                                # a repair is already admitted
-        store.admit_repair(first)
-    assert (caught.value.status, caught.value.code) == (409, "not_latest")
-    store.abandon_run(run, n)                                                        # a refused 503 gives its number back
-    assert store.run_view(run.run_id)["next_attempt"] == 2
-    _r, _rec, again = store.admit_repair(first)
-    assert again == 2
-    store.abandon_run(run, again)
-    for outcome, check in (("complete", "pass"), ("complete", "incomplete"), ("complete", "contract_error"),
-                           ("empty", "fail"), ("error", None), ("stopped", None)):
-        other = run_one(store, new_run(store), 1, outcome=outcome, check=check)
-        with pytest.raises(runs.RepairRefused) as caught:
-            store.admit_repair(other)
-        assert (caught.value.status, caught.value.code) == (409, "not_repairable"), (outcome, check)
-    stopped = new_run(store)
-    sid = run_one(store, stopped, 1)
-    stopped.token.cancel()
-    with pytest.raises(runs.RepairRefused) as caught:
-        store.admit_repair(sid)
-    assert (caught.value.status, caught.value.code) == (409, "run_stopped")
-
-
-def test_concurrent_repair_admission_gives_one_winner():
-    store = runs.AttemptStore()
-    run = new_run(store)
-    first = run_one(store, run, 1)
-    barrier, outcomes = threading.Barrier(8), []
-
-    def go():
-        barrier.wait()
-        try:
-            outcomes.append(store.admit_repair(first)[2])
-        except runs.RepairRefused as exc:
-            outcomes.append(exc.code)
-
-    threads = [threading.Thread(target=go) for _ in range(8)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(10)
-    assert sorted(map(str, outcomes)) == ["2"] + ["not_latest"] * 7
+    before = store.envelope(first)
+    number = store.reserve_attempt(run)
+    second = store.start(run, number, {"id": runs.attempt_id(run.run_id, number)})
+    assert store.stop(first) == "already_finished"
+    assert not run.token.cancelled and store.envelope(first) == before
+    assert store.stop(second) == "stopping" and run.token.cancelled
 
 
 def test_stop_decisions():
@@ -308,9 +268,6 @@ def test_deletion_reservation_and_settlement():
     assert reserved is run and store.history_state(run) == runs.HISTORY_DELETING
     with pytest.raises(runs.RunActive):
         store.reserve_delete(run.run_id)                                             # one reservation at a time
-    with pytest.raises(runs.RepairRefused) as caught:
-        store.admit_repair(runs.attempt_id(run.run_id, 1))
-    assert (caught.value.status, caught.value.code) == (409, "run_active")
     store.settle_delete(run, ok=False, changed=False)
     assert store.history_state(run) == runs.HISTORY_INTACT                           # restored
     assert store.run_view(run.run_id)["prior_history_state"] is None                 # discarded at settlement

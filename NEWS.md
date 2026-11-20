@@ -1,5 +1,15 @@
 # NEWS
 
+## 0.2.3
+- Checked request and Saved block runs are removed; Workshop Test and automatic repair cover them.
+- Workshop refuses to test a saved block changed since it was opened, keeping your inputs.
+- The activity indicator reopens a running Workshop test and can stop it from any tab.
+- Workshop shows why a hand-written block cannot run, with its file and issue locations.
+- Each Workshop trial lists its attempts, with each check result and repair reason.
+- List view inserts a Release Gate on a connection and explains why each value is restricted.
+- History still opens Checked request runs saved by earlier versions.
+- Removed API routes: manual repair, contract instructions and inline synthesis.
+
 ## 0.2.2
 - Late Workshop batch updates no longer replace a newer revision's save status or results.
 - Workshop field assertions compare Text outputs literally instead of attempting to decode them as JSON.

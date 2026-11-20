@@ -1,0 +1,33 @@
+{
+  "run_id": "66e35ee1889d4a0d6c98551c7452ca9c",
+  "example_index": 0,
+  "gate": "gate",
+  "payload_digest": "e74dc90b0468b4de0c2c4a19762a3ff83743e774e9a3c621e3161200bddfcb85",
+  "executable_digest": "11c7b26ebbd48dd78980da42183faeaf8a9353453db7a549fec61a32252d411e",
+  "destinations": {
+    "cloud_summary": {
+      "kind": "openrouter",
+      "url": "http://127.0.0.1:46237/v1",
+      "model": "private-summary",
+      "provider": "",
+      "role": "tutorial_cloud",
+      "routing": {
+        "routing_mode": "managed",
+        "routing_preset": "balanced",
+        "routing_zdr": null,
+        "routing_data_collection": ""
+      },
+      "task_text": "{}",
+      "trust_revision": null,
+      "protected": false
+    }
+  },
+  "scope_digest": "9f48e76fce5717f9f541f87109278ae16bb9a165d0deadaee3345f7aeac1a21c",
+  "checks_digest": "9dba201b7ff0f524f356e3af5cb508dff9ca4a76eb4ce8a80cf7531e5fa401a7",
+  "decision": "release",
+  "timestamp": "2026-11-19T21:53:45.185394+00:00",
+  "identifier_hits": [],
+  "assessment_status": "complete",
+  "acknowledge_identifiers": false,
+  "acknowledge_assessment": true
+}

@@ -248,7 +248,7 @@ Run the Bash blocks from the repository root after developer setup. The basic ch
 the evaluation quickstarts keep settings in the terminal for subsequent commands. Where a command
 uses `${VAR:-default}`, an existing non-empty value takes precedence. Start the local server and load
 the selected model before running an LM Studio check. Each backend's basic
-check makes one request; MCP and the Stop and checked-request tests are separate. Each check skips
+check makes one request; MCP, Stop and the block-repair test are separate. Each check skips
 unless its variables are set (CI sets none), runs against a temporary workspace and prints one summary
 line; a skip because required variables are missing is not a successful check, so never record one as
 a pass.
@@ -431,7 +431,7 @@ python -m pytest -m live -s tests/test_live.py::test_live_openrouter tests/test_
 
 To explicitly exercise a Manual pin, set `AGENTWIZ_LIVE_OPENROUTER_PROVIDER` first and run
 `python -m pytest -m live -s tests/test_live.py::test_live_openrouter_manual`.
-The checked-request test reports whether the model met its contract; a pytest pass alone is not
+The block-repair test (LV-1) reports whether the model met its contract; a pytest pass alone is not
 library qualification. Stop can report an inconclusive skip when the request finishes too early.
 A missing-variable, unsupported-variant or inconclusive skip is not a pass. Provider API/tool-replay diagnostics
 belong in modelSpell; these checks exercise AgentWiz integration. When finished, remove the key
@@ -464,13 +464,14 @@ so this guide shows no eval block for it.
 web-retrieval-mcp running, an example is `http://127.0.0.1:8765/mcp`, `search_web`,
 `{"query":"model context protocol"}`.
 
-### Stop and checked-request checks
+### Stop and block-repair checks
 
 - **OpenRouter:** `test_live_stop_openrouter` sends a long padded prompt, then Stop after `started`;
-  judgment uses `tests/live_stop.py`, itself tested offline. `test_live_checked_request_openrouter`
-  uses a JSON contract with up to two repairs. Both reuse the OpenRouter variables above.
-- **Local backends:** `test_live_stop_local` and `test_live_checked_request_local` are each
-  parametrized over LM Studio and llama-server. Set both backends' URL/model variables to run both
+  judgment uses `tests/live_stop.py`, itself tested offline. `test_live_block_repair_openrouter` (LV-1)
+  runs one small model block with a JSON output contract through `/api/blocks/run`, with up to two
+  automatic repairs (one to three billable requests), and reports outcome, attempts and repair reasons.
+  Both reuse the OpenRouter variables above, including the optional provider pin.
+- **Local backends:** `test_live_stop_local` is parametrized over LM Studio and llama-server. Set both backends' URL/model variables to run both
   cases, or select one with `-k lmstudio` or `-k llamaserver`. LM Studio's key is optional.
 
 Select one check with `python -m pytest -m live -s tests/test_live.py::<test_name>` and its required

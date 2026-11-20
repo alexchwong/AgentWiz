@@ -797,6 +797,11 @@ class ProcessState:
         with self._lock:
             return self.blocks.get(name, reload) if isinstance(name, str) else None
 
+    def current_block(self, name: str) -> blocks.Loaded | None:
+        """The block as it is now, at its effective revision, read under the state's lock (0.2.3, S-1)."""
+        with self._lock:
+            return self.blocks.get(name) if isinstance(name, str) else None
+
     def block_for_run(self, name: object, revision: int) -> blocks.Loaded:
         """The block a run request names, at its effective revision (15.3). Raises NoSuchBlock, StaleRevision
         (carrying the current revision) or BlockUnusable."""
@@ -1006,20 +1011,6 @@ class ProcessState:
                                        config.discovery_deadline_s, token)
 
     # --- contracts for a request (overhaul spec 13.1) ----------------------------------------
-    def contract_for_request(self, name: str, revision: int, digest: str):
-        """The exact pinned revision a Checked request reviewed, read from the current bytes. A newer appended
-        revision does not invalidate it; a missing revision, an unusable file or a different digest refuses
-        before dispatch. Raises contracts.StoreError."""
-        if not wsmod.valid_name(name):
-            raise contracts.StoreError("no_such_contract", 404, "no such contract")
-        entry = contracts.ContractStore(self.workspace.path).read_current(name)
-        found, refused = contracts.resolve_pin(entry, name, revision, digest)
-        if found is None:
-            code, message = refused
-            status = 404 if code in ("no_such_contract", "no_such_revision") else 409
-            raise contracts.StoreError(code, status, message)
-        return found
-
     # --- run history (techspec 10.1) -------------------------------------------------------------
     def credentials(self) -> list[str]:
         """Every credential AgentWiz has held: typed keys and tokens (even cleared ones), and the current
@@ -1184,11 +1175,20 @@ class ProcessState:
         repair, which sends to the endpoint its parent captured (techspec 9.2)."""
         with self._lock:
             ep = Endpoint(kind, base_url or None)
-            if ep.base_url != self.servers[kind].base_url:
-                raise SettingsError("the recorded server differs from the configured server; repair is unavailable")
+            self._check_server_locked(ep)
             if ep.api_key_env:
                 self._env_names.add(ep.api_key_env)
             return self._keys.get((ep.kind, ep.base_url)) or self.servers[kind].api_key
+
+    def check_server(self, kind: str, base_url: str) -> None:
+        """Raise SettingsError when a recorded server differs from the configured one: the comparison `key_for`
+        makes, for a repair that keeps its captured key (0.2.3, G-1)."""
+        with self._lock:
+            self._check_server_locked(Endpoint(kind, base_url or None))
+
+    def _check_server_locked(self, ep: Endpoint) -> None:
+        if ep.base_url != self.servers[ep.kind].base_url:
+            raise SettingsError("the recorded server differs from the configured server; repair is unavailable")
 
     def discovery_endpoint(self, kind: object, base_url: object, api_key: object) -> Endpoint:
         """Discovery uses the same fixed server and session key as model execution."""

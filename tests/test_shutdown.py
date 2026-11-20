@@ -12,21 +12,18 @@ from test_blocks import MODEL_FILES, model_block
 def test_the_barrier_counts_registers_and_refuses_after_close():
     barrier = writers.WriterBarrier()
     first = barrier.register("a")
-    assert barrier.count() == 1 and barrier.outstanding() == ["a"]
-    inherited = first.inherit("b")
+    held = barrier.register("b")
+    assert barrier.count() == 2 and barrier.outstanding() == ["a", "b"]
     first.release()
     first.release()                                               # a second release does nothing
     assert barrier.count() == 1
     barrier.close()
     with pytest.raises(writers.WritersClosed):
         barrier.register("late")
-    again = inherited.inherit("c")                                # inherit works while closing: its holder is counted
-    assert barrier.count() == 2
-    inherited.release()
     drained = threading.Event()
     threading.Thread(target=lambda: (barrier.wait_drained(5), drained.set()), daemon=True).start()
-    assert not drained.wait(0.2)
-    again.release()
+    assert not drained.wait(0.2)                                  # a writer registered before close is counted
+    held.release()
     assert drained.wait(5) and barrier.count() == 0
 
 
