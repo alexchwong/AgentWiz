@@ -204,4 +204,13 @@ candidate with the normal release command before publishing.
 - **Setting.** `scripts/installed_gate.json` holds the Stage 6 outcome (`f-b` for 0.2.3). The `tests.yml` step reads
   the version from `agentwiz/_version.py` and the outcome from the setting, runs the command, then requires exit 3
   for each other outcome with `--shape-only`. `release.yml` reuses that workflow unchanged.
-- **Candidate wheels.** Build from a disposable clone holding the tracked working tree, committed only there.
+- **Published baseline.** Install the published 0.2.2 wheel, verify its SHA-256 against the release, then run
+  `python scripts/check_installed_ui.py --expect-version 0.2.2 --workflow-outcome f-a` from the 0.2.3 checkout.
+  This runs the 13 Stage 0 cases and eight original Workflow Design checks. The 0.2.3 command selects the full
+  candidate modules and required cases, including the installed private Agentic Chat checks.
+- **Offline CI.** Run the offline suite and the installed-wheel check on the release matrix. The only permitted
+  offline skip on macOS is the Linux-only PDF worker address-space limit test. PDF installation and extracted
+  content checks still run on macOS. 0.2.3 requires no live model or provider testing.
+- **Candidate wheels.** Build from the exact tree under review. The release command archives `HEAD`. For an
+  uncommitted review where commits are prohibited, export `HEAD` to scratch, overlay the tracked edits, and use
+  the release builder's wheel, RC1–RC3 and installed smoke functions on that exported tree.

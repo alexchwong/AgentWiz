@@ -32,11 +32,15 @@ class References:
         self.records = OrderedDict()
 
     def issue(self, draft, lineage):
-        ident = secrets.token_hex(16)
         with self.lock:
-            self.records[ident] = lineage
-            while len(self.records) > LIMIT:
-                self.records.popitem(last=False)
+            return self.issue_locked(draft, lineage)
+
+    def issue_locked(self, draft, lineage):
+        """Issue a draft reference while the caller holds the shared Workshop lock."""
+        ident = secrets.token_hex(16)
+        self.records[ident] = lineage
+        while len(self.records) > LIMIT:
+            self.records.popitem(last=False)
         draft['draft_ref'] = ident
         return draft
 
@@ -49,4 +53,3 @@ class References:
                 self.records.move_to_end(ident)
                 return record
         fail('draft_expired', 409)
-

@@ -1,73 +1,58 @@
 # AgentWiz 0.2.3 handover
 
-**Date** 20 November 2026 · **Spec** AgentWiz 0.2.3 technical specification v15 · **Baseline** `devel` at `c3e4fa8`
-**Nothing was committed or pushed.** The checks below that build a wheel ran from a disposable clone that was committed only locally.
+**20 November 2026 · Australia/Sydney**
+**Implementation base** `devel` at `bee9e1e4a9be04ae3328c1492dd2328bba8779b3`
+**References** 0.2.3 technical specification v15 and plan v17.4
 
-## Stage 6 outcome: **F-b**
+## Scope
 
-Stage 6a (L-1, L-2, the `gateTarget` remedy resolver, W-1, W-2, W-5) is done. Stage 6b, removing the canvas, was
-**not attempted**, so the canvas stays in 0.2.3 and List keeps the additions (§5.5). `scripts/installed_gate.json`
-is `{"workflow_outcome": "f-b"}`. Because of that, W-3, W-4 and W-6 are not written, the `workflow` and
-`private-summary-release` tutorial tips keep their 0.2.2 wording, and NEWS/README describe the List additions but
-not a canvas removal. The canvas removal (§5.3) moves to 0.2.4.
+Ship **F-b** for 0.2.3. Workflow Design retains the canvas and the List improvements. Stage 6b, W-3/W-4/W-6 and
+the canvas-removal tutorial updates remain deferred. The release is **offline-only**. OpenRouter, LM Studio,
+webSpell and the `deidentify_text` live qualification belong to 0.2.4.
 
-## Results
+## Follow-up fixes
 
-| Check | Result |
-| --- | --- |
-| Baseline offline suite (unmodified `c3e4fa8`) | 1,385 passed (same as §1) |
-| Offline suite, candidate: `python -m pytest -q -m "not live"` | **1,441 passed**, 9 deselected, 0 skipped |
-| `scripts/build_release.py --smoke` (disposable clone) | RC1–RC3 ok, `pip check` ok, smoke **S1–S26** ok; wheel `agentwiz-0.2.3-py3-none-any.whl`, SHA-256 `da8c86c6548f811bf30565a0f17b2f5bfc511256f8244eada24f2c1af328050e` |
-| `check_installed_ui.py --expect-version 0.2.3 --workflow-outcome f-b` on that wheel | exit 0, 219 passed, **67 of 67 `REQUIRED` rows passed** |
-| Rejection loop, `--shape-only` with `f-a` / `removal` | exit 3 for both; missing argument exits 2 |
-| Stage 0 cases against the **published 0.2.2 wheel** (SHA-256 matches §1): U-1…U-5, H-1…H-4, R-6h, D-1, N-2 | 13 passed |
-| Size (0.2.2 → 0.2.3) | 685,707 → 678,760 bytes compressed; 175 → 175 members; 2,340,355 → 2,311,559 bytes uncompressed; 37,388 → 36,827 shipped source lines |
+- Workshop keeps current and retained selections distinct, including attached-run reopening and races between
+  the preview and revision list. A current block’s problem no longer disables a valid retained revision. Compare
+  preserves the selected arms and example choices after a stale refusal. Newly changed examples require reselection.
+- Managed Python recovery uses the saved revision’s draft path. Unmanaged recovery preserves the protected Assist
+  Apply lineage, bounds the raw captures and prunes expired references. Tested recovery after restart and workspace
+  switch, saved-evidence hygiene, and ordinary purpose and Python source edits after recovery.
+- Workshop views share in-flight compact attempt lookups by batch. R-2(b5) observes two polls after leaving the
+  block, then reattaches and stops the original batch. R-7 verifies the compact response is under 1 KiB.
+- W-1 uses the existing workflow’s direct Run → Design → List navigation and checks retained input. W-5 runs the
+  actual amended workflow after rebind, Save and reopen. It checks the full outbound request for private canaries
+  and verifies zero cloud requests before approval. The existing U-5 tests cover invalid, rejected and expired
+  decisions. Retired-route checks use the original request shapes. D-1 checks the exact rendered PDF input.
+- The installed command selects 21 baseline cases for the published 0.2.2 wheel and the full case set for 0.2.3.
+  Candidate evidence includes private Agentic Chat draft labeling, a zero-send refusal and Stop. CI checks for
+  unexpected skips and permits the documented macOS exception for the Linux-only PDF worker address-space test.
 
-Not run: the CI matrix (macOS, Python 3.10), WSL2, and the full `check_installed_ui.py` against the 0.2.2 wheel
-(its final `REQUIRED` table holds 0.2.3 cases, see below). There was no live run.
+## Verification on this candidate
 
-## Where the work departs from the spec
+- Published 0.2.2 wheel SHA-256 `fad5de0c335c60f0bf77bbea06656df7a20d1e66011d62432b94c4cba44141da`.
+  Installed F-a check passed **21 of 21**.
+- Candidate wheel SHA-256 `24995abd233bbb3a347aef741b8f91cfabc71c8d6e3c0537938b02a29a69c14f`.
+  Built from a Git archive with the tracked edits overlaid in scratch. No commit was created. F-b shape passed,
+  and F-a and removal both returned exit 3.
+- Linux/Python 3.13.5 offline suite passed **1,448 tests**, with nine live cases deselected and zero skips.
+- Linux/Python 3.13.5 installed F-b candidate passed **229 tests**, including **78 of 78** required checks.
+- RC1–RC3, `pip check` and S1–S26 passed against the candidate wheel.
 
-1. **Stage order.** Each stage went into one working tree with the suite run between stages, not as separate
-   PRs. The §4.2 Ports were added (and run green) while the Checked request routes still existed. Then 3b removed
-   the routes, and the Ports ran again. Several Ports in `test_attempts.py` and `test_history.py` replace their
-   originals in place and keep the original names, which matches the post-3b end state.
-2. **`REQUIRED` table.** It holds the final 0.2.3 rows. A Stage 0 run against the 0.2.2 wheel would fail on the
-   rows for later stages. The Stage 0 subset was checked separately (row above). Parametrized cases are listed per
-   parameter (R-4e1/2, R-6/R-6c, N-1a/b, W-5a…c-ex).
-3. **Refusal codes the spec assumed but 0.2.2 doesn't produce.** The tests assert what the code actually returns:
-   - A stale headless block revision is `stale_revision`, not `stale`.
-   - The Workshop router's not-found body is `{"code": "missing"}`, so R-0's `synthesis-inline` row asserts that. The `/api/` router's body is `{"error": "not found"}` as specified.
-   - A cloud role on a Local only input is `destination_ineligible`, so R-4(b) asserts that.
-   - The Assist **Apply plan** already returns `generated_script_disabled` (H-3b).
-4. **`Writer.inherit`** was listed as dead, but `test_shutdown.py` called it. It was removed anyway: the test now
-   covers the barrier without it, and `_add`'s unused `force` path is gone.
-5. **R-2(b5).** Choosing another block stops the poller in this code, so the test waits briefly and doesn't count
-   extra polls. Reattach by batch ID still passes.
-6. **W-5(a).** It covers finding → List → insert → save with no requests sent. It does not run the saved Gate
-   workflow through to approval; the existing release-gate page tests cover that.
-7. **R-4(k) after restart.** The server test checks that a Save after restart succeeds through the ordinary
-   managed path. It doesn't separately edit the Python source.
+## Historical departures and release follow-up
 
-## Files to delete
-
-**None.** 0.2.3 only removed code inside existing files; no tracked file became obsolete. Optional, owner's call:
-
-- `agentwiz/tutorial_support/backend.py` still serves the `json-repair` stand-in model. Only the retired `repair`
-  tutorial topic used it. Removing it would mean editing that module, not deleting a file.
-- Do **not** delete `handover.md` before review. It is meant to go once the change is merged.
-
-## New files
-
-`scripts/installed_gate.json`, `scripts/make_upgrade_fixture.py`, `tests/test_installed_gate.py`,
-`tests/test_retired_surfaces.py`, `tests/test_host_script_retired.py`, `tests/test_upgrade_v0_2_2.py`,
-`tests/fixtures/workspaces/v0_2_2/` (generated by the recipe from the published 0.2.2 wheel; its `README.md`
-records the command, hash and date), `handover.md`.
-
-## Owner actions
-
-- Review the diff, then commit to `devel` in your usual way (I did neither).
-- Confirm outcome F-b, or schedule Stage 6b (canvas removal, W-3/W-4/W-6, tutorial tips, setting → `removal`) for
-  0.2.4.
-- Run the CI matrix and check that the installed-gate log in every job shows 0.2.3, `f-b` and every row passed.
-- Optional: run LV-1 (`tests/test_live.py::test_live_block_repair_openrouter`).
+- The initial implementation bundled the stages into one commit. Its handover reported the Checked request
+  ports passing before the old routes were removed. Historical stage-by-stage CI logs were unavailable during
+  this follow-up.
+- Retain the existing refusal bodies and codes. The headless stale code is `stale_revision`, the Workshop
+  not-found code is `missing`, and a cloud destination for Local only input produces `destination_ineligible`.
+  The existing Apply guard is `generated_script_disabled`. The unused `Writer.inherit` test caller was migrated
+  with the original trim.
+- Archive the actual hosted Ubuntu/macOS and Python 3.10/3.13 runs before release. The three failing jobs
+  on `bee9e1e` are historical diagnostics. Their exact pytest failures were unavailable here. WSL2 PDF
+  verification for this candidate is still separate.
+- Remaining evidence gaps from the review are a separate R-7 case crossing the 32 MiB preview cap and a single
+  browser case combining restricted Agentic Chat, reconnect and Stop. The installed checks cover the sub-cap
+  Compare workload and private draft, refusal and Stop separately.
+- **Files to delete in this delivery: none.** Keep this handover through release review and move the durable
+  release evidence into the repository documentation before retiring it.

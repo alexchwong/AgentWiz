@@ -70,6 +70,6 @@ def test_contract_instructions_route_is_retired(ui, server):
     configure(ui, server)
     save_contract(ui, "c", TEXT_CONTRACT)
     name, revision, digest = contract_pin(ui, "c")
-    body = {"contract": {"name": name, "revision": revision, "digest": digest}}
+    body = {"format_version": 2, "name": name, "revision": revision, "digest": digest}
     assert refused(ui, "/api/contracts/instructions", body) == (404, ROUTER_404)
     assert server.requests == []

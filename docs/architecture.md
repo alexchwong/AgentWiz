@@ -1715,3 +1715,12 @@ remains an owner disposition, not something these checks prove.
   (`wf-gate-choice`). An edge selection sets the inspector's `data-target`.
 - **Upgrade fixture.** `tests/fixtures/workspaces/v0_2_2/` is a frozen workspace written by the published 0.2.2
   wheel (`scripts/make_upgrade_fixture.py`); `tests/test_upgrade_v0_2_2.py` copies it under `tmp_path` and opens it.
+
+
+A Workshop selection remains current or explicitly retained until the user chooses a different source. Reload after
+a stale refusal keeps the comparison arms and example choices. Examples changed in storage require reselection
+before inclusion. Reopening a current batch opens the live current block while displaying the original batch's
+results. Retained revisions use their own validation and run issues. Engine recovery for a managed block uses
+its saved revision as a draft. Unmanaged recovery binds bounded in-memory captures to draft references from that
+workspace, including derived drafts created by protected Assist Apply. Concurrent views of one Workshop batch
+share each in-flight compact attempt request.

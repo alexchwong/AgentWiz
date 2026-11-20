@@ -31,7 +31,21 @@ jobs:
         if: runner.os == 'macOS'
         run: python -m playwright install chromium
       - name: Run the offline suite (the live checks are deselected, whatever variables the runner holds)
-        run: python -m pytest -m "not live"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -ra -m "not live" --junitxml="$RUNNER_TEMP/offline.xml"
+          python - "$RUNNER_TEMP/offline.xml" <<'PYTHON'
+          import sys
+          from xml.etree import ElementTree
+          report = ElementTree.parse(sys.argv[1])
+          allowed = {("tests.test_pdf", "test_a_runaway_allocation_is_stopped_by_the_address_space_limit")} if sys.platform == "darwin" else set()
+          for case in report.iter("testcase"):
+              if case.find("skipped") is not None:
+                  key = (case.get("classname"), case.get("name"))
+                  if key not in allowed:
+                      raise SystemExit(f"Unexpected offline skip: {key}")
+          PYTHON
       - name: Build the candidate wheel
         run: python -m pip wheel . --no-deps --wheel-dir "$RUNNER_TEMP/agentwiz-wheels"
       - name: Replace editable installation with the candidate wheel

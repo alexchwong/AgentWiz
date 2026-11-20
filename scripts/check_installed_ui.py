@@ -54,6 +54,14 @@ _PAGE = 'tests/test_page.py::'
 # One row per required case: (spec label, exact pytest node ID). Rows for every outcome.
 REQUIRED = (
     ('D-1', _PAGE + 'test_page_documents_pdf_to_local_only_block_input'),
+    ('R-2-current', _PAGE + 'test_open_attached_current_loads_latest_revision'),
+    ('R-4-managed', _PAGE + 'test_managed_engine_open_as_draft'),
+    ('R-4-compare', _PAGE + 'test_compare_stale_reload_keeps_arms_and_examples'),
+    ('R-4-retained', _PAGE + 'test_current_problem_keeps_valid_retained_revision_runnable'),
+    ('R-7-active', _PAGE + 'test_compact_attempt_download_is_shared_while_batch_is_active'),
+    ('R-4k-restart', 'tests/test_workshop.py::test_engine_recovery_record_is_discarded_by_a_restart'),
+    ('R-4k-switch', 'tests/test_workshop.py::test_engine_recovery_expires_on_workspace_switch'),
+    ('R-4k-assist', 'tests/test_workshop.py::test_protected_apply_preserves_engine_recovery'),
     ('N-2', _PAGE + 'test_page_startup_initialises_every_screen'),
     ('N-1a', _PAGE + 'test_page_retired_screen_fragments_open_workshop[checked-request]'),
     ('N-1b', _PAGE + 'test_page_retired_screen_fragments_open_workshop[blocks]'),
@@ -154,6 +162,17 @@ def required_rows(outcome: str) -> tuple:
     return REQUIRED + WORKFLOW_ROWS[outcome]
 
 
+# The later trim tests deliberately fail against the published baseline. Select the Stage 0
+# checklist and the original F-a Workflow Design checks by exact node ID for that wheel.
+BASELINE_LABELS = {'D-1', 'N-2', 'R-6h', 'H-1', 'H-2', 'H-3a', 'H-3b', 'H-4',
+                   'U-1', 'U-2', 'U-3', 'U-4', 'U-5'}
+PRIVATE_CHAT = (
+    ('Chat-private', 'tests/test_agent_document_tools.py::test_a_draft_from_a_local_only_source_is_labelled_and_promotes_before_reading'),
+    ('Chat-refusal', 'tests/test_agent.py::test_restricted_memory_refuses_a_non_local_model_with_remedies'),
+    ('Chat-stop', 'tests/test_agent.py::test_stop_during_approval_prevents_every_later_send'),
+)
+
+
 def junit_key(node_id: str) -> tuple[str, str]:
     """The (classname, name) pytest's JUnit writer records for a node ID, with --rootdir at the copy."""
     path, _, rest = node_id.partition('::')
@@ -239,8 +258,12 @@ def main(argv=None):
             return 3
         if args.shape_only:
             return 0
-        modules = [name for name in MODULES if (destination / name).is_file()]
-        rows = required_rows(args.workflow_outcome)
+        if version == '0.2.2':
+            rows = tuple(row for row in REQUIRED if row[0] in BASELINE_LABELS) + _WF
+            modules = [node for _, node in rows]
+        else:
+            rows = required_rows(args.workflow_outcome) + PRIVATE_CHAT
+            modules = [*MODULES, *(node for _, node in PRIVATE_CHAT)]
         print('Modules:', ' '.join(modules), flush=True)
         print('Required cases:', flush=True)
         for label, node in rows:

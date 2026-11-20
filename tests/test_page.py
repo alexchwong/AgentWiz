@@ -2712,7 +2712,7 @@ def test_page_documents_pdf_to_local_only_block_input(ui, server, open_page, tmp
     has(page, "ws-trial", "data-outcome", "complete")
     assert len(server.requests) == 1
     user = server.requests[0]["body"]["messages"][-1]["content"]
-    assert copied in user
+    assert user == "Summarise: " + copied
     save_roles(ui, {"fast": "q"})
     tid(page, "ws-run-test").click()
     expect(page.locator('[data-code="destination_untrusted"]').first).to_be_attached()
@@ -2816,13 +2816,16 @@ def test_page_workshop_compare_loads_attempts_only_on_demand(ui, server, open_pa
     page = open_page(ui)
     page.on("request", lambda r: seen.append(r.url) if "/api/attempts/" in r.url else None)
     page.goto(ui.url + "#workshop/big/compare")
-    assert completed(ui, started["batch_id"])["state"] == "complete"
+    batch = completed(ui, started["batch_id"])
+    assert batch["state"] == "complete" and not any(r.get("preview_incomplete") for r in batch["rows"])
     trials = page.locator('[data-test="ws-trial"]')
     expect(trials).to_have_count(40)
     expect(page.locator('[data-test="ws-trial"][data-outcome="complete"]')).to_have_count(40)
     assert seen == []
     trial = trials.first
-    tid(trial, "ws-attempts").locator("summary").click()
+    with page.expect_response(lambda response: response.url.endswith("?view=compact")) as compact:
+        tid(trial, "ws-attempts").locator("summary").click()
+    assert len(compact.value.body()) < 1024
     expect(trial.locator('[data-test="ws-attempt"]')).to_have_count(1)
     assert len(seen) == 1 and all(url.endswith("?view=compact") for url in seen)
     tid(trial, "ws-attempts").locator("summary").click()
@@ -3021,8 +3024,6 @@ def test_page_indicator_reattaches_after_leaving_without_reload(ui, server, open
     profile_and_role(ui, server)
     managed_text_block(ui, "other")
     page = open_page(ui)
-    batches = []
-    page.on("request", lambda r: batches.append(r.url) if "/api/workshop/batches/" in r.url else None)
     managed_text_block(ui)
     server.reply(held_block_reply())
     open_block_test(page, ui, "managed")
@@ -3030,13 +3031,18 @@ def test_page_indicator_reattaches_after_leaving_without_reload(ui, server, open
     assert server.wait_holding(1)
     batch = active_batch(ui)
     tid(page, "ws-list").select_option("other")
-    page.wait_for_timeout(600)                     # the poller keeps the indicator published meanwhile
+    expect(page.get_by_role("heading", name="other", exact=True)).to_be_visible()
+    poll_url = "/api/workshop/batches/" + batch
+    for _ in range(2):
+        with page.expect_request(lambda req: req.method == "GET" and req.url.endswith(poll_url)):
+            pass
     tid(page, "ws-workbench").click()
     tid(page, "header-activity").click()
     expect(tid(page, "ws-attached")).to_have_attribute("data-operation-id", batch)
     expect(tid(page, "ws-attached-arm")).to_have_attribute("data-key", "managed")
     tid(page, "ws-attached-stop").click()
-    assert wait_until(lambda: request(ui, "/api/workshop/batches/" + batch)["state"] != "running")
+    has(page, "ws-trial", "data-outcome", "stopped")
+    assert len(server.requests) == 1
 
 
 def test_page_indicator_open_keeps_own_draft(ui, server, open_page):
@@ -3175,8 +3181,17 @@ def test_page_workshop_explicit_revision_stays_selected(ui, server, open_page):
     current = send(ui, "preview", key="managed")["draft"]
     current["metadata"]["display_name"] = "newer"
     plan_save(ui, current, current["base_digest"])
+    plans = "**/api/workshop/plans"
+    page.route(plans, lambda route: route.fulfill(status=409, json={"code": "stale"}), times=1)
+    tid(page, "ws-field-text").fill("preserved")
+    tid(page, "ws-run-test").click()
+    has(page, "ws-status", "data-code", "stale")
+    assert not server.requests
+    tid(page, "ws-reload").click()
+    expect(page.locator('[data-test="ws-choice-block-revision"]').first).to_have_value(first["durable_id"])
+    expect(tid(page, "ws-field-text")).to_have_value("preserved")
     server.reply(answer('{"out":"fine"}'))
-    run_test(page)
+    run_test(page, "preserved")
     has(page, "ws-trial", "data-outcome", "complete")
     batch = request(ui, "/api/workshop/batches")["latest"]
     arm = request(ui, "/api/workshop/batches/" + batch)["plan"]["candidates"][0]
@@ -3228,6 +3243,11 @@ def test_page_workshop_clean_indented_model_block_runs(ui, server, open_page):
     has(page, "ws-trial", "data-outcome", "complete")
     assert folder_bytes(folder) == before
     assert result_of(run_block(ui, "b", {"text": "hello"}))["outcome"] == "complete"
+    assert len(server.requests) == 2
+    (folder / "prompts" / "user.md").write_text("Changed: {{inputs.text}}")
+    tid(page, "ws-run-test").click()
+    has(page, "ws-status", "data-code", "stale")
+    assert len(server.requests) == 2
 
 
 def test_page_workshop_engine_recovery_open_as_draft_and_save(ui, open_page):
@@ -3297,7 +3317,12 @@ def test_workflow_list_insert_gate_on_a_connection_undoes_in_one_step(ui, open_p
     page = open_page(ui)
     open_workflow_run(page, "chain")
     tid(page, "wf-document").fill("Jane Example")
-    open_design_list(page, "chain")
+    tid(page, "wf-design").click()
+    if not tid(page, "wf-list").count():
+        tid(page, "wf-list-view").click()
+    tid(page, "wf-run-view").click()
+    expect(tid(page, "wf-document")).to_have_value("Jane Example")
+    tid(page, "wf-design").click()
     list_gate(page, "node:cloud_summary:text").click()
     expect(page.locator('[data-test="wf-list-node"][data-node="gate"]')).to_have_count(1)
     has(page, "wf-validation", "data-state", "checked")
@@ -3402,6 +3427,41 @@ def test_workflow_add_release_gate_selects_the_finding_connection(ui, open_page,
         expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
         assert request(ui, "/api/workshop/workflows/chain")["editor"]["nodes"]["cloud_summary"]["bindings"]["text"]["port"] == "released"
         assert local.requests == cloud.requests == []
+        from test_core_v3 import model_draft, port
+        from test_workshop import plan_save
+        plan_save(ui, model_draft("reviewed_summary", "cloud", {"text": port()}, {"summary": port()}))
+        node = page.locator('[data-test="wf-list-node"][data-node="cloud_summary"]')
+        tid(node, "wf-rebind-node").click()
+        dialog = page.get_by_role("dialog", name="Choose replacement revision")
+        tid(dialog, "wf-block-picker").select_option("reviewed_summary")
+        expect(dialog).to_contain_text("Ready to capture")
+        tid(dialog, "ws-use-revision").click()
+        tid(page, "wf-save").click()
+        review = page.get_by_role("dialog", name="Review node rebind")
+        expect(review).to_contain_text("reviewed_summary")
+        tid(review, "ws-confirm").click()
+        expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
+        assert local.requests == cloud.requests == []
+
+        page = open_page(ui)
+        open_workflow_run(page, "chain")
+        private, released = "Jane Example · case 768-223", "[PERSON_1] reported fatigue."
+        tid(page, "wf-document").fill(private)
+        local.reply(answer(jsonio.encode_exact({"redacted_text": released, "mapping": [
+            {"original": "Jane Example", "placeholder": "[PERSON_1]"}]})))
+        cloud.reply(answer('{"summary":"[PERSON_1] reported fatigue."}'))
+        tid(page, "wf-preflight").click()
+        has(page, "wf-readiness-state", "data-state", "ready")
+        tid(page, "wf-run").click()
+        expect(tid(page, "wf-release-payload")).to_have_text(released)
+        assert len(local.requests) == 1 and cloud.requests == []
+        tid(page, "wf-release-approve").click()
+        expect(tid(page, "wf-release-panel")).to_have_count(0)
+        expect(tid(page, "wf-trace")).to_contain_text("complete")
+        assert len(cloud.requests) == 1
+        outbound = cloud.requests[0]["body"]
+        assert [m["content"] for m in outbound["messages"] if m["role"] == "user"] == [released]
+        assert all(secret not in jsonio.encode_exact(outbound) for secret in ("Jane Example", "768-223", '"mapping"', '"original"'))
         return
     two_input_chain(ui, local, cloud)
     if case.startswith("named"):
@@ -3433,8 +3493,150 @@ def test_workflow_add_release_gate_selects_the_finding_connection(ui, open_page,
         tid(page.get_by_role("dialog", name="Review workflow save"), "ws-confirm").click()
         expect(tid(page, "wf-status")).to_have_text("Workflow saved.")
         nodes = request(ui, "/api/workshop/workflows/pair")["editor"]["nodes"]
-        assert nodes["send"]["bindings"]["b"]["port"] == "released" and nodes["send"]["bindings"]["a"]["node"] == "deid"
+        bindings = nodes["send"]["bindings"]
+        gate_id = bindings["b"]["node"]
+        assert bindings["b"]["port"] == "released"
+        current, original = nodes[gate_id]["bindings"]["value"], bindings["a"]
+        assert (current["node"], current["port"]) == ("deid", "notes")
+        assert (original["node"], original["port"]) == ("deid", "redacted_text")
     else:
         has(page, "wf-inspector", "data-selection", "node")
         choose_b_and_save(page, ui)
     assert local.requests == cloud.requests == []
+
+
+def test_managed_engine_open_as_draft(ui, open_page, monkeypatch):
+    from agentwiz import python_step
+    from test_workshop import plan_save
+    definition = python_block("managed_python", inputs={"text": {"format": "text"}}, outputs={"out": {"format": "text"}})
+    plan_save(ui, {"key": "managed_python", "definition_text": jsonio.encode_exact(definition),
+                   "files": {"scripts/go.py": "def transform(inputs):\n    return {'out': inputs['text']}\n"},
+                   "metadata": {}})
+    old_engine = python_step.engine()
+    monkeypatch.setattr(python_step, "engine", lambda: {**old_engine, "codec": old_engine["codec"] + 1})
+    ui.state.block_loaded("managed_python", reload=True)
+    page = open_page(ui, "workshop")
+    tid(page, "ws-list").select_option("managed_python")
+    expect(tid(page, "ws-open-engine-draft")).to_be_visible()
+    tid(page, "ws-open-engine-draft").click()
+    has(page, "ws-unsaved-state", "data-state", "unsaved")
+    tid(page, "ws-test").click()
+    run_test(page, "retained data")
+    has(page, "ws-trial", "data-outcome", "complete")
+    tid(page, "ws-design").click()
+    tid(page, "ws-save-revision").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    has(page, "ws-status", "data-state", "saved")
+
+
+def test_open_attached_current_loads_latest_revision(ui, server, open_page):
+    from test_workshop import plan_save, send
+    profile_and_role(ui, server)
+    managed_text_block(ui)
+    server.reply(held_block_reply())
+    page = open_page(ui)
+    open_block_test(page, ui, "managed")
+    run_test(page)
+    assert server.wait_holding(1)
+    batch = active_batch(ui)
+    page.goto(ui.url + "#chat")
+    page.reload()
+    tid(page, "header-activity").click()
+    expect(tid(page, "ws-attached-arm")).to_have_attribute("data-source", "current")
+    tid(page, "ws-attached-stop").click()
+    expect(tid(page, "ws-attached-open")).to_be_enabled()
+    current = send(ui, "preview", key="managed")["draft"]
+    current["metadata"]["display_name"] = "newer"
+    second = plan_save(ui, current, current["base_digest"])
+    tid(page, "ws-attached-open").click()
+    picker = page.locator('[data-test="ws-choice-block-revision"]').first
+    expect(picker).to_have_attribute("data-current", second["durable_id"])
+    expect(picker).to_have_value(second["durable_id"])
+    assert len(server.requests) == 1
+
+
+def test_compare_stale_reload_keeps_arms_and_examples(ui, server, open_page):
+    from test_workshop import http_method, plan_save, send
+    profile_and_role(ui, server)
+    first = managed_text_block(ui)
+
+    def publish_next(label):
+        draft = send(ui, "preview", key="managed")["draft"]
+        definition = jsonio.decode_exact(draft["definition_text"])
+        definition["description"] = label
+        draft["definition_text"] = jsonio.encode_exact(definition)
+        return plan_save(ui, draft, draft["base_digest"])
+
+    second = publish_next("another purpose")
+    examples = [{"id": f"e{n}", "version": 1, "label": f"example {n}", "inputs": {"text": str(n)},
+                 "expectation": {"kind": "review", "criterion": ""}, "verified": False} for n in (1, 2)]
+    http_method(ui, "blocks/managed/examples", "PUT", {"expected_revision": None, "examples": examples})
+    page = open_page(ui)
+    open_block_test(page, ui, "managed")
+    tid(page, "ws-compare").click()
+    baseline = page.get_by_label("Baseline revision", exact=True)
+    baseline.select_option(first["durable_id"])
+    excluded = page.get_by_role("checkbox", name="example 2")
+    excluded.uncheck()
+    third = publish_next("changed on disk")
+    assert second["durable_id"] != third["durable_id"]
+    tid(page, "ws-compare-versions").click()
+    expect(tid(page, "ws-status")).to_have_attribute("data-code", "stale")
+    assert not server.requests
+    tid(page, "ws-reload").click()
+    expect(baseline).to_have_value(first["durable_id"])
+    expect(excluded).not_to_be_checked()
+
+
+def test_current_problem_keeps_valid_retained_revision_runnable(ui, server, open_page):
+    from conftest import contract_pin, save_contract
+    from test_workshop import plan_save, send
+    profile_and_role(ui, server)
+    first = managed_text_block(ui)
+    save_contract(ui, "pin", '{"format":"text"}')
+    name, revision, digest = contract_pin(ui, "pin")
+    draft = send(ui, "preview", key="managed")["draft"]
+    definition = jsonio.decode_exact(draft["definition_text"])
+    definition["outputs"]["out"]["contract"] = {"name": name, "revision": revision, "digest": digest}
+    draft["definition_text"] = jsonio.encode_exact(definition)
+    plan_save(ui, draft, draft["base_digest"])
+    (ui.workspace.path / "contracts" / "pin.json").write_text("broken")
+    page = open_page(ui)
+    open_block_test(page, ui, "managed")
+    picker = page.locator('[data-test="ws-choice-block-revision"]').first
+    picker.select_option(first["durable_id"])
+    expect(picker).to_have_value(first["durable_id"])
+    assert not send(ui, "preview", key="managed", revision=first["durable_id"])["run_issues"]
+    expect(tid(page, "ws-run-test")).to_be_enabled()
+
+
+def test_compact_attempt_download_is_shared_while_batch_is_active(ui, server, open_page):
+    from test_workshop import http_method
+    profile_and_role(ui, server)
+    managed_text_block(ui)
+    examples = [{"id": f"e{n}", "version": 1, "label": f"example {n}", "inputs": {"text": str(n)},
+                 "expectation": {"kind": "review", "criterion": ""}, "verified": False} for n in (1, 2)]
+    http_method(ui, "blocks/managed/examples", "PUT", {"expected_revision": None, "examples": examples})
+    server.reply(answer('{"out":"fine"}'), held_block_reply())
+    page = open_page(ui)
+    open_block_test(page, ui, "managed")
+    tid(page, "ws-run-saved-examples").click()
+    tid(tid(page, "ws-dialog"), "ws-confirm").click()
+    assert server.wait_holding(1)
+    pending = []
+
+    def pause_compact(route):
+        pending.append(route)
+
+    page.route("**/api/attempts/*?view=compact", pause_compact)
+    trial = page.locator('[data-test="ws-trial"][data-outcome="complete"]')
+    tid(trial, "ws-attempts").locator("summary").click()
+    poll_url = "/api/workshop/batches/" + active_batch(ui)
+    for _ in range(3):
+        with page.expect_request(lambda req: req.method == "GET" and req.url.endswith(poll_url)):
+            pass
+    for route in pending:
+        route.continue_()
+    expect(tid(trial, "ws-attempt")).to_have_count(1)
+    assert len(pending) == 1
+    tid(page, "header-activity-stop").click()

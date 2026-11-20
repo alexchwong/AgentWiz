@@ -925,6 +925,8 @@ def test_engine_recovery_save_checkpoints_and_refusals(ui, monkeypatch):
 
 
 def test_engine_recovery_record_is_discarded_by_a_restart(ui, restart):
+    from agentwiz import jsonio
+    from conftest import result_of, run_block, switch_history
     folder = _engine_changed_block(ui)
     original = _bytes(folder)
     draft = _recover(ui, 'old_engine')
@@ -933,12 +935,46 @@ def test_engine_recovery_record_is_discarded_by_a_restart(ui, restart):
     assert failure_of(lambda: send(ui, 'plans', action='save', request=body)).body['code'] == 'draft_expired'
     assert _bytes(folder) == original
     draft = _recover(ui, 'old_engine')
+    switch_history(ui, True)
+    draft['metadata'].update(engine_recovery=True, recovery_id='discard this marker')
+    body = {'draft': draft, 'inputs': {'text': 'pong'}}
+    batch = completed(ui, start_planned(ui, 'test', body)['batch_id'])
+    assert batch['rows'][0]['outcome'] == 'complete'
     saved = plan_save(ui, draft, draft['base_digest'])
+    workspace = ui.workspace.path
+    for directory in (folder, workspace / 'runs', workspace / 'workshop' / 'comparisons'):
+        for evidence in directory.rglob('*.json'):
+            assert not any(key in evidence.read_bytes() for key in (b'"engine_recovery"', b'"recovery_id"'))
     assert saved['revision_number'] == 2
     ui = restart(ui)
     reopened = send(ui, 'preview', key='old_engine')['draft']
-    assert plan_save(ui, {**reopened, 'metadata': {**reopened['metadata'], 'display_name': 'Changed'}},
-                     reopened['base_digest'])['revision_number'] == 3
+    definition = jsonio.decode_exact(reopened['definition_text'])
+    definition['description'] = 'Changed purpose after restart'
+    reopened['definition_text'] = jsonio.encode_exact(definition)
+    assert plan_save(ui, reopened, reopened['base_digest'])['revision_number'] == 3
+    reopened = send(ui, 'preview', key='old_engine')['draft']
+    reopened['files']['scripts/go.py'] = "def transform(inputs):\n    return {'out': 'recovered ' + inputs['text']}\n"
+    assert plan_save(ui, reopened, reopened['base_digest'])['revision_number'] == 4
+    body = {'key': 'old_engine', 'expected_revision': _effective(ui, 'old_engine'), 'inputs': {'text': 'pong'}}
+    result = completed(ui, start_planned(ui, 'test', body)['batch_id'])['rows'][0]
+    assert result['outcome'] == 'complete' and result['outputs']['out']['text'] == 'recovered pong'
+    assert result_of(run_block(ui, 'old_engine', body['inputs']))['outcome'] == 'complete'
+
+
+def test_engine_recovery_expires_on_workspace_switch(ui):
+    from test_workspace_lifecycle import make_second
+    folder = _engine_changed_block(ui)
+    original = _bytes(folder)
+    draft = _recover(ui, 'old_engine')
+    name = ui.workspace.name
+    make_second(ui)
+    for target in ('second', name):
+        request(ui, '/api/workspaces/switch', {'format_version': 1, 'name': target})
+    body = {'draft': draft, 'expected_identity': draft['base_digest']}
+    assert failure_of(lambda: send(ui, 'plans', action='save', request=body)).body['code'] == 'draft_expired'
+    assert _bytes(folder) == original
+    draft = _recover(ui, 'old_engine')
+    assert plan_save(ui, draft, draft['base_digest'])['revision_number'] == 2
 
 
 def test_engine_recovery_binds_only_the_issued_draft_ref(ui):
@@ -965,3 +1001,31 @@ def test_engine_recovery_binds_only_the_issued_draft_ref(ui):
     assert jsonio.decode_exact(current['definition_text'])['context_local_only'] is True
     assert current['metadata']['protection_origin'] == 'inherited'
     assert json.dumps(current['metadata']).count('recovery') == 0
+
+
+def test_protected_apply_preserves_engine_recovery(ui, server):
+    from agentwiz import jsonio
+    from conftest import answer, save_profile, save_roles
+    _engine_changed_block(ui)
+    draft = _recover(ui, "old_engine")
+    save_profile(ui, "p", model="m", kind="openai_compat", base_url=server.url + "/v1", provider="")
+    save_roles(ui, {"assistant": "p"})
+    grants = request(ui, "/api/workshop/destination-trust")
+    send(ui, "destination-trust", expected_revision=grants["revision"], trusted=True,
+         destination={"kind": "openai_compat", "url": server.url + "/v1", "model": "m", "provider": ""})
+    response = {"format_version": 1, "action": "improve", "payload": {"purpose": "Reviewed purpose"},
+                "assumptions": [], "unmet_requirements": []}
+    server.reply(answer(jsonio.encode_exact({"proposal": response})))
+    started = start_planned(ui, "assist", {"action": "improve", "role": "assistant", "draft": draft,
+                                           "task": "Improve.", "sections": ["purpose"], "context_local_only": True})
+    batch = completed(ui, started["batch_id"])
+    apply_body = {"proposal_id": batch["rows"][0]["proposal_id"], "draft": draft}
+    plan = send(ui, "plans", action="proposals/apply", request=apply_body)
+    applied = send(ui, "proposals/apply", **apply_body, expected_plan=plan["expected_plan"],
+                   confirmations=[{"kind": r["kind"], "digest": r["digest"]} for r in plan["required_confirmations"]])["draft"]
+    assert applied["draft_ref"] != draft["draft_ref"]
+    assert applied["metadata"]["protection_origin"] == "inherited"
+    published = plan_save(ui, applied, draft["base_digest"])
+    assert published["revision_number"] == 2
+    stored = send(ui, "preview", key="old_engine")["draft"]
+    assert stored["metadata"]["protection_origin"] == "inherited"

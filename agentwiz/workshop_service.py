@@ -7,6 +7,7 @@ import hashlib
 import secrets
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 
 from . import agent_tools, blocks, checks, contract_schema, history, jsonio, model_step, runner, runs, task_settings as ts, templates
@@ -14,7 +15,7 @@ from . import workshop_editor as editor
 from .state import RoleUnresolved
 from . import draft_lineage, outbound_policy, python_step
 from .workshop import TOKEN, WorkshopError
-from .workshop_assets import Assets, Capture, decode_files, document, fail, fingerprint, head, key_name, read, relative, wire_files
+from .workshop_assets import CAPTURE_LIMIT, Assets, Capture, decode_files, document, fail, fingerprint, head, key_name, read, relative, wire_files
 from .workspace import write_atomic_bytes
 
 PREVIEW_LIMIT = 32 << 20
@@ -263,7 +264,7 @@ class Service:
         self.drafts = draft_lineage.References(self.lock)
         # E-1 (0.2.3): engine-recovery records of unmanaged blocks, by key, held only in this service's memory:
         # {"files": raw bytes read, "fingerprint", "support", "refs": the bound draft references}.
-        self.recoveries = {}
+        self.recoveries = OrderedDict()
         from .workflow_service import Workflows
         self.workflows = Workflows(self)
         from .python_authoring import Authoring
@@ -392,6 +393,9 @@ class Service:
             if parsed.problem:
                 fail('unusable', 409)
             files = {p: read(physical, p) for p in set(parsed.paths) | {'block.json'}}
+            size = sum(map(len, files.values()))
+            if size > CAPTURE_LIMIT:
+                fail('too_large', 400)
             if any(read(physical, p) != b for p, b in files.items()):
                 fail('stale', 409)
         finally:
@@ -402,10 +406,14 @@ class Service:
                  'metadata': {'format_version': 1, 'origin': 'manual', 'effects': 'unknown', 'support': []},
                  'base_digest': identity}
         lineage = draft_lineage.Lineage.of(draft)
-        self.drafts.issue(draft, lineage)
         with self.lock:
+            self.drafts.issue_locked(draft, lineage)
+            self.prune_recoveries()
+            self.recoveries.pop(key, None)
             self.recoveries[key] = {'files': files, 'fingerprint': identity, 'support': [],
-                                    'refs': {draft['draft_ref']}}
+                                    'refs': {draft['draft_ref']}, 'size': size}
+            while sum(record['size'] for record in self.recoveries.values()) > CAPTURE_LIMIT:
+                self.recoveries.popitem(last=False)
         return draft, lineage
 
     def recovery_for(self, draft):
@@ -413,6 +421,7 @@ class Service:
         draft's reference is bound to it. Otherwise None, and the Save is ordinary."""
         key = draft.get('key')
         with self.lock:
+            self.prune_recoveries()
             record = self.recoveries.get(key)
             if record is None or draft.get('draft_ref') not in record['refs']:
                 return None
@@ -420,13 +429,25 @@ class Service:
             return None
         return record
 
-    def bind_recovery(self, received, issued):
-        """A draft reference issued for a draft received with a bound reference joins the same record."""
-        ref = received.get('draft_ref') if isinstance(received, dict) else None
+    def prune_recoveries(self):
+        """Drop captured bytes once their draft references leave the workspace registry. Hold self.lock."""
+        for key, record in list(self.recoveries.items()):
+            record['refs'].intersection_update(self.drafts.records)
+            if not record['refs']:
+                del self.recoveries[key]
+
+    def issue_derived_draft(self, draft, original):
+        """Issue a new reference and preserve recovery only for the same bound draft and block key."""
+        key = draft['key']
         with self.lock:
-            for record in self.recoveries.values():
-                if ref in record['refs'] and issued.get('draft_ref'):
-                    record['refs'].add(issued['draft_ref'])
+            record = self.recoveries.get(key)
+            ref = original.get('draft_ref') if original and original.get('key') == key else None
+            bound = record is not None and ref in self.drafts.records and ref in record['refs']
+            self.drafts.issue_locked(draft, draft_lineage.Lineage.of(draft))
+            if bound:
+                record['refs'].add(draft['draft_ref'])
+            self.prune_recoveries()
+        return draft
 
     def effective_revision(self, key, files):
         """The block store's effective revision for exactly these raw bytes (0.2.3, S-1): 409 `stale` when the
@@ -494,7 +515,9 @@ class Service:
         effective = []
         draft = self.source(body, effective)
         if 'draft_ref' not in draft:
-            self.drafts.issue(draft, draft_lineage.Lineage.of(draft))
+            self.issue_derived_draft(draft, body.get('draft'))
+        if 'expected_revision' in body and (not effective or effective[0] != body['expected_revision']):
+            fail('stale', 409)
         with self.assets.validate(draft) as captured:
             result = self._project(draft, captured, body)
         if effective:
@@ -513,9 +536,13 @@ class Service:
             result['revision_number'] = saved.number
             result['revision_name'] = saved.name
             result['run_issues'] = self.live_issues(saved)
-            current = self.assets.revisions(saved.key)['current'] if 'revision' not in body else None
-            if current == saved.revision:
+            if 'revision' not in body:
+                if self.assets.revisions(saved.key)['current'] != saved.revision:
+                    fail('stale', 409)
                 result['effective_revision'] = self.effective_revision(saved.key, saved.files)
+            if 'expected_revision' in body and (result.get('effective_revision') is None
+                                                or result['effective_revision'] != body['expected_revision']):
+                fail('stale', 409)
             result['standard_description'] = descriptions.projection(self.assets.root(saved.key), saved,
                                                                      captured.parsed)
             return result
@@ -1335,7 +1362,8 @@ class Service:
                                                  recovery=recovery)
                     if recovery is not None:
                         with self.lock:
-                            self.recoveries.pop(draft['key'], None)
+                            if self.recoveries.get(draft['key']) is recovery:
+                                self.recoveries.pop(draft['key'])
             finally:
                 writer.release()
             result['effective_revision'] = self.state.block_loaded(draft['key'], reload=True).revision
@@ -2024,7 +2052,7 @@ class Service:
         return {'proposal_id': proposal_id, 'definition_text': text, 'projection': contract_service.project(text),
                 'notes': list(proposal['response'].get('notes', []))}
 
-    def protect_draft(self, draft):
+    def protect_draft(self, draft, original):
         definition = jsonio.decode_exact(draft['definition_text'])
         if definition.get('format_version') == 3:
             if definition['steps'][0]['kind'] not in ('model', 'tool'):
@@ -2034,7 +2062,7 @@ class Service:
         definition['context_local_only'] = True
         draft['definition_text'] = jsonio.encode_exact(definition)
         draft['metadata']['protection_origin'] = 'inherited'
-        return self.drafts.issue(draft, draft_lineage.Lineage.of(draft))
+        return self.issue_derived_draft(draft, original)
 
     def publish_inline(self, body):
         if set(body) != {'draft', 'side', 'port', 'name', 'family', 'label'}:
@@ -2091,11 +2119,10 @@ class Service:
                         examples[-1]['restrictions'] = {name: True for name in item['inputs']}
                 self.validate_examples(examples, captured.parsed.block)
                 result['examples'] = examples
-        if 'draft' in result and 'draft_ref' not in result['draft']:
-            self.drafts.issue(result['draft'], draft_lineage.Lineage.of(result['draft']))
-            self.bind_recovery(body.get('draft'), result['draft'])
         if 'draft' in result and proposal.get('protected'):
-            result['draft'] = self.protect_draft(result['draft'])
+            result['draft'] = self.protect_draft(result['draft'], body.get('draft'))
+        elif 'draft' in result and 'draft_ref' not in result['draft']:
+            self.issue_derived_draft(result['draft'], body.get('draft'))
         if 'draft' in result:
             # Application produces a draft. Invalid/incomplete bindings remain inspectable.
             result['preview'] = self.preview({'draft': result['draft']})
