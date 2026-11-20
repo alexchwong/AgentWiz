@@ -2491,22 +2491,27 @@ def test_page_s6_saved_use_banner_reports_a_model_change(ui, open_page, server):
     assert not server.requests
 
 
-def test_page_restore_parameter_control_saves_its_choice(ui, open_page):
+def test_page_restore_parameter_control_saves_its_choice(ui, open_page, monkeypatch):
+    reached, release = threading.Event(), threading.Event()
+    preview = ui.state.workshop.preview
+
+    def hold_parameter_preview(body):
+        if body.get("edit", {}).get("kind") == "starter_parameters":
+            reached.set()
+            if not release.wait(WAIT / 1000):
+                raise AssertionError("the test did not release the parameter preview")
+        return preview(body)
+
+    monkeypatch.setattr(ui.state.workshop, "preview", hold_parameter_preview)
     page = open_page(ui)
     new_block(page, "restorer", "restore_placeholders")
     tid(page, "ws-restore-unknown").select_option("keep")
-    held = []
-    preview_url = "**/api/workshop/preview"
-    page.route(preview_url, lambda route: held.append(route), times=1)
-    with page.expect_request(preview_url):
-        tid(page, "ws-apply-parameters").click()
     try:
-        # The dropdown already says "keep", but the draft still holds "fail".
+        tid(page, "ws-apply-parameters").click()
+        assert reached.wait(WAIT / 1000), "the parameter preview did not reach Workshop"
         assert tid(page, "ws-save-revision").evaluate("button => Boolean(button.closest('[inert]'))")
-        assert len(held) == 1, "the parameter preview was not held"
     finally:
-        for route in held:
-            route.continue_()
+        release.set()
     definition = save_new_revision(page, ui, "restorer")
     assert definition["steps"][0]["parameters"] == {"unknown": "keep", "placeholder_syntax": "bracket_upper"}
 
@@ -3124,6 +3129,7 @@ def test_page_workshop_stale_saved_block_keeps_inputs(ui, server, open_page):
     assert server.requests == []
     expect(tid(page, "ws-field-text")).to_have_value("hello")
     tid(page, "ws-reload").click()
+    has(page, "ws-status", "data-state", "reloaded")
     expect(tid(page, "ws-field-text")).to_have_value("hello")
     server.reply(answer('{"out":"fine"}'))
     tid(page, "ws-run-test").click()
@@ -3132,7 +3138,7 @@ def test_page_workshop_stale_saved_block_keeps_inputs(ui, server, open_page):
     assert server.requests[0]["body"]["messages"][1]["content"] == "Edited: hello"
 
 
-def test_page_workshop_stale_local_only_change_then_refused(ui, server, open_page):
+def test_page_workshop_stale_local_only_change_then_refused(ui, server, open_page, monkeypatch):
     """R-4(b): the input marked Local only on disk after opening gives `stale`; after Reload the Local only rule
     refuses the cloud role, with zero cloud requests."""
     from conftest import KEY
@@ -3146,7 +3152,28 @@ def test_page_workshop_stale_local_only_change_then_refused(ui, server, open_pag
     write_block(ui, "b", block, {**OBJ_FILES, "prompts/user.md": "Say {{inputs.text}}"})
     tid(page, "ws-run-test").click()
     expect(page.locator('[data-code="stale"]').first).to_be_attached()
-    tid(page, "ws-reload").click()
+    reached, release = threading.Event(), threading.Event()
+    collection = ui.state.workshop.collection
+
+    def hold_examples(key):
+        if key == "b":
+            reached.set()
+            if not release.wait(WAIT / 1000):
+                raise AssertionError("the test did not release the example collection")
+        return collection(key)
+
+    # The fresh definition has arrived, but Reload still needs its example collection.
+    with monkeypatch.context() as held:
+        held.setattr(ui.state.workshop, "collection", hold_examples)
+        try:
+            tid(page, "ws-reload").click()
+            assert reached.wait(WAIT / 1000), "Reload did not request the example collection"
+            assert tid(page, "ws-run-test").evaluate("button => Boolean(button.closest('[inert]'))")
+            assert server.requests == []
+        finally:
+            release.set()
+        has(page, "ws-status", "data-state", "reloaded")
+    expect(tid(page, "ws-field-text")).to_have_value("hello")
     tid(page, "ws-run-test").click()
     has(page, "ws-readiness", "data-code", "destination_ineligible")     # a cloud role is never eligible
     expect(page.locator('[data-code="declared_label"]').first).to_be_attached()
@@ -3176,7 +3203,9 @@ def test_page_workshop_explicit_revision_stays_selected(ui, server, open_page):
     first = managed_text_block(ui)
     page = open_page(ui)
     open_block_test(page, ui, "managed")
-    page.locator('[data-test="ws-choice-block-revision"]').first.select_option(first["durable_id"])
+    picker = page.locator('[data-test="ws-choice-block-revision"]').first
+    picker.select_option(first["durable_id"])
+    expect(picker).to_be_enabled()
     from test_workshop import plan_save, send
     current = send(ui, "preview", key="managed")["draft"]
     current["metadata"]["display_name"] = "newer"
@@ -3188,6 +3217,7 @@ def test_page_workshop_explicit_revision_stays_selected(ui, server, open_page):
     has(page, "ws-status", "data-code", "stale")
     assert not server.requests
     tid(page, "ws-reload").click()
+    has(page, "ws-status", "data-state", "reloaded")
     expect(page.locator('[data-test="ws-choice-block-revision"]').first).to_have_value(first["durable_id"])
     expect(tid(page, "ws-field-text")).to_have_value("preserved")
     server.reply(answer('{"out":"fine"}'))
@@ -3584,6 +3614,7 @@ def test_compare_stale_reload_keeps_arms_and_examples(ui, server, open_page):
     expect(tid(page, "ws-status")).to_have_attribute("data-code", "stale")
     assert not server.requests
     tid(page, "ws-reload").click()
+    has(page, "ws-status", "data-state", "reloaded")
     expect(baseline).to_have_value(first["durable_id"])
     expect(excluded).not_to_be_checked()
 
@@ -3610,7 +3641,7 @@ def test_current_problem_keeps_valid_retained_revision_runnable(ui, server, open
     expect(tid(page, "ws-run-test")).to_be_enabled()
 
 
-def test_compact_attempt_download_is_shared_while_batch_is_active(ui, server, open_page):
+def test_compact_attempt_download_is_shared_while_batch_is_active(ui, server, open_page, monkeypatch):
     from test_workshop import http_method
     profile_and_role(ui, server)
     managed_text_block(ui)
@@ -3623,20 +3654,28 @@ def test_compact_attempt_download_is_shared_while_batch_is_active(ui, server, op
     tid(page, "ws-run-saved-examples").click()
     tid(tid(page, "ws-dialog"), "ws-confirm").click()
     assert server.wait_holding(1)
+    reached, release = threading.Event(), threading.Event()
     pending = []
+    compact = ui.state.store.compact
 
-    def pause_compact(route):
-        pending.append(route)
+    def pause_compact(attempt_id):
+        pending.append(attempt_id)
+        reached.set()
+        if not release.wait(WAIT / 1000):
+            raise AssertionError("the test did not release the compact attempt response")
+        return compact(attempt_id)
 
-    page.route("**/api/attempts/*?view=compact", pause_compact)
+    monkeypatch.setattr(ui.state.store, "compact", pause_compact)
     trial = page.locator('[data-test="ws-trial"][data-outcome="complete"]')
-    tid(trial, "ws-attempts").locator("summary").click()
-    poll_url = "/api/workshop/batches/" + active_batch(ui)
-    for _ in range(3):
-        with page.expect_request(lambda req: req.method == "GET" and req.url.endswith(poll_url)):
-            pass
-    for route in pending:
-        route.continue_()
+    try:
+        tid(trial, "ws-attempts").locator("summary").click()
+        assert reached.wait(WAIT / 1000), "the compact attempt did not reach Workshop"
+        poll_url = "/api/workshop/batches/" + active_batch(ui)
+        for _ in range(3):
+            with page.expect_request(lambda req: req.method == "GET" and req.url.endswith(poll_url)):
+                pass
+    finally:
+        release.set()
     expect(tid(trial, "ws-attempt")).to_have_count(1)
     assert len(pending) == 1
     tid(page, "header-activity-stop").click()

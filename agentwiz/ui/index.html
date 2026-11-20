@@ -2684,9 +2684,11 @@ async function wsReloadKeeping(){
   const explicit=ws.explicitRevision;
   ws.captureTrialChoices?.();
   // Reload reopens only an arm that followed the current version; an explicit retained revision stays selected.
-  await wsLoad(explicit?{key:ws.draft.key,revision:ws.selectedRevision}:{key:ws.draft.key},false);
-  if(!keep.examples&&!ws.examples.some(ex=>ex.id===keep.selectedExample))keep.selectedExample="";
-  Object.assign(ws,keep);wsRender();wsNote.dataset.state="reloaded";delete wsNote.dataset.code;wsNote.textContent="Reloaded from disk";
+  wsBody.inert=true;wsNav.inert=true;wsRevisionPicker.inert=true;
+  try{
+    const loaded=await wsLoad(explicit?{key:ws.draft.key,revision:ws.selectedRevision}:{key:ws.draft.key},false,keep);
+    if(loaded){wsNote.dataset.state="reloaded";delete wsNote.dataset.code;wsNote.textContent="Reloaded from disk";}
+  }finally{wsBody.inert=false;wsNav.inert=false;wsRevisionPicker.inert=false;}
 }
 function wsButton(label,fn,id){
   return h("button",{type:"button","data-test":id || "ws-"+label.toLowerCase().replace(/[^a-z0-9]+/g,"-"),text:label,
@@ -2810,9 +2812,9 @@ async function wsRefresh(){
   wsBlocks=(await api("/api/blocks")).blocks;wsFilter();
 }
 function wsFilter(){wsList.replaceChildren(new Option("Choose a saved block",""),...wsBlocks.filter(b=>(b.name+" "+b.display_name).toLowerCase().includes(wsSearch.value.toLowerCase())).map(b=>new Option((b.display_name||b.name)+" · "+(b.kind||"unavailable"),b.name)));if(ws.draft&&!wsBlocks.some(b=>b.name===ws.draft.key))wsList.add(new Option((ws.draft.metadata.display_name||ws.draft.key)+" · Unsaved draft",ws.draft.key));wsList.value=ws.draft?.key||"";}
-async function wsLoad(source,dirty){
+async function wsLoad(source,dirty,preserved=null){
   const generation=++wsLoadGeneration;
-  const keep=source.draft&&source.draft.key===ws.draft?.key?{examples:ws.examples,revision:ws.revision,inputs:ws.inputs,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample}:null;
+  const keep=preserved||(source.draft&&source.draft.key===ws.draft?.key?{examples:ws.examples,revision:ws.revision,inputs:ws.inputs,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample}:null);
   const preview=await wsApi("preview",source);
   if(generation!==wsLoadGeneration)return;
   const sameBlock=ws.draft?.key===preview.draft.key;
@@ -2820,6 +2822,10 @@ async function wsLoad(source,dirty){
   if(generation!==wsLoadGeneration)return;
   if(!dirty&&!source.revision&&preview.selector&&preview.selector.revision!==versions.current)
     throw new ApiError("The current block changed while opening it.",409,"stale");
+  const listing=await api("/api/blocks");
+  if(generation!==wsLoadGeneration)return;
+  const collection=await wsApi("blocks/"+encodeURIComponent(preview.draft.key)+"/examples");
+  if(generation!==wsLoadGeneration)return;
   ws.attached=null;ws.problemRow=null;ws.problemOnly=null;
   if(!sameBlock){ws.compareSetup=null;ws.exampleChoices=null;}
   ws.draft=preview.draft;ws.projection=preview;ws.dirty=dirty;wsPending=null;
@@ -2832,14 +2838,18 @@ async function wsLoad(source,dirty){
   if(preview.selector)ws.saved={selector:preview.selector,number:preview.revision_number,name:preview.revision_name||"",description:preview.standard_description,runIssues:preview.run_issues||[]};
   else if(!keepSaved)ws.saved=null;
   ws.draft.metadata.revision_name=source.draft?(ws.draft.metadata.revision_name||""):"";
-  await wsRefresh();
-  const collection=await wsApi("blocks/"+encodeURIComponent(ws.draft.key)+"/examples");
-  if(generation!==wsLoadGeneration)return;
+  wsBlocks=listing.blocks;wsFilter();
   ws.examples=collection.examples;ws.revision=collection.revision;
-  ws.examplesDirty=false;ws.selectedExample="";ws.inputs={};if(keep)Object.assign(ws,keep);if(ws.batch?.plan?.candidates?.[0]?.draft?.key!==ws.draft.key)ws.batch=null;
+  ws.examplesDirty=false;ws.selectedExample="";ws.inputs={};
+  if(keep){
+    Object.assign(ws,keep);
+    if(preserved&&!ws.examples.some(ex=>ex.id===ws.selectedExample))ws.selectedExample="";
+  }
+  if(ws.batch?.plan?.candidates?.[0]?.draft?.key!==ws.draft.key)ws.batch=null;
   const row=wsBlocks.find(b=>b.name===ws.draft.key);
   ws.problemRow=!dirty&&!ws.explicitRevision&&row?.problem?row:null;
   wsRender();
+  return true;
 }
 // `starter` preselects a starter, for Workflow Design's Create block… and Restore placeholders (UI-CD v3 CD1.12).
 async function wsNew(starter){
@@ -2976,7 +2986,7 @@ function wsPicker(){
       wsBody.inert=true;wsNav.inert=true;
       try{
         const keep={examples:ws.examples,revision:ws.revision,examplesDirty:ws.examplesDirty,selectedExample:ws.selectedExample,inputs:ws.inputs};
-        await wsLoad({key:ws.draft.key,revision:selected},false);Object.assign(ws,keep);wsRender();
+        await wsLoad({key:ws.draft.key,revision:selected},false,keep);
       }finally{wsBody.inert=false;wsNav.inert=false;}
     }
   }catch(error){if(error.status===404){wsNote.dataset.state="error";wsNote.dataset.code="missing";wsNote.textContent="That revision is no longer retained. Choose another revision.";const versions=await wsApi("blocks/"+encodeURIComponent(ws.draft.key)+"/revisions").catch(()=>null);if(versions){ws.revisionRows=versions.revisions;ws.currentRevision=versions.current;}wsRender();}else wsError(error);}finally{if(revision.isConnected){revision.value=ws.selectedRevision||"";revision.disabled=!ws.revisionRows.length;}}};

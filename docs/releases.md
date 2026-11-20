@@ -208,7 +208,8 @@ candidate with the normal release command before publishing.
   `python scripts/check_installed_ui.py --expect-version 0.2.2 --workflow-outcome f-a` from the 0.2.3 checkout.
   This runs the 13 Stage 0 cases and eight original Workflow Design checks. The 0.2.3 command selects the full
   candidate modules and required cases, including the installed private Agentic Chat checks.
-- **Offline CI.** Run the offline suite and the installed-wheel check on the release matrix. The only permitted
+- **Offline CI.** Run the offline suite and the installed-wheel check on the release matrix. Each test step has
+  a 20-minute limit. Pytest prints the active test and dumps thread stacks after 120 seconds in one case. The only permitted
   offline skip on macOS is the Linux-only PDF worker address-space limit test. PDF installation and extracted
   content checks still run on macOS. 0.2.3 requires no live model or provider testing.
 - **Candidate wheels.** Build from the exact tree under review. The release command archives `HEAD`. For an

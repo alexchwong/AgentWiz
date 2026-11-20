@@ -83,3 +83,16 @@ def test_report_needs_exactly_one_passed_case(tmp_path, capsys):
     assert module.report([('A', 'tests/test_a.py::ok')], found)
     for name in ('skip', 'twice', 'bad', 'absent'):
         assert not module.report([('A', f'tests/test_a.py::{name}')], found)
+
+
+def test_installed_junit_keys_survive_a_symlinked_temp_root(tmp_path):
+    module = gate()
+    real_root = tmp_path / 'physical'
+    tests = real_root / 'tests'
+    tests.mkdir(parents=True)
+    (tests / 'test_probe.py').write_text('def test_probe():\n    assert True\n')
+    alias = tmp_path / 'alias'
+    alias.symlink_to(real_root, target_is_directory=True)
+    assert module.run_pytest(alias, ['tests/test_probe.py']) == 0
+    found = module.results_of(real_root / 'junit.xml')
+    assert module.report([('probe', 'tests/test_probe.py::test_probe')], found)

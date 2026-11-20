@@ -31,10 +31,11 @@ jobs:
         if: runner.os == 'macOS'
         run: python -m playwright install chromium
       - name: Run the offline suite (the live checks are deselected, whatever variables the runner holds)
+        timeout-minutes: 20
         shell: bash
         run: |
           set -euo pipefail
-          python -m pytest -ra -m "not live" --junitxml="$RUNNER_TEMP/offline.xml"
+          python -m pytest -vv -ra -o faulthandler_timeout=120 -m "not live" --junitxml="$RUNNER_TEMP/offline.xml"
           python - "$RUNNER_TEMP/offline.xml" <<'PYTHON'
           import sys
           from xml.etree import ElementTree
@@ -51,6 +52,7 @@ jobs:
       - name: Replace editable installation with the candidate wheel
         run: python -m pip install --no-deps --force-reinstall "$RUNNER_TEMP"/agentwiz-wheels/agentwiz-*.whl
       - name: Check the installed wheel outside the checkout (version, Workflow Design outcome, required cases)
+        timeout-minutes: 20
         shell: bash
         run: |
           set -euo pipefail

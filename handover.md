@@ -28,7 +28,7 @@ webSpell and the `deidentify_text` live qualification belong to 0.2.4.
   Candidate evidence includes private Agentic Chat draft labeling, a zero-send refusal and Stop. CI checks for
   unexpected skips and permits the documented macOS exception for the Linux-only PDF worker address-space test.
 
-## Verification on this candidate
+## Earlier local verification
 
 - Published 0.2.2 wheel SHA-256 `fad5de0c335c60f0bf77bbea06656df7a20d1e66011d62432b94c4cba44141da`.
   Installed F-a check passed **21 of 21**.
@@ -38,6 +38,32 @@ webSpell and the `deidentify_text` live qualification belong to 0.2.4.
 - Linux/Python 3.13.5 offline suite passed **1,448 tests**, with nine live cases deselected and zero skips.
 - Linux/Python 3.13.5 installed F-b candidate passed **229 tests**, including **78 of 78** required checks.
 - RC1–RC3, `pip check` and S1–S26 passed against the candidate wheel.
+
+## Hosted CI repair on 71c25f4
+
+[GitHub Actions run 44659019877](https://github.com/alexchwong/AgentWiz/actions/runs/44659019877)
+had three different failure symptoms.
+
+| Runner | Observed result | Change |
+| --- | --- | --- |
+| Ubuntu 3.13 | The source suite passed. The installed-wheel job stopped reporting progress after the first 72 tests and was cancelled roughly 80 minutes later. The old log has no per-test ID or stack for the stall. | Replace manually held Playwright routes in the parameter-preview and compact-attempt tests with bounded server-side holds that always release. Print each test ID, dump blocked thread stacks after 120 seconds, and bound each CI test step to 20 minutes. The original hosted hang did not reproduce locally. |
+| macOS 3.13 | The retained-revision reload test found an empty input in the source suite. | Restore inputs before the refreshed form is rendered and keep its controls inert until Reload completes. Explicit revision tests wait for selection to finish. |
+| macOS 3.10 | Installed tests failed on retained-revision input and stale Local only readiness. The report then marked all 78 required tests missing. | The same reload fix protects against early Run clicks. The installed launcher resolves its temporary root before invoking pytest, keeping JUnit test IDs relative to the copied test tree through symlinked temporary paths. |
+| Ubuntu 3.10 | Passed. | Preserve the same offline and installed requirements. |
+
+The old launcher reproduced malformed JUnit classnames with a symlinked temporary root on Linux.
+A forced in-flight reload also reproduced the formerly active Run control. The revised regression confirms Run
+is inert while Reload is waiting and that the refreshed Local only block refuses the cloud role with zero calls.
+The original Ubuntu stall has no stack trace, so the affected browser fixture remains a possible cause.
+
+- Linux/Python 3.13.5 passed **1,449 offline tests** with zero skips and nine live cases deselected.
+- The 0.2.3 candidate passed **229 installed tests** and **78 of 78** required cases with a symlinked
+  temporary directory. The published 0.2.2 wheel passed all **21** baseline cases with the same setup.
+- The candidate passed RC1–RC3, `pip check`, S1–S26, and the F-b shape check. Both alternative shapes
+  returned exit 3 as expected. Candidate wheel SHA-256
+  `cbbc52929c13896818ff21f3542952d2e8d498ee7901cbc6b4d8621872752e6b`.
+
+The patched hosted matrix still needs a run. No live testing is required for this repair.
 
 ## Historical departures and release follow-up
 

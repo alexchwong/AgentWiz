@@ -229,6 +229,16 @@ def parse(argv=None):
     return args
 
 
+def run_pytest(destination: Path, modules) -> int:
+    # On macOS TMPDIR may pass through /var -> /private/var. Match the child's physical cwd
+    # to pytest's rootdir so JUnit classnames remain relative to the copied test tree.
+    root = destination.resolve()
+    return subprocess.run([sys.executable, '-I', '-m', 'pytest', '-vv', '-p', 'no:cacheprovider',
+                           '-o', 'faulthandler_timeout=120', '--rootdir', str(root),
+                           f'--junitxml={root / "junit.xml"}', '-m', 'not live', *modules],
+                          cwd=root).returncode
+
+
 def main(argv=None):
     args = parse(argv)
     with tempfile.TemporaryDirectory(prefix='agentwiz-installed-ui-') as folder:
@@ -269,9 +279,7 @@ def main(argv=None):
         for label, node in rows:
             print(f'  {label:<20} {node}', flush=True)
         junit = destination / 'junit.xml'
-        code = subprocess.run([sys.executable, '-I', '-m', 'pytest', '-q', '-p', 'no:cacheprovider',
-                               '--rootdir', str(destination), f'--junitxml={junit}', '-m', 'not live',
-                               *modules], cwd=destination).returncode
+        code = run_pytest(destination, modules)
         if not junit.is_file():
             print('check_installed_ui: pytest wrote no JUnit report', file=sys.stderr)
             return code or 1
