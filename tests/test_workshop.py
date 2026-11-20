@@ -1,4 +1,8 @@
 """HTTP regressions for bounded, process-scoped Workshop Start tickets."""
+import threading
+import weakref
+from types import SimpleNamespace
+
 import pytest
 from conftest import failure_of, request
 
@@ -44,6 +48,41 @@ def model_draft(key):
     import json
     from test_blocks import model_block, MODEL_FILES
     return {'key': key, 'definition_text': json.dumps(model_block(name=key)), 'files': MODEL_FILES, 'metadata': {}}
+
+
+def test_revision_pin_finalizer_can_run_inside_workshop_lock(tmp_path):
+    from agentwiz import jsonio
+    from agentwiz.workshop_assets import Assets
+
+    class LoadedGeneration:
+        pass
+
+    revision = 'a' * 32
+    root = tmp_path / 'blocks' / 'finalized'
+    physical = root / '.workshop' / 'revisions' / revision
+    physical.mkdir(parents=True)
+    (root / 'block.json').write_bytes(jsonio.encode_file_exact(
+        {'format_version': 2, 'current': revision, 'retained': [revision]}))
+    operations_lock = threading.Lock()
+    assets = Assets(SimpleNamespace(workspace=SimpleNamespace(path=tmp_path)), operations_lock)
+    _, release = assets.pin('finalized')
+    owner = LoadedGeneration()
+    finalizer = weakref.finalize(owner, release)
+    _, release_other = assets.pin('finalized')
+
+    def finalize_while_polling():
+        with operations_lock:
+            finalizer()
+
+    # Run the callback at the same lock boundary as batch polling, with a
+    # bounded join so the regression reports a failure instead of hanging CI.
+    worker = threading.Thread(target=finalize_while_polling, daemon=True)
+    worker.start()
+    worker.join(timeout=2)
+    assert not worker.is_alive(), 'pin finalizer deadlocked with the Workshop operations lock held'
+    assert assets.pins == {('finalized', revision): 1}
+    release_other()
+    assert assets.pins == {}
 
 
 def test_overwrite_selected_revision_keeps_number_order_and_default(ui, restart):

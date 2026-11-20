@@ -1159,11 +1159,12 @@ review plan bind the target; old IDs leave retention while pinned readers finish
 Existing evidence retains its original ID and captured contents; replacement descriptions start empty.
 Revision names may be changed on overwrite. Restore-as-new still appends. Retention remains 20.
 
-C6 is the one Workshop leaf lock, shared with tickets. It protects reservations,
-pins, batch state, proposal references and session reviews. Existing locks may
-acquire C6. Code holding C6 must never acquire any other lock, perform I/O, call
-state/store methods or callbacks, dispatch, or wait. Logical reservations/pins
-survive release of the actual lock. Publication, examples, reviews and coordinators
+C6 is the Workshop operations lock, shared with tickets. It protects reservations,
+batch state, proposal references and session reviews. Existing locks may
+acquire C6. Code holding C6 must never perform I/O, call state/store methods or
+callbacks, dispatch, or wait. Revision pins use a separate reentrant leaf lock
+because a garbage-collection finalizer can release a pin while C6 is held.
+Pin bookkeeping never acquires C6. Publication, examples, reviews and coordinators
 register with the shutdown writer barrier. Shutdown closes Workshop admission,
 marks the batch cancelled, releases C6 and cancels its child through the ordinary
 run token. It prevents admission of the next child.
@@ -1212,7 +1213,7 @@ Experiment fixture submission uses scripts/workshop_experiment.py with --task la
 #### Operating revisions
 
 `Assets.pin(key, revision=None)` is the shared current/historical pin: it validates the ID shape, registers
-the pin under the leaf lock, re-reads the head and confirms retention before opening the generation,
+the pin under the pin lock, re-reads the head and confirms retention before opening the generation,
 rejects symbolic links on the path, and is released in `finally`. A no-longer-retained or malformed ID is
 404; a retained ID without its folder is a damaged generation (409 `unusable`). Publication's reaper skips
 pinned generations, so a reader either holds its pin or sees the ID leave retention. `Assets.saved` copies

@@ -13,6 +13,7 @@ import shutil
 import stat
 import tempfile
 from pathlib import Path, PurePosixPath
+from threading import RLock
 
 from . import checks, contract_schema, jsonio
 from .workspace import valid_name, write_atomic_bytes
@@ -302,6 +303,9 @@ class Assets:
         self.path = state.workspace.path / 'blocks'
         self.lock = lock
         self.reservations = set()
+        # A loaded generation can be finalized while the Workshop lock is held.
+        # Finalizers take only this lock and may run during pin bookkeeping too.
+        self._pins_lock = RLock()
         self.pins = {}
 
     def root(self, key):
@@ -348,11 +352,11 @@ class Assets:
             if revision is not None and ident not in h['retained']:
                 fail('missing', 404)
             identity = (key, ident)
-            with self.lock:
+            with self._pins_lock:
                 self.pins[identity] = self.pins.get(identity, 0) + 1
             released = [False]
             def release(identity=identity, released=released):
-                with self.lock:
+                with self._pins_lock:
                     if released[0]:
                         return
                     released[0] = True
@@ -809,7 +813,7 @@ class Assets:
                         durability_uncertain = True
                     # A later save also reaps generations whose old readers have released pins.
                     for p in (root / '.workshop' / 'revisions').iterdir():
-                        with self.lock:
+                        with self._pins_lock:
                             pinned = self.pins.get((key, p.name), 0)
                         if TOKEN.fullmatch(p.name) and p.name not in h['retained'] and not pinned and not p.is_symlink():
                             try:
