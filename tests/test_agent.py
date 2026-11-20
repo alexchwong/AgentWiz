@@ -484,7 +484,9 @@ def test_restricted_memory_refuses_a_non_local_model_with_remedies(ui, server, a
     server.reply(tool_call("aw_search_documents", {"query": "private"}), text_turn("found"))
     run(ui, agent, "find", ["aw_search_documents"])
     configure(ui, server, model="other")                                     # an untrusted model now
+    count = len(server.requests)
     refused = failure_of(lambda: run(ui, agent, "again"))
+    assert len(server.requests) == count
     assert refused.status == 409 and refused.body["code"] == "memory_restricted"
     assert refused.body["remedies"] == ["memory_off", "clear_memory", "trusted_local_model"]
 

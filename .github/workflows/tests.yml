@@ -31,13 +31,63 @@ jobs:
         if: runner.os == 'macOS'
         run: python -m playwright install chromium
       - name: Run the offline suite (the live checks are deselected, whatever variables the runner holds)
-        run: python -m pytest -m "not live"
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -vv -ra -o faulthandler_timeout=120 -m "not live" --junitxml="$RUNNER_TEMP/offline.xml"
+          python - "$RUNNER_TEMP/offline.xml" <<'PYTHON'
+          import sys
+          from xml.etree import ElementTree
+          report = ElementTree.parse(sys.argv[1])
+          allowed = {("tests.test_pdf", "test_a_runaway_allocation_is_stopped_by_the_address_space_limit")} if sys.platform == "darwin" else set()
+          for case in report.iter("testcase"):
+              if case.find("skipped") is not None:
+                  key = (case.get("classname"), case.get("name"))
+                  if key not in allowed:
+                      raise SystemExit(f"Unexpected offline skip: {key}")
+          PYTHON
       - name: Build the candidate wheel
         run: python -m pip wheel . --no-deps --wheel-dir "$RUNNER_TEMP/agentwiz-wheels"
       - name: Replace editable installation with the candidate wheel
         run: python -m pip install --no-deps --force-reinstall "$RUNNER_TEMP"/agentwiz-wheels/agentwiz-*.whl
-      - name: Check installed-wheel pages and tutorial outside the checkout
-        run: python scripts/check_installed_ui.py
+      - name: Check the installed wheel outside the checkout (version, Workflow Design outcome, required cases)
+        timeout-minutes: 10
+        env:
+          PYTEST_ADDOPTS: "-s --setup-show -o faulthandler_exit_on_timeout=true"
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(python -I -c 'import re,pathlib; print(re.search(r"^__version__ = \"([0-9]+\.[0-9]+\.[0-9]+)\"$", pathlib.Path("agentwiz/_version.py").read_text(), re.M).group(1))')"
+          OUTCOME="$(python -I -c 'import json; print(json.load(open("scripts/installed_gate.json"))["workflow_outcome"])')"
+          echo "installed gate: version $VERSION, workflow outcome $OUTCOME"
+          # The per-test watchdog starts inside pytest's test protocol. This
+          # watchdog also covers a stall between tests or during session cleanup.
+          diagnostics_dir="$(mktemp -d "$RUNNER_TEMP/agentwiz-pytest.XXXXXX")"
+          printf '[pytest]\npythonpath = .\n' > "$diagnostics_dir/pytest.ini"
+          cat > "$diagnostics_dir/agentwiz_ci_watchdog.py" <<'PYTHON'
+          import faulthandler
+          import sys
+          from threading import Timer
+
+          def dump_threads():
+              print("Installed-wheel pytest is still running after 8 minutes", file=sys.__stderr__, flush=True)
+              faulthandler.dump_traceback(file=sys.__stderr__, all_threads=True)
+
+          watchdog = Timer(8 * 60, dump_threads)
+          watchdog.daemon = True
+          watchdog.start()
+          PYTHON
+          PYTEST_ADDOPTS="$PYTEST_ADDOPTS -c \"$diagnostics_dir/pytest.ini\" -p agentwiz_ci_watchdog" \
+            python -u scripts/check_installed_ui.py --expect-version "$VERSION" --workflow-outcome "$OUTCOME"
+          for OTHER in f-a f-b removal; do
+            [ "$OTHER" = "$OUTCOME" ] && continue
+            set +e
+            python scripts/check_installed_ui.py --expect-version "$VERSION" --workflow-outcome "$OTHER" --shape-only
+            STATUS=$?
+            set -e
+            [ "$STATUS" -eq 3 ] || { echo "installed gate: outcome $OTHER was not rejected (exit $STATUS)"; exit 1; }
+          done
 
   pdf-wheels:
     runs-on: ${{ matrix.os }}

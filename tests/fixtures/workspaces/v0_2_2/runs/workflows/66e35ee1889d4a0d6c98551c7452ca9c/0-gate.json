@@ -1,0 +1,251 @@
+{
+  "outcome": "complete",
+  "release_decision": {
+    "run_id": "66e35ee1889d4a0d6c98551c7452ca9c",
+    "example_index": 0,
+    "gate": "gate",
+    "payload_digest": "e74dc90b0468b4de0c2c4a19762a3ff83743e774e9a3c621e3161200bddfcb85",
+    "executable_digest": "11c7b26ebbd48dd78980da42183faeaf8a9353453db7a549fec61a32252d411e",
+    "destinations": {
+      "cloud_summary": {
+        "kind": "openrouter",
+        "url": "http://127.0.0.1:46237/v1",
+        "model": "private-summary",
+        "provider": "",
+        "role": "tutorial_cloud",
+        "routing": {
+          "routing_mode": "managed",
+          "routing_preset": "balanced",
+          "routing_zdr": null,
+          "routing_data_collection": ""
+        },
+        "task_text": "{}",
+        "trust_revision": null,
+        "protected": false
+      }
+    },
+    "scope_digest": "9f48e76fce5717f9f541f87109278ae16bb9a165d0deadaee3345f7aeac1a21c",
+    "checks_digest": "9dba201b7ff0f524f356e3af5cb508dff9ca4a76eb4ce8a80cf7531e5fa401a7",
+    "decision": "release",
+    "timestamp": "2026-11-19T21:53:45.185394+00:00",
+    "identifier_hits": [],
+    "assessment_status": "complete",
+    "acknowledge_identifiers": false,
+    "acknowledge_assessment": true
+  },
+  "release_review": {
+    "run_id": "66e35ee1889d4a0d6c98551c7452ca9c",
+    "example_index": 0,
+    "gate": "gate",
+    "title": "Review redacted document",
+    "format": "text",
+    "payload": "[PERSON_1] reported fatigue on 3 March. Record [RECORD_1].",
+    "payload_digest": "e74dc90b0468b4de0c2c4a19762a3ff83743e774e9a3c621e3161200bddfcb85",
+    "executable_digest": "11c7b26ebbd48dd78980da42183faeaf8a9353453db7a549fec61a32252d411e",
+    "destinations": {
+      "cloud_summary": {
+        "kind": "openrouter",
+        "url": "http://127.0.0.1:46237/v1",
+        "model": "private-summary",
+        "provider": "",
+        "role": "tutorial_cloud",
+        "routing": {
+          "routing_mode": "managed",
+          "routing_preset": "balanced",
+          "routing_zdr": null,
+          "routing_data_collection": ""
+        },
+        "task_text": "{}",
+        "trust_revision": null,
+        "protected": false
+      }
+    },
+    "scope_digest": "9f48e76fce5717f9f541f87109278ae16bb9a165d0deadaee3345f7aeac1a21c",
+    "identifier_check": {
+      "status": "complete",
+      "hits": []
+    },
+    "assessment": {
+      "status": "complete",
+      "findings": [
+        {
+          "concern": "Context",
+          "location": "candidate",
+          "explanation": "An exact date may identify someone."
+        }
+      ]
+    },
+    "checks_digest": "9dba201b7ff0f524f356e3af5cb508dff9ca4a76eb4ce8a80cf7531e5fa401a7",
+    "expires_at": 1795127025.1494334
+  },
+  "assessment_trace": {
+    "record_version": 1,
+    "run_id": "c6438faaec16",
+    "source": "block",
+    "block": {
+      "name": "release_assessment",
+      "revision": 1,
+      "files": {
+        "block.json": "63cde05d0cd3f020ef698018eb400e28a16028cfe6a256e0e942ec72ed1eeabf"
+      }
+    },
+    "started_at": "2026-11-19T21:53:44.684Z",
+    "ended_at": "2026-11-19T21:53:45.146Z",
+    "outcome": "complete",
+    "stop_requested_at": null,
+    "cancel_reason": null,
+    "cancelled_at": null,
+    "input_texts": {
+      "candidate": "[PERSON_1] reported fatigue on 3 March. Record [RECORD_1].",
+      "mapping": "[{\"placeholder\":\"[PERSON_1]\",\"original\":\"Jane Example\"},{\"placeholder\":\"[RECORD_1]\",\"original\":\"TEST-123\"}]"
+    },
+    "inputs": {
+      "candidate": {
+        "format": "text",
+        "text": "[PERSON_1] reported fatigue on 3 March. Record [RECORD_1]."
+      },
+      "mapping": {
+        "format": "json",
+        "text": "[{\"placeholder\":\"[PERSON_1]\",\"original\":\"Jane Example\"},{\"placeholder\":\"[RECORD_1]\",\"original\":\"TEST-123\"}]"
+      }
+    },
+    "contracts": {
+      "inputs": {
+        "candidate": {
+          "name": null,
+          "revision": null,
+          "digest": "sha256:fed9b2422ab2ba97002fb66293f22a137be694bb3a9afaa5a2d25966239fabe0",
+          "text": "{\n  \"format\": \"text\"\n}",
+          "policy": "user"
+        },
+        "mapping": {
+          "name": null,
+          "revision": null,
+          "digest": "sha256:319e33e3ff0321ec166c815e39147049abe23b436936e9e8ee2b866cd0c8ed1b",
+          "text": "{\n  \"format\": \"json\"\n}",
+          "policy": "user"
+        }
+      },
+      "outputs": {
+        "assessment": {
+          "name": null,
+          "revision": null,
+          "digest": "sha256:74ccffb43d255795b7e7fdb146cb27eb7c213a93df21f2b2402b6dd6a361b2fc",
+          "text": "{\n  \"format\": \"json\",\n  \"schema\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"findings\": {\n        \"type\": \"array\",\n        \"maxItems\": 50,\n        \"items\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"concern\": {\n              \"type\": \"string\",\n              \"maxLength\": 2048\n            },\n            \"location\": {\n              \"type\": \"string\",\n              \"maxLength\": 2048\n            },\n            \"explanation\": {\n              \"type\": \"string\",\n              \"maxLength\": 2048\n            }\n          },\n          \"required\": [\n            \"concern\",\n            \"location\",\n            \"explanation\"\n          ],\n          \"additionalProperties\": false\n        }\n      }\n    },\n    \"required\": [\n      \"findings\"\n    ],\n    \"additionalProperties\": false\n  }\n}",
+          "policy": "user"
+        }
+      }
+    },
+    "input_checks": {
+      "candidate": {
+        "overall": "pass",
+        "checks": [],
+        "issues": [],
+        "issue_count": 0,
+        "notes": []
+      },
+      "mapping": {
+        "overall": "pass",
+        "checks": [
+          {
+            "check": "parse",
+            "result": "pass"
+          }
+        ],
+        "issues": [],
+        "issue_count": 0,
+        "notes": [
+          "value given already parsed"
+        ]
+      }
+    },
+    "outputs": {
+      "assessment": {
+        "format": "json",
+        "text": "{\"findings\":[{\"concern\":\"Context\",\"location\":\"candidate\",\"explanation\":\"An exact date may identify someone.\"}]}"
+      }
+    },
+    "issues": [],
+    "steps": [
+      {
+        "step_id": "assess",
+        "kind": "model",
+        "outcome": "ok",
+        "failure": null,
+        "role": "tutorial_private_risk",
+        "profile": "risk",
+        "endpoint": {
+          "kind": "openai_compat",
+          "base_url": "http://127.0.0.1:33517/v1"
+        },
+        "model": "release-risk",
+        "fills": [
+          {
+            "where": "prompt",
+            "placeholder": "{{inputs.candidate}}",
+            "source": "inputs.candidate",
+            "sha256": "e74dc90b0468b4de0c2c4a19762a3ff83743e774e9a3c621e3161200bddfcb85"
+          },
+          {
+            "where": "prompt",
+            "placeholder": "{{inputs.mapping}}",
+            "source": "inputs.mapping",
+            "sha256": "f53dfbe5810bf1d75d53b0befb238d75ee836a1e8f830f7800d132680e1ea373"
+          }
+        ],
+        "attempts": [
+          "c6438faaec16-1"
+        ],
+        "accepted_attempt": "c6438faaec16-1",
+        "max_repairs": 1,
+        "repairs_used": 0,
+        "truncated_attempts": 0,
+        "max_tokens": null,
+        "operation": null,
+        "output_checks": {
+          "assessment": {
+            "overall": "pass",
+            "checks": [
+              {
+                "check": "parse",
+                "result": "pass"
+              },
+              {
+                "check": "schema",
+                "result": "pass"
+              }
+            ],
+            "issues": [],
+            "issue_count": 0,
+            "notes": [
+              "value given already parsed"
+            ]
+          }
+        }
+      }
+    ],
+    "budget": {
+      "max_seconds": 1800,
+      "max_model_tokens": null
+    },
+    "usage": {
+      "reported_tokens": 20,
+      "limit": null,
+      "over_by": null,
+      "unreported_attempts": []
+    },
+    "protected": true,
+    "workshop": {
+      "workflow_node": "gate",
+      "release_assessment": true
+    },
+    "agentwiz_version": "0.2.2",
+    "modelspell_version": "0.4.0"
+  },
+  "outputs": {
+    "released": {
+      "format": "text",
+      "text": "[PERSON_1] reported fatigue on 3 March. Record [RECORD_1]."
+    }
+  }
+}

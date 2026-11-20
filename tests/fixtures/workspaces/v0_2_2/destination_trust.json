@@ -1,0 +1,23 @@
+{
+  "format_version": 1,
+  "grants": [
+    {
+      "kind": "openai_compat",
+      "url": "http://127.0.0.1:33517/v1",
+      "model": "private-deid",
+      "provider": ""
+    },
+    {
+      "kind": "openai_compat",
+      "url": "http://127.0.0.1:33517/v1",
+      "model": "private-summary",
+      "provider": ""
+    },
+    {
+      "kind": "openai_compat",
+      "url": "http://127.0.0.1:33517/v1",
+      "model": "release-risk",
+      "provider": ""
+    }
+  ]
+}

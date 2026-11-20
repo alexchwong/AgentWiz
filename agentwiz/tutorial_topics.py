@@ -76,10 +76,6 @@ TOPICS: tuple[Topic, ...] = (
           "example to learn where reusable requirements live; Check can apply it to text. A wrong number of the right "
           "type still passes: exact values belong in Workshop example expectations.", "contracts", "0.2.0", "complete",
           False, _page("contracts.tutorialPrepare", [CONTRACT, '{"id":1,"ratio":0.5}', "my-fields"]), "contracts-save"),
-    Topic("repair", "Repair a response", "Send asks for structured data using the selected contract. Preview repair "
-          "shows a follow-up request; Send repair continues the same run with feedback.", "checked-request",
-          "0.2.0", "json-repair", True,
-          _page("checked-request.tutorialPrepare", ["Extract the id and ratio as JSON."]), "checked-send"),
     Topic("model-block", "Run a model block",
           "A block is a saved step. This one asks a model (through the role fast) for the id and ratio in a report, "
           "plus a one-sentence note: two named outputs returned in one JSON object, each checked on its own, "

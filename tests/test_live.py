@@ -1,9 +1,9 @@
 """Opt-in live checks against real backends (techspec 0.1.1 13.4, tests #16-#18; 0.1.2 15.5, test_live_mcp;
-0.1.3 18.5, test_live_stop_openrouter and test_live_checked_request_openrouter).
+0.1.3 18.5, test_live_stop_openrouter; 0.2.3 LV-1, test_live_block_repair_openrouter).
 
 Optional: a quick end-to-end check against a backend you have running. Variables: DEVEL.md, Tests.
 
-Run:  python -m pytest -m live -s -k <lmstudio|openrouter|llamaserver|mcp|stop|checked_request>
+Run:  python -m pytest -m live -s -k <lmstudio|openrouter|llamaserver|mcp|stop|block_repair>
 Each test skips unless its variables are set; CI sets none. Each runs against a temporary workspace
 and prints one summary line.
 
@@ -24,7 +24,7 @@ import pytest
 
 import agentwiz
 from agentwiz.model_call import OUTCOMES
-from conftest import events, final_of, get_state, request, save_contract, strict_loads, configure_server
+from conftest import events, final_of, get_state, request, strict_loads, configure_server
 from live_stop import judge_stop
 
 CLASSIFIED = set(OUTCOMES) - {"error", "stopped"}
@@ -166,11 +166,6 @@ def test_live_stop_local(ui, backend):
     _checked_stop(ui, backend)
 
 
-@pytest.mark.parametrize('backend', ['lmstudio', 'llamaserver'])
-def test_live_checked_request_local(ui, backend):
-    _checked_contract(ui, backend)
-
-
 def test_live_stop_openrouter(ui):
     """Stop, with no deliberate delay, after `started`, on a long prompt. Either `sent` value passes and is
     reported; a normal result first, `already_finished` and a rule-3 record are inconclusive (D51)."""
@@ -205,28 +200,33 @@ CONTRACT = json.dumps({"format": "json", "schema": {"type": "object", "required"
                                                       "properties": {"answer": {"type": "string"}}}})
 
 
-def test_live_checked_request_openrouter(ui):
-    """A JSON contract requiring an object with an `answer` string; send, then up to two repairs while it
-    fails. Fails only on a protocol problem; a model that never passes is reported, not failed."""
-    _checked_contract(ui, "openrouter")
-
-
-def _checked_contract(ui, backend):
-    model = _additional_backend(ui, backend)
-    saved = save_contract(ui, "live_answer", CONTRACT)
-    prompt = 'Reply with a JSON object with one key, "answer", whose value is the word pong. Nothing else.'
-    evs = events(_call(ui, "/api/complete", {
-        "source": "checked_request", "prompt": prompt, "system": "", "revision": get_state(ui)["revision"],
-        "task": {"temperature": 0.2, "max_tokens": 512},
-        "contract": {"name": saved["name"], "revision": saved["revision"], "digest": saved["digest"]}}, raw=True))
-    record, lines = final_of(evs)["record"], []
-    for _ in range(3):
-        check = record["check"]
-        lines.append(f"attempt {record['attempt']}: outcome {record['outcome']}, "
-                     f"check {check['overall'] if check else record.get('check_skipped')}")
-        assert "run_id" in record and "attempt" in record and "outcome" in record, "a record without its fields"
-        if not check or check["overall"] != "fail" or record["attempt"] == 3:
-            break
-        record = final_of(events(_call(ui, "/api/repair", {"attempt_id": record["id"]}, raw=True)))["record"]
-    print(f"\nAgentWiz {agentwiz.__version__} | modelSpell {modelspell.__version__} | backend {backend} | "
-          f"model {model}\n  " + "\n  ".join(lines))
+def test_live_block_repair_openrouter(ui):
+    """LV-1 (0.2.3): one small model block whose output must be a JSON object with an `answer` string, run through
+    /api/blocks/run on OpenRouter with up to two automatic repairs (one to three billable requests). Fails only on
+    a protocol problem; a model that never passes is reported, not failed."""
+    from conftest import save_profile, save_roles, write_block
+    model = _openrouter(ui)
+    wanted = os.environ.get("AGENTWIZ_LIVE_OPENROUTER_PROVIDER", "").strip()
+    save_profile(ui, "live", kind="openrouter", model=model, provider=wanted,
+                 routing_mode="manual" if wanted else "automatic")
+    save_roles(ui, {"fast": "live"})
+    write_block(ui, "live_answer", {
+        "format_version": 4, "name": "live_answer", "description": "answers pong",
+        "inputs": {"text": {"contract": {"format": "text"}, "local_only": False}},
+        "outputs": {"answer": {"contract": json.loads(CONTRACT), "local_only": False}},
+        "steps": [{"id": "request", "kind": "model", "role": "fast", "system": {"text": ""},
+                   "prompt": {"text": "{{inputs.text}}"}, "response_mode": "named_json",
+                   "task": {"temperature": 0.2, "max_tokens": 512}, "repair": {"max_repairs": 2}}]})
+    revision = {r["name"]: r for r in _call(ui, "/api/blocks")["blocks"]}["live_answer"]["revision"]
+    evs = events(_call(ui, "/api/blocks/run", {"name": "live_answer", "revision": revision, "inputs": {
+        "text": 'For the output "answer", give a JSON object with one key, "answer", whose value is the word pong.'}}, raw=True))
+    result = final_of(evs)["result"]
+    step = result["steps"][0]
+    assert "run_id" in result and "outcome" in result and step["kind"] == "model", "a result without its fields"
+    lines = []
+    for ident in step["attempts"]:
+        record = _call(ui, f"/api/attempts/{ident}?view=compact")
+        lines.append(f"attempt {record['attempt']}: outcome {record['outcome']}, check {record['check']}, "
+                     f"repair reason {record['repair_reason']}")
+    print(f"\nAgentWiz {agentwiz.__version__} | modelSpell {modelspell.__version__} | backend openrouter | "
+          f"model {model} | outcome {result['outcome']}\n  " + "\n  ".join(lines))

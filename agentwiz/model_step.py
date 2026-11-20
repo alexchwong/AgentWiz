@@ -207,38 +207,30 @@ class Callbacks:
 
 # --- preparing ------------------------------------------------------------------------------------------
 def prepare_first(store: runs.AttemptStore, *, snapshot: RequestSnapshot, system: str, prompt: str,
-                  task: TaskSettings, source: str, save_runs: bool, contract: ContractCopy | None = None,
+                  task: TaskSettings, source: str, save_runs: bool,
                   arguments: dict | None = None) -> PreparedAttempt:
-    """A new run with attempt 1 reserved. The caller must run it, or `store.abandon_run` it."""
-    checks.require_validation([contract.parsed] if contract else [])
+    """A new Chat run with attempt 1 reserved (it carries no contract). The caller must run it, or
+    `store.abandon_run` it."""
     if arguments is None:
         arguments = model_call.task_arguments(task, snapshot.kind, snapshot.provider)
     model_call.preflight_request(snapshot, arguments)
-    if contract is not None:
-        generated = output_protocol.single_value_instructions(contract.parsed)
-        system = system + '\n\n' + generated if system else generated
     messages = build_messages(system, prompt)
-    run = store.new_run(source=source, save_runs=save_runs, system=system, prompt=prompt,
-                        contract=({"name": contract.name, "revision": contract.revision, "digest": contract.digest}
-                                  if contract else None))
-    return PreparedAttempt(run, 1, None, snapshot, task, arguments, messages, list(messages), contract)
+    run = store.new_run(source=source, save_runs=save_runs, system=system, prompt=prompt, contract=None)
+    return PreparedAttempt(run, 1, None, snapshot, task, arguments, messages, list(messages))
 
 
 def repair_plan(record: dict) -> dict:
     """What a repair of this committed record would send (9.2, 9.4; 0.1.4, 12.1): used by the preview, by the
     manual send and by automatic repair, so they cannot differ. An attempt that ended `truncated` gets the
     truncation message and `repair_reason` "truncated"; any other gets "check_failed". A block's named
-    envelope repairs against its captured plan; a page attempt repairs against its captured contract."""
-    plan = OutputPlan.from_record(record["output_plan"]) if record.get("output_plan") else None
-    contract = ContractCopy.from_record(record["contract"]) if record.get("contract") else None
-    checks.require_validation(plan.contracts().values() if plan else [contract.parsed] if contract else [])
+    envelope repairs against its captured plan (0.2.3: the only repair there is)."""
+    plan = OutputPlan.from_record(record["output_plan"])
+    checks.require_validation(plan.contracts().values())
     truncated = record["outcome"] == "truncated"
-    text = checks.repair_message(None if plan is not None else contract.parsed, record["check"],
-                                 truncated=truncated,
-                                 instruction=checks.ENVELOPE_REPLY if plan is not None else None)
+    text = checks.repair_message(None, record["check"], truncated=truncated, instruction=checks.ENVELOPE_REPLY)
     messages = [*record["input_messages"], {"role": "assistant", "content": record["result"]["text"]},
                 {"role": "user", "content": text}]
-    return {"messages": messages, "repair_message": text, "contract": contract, "plan": plan,
+    return {"messages": messages, "repair_message": text, "plan": plan,
             "repair_reason": "truncated" if truncated else "check_failed",
             "settings": {"kind": record["endpoint"]["kind"], "base_url": record["endpoint"]["base_url"],
                          "model": record["model"], "provider": record["provider"], "task": record["task"]}}
@@ -259,7 +251,7 @@ def prepare_repair(run: runs.Run, number: int, parent: dict,
     task = parse_task(s["task"])
     arguments = model_call.task_arguments(task, snapshot.kind, snapshot.provider)
     return PreparedAttempt(run, number, parent, snapshot, task, arguments, list(parent["input_messages"]),
-                           plan["messages"], plan["contract"], plan["plan"], step_id=parent["step_id"],
+                           plan["messages"], None, plan["plan"], step_id=parent["step_id"],
                            role=parent.get("role"), fills=(), repair_reason=plan["repair_reason"],
                            settings_sources=parent.get("settings_sources"))
 
@@ -332,10 +324,9 @@ def run_attempt(store: runs.AttemptStore, prepared: PreparedAttempt, callbacks: 
 
 def run_attempt_with_value(store: runs.AttemptStore, prepared: PreparedAttempt, callbacks: Callbacks = Callbacks(),
                            sink: history.Writer | None = None, *, dispatch=None) -> tuple[dict, object]:
-    """Section 8.4, returning (the committed record, the checked value). For a page attempt the value is what
-    the one check that decided the attempt parsed (`checks.check_answer_value`); for a block's named envelope
-    it is `{name: value}` for every declared output (`checks.check_named_answer`). Both are
-    `checks.NO_VALUE` unless the check ran. A value never enters the record, so records stay plain JSON; a
+    """Section 8.4, returning (the committed record, the checked value). For a block's named envelope the value
+    is `{name: value}` for every declared output (`checks.check_named_answer`); a Chat attempt has no check.
+    It is `checks.NO_VALUE` unless the check ran. A value never enters the record, so records stay plain JSON; a
     caller uses it only for an attempt that ended `complete` with check `pass` (0.1.4, 9.3, 11.2)."""
     run, p = prepared.run, prepared
     aid = runs.attempt_id(run.run_id, p.number)
@@ -431,15 +422,6 @@ def run_attempt_with_value(store: runs.AttemptStore, prepared: PreparedAttempt, 
         if outcome in ("complete", "truncated"):
             try:
                 check, value = checks.check_named_answer(p.plan.contracts(), result.text)
-            except Exception as exc:  # noqa: BLE001 - never read as a pass
-                report_internal("checks", exc)
-                check = _failed_checks()
-        else:
-            skipped = "blank_answer" if outcome in BLANK_OUTCOMES else "not_completed"
-    elif p.contract is not None:
-        if outcome in ("complete", "truncated"):
-            try:
-                check, value = checks.check_answer_value(p.contract.parsed, result.text)
             except Exception as exc:  # noqa: BLE001 - never read as a pass
                 report_internal("checks", exc)
                 check = _failed_checks()

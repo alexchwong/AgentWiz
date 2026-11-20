@@ -93,15 +93,97 @@ def test_legacy_profiles_use_machine_endpoint_after_restart(make_ui, server, tmp
     assert ui.state.resolve_role("fast").endpoint.base_url == server.url + "/v1"
 
 
-def test_repair_refuses_changed_server_before_dispatch(ui, server, make_server):
+# --- R-6h and R-6 (0.2.3 spec v15, 4.2 G-1): a repair after the configured model server changed ---------------
+def _repairing_block(ui):
+    """An unrestricted v4 model block: no Local only port and no protection, so no destination check runs. Its
+    output contract fails the first answer, and one repair is allowed."""
+    from conftest import write_block
+    save_profile(ui, "p", kind="openai_compat", model="m")
+    save_roles(ui, {"fast": "p"})
+    write_block(ui, "ask", {"format_version": 4, "name": "ask", "description": "asks a model",
+                            "inputs": {"text": {"contract": {"format": "text"}, "local_only": False}},
+                            "outputs": {"out": {"contract": {"format": "text", "contains": ["pong"]},
+                                                "local_only": False}},
+                            "steps": [{"id": "request", "kind": "model", "role": "fast", "system": {"text": ""},
+                                       "prompt": {"text": "Say {{inputs.text}}"}, "response_mode": "named_json",
+                                       "repair": {"max_repairs": 1}}]})
+
+
+def _held_failing_answer():
+    from conftest import DONE, delta
+    return Reply(body=[], hold=True, headers={"Content-Type": "text/event-stream"},
+                 after_release=[delta('{"out":"nope"}'), delta(finish="stop"), DONE])
+
+
+def _reconfigure_while_held(ui, server, replacement):
+    assert server.wait_holding(1)
+    configure(ui, replacement)
+    server.release.set()
+
+
+def test_headless_repair_after_server_change_is_unchanged(ui, server, make_server):
+    """R-6h: pins 0.2.2's headless record, which G-1 leaves as it is."""
+    import threading
+    from conftest import result_of, run_block
     configure(ui, server)
-    saved = save_contract(ui, "c", JSON_CONTRACT)               # ratio maximum 1 fails this answer
-    server.reply(json_answer('{"id":1,"ratio":2}'))
-    record = record_of(complete(ui, "extract", source="checked_request",
-                                contract=("c", saved["revision"], saved["digest"])))
-    assert record["check"]["overall"] == "fail"
+    _repairing_block(ui)
     other = make_server()
-    configure(ui, other)
-    for route in ("/api/repair/preview", "/api/repair"):
-        assert failure_of(lambda: request(ui, route, {"attempt_id": record["id"]})).status == 400
-    assert other.requests == [] and len(server.requests) == 1
+    server.reply(_held_failing_answer())
+    out = {}
+    worker = threading.Thread(target=lambda: out.update(evs=run_block(ui, "ask", {"text": "pong"})))
+    worker.start()
+    _reconfigure_while_held(ui, server, other)
+    worker.join(30)
+    result = result_of(out["evs"])
+    assert result["outcome"] == "failed", result
+    assert result["steps"][0]["failure"] == "internal_error", result["steps"][0]
+    assert len(server.requests) == 1 and other.requests == []
+
+
+def _spy(monkeypatch):
+    from agentwiz import runs
+    calls = {"reserve_attempt": [], "abandon_run": []}
+    for name in calls:
+        original = getattr(runs.AttemptStore, name)
+
+        def wrapper(self, run, *args, _name=name, _original=original):
+            if run.kind == "block":
+                calls[_name].append(run.run_id)
+            return _original(self, run, *args)
+        monkeypatch.setattr(runs.AttemptStore, name, wrapper)
+    return calls
+
+
+def _workshop_test(ui):
+    from test_workshop import start_planned
+    started = start_planned(ui, "test", {"key": "ask", "inputs": {"text": "pong"}})
+    return started
+
+
+@pytest.mark.parametrize("changed", [True, False], ids=["changed", "unchanged"])
+def test_workshop_repair_refuses_changed_server_before_reservation(ui, server, make_server, monkeypatch, changed):
+    """R-6: through Workshop Test, a repair after the configured server changed is refused `server_changed` before
+    its attempt is reserved; nothing reaches either server. The control re-applies the original configuration."""
+    from test_workshop import completed
+    configure(ui, server)
+    _repairing_block(ui)
+    other = make_server().reply(answer('{"out":"pong"}'))
+    server.reply(_held_failing_answer(), answer('{"out":"pong"}'))
+    calls = _spy(monkeypatch)
+    started = _workshop_test(ui)
+    _reconfigure_while_held(ui, server, other if changed else server)
+    batch = completed(ui, started["batch_id"])
+    row = batch["rows"][0]
+    step = ui.state.store.run_envelope(row["run_id"])["result"]["steps"][0]
+    run_ids = set(calls["reserve_attempt"])
+    assert run_ids == {row["run_id"]}, calls
+    if changed:
+        assert step["failure"] == "server_changed", step
+        assert len(step["attempts"]) == 1 and step["repairs_used"] == 0
+        assert len(calls["reserve_attempt"]) == 1 and calls["abandon_run"] == []
+        assert len(server.requests) == 1 and other.requests == []
+    else:
+        assert step["outcome"] == "ok", step
+        assert step["repairs_used"] == 1 and len(step["attempts"]) == 2
+        assert len(calls["reserve_attempt"]) == 2 and calls["abandon_run"] == []
+        assert len(server.requests) == 2 and other.requests == []

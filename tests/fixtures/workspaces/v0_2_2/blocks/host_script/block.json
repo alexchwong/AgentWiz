@@ -1,0 +1,25 @@
+{
+  "format_version": 3,
+  "name": "host_script",
+  "inputs": {
+    "text": {
+      "contract": {
+        "format": "text"
+      }
+    }
+  },
+  "outputs": {
+    "x": {
+      "contract": {
+        "format": "text"
+      }
+    }
+  },
+  "steps": [
+    {
+      "id": "s",
+      "kind": "script",
+      "file": "scripts/go.py"
+    }
+  ]
+}

@@ -1,0 +1,149 @@
+{
+  "record_version": 1,
+  "run_id": "14e888bc9fba",
+  "source": "block",
+  "block": {
+    "name": "private_deid",
+    "revision": 1,
+    "files": {
+      "block.json": "5e4bfec5072c412405545b4d2909d1fc9965b4b74e369ebfe94d5e1c4c49b71e"
+    }
+  },
+  "started_at": "2026-11-19T21:53:44.671Z",
+  "ended_at": "2026-11-19T21:53:44.680Z",
+  "outcome": "complete",
+  "stop_requested_at": null,
+  "cancel_reason": null,
+  "cancelled_at": null,
+  "input_texts": {
+    "text": "Jane Example reported fatigue on 3 March. Record TEST-123."
+  },
+  "inputs": {
+    "text": {
+      "format": "text",
+      "text": "Jane Example reported fatigue on 3 March. Record TEST-123."
+    }
+  },
+  "contracts": {
+    "inputs": {
+      "text": {
+        "name": null,
+        "revision": null,
+        "digest": "sha256:fed9b2422ab2ba97002fb66293f22a137be694bb3a9afaa5a2d25966239fabe0",
+        "text": "{\n  \"format\": \"text\"\n}",
+        "policy": "user"
+      }
+    },
+    "outputs": {
+      "redacted_text": {
+        "name": null,
+        "revision": null,
+        "digest": "sha256:fed9b2422ab2ba97002fb66293f22a137be694bb3a9afaa5a2d25966239fabe0",
+        "text": "{\n  \"format\": \"text\"\n}",
+        "policy": "user"
+      },
+      "mapping": {
+        "name": null,
+        "revision": null,
+        "digest": "sha256:89ccc0127a72d41ca1cba835a1cb02386166649cffc230a8d39dd59e0c713a3f",
+        "text": "{\n  \"format\": \"json\",\n  \"schema\": {\n    \"type\": \"array\",\n    \"maxItems\": 1000,\n    \"items\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"placeholder\": {\n          \"type\": \"string\"\n        },\n        \"original\": {\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"placeholder\",\n        \"original\"\n      ],\n      \"additionalProperties\": false\n    }\n  }\n}",
+        "policy": "user"
+      }
+    }
+  },
+  "input_checks": {
+    "text": {
+      "overall": "pass",
+      "checks": [],
+      "issues": [],
+      "issue_count": 0,
+      "notes": []
+    }
+  },
+  "outputs": {
+    "redacted_text": {
+      "format": "text",
+      "text": "[PERSON_1] reported fatigue on 3 March. Record [RECORD_1]."
+    },
+    "mapping": {
+      "format": "json",
+      "text": "[{\"placeholder\":\"[PERSON_1]\",\"original\":\"Jane Example\"},{\"placeholder\":\"[RECORD_1]\",\"original\":\"TEST-123\"}]"
+    }
+  },
+  "issues": [],
+  "steps": [
+    {
+      "step_id": "run",
+      "kind": "model",
+      "outcome": "ok",
+      "failure": null,
+      "role": "tutorial_private",
+      "profile": "private",
+      "endpoint": {
+        "kind": "openai_compat",
+        "base_url": "http://127.0.0.1:33517/v1"
+      },
+      "model": "private-deid",
+      "fills": [
+        {
+          "where": "prompt",
+          "placeholder": "{{inputs.text}}",
+          "source": "inputs.text",
+          "sha256": "67779ec40fc87f6ceb81c9f72bea04105357f11570246e0cc0222aa9904dae4e"
+        }
+      ],
+      "attempts": [
+        "14e888bc9fba-1"
+      ],
+      "accepted_attempt": "14e888bc9fba-1",
+      "max_repairs": 1,
+      "repairs_used": 0,
+      "truncated_attempts": 0,
+      "max_tokens": null,
+      "operation": null,
+      "output_checks": {
+        "redacted_text": {
+          "overall": "pass",
+          "checks": [],
+          "issues": [],
+          "issue_count": 0,
+          "notes": []
+        },
+        "mapping": {
+          "overall": "pass",
+          "checks": [
+            {
+              "check": "parse",
+              "result": "pass"
+            },
+            {
+              "check": "schema",
+              "result": "pass"
+            }
+          ],
+          "issues": [],
+          "issue_count": 0,
+          "notes": [
+            "value given already parsed"
+          ]
+        }
+      }
+    }
+  ],
+  "budget": {
+    "max_seconds": 1800,
+    "max_model_tokens": null
+  },
+  "usage": {
+    "reported_tokens": 20,
+    "limit": null,
+    "over_by": null,
+    "unreported_attempts": []
+  },
+  "protected": true,
+  "workshop": {
+    "workflow_node": "deid"
+  },
+  "agentwiz_version": "0.2.2",
+  "modelspell_version": "0.4.0"
+}

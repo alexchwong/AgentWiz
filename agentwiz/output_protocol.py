@@ -58,11 +58,6 @@ class Spec:
         return jsonio.encode_exact(self.contract.schema)
 
 
-def specs_for(declared: Iterable, captured: Mapping) -> tuple[Spec, ...]:
-    """The specs of a block's outputs, in declaration order, from its captured contracts."""
-    return tuple(Spec(item.name, item.description, captured[item.name].parsed) for item in declared)
-
-
 def _value_rule(spec: Spec) -> str:
     if spec.contract.format == "text":
         return ("Value: a JSON string holding the complete text. Escape quotes, backslashes and line "
@@ -73,7 +68,7 @@ def _value_rule(spec: Spec) -> str:
 
 
 def definition_lines(contract: checks.Contract, purpose: str = '') -> list[str]:
-    """The same captured one-value requirements for blocks and Checked request."""
+    """The captured one-value requirements of a block output."""
     lines = []
     if purpose:
         lines.append('Purpose: ' + purpose)
@@ -97,15 +92,6 @@ def definition_lines(contract: checks.Contract, purpose: str = '') -> list[str]:
             for literal in raw.get(key, []):
                 lines.append(phrase + ': ' + jsonio.encode_exact(literal))
     return lines
-
-
-def single_value_instructions(contract: checks.Contract) -> str:
-    """A direct value, never the named block transport envelope."""
-    reply = ('Return plain text directly, not a JSON string or output-name wrapper.'
-             if contract.format == 'text' else
-             'Return the JSON value directly, without Markdown fences or an output-name wrapper.')
-    return '\n'.join([BEGIN, reply,
-                      *definition_lines(contract), END])
 
 
 def instructions(specs: Iterable[Spec]) -> str:

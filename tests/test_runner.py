@@ -442,17 +442,6 @@ def test_a_lost_page_does_not_stop_the_run_and_polling_finds_it(ui, server):
     assert failure_of(lambda: poll_block(ui, "0" * 12)).status == 410
 
 
-def test_a_block_attempt_cannot_be_repaired_by_hand(ui, server):
-    setup_model(ui, server, **checked_output())
-    server.reply(answer("no"))
-    write_block(ui, "b", {**model_block("b", **checked_output()),
-                          "steps": [{**model_block()["steps"][0], "repair": {"max_repairs": 0}}]}, MODEL_FILES)
-    result = result_of(run_block(ui, "b", {"text": "x"}))
-    attempt = step_of(result)["attempts"][0]
-    fail = failure_of(lambda: request(ui, "/api/repair", {"attempt_id": attempt}))
-    assert fail.status == 409 and fail.body["code"] == "not_repairable"
-
-
 def test_a_delivery_that_fails_never_stops_the_run(ui, server, monkeypatch):
     setup_model(ui, server)
     server.reply(block_answer(out="done"))
@@ -516,3 +505,107 @@ def test_shutdown_stops_a_run_and_a_second_close_does_nothing(ui, server):
         ui.state.register_writer("late")
     assert "shutting down" in str(caught.value)
     assert fail is None
+
+
+# --- 0.2.3 (spec v15, 4.2): ports of Checked request tests to block runs ------------------------------------------
+TEXT_PONG = '{"format": "text", "contains": ["pong"]}'
+
+
+def pong_block(ui, server, max_repairs=0, contract=None):
+    """Model block `b`, output `out` checked against `contract` (default: contains "pong")."""
+    setup_model(ui, server, outputs={"out": {"contract": contract or json.loads(TEXT_PONG)}},
+                steps=[{**model_block()["steps"][0], "repair": {"max_repairs": max_repairs}}])
+
+
+def test_block_repair_chain_identity_and_run_files(ui, server, monkeypatch):
+    """Port of test_attempts.py::test_identity_and_run_files: attempt IDs, parents, the run's files written once,
+    their modes, and the same captured output plan on every attempt."""
+    import os
+    from agentwiz import history
+    pong_block(ui, server, max_repairs=2)
+    switch_history(ui, True)
+    writes = []
+    real = history.write_atomic_bytes
+
+    def spy(folder, name, data):
+        writes.append(name)
+        return real(folder, name, data)
+    monkeypatch.setattr(history, "write_atomic_bytes", spy)
+    server.reply(block_answer(out="nope"), block_answer(out="still nope"), block_answer(out="pong"))
+    result = result_of(run_block(ui, "b", {"text": "x"}))
+    run_id = result["run_id"]
+    step = step_of(result)
+    assert result["outcome"] == "complete" and step["attempts"] == [f"{run_id}-{n}" for n in (1, 2, 3)]
+    records = [request(ui, f"/api/attempts/{ident}")["record"] for ident in step["attempts"]]
+    assert [r["parent_id"] for r in records] == [None, f"{run_id}-1", f"{run_id}-2"]
+    assert [r["check"]["overall"] for r in records] == ["fail", "fail", "pass"]
+    assert all(r["output_plan"] == records[0]["output_plan"] for r in records)
+    folder = next(p for p in run_folders(ui) if p.name.endswith("-" + run_id))
+    names = sorted(p.name for p in folder.iterdir())
+    assert names == ["result.json", "run.json", "s-1.json", "s-2.json", "s-3.json"]
+    assert sorted(writes) == names                                        # each written exactly once
+    assert all(oct(os.stat(folder / n).st_mode & 0o777) == "0o600" for n in names)
+    assert oct(os.stat(folder).st_mode & 0o777) == "0o700"
+
+
+def test_block_check_on_outcomes(ui, server):
+    """Port of test_attempts.py::test_check_on_outcomes: each reply's outcome and check on a block attempt."""
+    pong_block(ui, server)
+    cases = [
+        (block_answer(out="pong"), "complete", "pass", None),
+        (Reply(body=[delta('{"out": "pon'), delta(finish="length"), DONE], headers=SSE), "truncated", "fail", None),
+        (answer(""), "empty", None, "blank_answer"),
+        (Reply(body=[delta("", reasoning="thinking"), delta(finish="stop"), DONE], headers=SSE),
+         "reasoning_only", None, "blank_answer"),
+        (Reply(body=[delta("", reasoning="thinking"), delta(finish="length"), DONE], headers=SSE),
+         "truncated_no_answer", None, "blank_answer"),
+        (Reply(status=500, body=b"{}", headers={"Content-Type": "application/json"}), "error", None, "not_completed"),
+    ]
+    for reply, outcome, check, skipped in cases:
+        server.reply(reply)
+        ident = step_of(result_of(run_block(ui, "b", {"text": "x"})))["attempts"][0]
+        record = request(ui, f"/api/attempts/{ident}")["record"]
+        assert record["outcome"] == outcome, (outcome, record["outcome"])
+        assert (record["check"] or {}).get("overall") == check, outcome
+        if skipped is None:
+            assert "check_skipped" not in record, outcome
+        else:
+            assert record["check_skipped"] == skipped, outcome
+
+
+def test_a_block_pinning_a_damaged_contract_is_refused_and_runs_once_restored(ui, server):
+    """Port of test_attempts.py::test_a_damaged_contract_is_refused_and_usable_after_repair (both of whose calls
+    were Checked requests), and of the pin half of the source-rule test."""
+    import os
+    from conftest import contract_token, save_contract
+    saved = save_contract(ui, "c", TEXT_PONG)
+    pong_block(ui, server, contract={"name": "c", "revision": 1, "digest": saved["digest"]})
+    rows = lambda: {r["name"]: r for r in request(ui, "/api/blocks")["blocks"]}   # noqa: E731
+    old = rows()["b"]["revision"]
+    path = ui.workspace.path / "contracts" / "c.json"
+    good = path.read_bytes()
+    path.write_bytes(b"{ damaged")
+    os.utime(path, ns=(os.stat(path).st_mtime_ns + 5_000_000_000,) * 2)
+    damaged = rows()["b"]
+    assert damaged["problem"] is not None and damaged["revision"] != old
+    for revision, code in ((old, "stale_revision"), (damaged["revision"], "block_unusable")):
+        refusal = failure_of(lambda: run_block(ui, "b", {"text": "x"}, revision=revision))
+        assert (refusal.status, refusal.body["code"]) == (409, code)
+    assert server.requests == [] and ui.state.store.running_count() == 0 and run_folders(ui) == []
+    path.write_bytes(good)
+    os.utime(path, ns=(os.stat(path).st_mtime_ns + 10_000_000_000,) * 2)
+    assert rows()["b"]["problem"] is None
+    server.reply(block_answer(out="pong"))
+    result = result_of(run_block(ui, "b", {"text": "x"}))
+    assert result["outcome"] == "complete" and len(server.requests) == 1
+    record = request(ui, f"/api/attempts/{step_of(result)['attempts'][0]}")["record"]
+    assert record["check"]["overall"] == "pass"
+    pinned = result["contracts"]["outputs"]["out"]
+    assert (pinned["name"], pinned["revision"], pinned["digest"]) == ("c", 1, saved["digest"])
+    # Appending revision 2 does not move the block's pin.
+    revision = rows()["b"]["revision"]
+    save_contract(ui, "c", '{"format": "text", "contains": ["other"]}', contract_token(ui, "c"))
+    assert rows()["b"]["revision"] == revision
+    server.reply(block_answer(out="pong"))
+    again = result_of(run_block(ui, "b", {"text": "x"}))
+    assert again["outcome"] == "complete" and again["contracts"]["outputs"]["out"]["revision"] == 1

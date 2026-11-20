@@ -415,3 +415,42 @@ probe charges, retains explicit privacy policy, and never authorizes post-tool p
   profile. Its source and cases are retained for that evaluation.
 - Archived implementation context is available in the [baseline handover](https://github.com/alexchwong/AgentWiz/blob/6ad9b9cf54b7c10192f32150c59b16f731574164/AgentWiz_0.2.2_handover.md)
   and the [starter blocks handover](https://github.com/alexchwong/AgentWiz/blob/6ad9b9cf54b7c10192f32150c59b16f731574164/AgentWiz_0.2.2_starter_blocks_handover.md).
+
+
+## 0.2.3 (20 November 2026) · Script-verifiable trim
+
+Implements the 0.2.3 technical specification v15. Owner decisions: OD-1 keep Documents (PDF to Workshop input,
+checked by D-1); OD-2 retire Checked request and manual repair, keeping automatic repair and saved history;
+OD-3 accept losing browser monitoring of script-started runs (headless poll and Stop stay). OD-5: no gating live
+test; LV-1 is optional. OD-6: a committed 0.2.2 workspace fixture with its regeneration recipe. OD-4: Stage 6 ended
+in outcome **F-b**. Workflow Design retains the canvas and adds List view Gate insertion, restriction
+explanations and the remedy resolver. Stage 6b, W-3/W-4/W-6 and the canvas-removal tutorial changes
+were deferred. Accepted losses include the manual repair preview and the Saved block runs screen.
+OpenRouter and LM Studio qualification, including the trusted-local `deidentify_text` run, and webSpell
+qualification belong to 0.2.4.
+
+The first implementation bundled the trim stages. The handover reports that the Checked request test
+ports passed before the original routes were removed. Separate Stage 3a CI logs were unavailable for
+release review. Keep that distinction when citing evidence for the staged cutover. [Archived handover](https://github.com/alexchwong/AgentWiz/blob/db5692c3637f582d2e130f80eb7b1704ab99acff/handover.md)
+
+Later fixes moved the installed test runner to the resolved temporary directory for stable JUnit IDs
+and isolated revision-pin locking from Workshop's operations lock. The resulting hosted run on
+`db5692c` passed the four source and installed-wheel jobs and the 16 PDF wheel jobs.
+[Hosted run](https://github.com/alexchwong/AgentWiz/actions/runs/44685597295)
+
+### 21 November 2026 release review
+
+The R-7 browser fixture loads 40 large outputs below the preview budget. It checks compact,
+on-demand attempt requests. A focused reproduction with a lowered budget found that the budget
+can be exceeded when the structured output and raw answer each fit the remaining bytes but their
+sum does not. This accounting predates 0.2.3. Private draft labelling, zero-send refusal and Stop
+have separate installed cases. The review found no single restricted Agentic Chat browser case
+that reconnects and then exercises Stop. The hosted result does not cover WSL2.
+
+The published 0.2.2 wheel and the 0.2.3 wheel built from the reviewed documentation overlay
+had the following sizes. Shipped source lines count newline-terminated lines in Python, JavaScript and HTML.
+
+| Wheel | Compressed bytes | Members | Uncompressed bytes | Shipped source lines |
+| --- | ---: | ---: | ---: | ---: |
+| Published 0.2.2 | 685,707 | 175 | 2,340,355 | 37,388 |
+| Reviewed 0.2.3 | 679,864 | 175 | 2,315,326 | 36,897 |

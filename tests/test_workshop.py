@@ -1,4 +1,9 @@
 """HTTP regressions for bounded, process-scoped Workshop Start tickets."""
+import threading
+import weakref
+from types import SimpleNamespace
+
+import pytest
 from conftest import failure_of, request
 
 
@@ -43,6 +48,41 @@ def model_draft(key):
     import json
     from test_blocks import model_block, MODEL_FILES
     return {'key': key, 'definition_text': json.dumps(model_block(name=key)), 'files': MODEL_FILES, 'metadata': {}}
+
+
+def test_revision_pin_finalizer_can_run_inside_workshop_lock(tmp_path):
+    from agentwiz import jsonio
+    from agentwiz.workshop_assets import Assets
+
+    class LoadedGeneration:
+        pass
+
+    revision = 'a' * 32
+    root = tmp_path / 'blocks' / 'finalized'
+    physical = root / '.workshop' / 'revisions' / revision
+    physical.mkdir(parents=True)
+    (root / 'block.json').write_bytes(jsonio.encode_file_exact(
+        {'format_version': 2, 'current': revision, 'retained': [revision]}))
+    operations_lock = threading.Lock()
+    assets = Assets(SimpleNamespace(workspace=SimpleNamespace(path=tmp_path)), operations_lock)
+    _, release = assets.pin('finalized')
+    owner = LoadedGeneration()
+    finalizer = weakref.finalize(owner, release)
+    _, release_other = assets.pin('finalized')
+
+    def finalize_while_polling():
+        with operations_lock:
+            finalizer()
+
+    # Run the callback at the same lock boundary as batch polling, with a
+    # bounded join so the regression reports a failure instead of hanging CI.
+    worker = threading.Thread(target=finalize_while_polling, daemon=True)
+    worker.start()
+    worker.join(timeout=2)
+    assert not worker.is_alive(), 'pin finalizer deadlocked with the Workshop operations lock held'
+    assert assets.pins == {('finalized', revision): 1}
+    release_other()
+    assert assets.pins == {}
 
 
 def test_overwrite_selected_revision_keeps_number_order_and_default(ui, restart):
@@ -717,3 +757,314 @@ def test_override_controls_inherit_reset_or_set_and_a_blank_custom_is_refused(ui
     for bad in ({'customs': ['temperature'], 'resets': ['temperature'], 'sampling': {'temperature': '1'}},
                 {'customs': ['max_tokens']}, {'customs': ['temperature', 'temperature']}):
         assert failure_of(lambda: step_of(**bad)).status == 400
+
+
+# --- 0.2.3 (spec v15, 4.3): S-1 clean current selections and E-1 engine recovery -----------------------------------
+def _cloud_block(ui, cloud, key='cloudy', local_only=False):
+    """An unmanaged v4 model block at a cloud role; no protection, so no destination check unless labelled."""
+    from conftest import KEY, save_profile, save_roles, write_block
+    save_profile(ui, 'remote', model='remote', kind='openrouter', base_url=cloud.url + '/v1', provider='', api_key=KEY)
+    save_roles(ui, {'cloud': 'remote'})
+    definition = {'format_version': 4, 'name': key, 'description': 'asks the cloud',
+                  'inputs': {'text': {'contract': {'format': 'text'}, 'local_only': local_only}},
+                  'outputs': {'out': {'contract': {'format': 'text'}, 'local_only': False}},
+                  'steps': [{'id': 'request', 'kind': 'model', 'role': 'cloud', 'system': {'text': ''},
+                             'prompt': {'text': 'Say {{inputs.text}}'}, 'response_mode': 'named_json',
+                             'repair': {'max_repairs': 0}}]}
+    folder = write_block(ui, key, definition)
+    return folder, definition
+
+
+def _effective(ui, key):
+    return {r['name']: r for r in request(ui, '/api/blocks')['blocks']}[key]['revision']
+
+
+def test_clean_current_selection_mismatched_revision_is_stale(ui, server):
+    """R-4(d): a `test` plan with a mismatched `expected_revision` answers 409 `stale`, creating no batch."""
+    _cloud_block(ui, server)
+    revision = _effective(ui, 'cloudy')
+    for expected in (revision + 1, revision - 1):
+        body = {'key': 'cloudy', 'expected_revision': expected, 'inputs': {'text': 'x'}}
+        refusal = failure_of(lambda: send(ui, 'plans', action='test', request=body))
+        assert refusal.status == 409 and refusal.body['code'] == 'stale'
+    for extra in ({'draft': {}}, {'revision': 'r'}, {'edit': {}}):
+        body = {'key': 'cloudy', 'expected_revision': revision, 'inputs': {'text': 'x'}, **extra}
+        assert failure_of(lambda: send(ui, 'plans', action='test', request=body)).status == 400
+    assert request(ui, '/api/workshop/batches')['active'] is None and server.requests == []
+
+
+@pytest.mark.parametrize('before_trial', [1, 2])
+def test_clean_current_selection_rechecks_before_every_trial(ui, server, monkeypatch, before_trial):
+    """R-4(e): S-1's per-trial guard alone. The hook marks the input Local only on disk before trial n: that trial
+    and every later one send nothing, earlier trials keep their results, and the batch ends dependency_changed."""
+    import json
+    from agentwiz import jsonio, workshop_service
+    from conftest import block_answer
+    folder, definition = _cloud_block(ui, server)
+    server.reply(block_answer(out='fine'))
+    calls = []
+
+    def hook(batch_id, row):
+        calls.append(row['trial_id'])
+        if len(calls) == before_trial:
+            definition['inputs']['text']['local_only'] = True
+            (folder / 'block.json').write_bytes(jsonio.encode_exact(definition, indent=2).encode())
+    monkeypatch.setattr(workshop_service, 'before_trial_dispatch', hook)
+    examples = [{'id': f'e{n}', 'version': 1, 'inputs': {'text': str(n)},
+                 'expectation': {'kind': 'review', 'criterion': ''}, 'verified': False} for n in (1, 2)]
+    started = start_planned(ui, 'batches', {'candidates': [{'key': 'cloudy', 'expected_revision': _effective(ui, 'cloudy')}],
+                                            'examples': examples})
+    batch = completed(ui, started['batch_id'])
+    assert (batch['state'], batch['reason']) == ('stopped', 'dependency_changed'), json.dumps(batch)[:2000]
+    assert len(server.requests) == before_trial - 1
+    if before_trial == 2:
+        assert batch['rows'][0]['outcome'] == 'complete'
+
+
+def test_clean_current_selection_unusable_contract_pin_is_stale(ui, server):
+    """R-4(g): a pinned contract revision that becomes unusable after opening answers stale with zero requests,
+    as `block_for_run` does."""
+    import os
+    from conftest import save_contract, write_block
+    saved = save_contract(ui, 'tc', '{"format": "text"}')
+    _cloud_block(ui, server)
+    from test_blocks import model_block, MODEL_FILES
+    block = model_block('pinned', outputs={'out': {'contract': {'name': 'tc', 'revision': 1, 'digest': saved['digest']}}})
+    write_block(ui, 'pinned', block, MODEL_FILES)
+    opened = send(ui, 'preview', key='pinned')
+    revision = opened['effective_revision']
+    path = ui.workspace.path / 'contracts' / 'tc.json'
+    path.write_bytes(b'{ damaged')
+    os.utime(path, ns=(os.stat(path).st_mtime_ns + 5_000_000_000,) * 2)
+    body = {'key': 'pinned', 'expected_revision': revision, 'inputs': {'text': 'x'}}
+    refusal = failure_of(lambda: send(ui, 'plans', action='test', request=body))
+    assert refusal.status == 409 and refusal.body['code'] == 'stale'
+    assert server.requests == []
+
+
+def test_export_race_never_pairs_old_bytes_with_new_revision(ui, server, monkeypatch):
+    """R-4(h): a disk edit injected between the two reads of `export` answers stale, never a draft paired with the
+    newer revision."""
+    from agentwiz import workshop_assets
+    folder, _ = _cloud_block(ui, server)
+    real = workshop_assets.read
+    state = {'done': False}
+
+    def racing(root, path, *args, **kwargs):
+        data = real(root, path, *args, **kwargs)
+        import sys
+        caller = sys._getframe(1).f_code.co_name
+        if path == 'block.json' and not state['done'] and caller in ('export', '<dictcomp>'):
+            state['done'] = True
+            text = (folder / 'block.json').read_text().replace('asks the cloud', 'edited on disk')
+            (folder / 'block.json').write_text(text)
+        return data
+    monkeypatch.setattr(workshop_assets, 'read', racing)
+    refusal = failure_of(lambda: send(ui, 'preview', key='cloudy'))
+    assert refusal.status == 409 and refusal.body['code'] == 'stale'
+    monkeypatch.setattr(workshop_assets, 'read', real)
+    opened = send(ui, 'preview', key='cloudy')
+    assert 'edited on disk' in opened['draft']['definition_text']
+    assert opened['effective_revision'] == _effective(ui, 'cloudy')
+
+
+def _engine_changed_block(ui, key='old_engine', protected=False):
+    """An unmanaged, indented v4 Python block whose recorded engine differs from the installed one."""
+    from conftest import python_block, write_block
+    definition = python_block(key, inputs={'text': {'format': 'text'}}, outputs={'out': {'format': 'text'}})
+    definition['steps'][0]['engine'] = {**definition['steps'][0]['engine'], 'codec': 999}
+    if protected:
+        definition['context_local_only'] = True
+    folder = write_block(ui, key, definition, {'scripts/go.py': "def transform(inputs):\n    return {'out': inputs['text']}\n"})
+    return folder
+
+
+def _bytes(folder):
+    return {str(p.relative_to(folder)): p.read_bytes() for p in sorted(folder.rglob('*')) if p.is_file()}
+
+
+def _recover(ui, key):
+    return send(ui, 'preview', key=key, engine_recovery=True)['draft']
+
+
+def test_engine_recovery_save_checkpoints_and_refusals(ui, monkeypatch):
+    """R-4(k), server part: Open as draft writes the installed engine into a draft while disk is unchanged; Save
+    archives the exact original bytes as the first retained revision; a disk edit before the plan, before
+    Confirm or at the publication checkpoint answers stale and publishes nothing; a restart discards the record."""
+    import hashlib
+    from agentwiz import jsonio, python_step, workshop_assets
+    folder = _engine_changed_block(ui)
+    original = _bytes(folder)
+    headless = failure_of(lambda: request(ui, '/api/blocks/run', {'name': 'old_engine',
+                                                                  'revision': _effective(ui, 'old_engine'),
+                                                                  'inputs': {'text': 'x'}}))
+    assert headless.body['code'] == 'block_unusable'
+    current = failure_of(lambda: send(ui, 'plans', action='test', request={
+        'key': 'old_engine', 'expected_revision': _effective(ui, 'old_engine'), 'inputs': {'text': 'x'}}))
+    assert current.body['code'] == 'block_unusable'
+    assert 'engine_changed' in str(current.body['issues']) and 'engine_changed' in str(headless.body['problem'])
+    draft = _recover(ui, 'old_engine')
+    assert jsonio.decode_exact(draft['definition_text'])['steps'][0]['engine'] == python_step.engine()
+    assert 'engine_recovery' not in draft['metadata'] and 'recovery_id' not in draft['metadata']
+    assert _bytes(folder) == original
+    # Staleness before the Save plan, before Confirm, and at the publication checkpoint.
+    def edit_disk():
+        (folder / 'scripts' / 'go.py').write_text("def transform(inputs):\n    return {'out': 'edited'}\n")
+
+    def restore():
+        for rel, data in original.items():
+            (folder / rel).write_bytes(data)
+    for when in ('plan', 'confirm', 'checkpoint'):
+        restore()
+        draft = _recover(ui, 'old_engine')
+        body = {'draft': draft, 'expected_identity': draft['base_digest']}
+        if when == 'plan':
+            edit_disk()
+            assert failure_of(lambda: send(ui, 'plans', action='save', request=body)).body['code'] == 'stale'
+        else:
+            plan = send(ui, 'plans', action='save', request=body)
+            if when == 'confirm':
+                edit_disk()
+            else:
+                monkeypatch.setattr(workshop_assets, 'publish_checkpoint', lambda key, stage: edit_disk())
+            refusal = failure_of(lambda: send(ui, 'save', **body, expected_plan=plan['expected_plan'],
+                                              confirmations=[{'kind': r['kind'], 'digest': r['digest']}
+                                                             for r in plan['required_confirmations']]))
+            assert refusal.body['code'] == 'stale'
+            monkeypatch.setattr(workshop_assets, 'publish_checkpoint', lambda key, stage: None)
+        edited = _bytes(folder)
+        assert not (folder / '.workshop').exists() and edited != original
+    # A block with another issue besides engine_changed offers no recovery.
+    restore()
+    broken = jsonio.decode_exact((folder / 'block.json').read_text())
+    broken['unknown_key'] = 1
+    (folder / 'block.json').write_text(jsonio.encode_exact(broken, indent=2))
+    assert failure_of(lambda: _recover(ui, 'old_engine')).body['code'] == 'unusable'
+    restore()
+    # Explicit revision and authoring fields are refused with engine_recovery.
+    for extra in ({'revision': 'r'}, {'edit': {}}, {'draft': {}}):
+        assert failure_of(lambda: send(ui, 'preview', key='old_engine', engine_recovery=True, **extra)).status in (400, 409)
+    # Save succeeds: the first retained revision keeps the original bytes; the current carries the installed engine.
+    draft = _recover(ui, 'old_engine')
+    saved = plan_save(ui, draft, draft['base_digest'])
+    rows = request(ui, '/api/workshop/blocks/old_engine/revisions')['revisions']
+    assert [r['revision_number'] for r in rows] == [2, 1]
+    first = folder / '.workshop' / 'revisions' / rows[1]['id']
+    for rel, data in original.items():
+        assert (first / rel).read_bytes() == data, rel
+    meta = jsonio.decode_file_exact((first / 'workshop.json').read_bytes())
+    assert meta['assets'] == {rel: hashlib.sha256(data).hexdigest() for rel, data in original.items()}
+    assert 'contract_pins' in meta and 'contracts' in meta
+    workshop_assets.validate_contract_maps(jsonio.decode_file_exact((first / 'block.json').read_bytes()), meta)
+    current_def = jsonio.decode_file_exact((folder / '.workshop' / 'revisions' / saved['durable_id'] / 'block.json').read_bytes())
+    assert current_def['steps'][0]['engine'] == python_step.engine()
+    result = completed(ui, start_planned(ui, 'test', {'key': 'old_engine', 'expected_revision': _effective(ui, 'old_engine'),
+                                                      'inputs': {'text': 'pong'}})['batch_id'])
+    assert result['rows'][0]['outcome'] == 'complete', result['rows'][0]
+
+
+def test_engine_recovery_record_is_discarded_by_a_restart(ui, restart):
+    from agentwiz import jsonio
+    from conftest import result_of, run_block, switch_history
+    folder = _engine_changed_block(ui)
+    original = _bytes(folder)
+    draft = _recover(ui, 'old_engine')
+    ui = restart(ui)
+    body = {'draft': draft, 'expected_identity': draft['base_digest']}
+    assert failure_of(lambda: send(ui, 'plans', action='save', request=body)).body['code'] == 'draft_expired'
+    assert _bytes(folder) == original
+    draft = _recover(ui, 'old_engine')
+    switch_history(ui, True)
+    draft['metadata'].update(engine_recovery=True, recovery_id='discard this marker')
+    body = {'draft': draft, 'inputs': {'text': 'pong'}}
+    batch = completed(ui, start_planned(ui, 'test', body)['batch_id'])
+    assert batch['rows'][0]['outcome'] == 'complete'
+    saved = plan_save(ui, draft, draft['base_digest'])
+    workspace = ui.workspace.path
+    for directory in (folder, workspace / 'runs', workspace / 'workshop' / 'comparisons'):
+        for evidence in directory.rglob('*.json'):
+            assert not any(key in evidence.read_bytes() for key in (b'"engine_recovery"', b'"recovery_id"'))
+    assert saved['revision_number'] == 2
+    ui = restart(ui)
+    reopened = send(ui, 'preview', key='old_engine')['draft']
+    definition = jsonio.decode_exact(reopened['definition_text'])
+    definition['description'] = 'Changed purpose after restart'
+    reopened['definition_text'] = jsonio.encode_exact(definition)
+    assert plan_save(ui, reopened, reopened['base_digest'])['revision_number'] == 3
+    reopened = send(ui, 'preview', key='old_engine')['draft']
+    reopened['files']['scripts/go.py'] = "def transform(inputs):\n    return {'out': 'recovered ' + inputs['text']}\n"
+    assert plan_save(ui, reopened, reopened['base_digest'])['revision_number'] == 4
+    body = {'key': 'old_engine', 'expected_revision': _effective(ui, 'old_engine'), 'inputs': {'text': 'pong'}}
+    result = completed(ui, start_planned(ui, 'test', body)['batch_id'])['rows'][0]
+    assert result['outcome'] == 'complete' and result['outputs']['out']['text'] == 'recovered pong'
+    assert result_of(run_block(ui, 'old_engine', body['inputs']))['outcome'] == 'complete'
+
+
+def test_engine_recovery_expires_on_workspace_switch(ui):
+    from test_workspace_lifecycle import make_second
+    folder = _engine_changed_block(ui)
+    original = _bytes(folder)
+    draft = _recover(ui, 'old_engine')
+    name = ui.workspace.name
+    make_second(ui)
+    for target in ('second', name):
+        request(ui, '/api/workspaces/switch', {'format_version': 1, 'name': target})
+    body = {'draft': draft, 'expected_identity': draft['base_digest']}
+    assert failure_of(lambda: send(ui, 'plans', action='save', request=body)).body['code'] == 'draft_expired'
+    assert _bytes(folder) == original
+    draft = _recover(ui, 'old_engine')
+    assert plan_save(ui, draft, draft['base_digest'])['revision_number'] == 2
+
+
+def test_engine_recovery_binds_only_the_issued_draft_ref(ui):
+    """R-4(n): a second draft for the same protected key, given A's base_digest, is not a recovery; A keeps its
+    inherited protection and saves with it."""
+    import json
+    from agentwiz import jsonio
+    folder = _engine_changed_block(ui, protected=True)
+    original = _bytes(folder)
+    a = _recover(ui, 'old_engine')
+    assert a['metadata']['protection_origin'] == 'inherited'
+    definition = jsonio.decode_exact(a['definition_text'])
+    definition.pop('context_local_only', None)
+    b = send(ui, 'drafts/import', draft={'key': 'old_engine', 'definition_text': jsonio.encode_exact(definition),
+                                          'files': a['files'], 'metadata': {}})['draft']
+    b['base_digest'] = a['base_digest']
+    refusal = failure_of(lambda: send(ui, 'plans', action='save', request={'draft': b, 'expected_identity': a['base_digest']}))
+    assert refusal.status in (400, 409), refusal.body
+    assert _bytes(folder) == original
+    cleared = dict(a, definition_text=jsonio.encode_exact(definition))
+    assert failure_of(lambda: send(ui, 'preview', draft=cleared)).body['code'] == 'protection_inherited'
+    plan_save(ui, a, a['base_digest'])
+    current = send(ui, 'preview', key='old_engine')['draft']
+    assert jsonio.decode_exact(current['definition_text'])['context_local_only'] is True
+    assert current['metadata']['protection_origin'] == 'inherited'
+    assert json.dumps(current['metadata']).count('recovery') == 0
+
+
+def test_protected_apply_preserves_engine_recovery(ui, server):
+    from agentwiz import jsonio
+    from conftest import answer, save_profile, save_roles
+    _engine_changed_block(ui)
+    draft = _recover(ui, "old_engine")
+    save_profile(ui, "p", model="m", kind="openai_compat", base_url=server.url + "/v1", provider="")
+    save_roles(ui, {"assistant": "p"})
+    grants = request(ui, "/api/workshop/destination-trust")
+    send(ui, "destination-trust", expected_revision=grants["revision"], trusted=True,
+         destination={"kind": "openai_compat", "url": server.url + "/v1", "model": "m", "provider": ""})
+    response = {"format_version": 1, "action": "improve", "payload": {"purpose": "Reviewed purpose"},
+                "assumptions": [], "unmet_requirements": []}
+    server.reply(answer(jsonio.encode_exact({"proposal": response})))
+    started = start_planned(ui, "assist", {"action": "improve", "role": "assistant", "draft": draft,
+                                           "task": "Improve.", "sections": ["purpose"], "context_local_only": True})
+    batch = completed(ui, started["batch_id"])
+    apply_body = {"proposal_id": batch["rows"][0]["proposal_id"], "draft": draft}
+    plan = send(ui, "plans", action="proposals/apply", request=apply_body)
+    applied = send(ui, "proposals/apply", **apply_body, expected_plan=plan["expected_plan"],
+                   confirmations=[{"kind": r["kind"], "digest": r["digest"]} for r in plan["required_confirmations"]])["draft"]
+    assert applied["draft_ref"] != draft["draft_ref"]
+    assert applied["metadata"]["protection_origin"] == "inherited"
+    published = plan_save(ui, applied, draft["base_digest"])
+    assert published["revision_number"] == 2
+    stored = send(ui, "preview", key="old_engine")["draft"]
+    assert stored["metadata"]["protection_origin"] == "inherited"

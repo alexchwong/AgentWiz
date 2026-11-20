@@ -67,7 +67,7 @@ Paths in this table are relative to the repository root.
 | `agentwiz/roles.py` | yes | **0.1.4.** `roles.json`: parsing, reading, writing. Called from `state.py` under the state lock. No HTTP. |
 | `agentwiz/templates.py` | yes | **0.1.4.** `{{inputs.x.y}}` scanning and filling (text and typed), with provenance. No HTTP. |
 | `agentwiz/blocks.py` | yes | **0.1.4.** The block loader, problems, the block store (fingerprints, effective revisions, cache) and the `GET /api/blocks/<name>` view. Reads unmanaged executable v3 blocks and v3 generations selected by managed v2 heads. Workshop publication lives in workshop_assets. No HTTP. |
-| `agentwiz/python_step.py` | yes | **0.2.2.** Python steps through scriptSpell's public `run`: engine identity, float rejection, issue mapping, `CleanupFailed`. No HTTP. |
+| `agentwiz/python_step.py` | yes | **0.2.2.** Python steps through scriptSpell's public `run`: engine identity, float rejection, issue mapping. No HTTP. |
 | `agentwiz/python_authoring.py` | yes | **0.2.2.** Workshop **Describe it** for Python: examples, source generation and local checks through `YamlAuthoring`; at most three requests. No HTTP. |
 | `agentwiz/agent_tools.py` | yes | **0.2.2.** Built-in tool definitions; the utility registry (`REGISTRY` of `Utility(name, schema, result, description, limits, function)`, from which `UTILITY_TOOLS`, `SCHEMAS`, `DESCRIPTIONS` and `blocks.BUILTIN_TOOLS` derive) with fourteen pure utilities and `run_utility(name, arguments, *, result_limit, check)`; the eight document tool definitions and their effects. No HTTP. |
 | `agentwiz/agent_documents.py` | yes | **0.2.2.** Agentic Chat conversations: staged documents and drafts (`dir_fd`, `O_NOFOLLOW`/`O_EXCL`), labels, memory. No HTTP. |
@@ -96,7 +96,7 @@ Paths in this table are relative to the repository root.
 | `scripts/utility_stress.py` | no | Worst-case timings of the utilities on bounded input (the reference for their limits). |
 | `scripts/replay_output.py` | no | Replays captured named-output evidence using the current checker. |
 | `scripts/workshop_experiment.py` | no | Prepares Workshop fixtures and compares outcomes through the coordinator. |
-| `scripts/smoke_installed.py` | no | Smoke check (S1–S25) against an installed wheel. |
+| `scripts/smoke_installed.py` | no | Smoke check (S1–S26) against an installed wheel. |
 | `scripts/dev_setup.sh` | no | Developer setup: `./.venv` with an editable install, pytest, `jsonschema`, Playwright and Chromium. |
 | `scripts/stub_backend.py` | no | Scripted OpenAI-compatible backend for trying the UI without a model; logs the sampling fields and message roles each request carries. Models `json-pass`, `json-repair` and `slow-headers` serve the README tour. |
 | `scripts/stub_mcp_server.py` | no | Scripted MCP server (`--era dual|modern|legacy`, `--token`) for trying the MCP tools tab; logs every request, disconnect, notice and `DELETE`. |
@@ -391,7 +391,7 @@ acceptance, so an accepted proposal is always applicable and an oversized one us
   cannot all be enumerated is unreadable and refuses with `reference_scan_incomplete`. Used by carries
   `complete: false` in that case, so an empty item list is not evidence of non-use.
 - **Tokens and writes.** `file_token` is `sha256:` of the complete file bytes; explicit get/save/delete and
-  Checked request resolution read current bytes, while stat fingerprints only drive re-scans. Writers use a
+  block-pin resolution read current bytes, while stat fingerprints only drive re-scans. Writers use a
   same-directory temporary file, file fsync, a recheck of the token, atomic replace and parent fsync. A failed
   parent fsync after replacement reports `publication:"durability_uncertain"`; an ambiguous replace is
   settled by rereading, never retried.
@@ -425,11 +425,9 @@ acceptance, so an accepted proposal is always applicable and an oversized one us
 | POST `/api/contracts/project`, `/edit`, `/check` | Draft projection, targeted edit, Contract check; never write or dispatch. |
 | POST `/api/contracts/save`, `/family`, `/restore`, `/delete` | Persistence with `expected_file_token`; refused in read-only workspaces. |
 | POST `/api/contracts/synthesis/plan`, `/start`, `/apply` | Synthesis plan, ticketed start, draft-bound application (no write). |
-| POST `/api/contracts/instructions` | `{name, revision, digest}` → the exact direct-value section `output_protocol.single_value_instructions` renders for that pin, resolved like a Checked request send (404/409 on a missing revision or changed digest). Never writes. |
 | GET `/assets/contracts.js` | The packaged page component script; an explicit allowlist entry in `server.ASSETS`, session token required (header or same-origin `t` query), `text/javascript; charset=utf-8`. No other path under `/assets` is served. |
 
-Checked requests send `contract:{name,revision,digest}`; a newer appended revision does not invalidate the
-reviewed pin.
+Block ports pin `{name,revision,digest}`; a newer appended revision does not invalidate the reviewed pin.
 
 ### The page's contract components (`agentwiz/ui/contracts.js`)
 
@@ -450,9 +448,8 @@ a load failure is shown in the banner and ports show that the editor is unavaila
   keeps drafts), family save, restore, duplicate, delete with blockers/unreadable paths, Check sample,
   Used by and synthesis (plan → review dialog → ticket → start → batch poll/Stop → apply bound to the
   draft text the request used → explicit Apply draft; Save sends `proposal_id`).
-- `picker` — contract and revision selectors for a concrete `{name, revision, digest}` pin; `latestOption`
-  (Checked request) maps **Latest** to the concrete latest at the last read. Refresh never moves an explicit
-  numbered selection.
+- `picker` — contract and revision selectors for a concrete `{name, revision, digest}` pin. Refresh never moves
+  an explicit numbered selection.
 - `port` — Inline | Saved contract for one block port. Changes reach the block draft through the existing
   `design_form` port `source`/`format` (an inline definition, or `format:"shared"` with the pin JSON). Make
   local copy uses the pinned revision when its digest still matches, otherwise the generation's captured
@@ -648,8 +645,8 @@ and the four example blocks, and creates (or reuses, when its revision 1 is the 
 version 2 `fields` contract in family Tutorial, which the example blocks pin by name/revision/digest. Assistance topics select their packaged model
 through a topic-local profile in that same temporary workspace. Exit closes the child through
 `UIServer.server_close(wait=False)` once; an outstanding cleanup makes the session the manager's one
-pending session (state, workspace and `TemporaryDirectory` kept until it drains); `Tutorial.shutdown_all()`
-(built from `begin_shutdown()` and `finish()`) drains it at the parent's shutdown. `test_tutorial_topics`
+pending session (state, workspace and `TemporaryDirectory` kept until it drains); `Tutorial.begin_shutdown()`
+and `finish()` drain it at the parent's shutdown. `test_tutorial_topics`
 requires a driver for every topic in the registry, so a new topic without one fails the gate.
 
 ## Concurrency and resource limits
@@ -1162,11 +1159,12 @@ review plan bind the target; old IDs leave retention while pinned readers finish
 Existing evidence retains its original ID and captured contents; replacement descriptions start empty.
 Revision names may be changed on overwrite. Restore-as-new still appends. Retention remains 20.
 
-C6 is the one Workshop leaf lock, shared with tickets. It protects reservations,
-pins, batch state, proposal references and session reviews. Existing locks may
-acquire C6. Code holding C6 must never acquire any other lock, perform I/O, call
-state/store methods or callbacks, dispatch, or wait. Logical reservations/pins
-survive release of the actual lock. Publication, examples, reviews and coordinators
+C6 is the Workshop operations lock, shared with tickets. It protects reservations,
+batch state, proposal references and session reviews. Existing locks may
+acquire C6. Code holding C6 must never perform I/O, call state/store methods or
+callbacks, dispatch, or wait. Revision pins use a separate reentrant leaf lock
+because a garbage-collection finalizer can release a pin while C6 is held.
+Pin bookkeeping never acquires C6. Publication, examples, reviews and coordinators
 register with the shutdown writer barrier. Shutdown closes Workshop admission,
 marks the batch cancelled, releases C6 and cancels its child through the ordinary
 run token. It prevents admission of the next child.
@@ -1215,7 +1213,7 @@ Experiment fixture submission uses scripts/workshop_experiment.py with --task la
 #### Operating revisions
 
 `Assets.pin(key, revision=None)` is the shared current/historical pin: it validates the ID shape, registers
-the pin under the leaf lock, re-reads the head and confirms retention before opening the generation,
+the pin under the pin lock, re-reads the head and confirms retention before opening the generation,
 rejects symbolic links on the path, and is released in `finally`. A no-longer-retained or malformed ID is
 404; a retained ID without its folder is a damaged generation (409 `unusable`). Publication's reaper skips
 pinned generations, so a reader either holds its pin or sees the ID leave retention. `Assets.saved` copies
@@ -1672,3 +1670,62 @@ throwaway directory, verifies site-packages imports and runs existing page/libra
 `check_pdf_install.py` checks installed notices and real worker extraction, including near-limit and
 partial fixtures. Neither check requires models. WSL2 is reported separately; macOS memory containment
 remains an owner disposition, not something these checks prove.
+
+
+## 0.2.3 trim: surfaces, routes and guards
+
+- **Page.** The request controller is Chat only (`makeRequestTab("chat")`); the Checked request tab, its repair
+  controls and the Saved block runs screen (`#blocks`, its sidebar entry and CSS) are gone. `#checked-request` and
+  `#blocks` fall under the unknown-fragment rule and open Workshop. Workbench holds Chat, Documents and MCP tools.
+- **Routes.** `/api/repair`, `/api/repair/preview`, `/api/contracts/instructions` and
+  `/api/workshop/synthesis-inline` are removed (router not-found body). `/api/complete` accepts only
+  `source: "chat"` and no `contract` member (400 before a run exists). The record format is unchanged: `source`
+  and `contract` stay, Chat writes `contract: null`, and saved `checked_request` runs stay readable in History.
+  `model_step.prepare_first` has no contract; `repair_plan` serves the named-envelope plan only.
+- **Compact attempt view.** `GET /api/attempts/<id>?view=compact` answers exactly `{attempt, outcome, check,
+  repair_reason, availability}` (`held`, `summary` or `running`; 410 `not_held`; 400 for another `view` or `view`
+  twice) under the store's lock. Without `view` the answer is the existing envelope and other parameters are
+  ignored. Each terminal Workshop trial has a closed `ws-attempts` disclosure; opening it reads the compact view
+  per attempt ID in order and caches only those fields for the shown batch (`ws-attempt` items with
+  `data-attempt`, `data-outcome`, `data-check`, `data-repair-reason`, `data-state`). Concurrent views of the
+  same batch share in-flight compact attempt requests.
+- **G-1.** `state.check_server(kind, base_url)` holds the comparison `key_for` makes. `FrozenSource.live_server_check`
+  (set by Workshop for every trial) gives a model step `StepContext.server_check(parent)`, called before a repair's
+  `reserve_attempt`; a changed server refuses `server_changed` with no attempt reserved. Headless runs are unchanged.
+- **S-1 clean current selection.** A Test/Compare candidate `{key, expected_revision}` is captured from the raw
+  saved bytes (`assets.saved(key)` for a managed block, `assets.current(key)` for an unmanaged one), never through
+  `source()`; it refuses authoring fields, answers 409 `stale` unless the bytes and the block store's effective
+  revision agree, and refuses an unusable block `block_unusable` as `/api/blocks/run` does. The plan record keeps
+  `selection: "current"`, `key` and `expected_revision`; before every trial (after `before_trial_dispatch`) a
+  changed revision ends the batch `dependency_changed`. Key-only previews return `effective_revision`, computed
+  from exactly the bytes read. The page sends this selection for an unedited block at its current version.
+- **B-1 / E-1.** Workshop shows a selected block's `/api/blocks` problem (`ws-block-problem`, `data-code`, file and
+  first 20 issues) with Test and Compare disabled. Preview `{key, engine_recovery: true}` opens an unmanaged block
+  whose only issues are `engine_changed` as an edited draft; the service holds a recovery record (raw bytes, raw
+  fingerprint, bound draft references) in memory only. A Save qualifies only with a bound `draft_ref`; both
+  publication identity checks use `identity(key, engine_check=False)` and the first retained revision is archived
+  from the record's bytes with populated contract maps. `workshop_assets.publish_checkpoint(key, stage)` is a no-op
+  test seam after staging. `engine_recovery`/`recovery_id` never reach saved metadata.
+- **A-1.** Both indicator publishers use `wsActivity(id, batch)`: **Open** reattaches by batch ID at click time
+  (own block: switch and follow; edited draft: Preview with its reference; clean selection or evicted reference:
+  a read-only `ws-attached` run with `ws-attached-arm` rows, Stop and **Open block**); `header-activity-stop`
+  stops the batch directly. `wsTrialArticle(row, {readOnly})` omits the review buttons only.
+- **Workflow Design (Stage 6 outcome F-b).** The canvas stays. List view adds `wf-list-insert-gate` (L-1,
+  `data-target` `node:<id>:<port>` or `output:<name>`, `data-gate-candidate`) and `wf-list-restriction` (L-2).
+  Every Add Release Gate button uses `gateTarget(location, node)`: an `examples[<n>].` prefix is removed, a named
+  bound input is selected exactly, a node-level finding selects its one restricted input or asks the user to choose
+  (`wf-gate-choice`). An edge selection sets the inspector's `data-target`.
+- **Upgrade fixture.** `tests/fixtures/workspaces/v0_2_2/` is a frozen workspace written by the published 0.2.2
+  wheel (`scripts/make_upgrade_fixture.py`); `tests/test_upgrade_v0_2_2.py` copies it under `tmp_path` and opens it.
+
+
+A Workshop selection remains current or explicitly retained until the user chooses a different source.
+Retained revisions use their own validation and run issues, even when the current block has a problem.
+Reload after a stale refusal preserves inputs, Compare arms and example choices. Examples changed in
+storage require reselection. Run controls stay disabled until Reload has restored the inputs and rendered
+the refreshed selection. Reopening a current batch displays the original batch's results with the current
+block selection.
+
+Engine recovery for a managed block uses its saved revision as a draft. Unmanaged recovery binds bounded
+in-memory captures to draft references in the workspace, including drafts derived by protected Assist Apply.
+Expired references are pruned. Recovery identifiers and raw captures stay out of saved metadata.

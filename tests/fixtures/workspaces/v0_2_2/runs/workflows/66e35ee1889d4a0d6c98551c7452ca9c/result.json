@@ -1,0 +1,42 @@
+{
+  "outcome": "complete",
+  "nodes": {
+    "deid": {
+      "outcome": "complete",
+      "detail_available": true,
+      "elapsed_ms": 11
+    },
+    "gate": {
+      "outcome": "complete",
+      "detail_available": true,
+      "elapsed_ms": 505
+    },
+    "cloud_summary": {
+      "outcome": "complete",
+      "detail_available": true,
+      "elapsed_ms": 9
+    },
+    "restore": {
+      "outcome": "complete",
+      "detail_available": true,
+      "elapsed_ms": 2
+    }
+  },
+  "issues": [],
+  "model_attempts": 3,
+  "execution_complete": true,
+  "checks_passed": true,
+  "outputs": {
+    "redacted_text": {
+      "format": "text",
+      "text": "[PERSON_1] reported fatigue on 3 March. Record [RECORD_1].",
+      "local_only": true
+    },
+    "restored": {
+      "format": "text",
+      "text": "Jane Example reported fatigue on 3 March.",
+      "local_only": true
+    }
+  },
+  "executable_digest": "11c7b26ebbd48dd78980da42183faeaf8a9353453db7a549fec61a32252d411e"
+}

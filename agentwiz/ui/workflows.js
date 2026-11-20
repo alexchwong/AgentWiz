@@ -11,6 +11,7 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
   let releaseAcknowledgements={}, releaseSubmitting=false, releasePanelToken=null, releasePanelElement=null;
   // Workflow Design (UI-CD v3 CD1): selection, viewport, undo, the validation client and port projections held
   // per capture. `vgen` never resets within the page session; `vcontext` changes on every load.
+  let gateCandidates=null;   // 0.2.3 remedy: {node, ports} when a finding names a node, not a connection
   let selection=null, listView=null, viewport={x:24,y:24,zoom:1}, undoStack=[], redoStack=[], heldPorts={};
   let vgen=0, vrequested=-1, vtimer=null, vaccepted=null, vstatus={state:"unchecked"}, vbasis="", vcontext=0;
   let connecting=null, suppressClick=false, canvasState=null, issuesOpen=false, paletteOpen=false, constantsOpen=false, band="wide";
@@ -692,7 +693,7 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     const remedy=row.remedy;
     if(remedy.action==="grant"&&remedy.target)return button("Grant",async()=>{
       if(await wsGrantTrust(trustTarget(remedy.target))){invalidatePlan();bumpValidation();}},"design-grant");
-    if(remedy.action==="add_release_gate")return button("Add Release Gate",()=>selectFeedingEdge(node),"design-add-gate");
+    if(remedy.action==="add_release_gate")return button("Add Release Gate",()=>gateTarget(null,node),"design-add-gate");
     if(["choose_local_role","configure_role"].includes(remedy.action))return button(remedyLabel(remedy)||"Open roles",()=>openSettingsAt("roles",node),"design-remedy");
     if(remedy.action==="configure_server")return button(remedyLabel(remedy)||"Open MCP servers",()=>openSettingsAt("servers",node),"design-remedy");
     return h("span",{class:"ws-hint",...test("design-remedy-text"),"data-action":remedy.action,text:messageText({action:remedy.action,target:remedy.target})});
@@ -716,7 +717,7 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
       h("ul",{class:"wf-findings",...test("issue-list")},rows.map(row=>h("li",{class:"wf-finding",...test("issue"),"data-code":row.code||"","data-severity":row.severity||"error",
         "data-location":row.location||""},h("button",{type:"button",class:"wf-link",...test("issue-select"),text:(row.location||"workflow")+" · "+messageText(row,row.message||row.code),
           onclick:()=>selectLocation(row.location)}),codeDetails(row.code||"issue","wf-issue-code"),
-          row.remedy?.action==="add_release_gate"?button("Add Release Gate",()=>selectFeedingEdge(nodeOf(row.location)),"issue-add-gate"):null)),
+          row.remedy?.action==="add_release_gate"?button("Add Release Gate",()=>gateTarget(row.location,null),"issue-add-gate"):null)),
         remedies.map(({node,row})=>h("li",{class:"wf-finding",...test("destination-remedy"),"data-node":node,"data-action":row.remedy.action},
           h("span",{text:node+" · "+destinationText(row)+" · "}),remedyButton(node,row)))));
   }
@@ -732,18 +733,33 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     }
     renderDesignSurface();
   }
-  function selectFeedingEdge(node) {
-    view="design";
-    const row=draft.nodes[node];
-    if(!row){render();return;}
+  // One resolver for every Add Release Gate button (0.2.3, 5.2): a saved-example prefix is removed; a named,
+  // bound input selects exactly that connection; a node-only finding selects its one restricted input, or asks the
+  // user to choose among the candidates. Inserting rewires only the connection chosen.
+  function gateTarget(location,node) {
+    view="design";listView=true;gateCandidates=null;
+    const rest=(location||"").replace(/^examples\[\d+\]\./,"");
+    const named=/^nodes\.([^.]+)\.inputs\.([^.]+)$/.exec(rest);
+    const id=named?named[1]:(/^nodes\.([^.]+)/.exec(rest)||[])[1]||node;
+    const row=id?draft.nodes[id]:null;
+    if(!row){selection=null;render();return null;}
     const r=restriction();
-    const names=Object.keys(row.bindings||{});
-    const port=names.find(name=>valueState(valueKey(row.bindings[name])).state==="restricted")||names.find(name=>row.bindings[name].kind==="node")||names[0];
-    selection=port?{kind:"edge",target:{kind:"node",node,port}}:{kind:"node",id:node};
+    const bound=Object.keys(row.bindings||{});
+    if(named&&row.bindings?.[named[2]])selection={kind:"edge",target:{kind:"node",node:id,port:named[2]}};
+    else {
+      const restricted=bound.filter(name=>valueState(valueKey(row.bindings[name])).state==="restricted");
+      if(restricted.length===1)selection={kind:"edge",target:{kind:"node",node:id,port:restricted[0]}};
+      else{selection={kind:"node",id};gateCandidates={node:id,ports:restricted.length?restricted:bound};}
+    }
     if(!r)bumpValidation();
     render();
-    main.querySelector('[data-test="wf-insert-gate"]')?.focus();
+    if(selection.kind==="edge"){
+      const t=selection.target,control=main.querySelector(`[data-test="wf-list-insert-gate"][data-target="node:${t.node}:${t.port}"]`);
+      control?.scrollIntoView?.({block:"center"});
+    }
+    return selection.kind==="edge"?null:"Choose the connection to gate";
   }
+
   function destinationText(row) {
     if(!row?.available)return row?.reason==="role_unresolved"?"Role not configured":row?.reason==="server_missing"?"Server not configured":"Destination unresolved";
     const d=row.destination||{};
@@ -1471,6 +1487,7 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
   }
   function inspectorView() {
     const box=h("aside",{class:"wf-inspector",...test("inspector"),"aria-label":"Inspector","data-selection":selection?selection.kind:"workflow"});
+    if(selection?.kind==="edge")box.dataset.target=selection.target.kind==="node"?"node:"+selection.target.node+":"+selection.target.port:"output:"+selection.target.name;
     const editable=!effectiveList();
     if(selection?.kind==="node"&&draft.nodes[selection.id])box.append(...nodeInspector(selection.id,editable));
     else if(selection?.kind==="edge"&&bindingOf(selection.target))box.append(...edgeInspector(selection.target));
@@ -1585,15 +1602,41 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
       side === "outputs" ? bindingForm("Output source",row.binding,v=>{if(v)row.binding=v;else delete row.binding;}) : null,
       button("Remove "+name,()=>removeIo(side,name),"remove-port"));
   }
+  // L-1 (0.2.3): Insert Release Gate beside a bound input or Output source, with the edge inspector's rules.
+  function listInsertGate(target) {
+    const binding=bindingOf(target), key=target.kind==="node"?"node:"+target.node+":"+target.port:"output:"+target.name;
+    const contract=gateContractFor(binding,target);
+    const b=h("button",{type:"button",text:"Insert Release Gate",...test("list-insert-gate"),disabled:!contract||!!rebind,onclick:()=>{try{
+      gateCandidates=null;insertGate({target});render();
+      const gate=selection?.kind==="node"?main.querySelector(`[data-test="wf-list-node"][data-node="${selection.id}"]`):null;
+      gate?.querySelector("input,select,textarea,button")?.focus();
+    }catch(e){error(e);}}});
+    b.dataset.target=key;
+    if(!contract)b.title=binding?.kind==="constant"?"Constants have no declared contract; insert a Gate by hand.":"Contract details unavailable. Check again.";
+    if(gateCandidates&&target.kind==="node"&&gateCandidates.node===target.node&&gateCandidates.ports.includes(target.port))b.dataset.gateCandidate="true";
+    return b;
+  }
+  // L-2 (0.2.3): why a value is restricted, repainted with every accepted validation.
+  function listRestriction(key) {
+    return h("details",{class:"wf-restriction",...test("list-restriction"),"data-value":key},h("summary",{text:"Restriction"}),whyValue(key));
+  }
   // List view (CD1.1, CD1.10): the whole design form over the same draft, selection and inspector.
   function listForm() {
     const area=h("div",{class:"wf-list",...test("list")});
     // Name and purpose belong to the whole form in List view (the inspector shows them in canvas view only).
     if (!token) area.append(field("Workflow name",draft.name,v=>{draft.name=v;changed();}));
     area.append(field("Purpose",draft.purpose,v=>{draft.purpose=v;changed();},true));
+    if(gateCandidates)area.append(h("p",{class:"ws-hint",...test("gate-choice"),text:"Choose the connection to gate"}));
     for (const side of ["inputs","outputs","constants"]) {
       const group = h("fieldset",{},h("legend",{text:side[0].toUpperCase()+side.slice(1)}));
-      for (const [name,row] of entries(draft[side])) group.append(ioForm(side,name,row));
+      for (const [name,row] of entries(draft[side])) {
+        const item=ioForm(side,name,row);
+        // Focusing an I/O item selects it, so the inspector shows its I/O inspector.
+        item.addEventListener("focusin",()=>{if(selection?.kind!=="io"||selection.side!==side||selection.name!==name){selection={kind:"io",side,name};const old=main.querySelector('[data-test="wf-inspector"]');if(old)old.replaceWith(inspectorView());}});
+        if(side==="outputs"&&row.binding)item.append(listInsertGate({kind:"output",name}),listRestriction(valueKey(row.binding)));
+        if(side!=="outputs")item.append(listRestriction(side==="inputs"?"input."+name:"constant."+name));
+        group.append(item);
+      }
       area.append(group);
     }
     const points=positions();
@@ -1608,8 +1651,10 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
           (detail?.role ? " · Role "+detail.role : detail?.tool ? " · "+detail.server+"/"+detail.tool : "")});
         const actions=h("div",{class:"row"});group.append(label,actions);sourceActions(id,actions,label);
       }
-      for(const [name,port] of entries(detail?.inputs)) group.append(bindingForm(
-        "Bind "+name+" · "+port.format+(port.local_only?" · Local only":""),node.bindings[name],v=>setNodeBinding(id,name,v),id));
+      for(const [name,port] of entries(detail?.inputs)){
+        group.append(bindingForm("Bind "+name+" · "+port.format+(port.local_only?" · Local only":""),node.bindings[name],v=>setNodeBinding(id,name,v),id));
+        if(node.bindings[name])group.append(listInsertGate({kind:"node",node:id,port:name}),listRestriction(valueKey(node.bindings[name])));
+      }
       for(const [name,port] of entries(detail?.outputs)) group.append(h("p",{text:"Output "+name+" · "+port.format},
         vslot(()=>stateChip(valueState(valueKey({kind:"node",node:id,port:name}))),"span")));
       group.append(button("Rebind "+id,()=>pickSource(id),"rebind-node",!node.snapshot_id || !!rebind || Object.keys(selections).length>0),
@@ -1820,8 +1865,8 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     if(row.remedy?.action==="add_release_gate"||row.code==="unrestricted_ancestor"||(node&&["destination_ineligible","destination_untrusted"].includes(row.code)&&row.message?.includes("released value"))){
       // Opens Design with the edge feeding the refused node selected; the user still confirms the insert (CD1.6).
       out.push(button("Add Release Gate",()=>{
-        if(node&&draft.nodes[node])selectFeedingEdge(node);else{view="design";render();}
-        report("Insert a Release Gate on the selected connection, then save and check readiness again.");},"finding-add-gate"));
+        const choose=gateTarget(row.location,node);
+        report(choose||"Insert a Release Gate on the selected connection, then save and check readiness again.");},"finding-add-gate"));
     }
     if(node&&sources[node]&&!draft.nodes[node]?.gate&&!/^destination_untrusted$/.test(row.code)){
       out.push(button("Open source revision",()=>detour({node},()=>openBlock(sources[node].key,sources[node].revision)),"finding-open-source"));

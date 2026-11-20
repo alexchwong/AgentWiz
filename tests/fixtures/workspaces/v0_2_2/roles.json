@@ -1,0 +1,32 @@
+{
+  "format_version": 3,
+  "roles": {
+    "tutorial_private": "private",
+    "tutorial_private_summary": "private-summary",
+    "tutorial_private_risk": "risk",
+    "tutorial_cloud": "cloud",
+    "fast": "fast"
+  },
+  "definitions": {
+    "tutorial_private": {
+      "description": "",
+      "location": "local"
+    },
+    "tutorial_private_summary": {
+      "description": "",
+      "location": "local"
+    },
+    "tutorial_private_risk": {
+      "description": "",
+      "location": "local"
+    },
+    "tutorial_cloud": {
+      "description": "",
+      "location": "cloud"
+    },
+    "fast": {
+      "description": "",
+      "location": "local"
+    }
+  }
+}

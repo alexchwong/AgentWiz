@@ -451,14 +451,12 @@ def configure(ui, backend, kind="openai_compat", **fields) -> dict:
     return request(ui, "/api/config", body)
 
 
-def complete(ui, prompt, system="", revision=None, raw=False, task=None, source="chat", contract=None):
-    """POST /api/complete. `contract` is (name, revision, digest) and goes with source="checked_request"."""
+def complete(ui, prompt, system="", revision=None, raw=False, task=None, source="chat"):
+    """POST /api/complete: a Chat request (0.2.3 retired Checked request)."""
     rev = get_state(ui)["revision"] if revision is None else revision
     body = {"source": source, "prompt": prompt, "system": system, "revision": rev}
     if task is not None:
         body["task"] = task
-    if contract is not None:
-        body["contract"] = {"name": contract[0], "revision": contract[1], "digest": contract[2]}
     resp = request(ui, "/api/complete", body, raw=True)
     return resp if raw else events(resp, ui)
 
@@ -497,11 +495,6 @@ def stop_attempt(ui, attempt_id):
 
 def poll_attempt(ui, attempt_id):
     return request(ui, f"/api/attempts/{attempt_id}")
-
-
-def repair_attempt(ui, attempt_id, raw=False):
-    resp = request(ui, "/api/repair", {"attempt_id": attempt_id}, raw=True)
-    return resp if raw else events(resp, ui)
 
 
 def json_answer(text: str, fenced: bool = False, **kw) -> Reply:

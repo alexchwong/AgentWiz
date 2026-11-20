@@ -490,8 +490,8 @@
     }
     const label = (kind) => (FORMATS.find(([v]) => v === kind) || [kind, kind])[1];
 
-    // --- pinned selector: Checked request and saved block ports (spec 13.1, 15.3) -------------------------------
-    // picker({test, latestOption, pin, onChange}) -> {el, pin(), select(name), refresh(), detail()}
+    // --- pinned selector: saved block ports (spec 13.1, 15.3) --------------------------------------------------
+    // picker({test, pin, onChange}) -> {el, pin(), select(name), refresh(), detail()}
     function picker(opts) {
       const p = opts.test;
       const contract = h("select", { "data-test": p + "-contract", "aria-label": "Saved contract" });
@@ -518,7 +518,7 @@
         if (summary && summary.description) shown.append(h("div", { text: summary.description }));
         if (info && info.missing) shown.append(h("div", { class: "err-text", "data-test": p + "-pin-problem", text: info.missing }));
         const latest = info && info.latest;
-        newer.hidden = !(latest && pinned.revision < latest && revision.value !== "latest");
+        newer.hidden = !(latest && pinned.revision < latest);
         newer.dataset.latest = latest ? String(latest) : "";
       }
       async function load(name, keepRevision) {
@@ -530,22 +530,20 @@
         if (mine !== generation) return;
         info = detail;
         if (detail.problem) { info.missing = detail.problem.message; }
-        const before = revision.value;
         revision.replaceChildren();
-        if (opts.latestOption && detail.latest) revision.add(new Option(`Latest (revision ${detail.latest})`, "latest"));
         for (const r of [...(detail.revisions || [])].reverse())
           revision.add(new Option(`Revision ${r.revision}${r.label ? " — " + r.label : ""}${r.revision === detail.latest ? " (latest)" : ""}`, String(r.revision)));
         if (keepRevision && current && current.name === name && current.revision !== null) {
           const asNumber = String(current.revision);
-          revision.value = opts.latestOption && before === "latest" ? "latest" : asNumber;
+          revision.value = asNumber;
           if (!revision.value) revision.add(new Option(`Revision ${asNumber} (unavailable)`, asNumber)), revision.value = asNumber;
-        } else revision.value = opts.latestOption ? "latest" : String(detail.latest || "");
+        } else revision.value = String(detail.latest || "");
         choose(false);
       }
       function choose(notify = true) {
         const name = contract.value;
         if (!info || !name || info.problem) { current = name && current && current.name === name ? current : null; show(); if (notify && opts.onChange) opts.onChange(current); return; }
-        const wanted = revision.value === "latest" ? info.latest : parseInt(revision.value, 10);
+        const wanted = parseInt(revision.value, 10);
         const summary = (info.revisions || []).find((r) => r.revision === wanted);
         const before = current;
         if (summary) current = { name, revision: summary.revision, digest: summary.digest };

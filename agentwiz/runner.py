@@ -42,6 +42,9 @@ class FrozenSource:
     # or raises outbound_policy.Refused.
     parent_guard: Any = None
     before_tool: Any = None
+    # 0.2.3 (G-1), set by Workshop for every trial: a repair is refused `server_changed`, before its attempt is
+    # reserved, when the configured model server changed since the failed attempt. The captured key stays.
+    live_server_check: bool = False
 
 
 # --- hooks tests replace ----------------------------------------------------------------------------------------
@@ -576,6 +579,8 @@ def _execute(ex: _Execution) -> None:
         dispatch=dispatch, repair_dispatch=repair_dispatch,
         attempt_gate=ex.frozen.attempt_gate if ex.frozen else None,
         parent_guard=parent_guard, tool_authorize=tool_authorize,
+        server_check=(lambda parent: state.check_server(parent["endpoint"]["kind"], parent["endpoint"]["base_url"]))
+        if kind == 'model' and ex.frozen is not None and ex.frozen.live_server_check else None,
         on_python_cleanup_failed=state.python_cleanup_failed)
     ex.step = executor.execute_step(ctx)
 

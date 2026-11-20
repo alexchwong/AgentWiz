@@ -1,0 +1,29 @@
+{
+  "display_name": "guarded",
+  "origin": "manual",
+  "effects": "unknown",
+  "created_at": "2026-11-19T21:53:45.277204+00:00",
+  "parent": null,
+  "contracts_validated_at_save": true,
+  "protection_origin": "inherited",
+  "format_version": 1,
+  "contracts": {
+    "inputs": {
+      "text": "{\n  \"format\": \"text\"\n}"
+    },
+    "outputs": {
+      "out": "{\n  \"format\": \"text\"\n}"
+    }
+  },
+  "contract_pins": {
+    "inputs": {},
+    "outputs": {}
+  },
+  "contracts_digest": "d7488c9f513ab61002487e8a922350b3373bfe86a60531e614cd0986c19ea8ea",
+  "asset_digest": "3a9ce366ff9e6f0ae21b76edd0d86f7205a2abf39ea34d3a65cef09d60b928e0",
+  "assets": {
+    "block.json": "c466c74f8dabb1a477fd6a6340a407a025994fc7333d9f2193a7dae73a6d3dff"
+  },
+  "revision_number": 1,
+  "revision_name": ""
+}

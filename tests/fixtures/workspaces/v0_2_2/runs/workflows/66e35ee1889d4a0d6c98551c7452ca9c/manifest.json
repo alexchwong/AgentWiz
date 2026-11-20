@@ -1,0 +1,21 @@
+{
+  "format_version": 1,
+  "id": "66e35ee1889d4a0d6c98551c7452ca9c",
+  "outcome": "complete",
+  "intent": null,
+  "records": [
+    "capture.json",
+    "0-deid-attempt-1.json",
+    "0-deid.json",
+    "0-gate-attempt-1.json",
+    "0-gate-release-review.json",
+    "0-gate-release-decision.json",
+    "0-gate.json",
+    "0-cloud_summary-attempt-1.json",
+    "0-cloud_summary.json",
+    "0-restore.json",
+    "result.json"
+  ],
+  "name": "private_summary_release",
+  "result": "result.json"
+}

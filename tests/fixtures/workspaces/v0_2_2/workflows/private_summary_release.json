@@ -1,0 +1,619 @@
+{
+  "format_version": 2,
+  "definition": {
+    "name": "private_summary_release",
+    "purpose": "Summarise a synthetic private document after de-identification, then restore the identifiers locally.",
+    "inputs": {
+      "document": {
+        "contract": {
+          "format": "text"
+        },
+        "local_only": true
+      }
+    },
+    "constants": {},
+    "outputs": {
+      "redacted_text": {
+        "contract": {
+          "format": "text"
+        },
+        "local_only": true,
+        "binding": {
+          "kind": "node",
+          "node": "deid",
+          "port": "redacted_text"
+        }
+      },
+      "restored": {
+        "contract": {
+          "format": "text"
+        },
+        "local_only": true,
+        "binding": {
+          "kind": "node",
+          "node": "restore",
+          "port": "out"
+        }
+      }
+    },
+    "nodes": {
+      "deid": {
+        "bindings": {
+          "text": {
+            "kind": "input",
+            "port": "document"
+          }
+        },
+        "snapshot_id": "e28485b7940a8a0912f5534cb3b279be6e6616debd71f87a6e6db498d38762c0"
+      },
+      "restore": {
+        "bindings": {
+          "text": {
+            "kind": "node",
+            "node": "cloud_summary",
+            "port": "summary"
+          },
+          "pairs": {
+            "kind": "node",
+            "node": "deid",
+            "port": "mapping"
+          }
+        },
+        "snapshot_id": "54c25b9bbf72313139429df7f02f19b0d3514c06bd7e52403c18a3c10b4efcc6"
+      },
+      "gate": {
+        "gate": {
+          "kind": "release",
+          "title": "Review redacted document",
+          "contract": {
+            "format": "text"
+          },
+          "assessment": {
+            "enabled": true,
+            "role": "tutorial_private_risk"
+          }
+        },
+        "bindings": {
+          "value": {
+            "kind": "node",
+            "node": "deid",
+            "port": "redacted_text"
+          },
+          "scan": {
+            "kind": "node",
+            "node": "deid",
+            "port": "mapping"
+          }
+        }
+      },
+      "cloud_summary": {
+        "bindings": {
+          "text": {
+            "kind": "node",
+            "node": "gate",
+            "port": "released"
+          }
+        },
+        "snapshot_id": "316e7963715b728274c73907896498c56359839801f0e17b4b9b00f7ca12aa23"
+      }
+    }
+  },
+  "snapshots": {
+    "e28485b7940a8a0912f5534cb3b279be6e6616debd71f87a6e6db498d38762c0": {
+      "files": {
+        "block.json": {
+          "encoding": "base64",
+          "text": "eyJmb3JtYXRfdmVyc2lvbiI6NCwibmFtZSI6InByaXZhdGVfZGVpZCIsImRlc2NyaXB0aW9uIjoicHJpdmF0ZSBkZWlkIiwiaW5wdXRzIjp7InRleHQiOnsiY29udHJhY3QiOnsiZm9ybWF0IjoidGV4dCJ9LCJsb2NhbF9vbmx5IjpmYWxzZX19LCJvdXRwdXRzIjp7InJlZGFjdGVkX3RleHQiOnsiY29udHJhY3QiOnsiZm9ybWF0IjoidGV4dCJ9LCJsb2NhbF9vbmx5IjpmYWxzZX0sIm1hcHBpbmciOnsiY29udHJhY3QiOnsiZm9ybWF0IjoianNvbiIsInNjaGVtYSI6eyJ0eXBlIjoiYXJyYXkiLCJtYXhJdGVtcyI6MTAwMCwiaXRlbXMiOnsidHlwZSI6Im9iamVjdCIsInByb3BlcnRpZXMiOnsicGxhY2Vob2xkZXIiOnsidHlwZSI6InN0cmluZyJ9LCJvcmlnaW5hbCI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJwbGFjZWhvbGRlciIsIm9yaWdpbmFsIl0sImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjpmYWxzZX19fSwibG9jYWxfb25seSI6dHJ1ZX19LCJzdGVwcyI6W3siaWQiOiJydW4iLCJraW5kIjoibW9kZWwiLCJyb2xlIjoidHV0b3JpYWxfcHJpdmF0ZSIsInJlc3BvbnNlX21vZGUiOiJuYW1lZF9qc29uIiwicHJvbXB0Ijp7InRleHQiOiJEb2N1bWVudDpcbjw8PFxue3tpbnB1dHMudGV4dH19XG4+Pj4ifSwicmVwYWlyIjp7Im1heF9yZXBhaXJzIjoxfX1dfQ=="
+        }
+      },
+      "asset_digest": "252e9dc0b4bdf1b5bd811a82fa7a9e1f881d9b6de9cec88cd5a5675dcfba0fb2",
+      "contracts": {
+        "inputs": {
+          "text": "{\n  \"format\": \"text\"\n}"
+        },
+        "outputs": {
+          "redacted_text": "{\n  \"format\": \"text\"\n}",
+          "mapping": "{\n  \"format\": \"json\",\n  \"schema\": {\n    \"type\": \"array\",\n    \"maxItems\": 1000,\n    \"items\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"placeholder\": {\n          \"type\": \"string\"\n        },\n        \"original\": {\n          \"type\": \"string\"\n        }\n      },\n      \"required\": [\n        \"placeholder\",\n        \"original\"\n      ],\n      \"additionalProperties\": false\n    }\n  }\n}"
+        }
+      },
+      "contract_pins": {
+        "inputs": {},
+        "outputs": {}
+      },
+      "provenance": {
+        "key": "private_deid",
+        "revision": "48eb03e6eb184ca2c1633621cf2f850b",
+        "revision_number": 1,
+        "title": "private_deid",
+        "effects": "unknown"
+      }
+    },
+    "54c25b9bbf72313139429df7f02f19b0d3514c06bd7e52403c18a3c10b4efcc6": {
+      "files": {
+        "block.json": {
+          "encoding": "base64",
+          "text": "eyJmb3JtYXRfdmVyc2lvbiI6NCwibmFtZSI6InJlc3RvcmVfaWRlbnRpZmllcnMiLCJkZXNjcmlwdGlvbiI6InJlc3RvcmUgcGxhY2Vob2xkZXJzIiwiaW5wdXRzIjp7InRleHQiOnsiY29udHJhY3QiOnsiZm9ybWF0IjoidGV4dCJ9LCJsb2NhbF9vbmx5Ijp0cnVlfSwicGFpcnMiOnsiY29udHJhY3QiOnsiZm9ybWF0IjoianNvbiJ9LCJsb2NhbF9vbmx5Ijp0cnVlfX0sIm91dHB1dHMiOnsib3V0Ijp7ImNvbnRyYWN0Ijp7ImZvcm1hdCI6InRleHQifSwibG9jYWxfb25seSI6dHJ1ZX19LCJzdGVwcyI6W3siaWQiOiJ0cmFuc2Zvcm0iLCJraW5kIjoidHJhbnNmb3JtIiwib3BlcmF0aW9uIjoicmVzdG9yZV9wbGFjZWhvbGRlcnMiLCJvcGVyYXRpb25fdmVyc2lvbiI6MSwicGFyYW1ldGVycyI6eyJ1bmtub3duIjoiZmFpbCIsInBsYWNlaG9sZGVyX3N5bnRheCI6ImJyYWNrZXRfdXBwZXIifSwib3V0cHV0Ijoib3V0In1dfQ=="
+        }
+      },
+      "asset_digest": "5ac25faf96e13c1dda724c66198f01571fb909170df136d07146c5189fc8d548",
+      "contracts": {
+        "inputs": {
+          "text": "{\n  \"format\": \"text\"\n}",
+          "pairs": "{\n  \"format\": \"json\"\n}"
+        },
+        "outputs": {
+          "out": "{\n  \"format\": \"text\"\n}"
+        }
+      },
+      "contract_pins": {
+        "inputs": {},
+        "outputs": {}
+      },
+      "provenance": {
+        "key": "restore_identifiers",
+        "revision": "520d938d50e9967af73cab8b916c6c7b",
+        "revision_number": 1,
+        "title": "restore_identifiers",
+        "effects": "read-only"
+      }
+    },
+    "316e7963715b728274c73907896498c56359839801f0e17b4b9b00f7ca12aa23": {
+      "files": {
+        "block.json": {
+          "encoding": "base64",
+          "text": "eyJmb3JtYXRfdmVyc2lvbiI6NCwibmFtZSI6ImNsb3VkX3N1bW1hcml6ZSIsImRlc2NyaXB0aW9uIjoiY2xvdWQgc3VtbWFyaXplIiwiaW5wdXRzIjp7InRleHQiOnsiY29udHJhY3QiOnsiZm9ybWF0IjoidGV4dCJ9LCJsb2NhbF9vbmx5IjpmYWxzZX19LCJvdXRwdXRzIjp7InN1bW1hcnkiOnsiY29udHJhY3QiOnsiZm9ybWF0IjoidGV4dCJ9LCJsb2NhbF9vbmx5IjpmYWxzZX19LCJzdGVwcyI6W3siaWQiOiJydW4iLCJraW5kIjoibW9kZWwiLCJyb2xlIjoidHV0b3JpYWxfY2xvdWQiLCJyZXNwb25zZV9tb2RlIjoibmFtZWRfanNvbiIsInByb21wdCI6eyJ0ZXh0IjoiRG9jdW1lbnQ6XG48PDxcbnt7aW5wdXRzLnRleHR9fVxuPj4+In0sInJlcGFpciI6eyJtYXhfcmVwYWlycyI6MX19XX0="
+        }
+      },
+      "asset_digest": "0709423f4b47ded1ff2b6c8c967f76053fdc0d84170b0f68d50fe4c17875095c",
+      "contracts": {
+        "inputs": {
+          "text": "{\n  \"format\": \"text\"\n}"
+        },
+        "outputs": {
+          "summary": "{\n  \"format\": \"text\"\n}"
+        }
+      },
+      "contract_pins": {
+        "inputs": {},
+        "outputs": {}
+      },
+      "provenance": {
+        "key": "cloud_summarize",
+        "revision": "33ac3bbd67cada11d05b55c8041f8261",
+        "revision_number": 1,
+        "title": "cloud_summarize",
+        "effects": "unknown"
+      }
+    }
+  },
+  "layout": {
+    "cloud_summary": {
+      "x": 0,
+      "y": 0
+    },
+    "deid": {
+      "x": 220,
+      "y": 0
+    },
+    "gate": {
+      "x": 440,
+      "y": 0
+    },
+    "restore": {
+      "x": 660,
+      "y": 0
+    }
+  },
+  "examples": [
+    {
+      "id": "case_1",
+      "version": 1,
+      "label": "Synthetic case 1",
+      "verified": true,
+      "origin": "packaged_human_reviewed",
+      "inputs": {
+        "document": "Jane Example reported fatigue after the night shift. Contact jane@clinic.invalid about record TEST-123."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "redacted_text",
+            "operation": "excludes",
+            "values": [
+              "Jane Example",
+              "jane@clinic.invalid",
+              "TEST-123"
+            ],
+            "case": "insensitive"
+          },
+          {
+            "output": "restored",
+            "operation": "excludes_pattern",
+            "pattern": "bracket_upper"
+          },
+          {
+            "output": "restored",
+            "operation": "includes",
+            "values": [
+              "fatigue"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "restrictions": {
+        "document": true
+      }
+    },
+    {
+      "id": "case_2",
+      "version": 1,
+      "label": "Synthetic case 2",
+      "verified": true,
+      "origin": "packaged_human_reviewed",
+      "inputs": {
+        "document": "John Sample described a mild headache since Monday. His record is TEST-204 and email john@mail.invalid."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "redacted_text",
+            "operation": "excludes",
+            "values": [
+              "John Sample",
+              "TEST-204",
+              "john@mail.invalid"
+            ],
+            "case": "insensitive"
+          },
+          {
+            "output": "restored",
+            "operation": "excludes_pattern",
+            "pattern": "bracket_upper"
+          },
+          {
+            "output": "restored",
+            "operation": "includes",
+            "values": [
+              "headache"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "restrictions": {
+        "document": true
+      }
+    },
+    {
+      "id": "case_3",
+      "version": 1,
+      "label": "Synthetic case 3",
+      "verified": true,
+      "origin": "packaged_human_reviewed",
+      "inputs": {
+        "document": "Mary Placeholder needs a repeat prescription for asthma. Reach her at mary@care.invalid; record TEST-311."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "redacted_text",
+            "operation": "excludes",
+            "values": [
+              "Mary Placeholder",
+              "mary@care.invalid",
+              "TEST-311"
+            ],
+            "case": "insensitive"
+          },
+          {
+            "output": "restored",
+            "operation": "excludes_pattern",
+            "pattern": "bracket_upper"
+          },
+          {
+            "output": "restored",
+            "operation": "includes",
+            "values": [
+              "asthma"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "restrictions": {
+        "document": true
+      }
+    },
+    {
+      "id": "case_4",
+      "version": 1,
+      "label": "Synthetic case 4",
+      "verified": true,
+      "origin": "packaged_human_reviewed",
+      "inputs": {
+        "document": "Omar Fictional reports improved sleep this week. Record TEST-418 lists omar@home.invalid as contact."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "redacted_text",
+            "operation": "excludes",
+            "values": [
+              "Omar Fictional",
+              "TEST-418",
+              "omar@home.invalid"
+            ],
+            "case": "insensitive"
+          },
+          {
+            "output": "restored",
+            "operation": "excludes_pattern",
+            "pattern": "bracket_upper"
+          },
+          {
+            "output": "restored",
+            "operation": "includes",
+            "values": [
+              "sleep"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "restrictions": {
+        "document": true
+      }
+    },
+    {
+      "id": "case_5",
+      "version": 1,
+      "label": "Synthetic case 5",
+      "verified": true,
+      "origin": "packaged_human_reviewed",
+      "inputs": {
+        "document": "Lena Synthetic noticed a rash on both arms. Follow up through lena@mail.invalid, record TEST-502."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "redacted_text",
+            "operation": "excludes",
+            "values": [
+              "Lena Synthetic",
+              "lena@mail.invalid",
+              "TEST-502"
+            ],
+            "case": "insensitive"
+          },
+          {
+            "output": "restored",
+            "operation": "excludes_pattern",
+            "pattern": "bracket_upper"
+          },
+          {
+            "output": "restored",
+            "operation": "includes",
+            "values": [
+              "rash"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "restrictions": {
+        "document": true
+      }
+    },
+    {
+      "id": "case_6",
+      "version": 1,
+      "label": "Synthetic case 6",
+      "verified": true,
+      "origin": "packaged_human_reviewed",
+      "inputs": {
+        "document": "Ravi Testcase completed physiotherapy for his knee. Record TEST-617; email ravi@clinic.invalid."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "redacted_text",
+            "operation": "excludes",
+            "values": [
+              "Ravi Testcase",
+              "TEST-617",
+              "ravi@clinic.invalid"
+            ],
+            "case": "insensitive"
+          },
+          {
+            "output": "restored",
+            "operation": "excludes_pattern",
+            "pattern": "bracket_upper"
+          },
+          {
+            "output": "restored",
+            "operation": "includes",
+            "values": [
+              "knee"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "restrictions": {
+        "document": true
+      }
+    },
+    {
+      "id": "case_7",
+      "version": 1,
+      "label": "Synthetic case 7",
+      "verified": true,
+      "origin": "packaged_human_reviewed",
+      "inputs": {
+        "document": "Ana Demo asked about dietary advice for anaemia. Her record TEST-733 uses ana@care.invalid."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "redacted_text",
+            "operation": "excludes",
+            "values": [
+              "Ana Demo",
+              "TEST-733",
+              "ana@care.invalid"
+            ],
+            "case": "insensitive"
+          },
+          {
+            "output": "restored",
+            "operation": "excludes_pattern",
+            "pattern": "bracket_upper"
+          },
+          {
+            "output": "restored",
+            "operation": "includes",
+            "values": [
+              "anaemia"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "restrictions": {
+        "document": true
+      }
+    },
+    {
+      "id": "case_8",
+      "version": 1,
+      "label": "Synthetic case 8",
+      "verified": true,
+      "origin": "packaged_human_reviewed",
+      "inputs": {
+        "document": "Tom Specimen reported dizziness when standing. Record TEST-845, contact tom@home.invalid."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "redacted_text",
+            "operation": "excludes",
+            "values": [
+              "Tom Specimen",
+              "TEST-845",
+              "tom@home.invalid"
+            ],
+            "case": "insensitive"
+          },
+          {
+            "output": "restored",
+            "operation": "excludes_pattern",
+            "pattern": "bracket_upper"
+          },
+          {
+            "output": "restored",
+            "operation": "includes",
+            "values": [
+              "dizziness"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "restrictions": {
+        "document": true
+      }
+    },
+    {
+      "id": "case_9",
+      "version": 1,
+      "label": "Synthetic case 9",
+      "verified": true,
+      "origin": "packaged_human_reviewed",
+      "inputs": {
+        "document": "Kiri Mockup started a new blood pressure plan. Email kiri@mail.invalid regarding record TEST-956."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "redacted_text",
+            "operation": "excludes",
+            "values": [
+              "Kiri Mockup",
+              "kiri@mail.invalid",
+              "TEST-956"
+            ],
+            "case": "insensitive"
+          },
+          {
+            "output": "restored",
+            "operation": "excludes_pattern",
+            "pattern": "bracket_upper"
+          },
+          {
+            "output": "restored",
+            "operation": "includes",
+            "values": [
+              "blood pressure"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "restrictions": {
+        "document": true
+      }
+    },
+    {
+      "id": "case_10",
+      "version": 1,
+      "label": "Synthetic case 10",
+      "verified": true,
+      "origin": "packaged_human_reviewed",
+      "inputs": {
+        "document": "Sam Dummy has a follow-up for a sprained wrist. Record TEST-1001; sam@clinic.invalid."
+      },
+      "expectation": {
+        "kind": "text",
+        "assertions": [
+          {
+            "output": "redacted_text",
+            "operation": "excludes",
+            "values": [
+              "Sam Dummy",
+              "TEST-1001",
+              "sam@clinic.invalid"
+            ],
+            "case": "insensitive"
+          },
+          {
+            "output": "restored",
+            "operation": "excludes_pattern",
+            "pattern": "bracket_upper"
+          },
+          {
+            "output": "restored",
+            "operation": "includes",
+            "values": [
+              "wrist"
+            ],
+            "case": "insensitive"
+          }
+        ]
+      },
+      "restrictions": {
+        "document": true
+      }
+    }
+  ]
+}
