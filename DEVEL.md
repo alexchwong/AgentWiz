@@ -72,9 +72,9 @@ Setup installs `.[dev]` (including required JSON Schema validation) and the matc
 checks; do not skip them. Setup/service details and local modelSpell checkout instructions are
 in `docs/architecture.md`. Never commit a local dependency override; releases use the pinned wheel.
 
-The release builder uses committed `HEAD`, not uncommitted edits. To validate uncommitted work,
-transfer it to a throwaway clone and commit only there; never commit this checkout just to run a
-smoke check. For offline smoke prerequisites and commands, consult `docs/releases.md`.
+The release builder uses committed `HEAD`. For an uncommitted review, follow the temporary
+export procedure in [release operations](docs/releases.md#installed-wheel-smoke). That section
+also defines the offline smoke prerequisites.
 Never present source-only checks as installed-wheel smoke or substitute a stand-in for modelSpell.
 
 ## Platform compatibility
@@ -189,8 +189,9 @@ tests, not the learning tour. Do not add acknowledgement gates, pass counts or c
 ## Tests
 
 At each build checkpoint, run `python -m pytest -q -m "not live"` with no failures, errors or
-skips. Offline tests must run unattended. Report unavailable checks as blocked, never passed;
-do not pass a gate by skipping, weakening or deleting tests. The release criterion is the CI
+unexpected skips. macOS allows only the Linux-specific PDF worker address-space test to skip.
+Offline tests must run unattended. Report unavailable checks as blocked. Do not pass a gate by
+skipping, weakening or deleting tests. The release criterion is the CI
 matrix on Linux/macOS and Python 3.10/3.13; report the actual locally tested OS/interpreter and
 anything unverified. Required release tooling checks and smoke remain separate from pytest.
 
@@ -426,7 +427,7 @@ report files are replaced by a new run, so use unique names to keep earlier evid
 only the three OpenRouter tests so missing local-backend variables do not create confusing skips:
 
 ```bash
-python -m pytest -m live -s tests/test_live.py::test_live_openrouter tests/test_live.py::test_live_stop_openrouter tests/test_live.py::test_live_checked_request_openrouter
+python -m pytest -m live -s tests/test_live.py::test_live_openrouter tests/test_live.py::test_live_stop_openrouter tests/test_live.py::test_live_block_repair_openrouter
 ```
 
 To explicitly exercise a Manual pin, set `AGENTWIZ_LIVE_OPENROUTER_PROVIDER` first and run

@@ -7,7 +7,7 @@ You choose a model backend (LM Studio, OpenRouter, or any OpenAI-compatible serv
 llama-server), type an optional system prompt and an input, and watch the reasoning and the answer
 stream back, followed by token usage, cost and a clear outcome.
 
-AgentWiz 0.2.2 includes:
+AgentWiz 0.2.3 includes:
 
 - **Agentic Chat:** a switch in Chat that lets the model ask AgentWiz to run one approved capability per turn.
   AgentWiz decides what may run, validates every request, asks before any call that may change state, and
@@ -43,7 +43,7 @@ Python (v3 script) blocks are retired. AgentWiz uses the pinned modelSpell 0.4.0
 
 ## Install
 
-AgentWiz 0.2.2 requires Python 3.10 or later.
+AgentWiz requires Python 3.10 or later.
 
 ```bash
 curl -fsSL https://github.com/alexchwong/AgentWiz/releases/latest/download/install.sh | bash
@@ -60,12 +60,12 @@ files report `migration_required`. Recreate or deliberately rewrite them as exec
 and current Text/JSON contracts. Reusable contract references need exact revision pins. For model
 steps, update the reply instructions to match the [named JSON envelope](#named-outputs).
 
-If you have a local copy of the 0.2.2 wheel, install it with:
+If you have a local copy of the 0.2.3 wheel, install it with:
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install ./agentwiz-0.2.2-py3-none-any.whl
+python -m pip install ./agentwiz-0.2.3-py3-none-any.whl
 ```
 
 For a published wheel, you can pass the URL with the `#sha256=…` fragment from the release notes
@@ -123,7 +123,7 @@ starting with a letter or digit.
 ## Navigation
 
 **Workshop** is the default, with **Blocks** (its compact saved-block selector is above
-Design, Test and Compare), **Contracts** and **Workflows**. **Workbench** groups the four independent utilities below. **History**
+Design, Test and Compare), **Contracts** and **Workflows**. **Workbench** groups Chat, Documents and MCP tools. **History**
 opens saved block runs, workflow runs and comparisons. **Save runs: On/Off** sits beside the workspace name and
 shows its state either way. The header activity indicator reopens running work without starting it again.
 Settings is a categorised dialog with the configuration summary, model profiles, **Models &
@@ -134,6 +134,7 @@ workspace management. The tutorial opens as a help panel at the side, over the p
 | --- | --- | --- |
 | Workshop: Blocks | `#workshop/<key>/<design\|test\|compare>` | Author and evaluate one block. |
 | Workshop: Contracts | `#contracts` | Create, revise, check and reuse saved contracts; see which blocks use them. |
+| Workshop: Workflows | `#workflows` | Design and run saved workflows with captured block revisions. |
 | Workbench: Chat | `#chat` | Send a system prompt and input; see reasoning and answer stream in. |
 | Workbench: Documents | `#documents` | Preview a text document and copy it. |
 | Workbench: MCP tools | `#mcp-tools` | Discover and call tools, with labelled arguments or an explicit advanced editor. |
@@ -952,7 +953,8 @@ A block lives directly under `<workspace>/blocks/<key>/`. An unmanaged block has
 v3 `block.json` with a matching `name`. A Workshop-managed root has a v2 `block.json` that points
 to its saved generations. Edit managed blocks through Workshop so the captured assets stay intact.
 Run a saved block from Workshop (**Test** and **Compare**) or through the headless block API
-(`/api/blocks/run`); 0.2.3 removed the separate Saved block runs screen. An unedited block is tested at
+(`/api/blocks/run`). For a run started through the API, use the headless API to poll or stop it.
+If saving was on, its saved record opens in History. An unedited block is tested at
 the revision Workshop showed: if its files, or a contract revision it pins, changed on disk since, Test
 is refused `stale` with nothing sent, your inputs are kept, and **Reload** reopens it. Workshop shows
 why a hand-written block cannot run (its file and the first 20 located issues) and keeps Test disabled;
@@ -1248,11 +1250,12 @@ the page keeps showing the text that had arrived.
 - **If Stop arrives just after the answer completes**, the answer is kept, the page says "Stop
   arrived after the answer finished", and the run takes no repairs (send again).
 - **A request that is stopped, or whose page is closed**, is still recorded, with its partial text.
-- **Stop on the Blocks tab** ends any step of a block run: a model request as above; a script by its
-  process group (SIGTERM, then SIGKILL); a tool call by abandoning it, which closes its connection
-  and, on servers that use the earlier handshake, sends a cancellation notice. **A stopped tool call
-  may still have run**, so its outcome is shown as unknown. An answer already accepted by the time
-  Stop arrives stands.
+- **Stop in Workshop Test or Compare** stops the current trial and cancels the remaining trials.
+  The activity indicator can stop the same batch from any tab. A model request stops as described
+  above. A Python step is cancelled through scriptSpell's runner. A tool call is abandoned and its
+  connection closed. Servers using the earlier handshake also receive a cancellation notice.
+  **A stopped tool call may still have run**, so its outcome is shown as unknown. An answer already
+  accepted by the time Stop arrives stands.
 
 ## Run history
 
@@ -1292,8 +1295,7 @@ a read-only workspace.
   acknowledged, the page says "Outcome unknown: AgentWiz may have accepted this request" and, with
   saving on, points you at the History tab.
 - Without saving, the latest 100 finished attempts (256 MiB at most) stay in memory, with
-  summaries of the latest 1,000; older ones cannot be repaired, and eventually their outcomes cannot
-  be retrieved.
+  summaries of the latest 1,000. Once the summary is evicted, the outcome can no longer be retrieved.
 
 ## Outcomes
 

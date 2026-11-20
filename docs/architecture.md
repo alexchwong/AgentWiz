@@ -1687,7 +1687,8 @@ remains an owner disposition, not something these checks prove.
   twice) under the store's lock. Without `view` the answer is the existing envelope and other parameters are
   ignored. Each terminal Workshop trial has a closed `ws-attempts` disclosure; opening it reads the compact view
   per attempt ID in order and caches only those fields for the shown batch (`ws-attempt` items with
-  `data-attempt`, `data-outcome`, `data-check`, `data-repair-reason`, `data-state`).
+  `data-attempt`, `data-outcome`, `data-check`, `data-repair-reason`, `data-state`). Concurrent views of the
+  same batch share in-flight compact attempt requests.
 - **G-1.** `state.check_server(kind, base_url)` holds the comparison `key_for` makes. `FrozenSource.live_server_check`
   (set by Workshop for every trial) gives a model step `StepContext.server_check(parent)`, called before a repair's
   `reserve_attempt`; a changed server refuses `server_changed` with no attempt reserved. Headless runs are unchanged.
@@ -1718,10 +1719,13 @@ remains an owner disposition, not something these checks prove.
   wheel (`scripts/make_upgrade_fixture.py`); `tests/test_upgrade_v0_2_2.py` copies it under `tmp_path` and opens it.
 
 
-A Workshop selection remains current or explicitly retained until the user chooses a different source. Reload after
-a stale refusal keeps the comparison arms and example choices. Examples changed in storage require reselection
-before inclusion. Reopening a current batch opens the live current block while displaying the original batch's
-results. Retained revisions use their own validation and run issues. Engine recovery for a managed block uses
-its saved revision as a draft. Unmanaged recovery binds bounded in-memory captures to draft references from that
-workspace, including derived drafts created by protected Assist Apply. Concurrent views of one Workshop batch
-share each in-flight compact attempt request.
+A Workshop selection remains current or explicitly retained until the user chooses a different source.
+Retained revisions use their own validation and run issues, even when the current block has a problem.
+Reload after a stale refusal preserves inputs, Compare arms and example choices. Examples changed in
+storage require reselection. Run controls stay disabled until Reload has restored the inputs and rendered
+the refreshed selection. Reopening a current batch displays the original batch's results with the current
+block selection.
+
+Engine recovery for a managed block uses its saved revision as a draft. Unmanaged recovery binds bounded
+in-memory captures to draft references in the workspace, including drafts derived by protected Assist Apply.
+Expired references are pruned. Recovery identifiers and raw captures stay out of saved metadata.

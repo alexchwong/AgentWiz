@@ -6,22 +6,14 @@ and documentation placement are governed by `../DEVEL.md`.
 
 ## Validation and optional review
 
-Automated release gates are the offline CI matrix, the release tooling's checks and the installed-wheel
-smoke. The 0.2.2 live evaluations below are owner sign-offs before the release merge. The basic live
-pytest checks and tutorial walkthrough are optional. See
-[the live quickstarts](../DEVEL.md#live-checks-and-evaluation-quick-starts).
+Automated release gates are the offline CI matrix, the release tooling checks and the installed-wheel
+smoke. For 0.2.3, use the [installed-wheel gate below](#023-installed-wheel-gate). No API key, live
+model or owner walkthrough is required. The 0.2.2 live qualifications are recorded in
+[the decision history](decisions.md#18-november-2026--022-release-close-out-disposition).
 
-Subjective UI review covers presentation (readability, spacing, clipping/overlap), clarity of
-guidance/errors/status and discoverability/understandability of interactions. Use the built-in
-sandbox tutorial with tips and prepared inputs; no manual setup runbook, screenshots, evidence
-dossier or acknowledgement is required. Objective regression checks belong in automation.
-Historical owner dispositions are recorded in `decisions.md`, not as current test results.
-
-For 0.2.1, the owner deferred canvas-engine evaluation and remaining UI proposal acceptance
-work; see the dated disposition in `decisions.md`. This does not waive functional regressions,
-the offline matrix or installed-wheel validation. WSL2 is not covered by CI; report its
-verification status separately rather than treating an old handover's follow-up as another
-automated release gate. Keep the documented workspace filesystem limitations.
+Subjective UI review is optional. Use the built-in sandbox tutorial to check readability, spacing,
+guidance and discoverability. Objective regression checks belong in automation. Report WSL2
+verification separately because the hosted matrix covers Linux and macOS.
 
 ## Installed-wheel smoke
 
@@ -31,10 +23,14 @@ Run from the repository root in the activated checkout `.venv`:
 python scripts/build_release.py --smoke
 ```
 
-The script builds committed `HEAD`, not the working tree. For uncommitted work, transfer changes
-to a throwaway clone and commit only there. Do not commit the implementation checkout merely
-to run the smoke. Prepare hatchling and the hash-checked pinned modelSpell and scriptSpell wheels before an
-offline smoke; do not rely on a warm pip cache as proof of preparation.
+The script builds committed `HEAD`. To check uncommitted edits without creating a commit, export
+`HEAD` with `git archive` into a temporary directory, overlay the changed and new files, and remove
+deleted paths there. Apply the release builder's `build_wheel`, `release_checks` and `smoke` functions
+to that tree. Keep that output separate from earlier builds. Before publishing, run the normal
+command against the intended committed tree.
+
+Prepare hatchling and a wheelhouse containing the hash-checked pinned modelSpell and scriptSpell
+wheels and all runtime dependencies for an offline smoke.
 
 ```bash
 python scripts/build_release.py --smoke --no-isolation --modelspell-wheel ../agentwiz-prep/wheels/modelspell-0.4.0-py3-none-any.whl --scriptspell-wheel ../agentwiz-prep/wheels/scriptspell-0.3.0-py3-none-any.whl --dependency-wheels ../agentwiz-prep/wheels
@@ -100,10 +96,10 @@ judgement.
    changes, use a version newer than the published version they change and its NEWS section.
    Keep the same version for further edits while it is unreleased. Commit and push when authorized.
 2. Confirm the offline CI matrix passes on Ubuntu and macOS, Python 3.10 and 3.13. A Linux-only
-   local pass covers Linux. See the owner sign-offs below for the 0.2.2 live evaluations.
-3. Run `python scripts/build_release.py --smoke` on the intended committed tree; require
-   RC1–RC3 and the installed-wheel smoke S1–S26 to pass. The Tests workflow now runs installed-wheel page/library/tutorial checks on each main matrix job;
-   confirm those steps pass. Source-checkout browser results do not establish packaged UI behavior.
+   local pass covers Linux. Check the installed-wheel gate and the PDF wheel matrix in the same run.
+3. Run `python scripts/build_release.py --smoke` on the intended committed tree and require
+   RC1–RC3, `pip check` and S1–S26 to pass. Run the pull request checks against the proposed merge
+   before merging. Merging into `main` can publish the release automatically.
 4. Merge `devel` into `main` when authorized. The release workflow reruns tests and checks
    before publishing. Verify that the tag points to the tested merge commit and that the release has
    the wheel and installer. Compare the wheel's SHA-256 with the install line in the release notes.
@@ -113,14 +109,8 @@ NEWS authoring and version-bump requirements are defined in `../DEVEL.md`.
 S15 in the installed smoke creates a captured
 Workshop script starter, publishes it through a bound plan, runs it through the
 normal coordinator, checks the returned count and verifies duplicate Start identity.
-This exercises packaged starter runtime/license resources without requiring the
-model backend. Validate the final installed UI using `tests/test_page.py` and `tests/test_tutorial.py`
-against an environment where the built wheel replaces the editable package and the
-existing dev dependencies are installed. Use `python -I -m pytest` from outside
-the checkout and verify AgentWiz imports from that environment's site-packages. This
-runs the completion journey, narrow/desktop authoring, retained utilities and the current
-tutorial paths against the installed package. These are objective automated
-checks; tutorial walking remains optional.
+This exercises packaged starter runtime and licence resources without requiring a model backend.
+Use the installed-wheel gate below for the browser and workspace upgrade tests.
 
 Release 0.2.1 adds S16 and S17. S16 checks the installed Workflows browser asset, publishes a
 captured v4 transform workflow, preflights it, and verifies its final output through
@@ -141,15 +131,13 @@ including the partial-coverage fixture, through the installed PDF worker. S25 is
 RC2 also requires the PDF reader and worker and every library entry listed by `agentwiz/library/index.json`; RC3
 requires `pypdfium2>=5.13,<6`, which the smoke's dependency preload and the offline wheelhouse must include.
 
-### Owner sign-off before merging to `main` (starter blocks addendum, Section 7)
+### Historical 0.2.2 qualification (starter blocks addendum, Section 7)
 
-The release workflow publishes on an eligible `main` push, so these are owner sign-offs before the merge, not
-automatic release conditions:
-
-**Live acceptance can be cleared entirely on OpenRouter.** An OpenRouter pass and an LM Studio pass carry the
-same weight for the shipped catalog and Agentic Chat scenarios. Choose a profile explicitly and use synthetic
-fixtures. Record the route, model, provider pin where applicable and the effective settings. A blocked run
-requires fresh evidence. Provider API and tool replay diagnostics belong in modelSpell's live suite.
+For 0.2.2, the owner accepted either OpenRouter or LM Studio for live qualification of the
+shipped catalogue and Agentic Chat. The evaluation procedure below records that release's criteria.
+Choose a profile explicitly and use synthetic fixtures. Record the route, model, provider pin
+where applicable and effective settings. Provider API and tool replay diagnostics belong in
+modelSpell's live suite.
 
 1. **Model-block qualification.** Run `scripts/library_eval.py --profile NAME` on the chosen profile. Round 1
    is one trial of the dev set. Run full qualification (three trials of ten cases, `--trials 3 --set all`) for
@@ -185,13 +173,6 @@ run the same block evaluation on a trusted local profile, such as LM Studio or a
 (`--route openai_compat`). Restore shipping metadata only after it passes. The catalog deferral keeps a local
 model run off the OpenRouter release path.
 
-For an uncommitted candidate, transfer the tracked working-tree changes (including deletions)
-to a throwaway clone and commit only there, then run the normal release command in that clone.
-Keep build output separate from old `dist/` artifacts. Copy the tests, including their fixtures,
-outside the checkout for installed-wheel page/tutorial checks. Confirm the intended committed
-candidate with the normal release command before publishing.
-
-
 ## 0.2.3 installed-wheel gate
 
 - **Smoke.** S11 now runs a v4 model block pinning the saved contract through `/api/blocks/run` (complete, check
@@ -208,10 +189,9 @@ candidate with the normal release command before publishing.
   `python scripts/check_installed_ui.py --expect-version 0.2.2 --workflow-outcome f-a` from the 0.2.3 checkout.
   This runs the 13 Stage 0 cases and eight original Workflow Design checks. The 0.2.3 command selects the full
   candidate modules and required cases, including the installed private Agentic Chat checks.
-- **Offline CI.** Run the offline suite and the installed-wheel check on the release matrix. Each test step has
-  a 20-minute limit. Pytest prints the active test and dumps thread stacks after 120 seconds in one case. The only permitted
-  offline skip on macOS is the Linux-only PDF worker address-space limit test. PDF installation and extracted
-  content checks still run on macOS. 0.2.3 requires no live model or provider testing.
-- **Candidate wheels.** Build from the exact tree under review. The release command archives `HEAD`. For an
-  uncommitted review where commits are prohibited, export `HEAD` to scratch, overlay the tracked edits, and use
-  the release builder's wheel, RC1–RC3 and installed smoke functions on that exported tree.
+- **Offline CI.** The source suite has a 20-minute step limit. The installed step has a 10-minute limit,
+  prints pytest setup and teardown, and dumps a blocked test's stacks after 120 seconds. A separate
+  8-minute watchdog dumps stacks if the installed pytest session is still active, including between
+  tests and during cleanup. The offline suite allows one macOS skip for the Linux-only PDF worker
+  address-space test. The separate PDF wheel matrix still checks binary installation, licence notices
+  and extraction through the installed worker on Linux and macOS.
