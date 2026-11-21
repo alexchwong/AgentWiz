@@ -240,6 +240,7 @@ class Session:
     superseded: bool = False
     delete_scheduled: bool = False
     delete_sent: bool = False
+    server_name: str | None = None
 
 
 @dataclass
@@ -416,10 +417,11 @@ class MCPClient:
         self._current: set[tuple] | None = None       # current identities (None: every identity is current)
         self._init_locks: dict[tuple, threading.Lock] = {}
         self._generation = itertools.count(1)
+        self._server_names: dict[tuple, str | None] = {}
         # Called with a Session that is due its DELETE; mcp_ops replaces it with maintenance work.
         self.schedule_delete: Callable[[Session], None] = lambda s: None
 
-    def observe(self, identity, tools, era, version):
+    def observe(self, identity, tools, era, version, *, server_name=None):
         values = {tool['name']: {'digest': hashlib.sha256(encode_exact(tool.get('inputSchema')).encode()).hexdigest(),
                                 'era': era, 'version': version} for tool in tools[:TOOL_LIMIT]}
         # Agentic Chat (0.2.2, 5.2) offers an observed tool with the exact schema whose digest it checks, and its
@@ -428,11 +430,13 @@ class MCPClient:
             tool.get('description'), str) else '') for tool in tools[:TOOL_LIMIT]}
         with self._lock:
             self._observations[identity] = values
+            self._server_names[identity] = server_name
             self._schemas[identity] = schemas
             self._observations.move_to_end(identity)
             while len(self._observations) > 128:
                 gone, _ = self._observations.popitem(last=False)
                 self._schemas.pop(gone, None)
+                self._server_names.pop(gone, None)
 
     def observed_schema(self, identity, tool):
         """(digest, inputSchema, description) from the latest tool list, or None (0.2.2, 5.2)."""
@@ -442,6 +446,10 @@ class MCPClient:
             if value is None or schema is None:
                 return None
             return value['digest'], copy.deepcopy(schema[0]), schema[1]
+
+    def observed_server_name(self, identity):
+        with self._lock:
+            return self._server_names.get(identity) if identity in self._observations else None
 
     def observed_tools(self, identity):
         with self._lock:
@@ -937,7 +945,7 @@ class MCPClient:
         era, version, info = self.probe(ctx, snap)
         if era == "modern":
             tools = self._list_pages(ctx, snap, "modern", None, "discovery")
-            self.observe(snap.identity, tools, "modern", MODERN)
+            self.observe(snap.identity, tools, "modern", MODERN, server_name=(info or {}).get("name"))
             entry = self._entry_from(tools, MODERN)
             self._store_entry(snap.identity, entry)
             offered = [t for t in tools if t["name"] in entry.offered]
@@ -946,8 +954,8 @@ class MCPClient:
                                    {n: [".".join(p) for p, _, _ in paths] for n, paths in entry.offered.items()})
         session = self._session(ctx, snap, "discovery")
         tools = self._list_pages(ctx, snap, "legacy", session, "discovery")
-        self.observe(snap.identity, tools, "legacy", session.version)
-        return DiscoveryResult("legacy", session.version, info, tools)
+        self.observe(snap.identity, tools, "legacy", session.version, server_name=session.server_name)
+        return DiscoveryResult("legacy", session.version, info or {"name": session.server_name}, tools)
 
     # --- legacy sessions --------------------------------------------------------------------------
     def _session(self, ctx: OpContext, snap: Snapshot, stage: str, *, replacing: Session | None = None) -> Session:
@@ -1000,7 +1008,8 @@ class MCPClient:
             with self.session_lock:
                 self._refused[snap.identity] = str(version)
             raise self._unsupported(snap, [str(version)], stage)
-        session = Session(snap.identity, reply.session_id, version, next(self._generation))
+        session = Session(snap.identity, reply.session_id, version, next(self._generation),
+                          server_name=(_server_info(result) or {}).get("name"))
         self._set_era(snap.url, "legacy", version)
         note = {"jsonrpc": "2.0", "method": "notifications/initialized"}
         self.exchange(ctx, snap, "notifications/initialized", note,

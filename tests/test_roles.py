@@ -88,7 +88,7 @@ def test_unknown_top_level_fields_survive_a_save(make_ui, tmp_path):
     ("{not json", "invalid_json"),
     (json.dumps({"format_version": 1}), "invalid_field"),
     (json.dumps({"format_version": 1, "roles": {"fast": 5}}), "invalid_field"),
-    (json.dumps({"format_version": 4, "roles": {}}), "newer_format"),
+    (json.dumps({"format_version": 5, "roles": {}}), "newer_format"),
     (json.dumps({"format_version": 3, "roles": {}}), "invalid_field"),
     (json.dumps({"format_version": 2, "roles": {}}), "invalid_field"),
     (json.dumps({"format_version": 2, "roles": {"fast": "p"}, "definitions": {}}), "invalid_field"),

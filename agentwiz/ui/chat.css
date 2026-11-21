@@ -1,0 +1,21 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+header { border-bottom: 1px solid #8885; padding: .85rem max(1rem, calc((100% - 70rem)/2)); display: flex; align-items: center; justify-content: space-between; }
+main { max-width: 72rem; margin: auto; padding: 1rem; }
+section { padding: .8rem 0; border-bottom: 1px solid #8885; }
+h1, h2 { font-size: 1.05rem; margin: 0 0 .75rem; }
+textarea { width: 100%; resize: none; line-height: 1.5; font: inherit; min-height: 6.5rem; max-height: 19rem; padding: .65rem; }
+input, button, select { font: inherit; }
+button, select { padding: .25rem .55rem; }
+button, summary { cursor: pointer; }
+.bar { display: flex; gap: .65rem; align-items: center; flex-wrap: wrap; margin: .65rem 0; }
+#documents, #labels, #drafts { display: grid; gap: .4rem; margin: .4rem 0; }
+#activity { display: flex; gap: .55rem; overflow-x: auto; }
+#activity details { min-width: 11rem; max-width: 25rem; border: 1px solid #339c; border-radius: .35rem; padding: .5rem; }
+#activity details[data-state="completed"] { border-color: #297a4b; }
+#activity details[data-state="denied"], #approval { border-color: #ad5420; }
+#approval { border: 1px solid; padding: .65rem; margin-top: .65rem; }
+#answer, #approval pre, #activity pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+#notice { border-left: .2rem solid #a05025; padding-left: .75rem; }
+dialog { max-width: min(34rem, 95vw); }

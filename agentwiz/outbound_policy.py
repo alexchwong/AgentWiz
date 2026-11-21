@@ -305,6 +305,7 @@ def candidates(state):
     row per resolved model role, per observed MCP tool and per destination a block or saved workflow binds, with
     locality, eligibility, trust, uses and `requires_trust`. `trust_gaps` are eligible, untrusted destinations a
     saved protected workflow requires; `scan` says whether the saved-use inventory is complete."""
+    from . import roles, webspell
     from .state import NoSuchServer, RoleUnresolved
     current = view(state)
     revision, grants = current['revision'], current['grants']
@@ -339,7 +340,16 @@ def candidates(state):
             continue
         add({'kind': snapshot.kind, 'url': snapshot.endpoint.base_url, 'model': snapshot.model,
              'provider': snapshot.provider or ''}, {'kind': 'role', 'name': role})
+    if getattr(state, "chat_surfaces", False):
+        for role in set(roles.CHAT_MODELS) | set(snapshot_view["roles"]["mode_bindings"]):
+            try:
+                snapshot = state.role_capture(role, "local").snapshot
+            except RoleUnresolved:
+                continue
+            add(model_identity(snapshot), {"kind": "role", "name": f"{role} (Local only)"}, requires=True)
     for server in snapshot_view['mcp']['servers']:
+        if server == webspell.SERVER:
+            continue
         try:
             snapshot = state.mcp_snapshot_for_block(server)
         except NoSuchServer:
@@ -425,7 +435,7 @@ def credential(endpoint):
             (os.environ.get(endpoint.api_key_env, '').strip() if endpoint.api_key_env else '') or None)
 
 
-def block_dispatch(state, block, snapshot, *, protected=True, defaults=None):
+def block_dispatch(state, block, snapshot, *, protected=True, defaults=None, mode=None):
     if block.step.kind == 'model':
         key = credential(snapshot.endpoint)
 
@@ -433,7 +443,8 @@ def block_dispatch(state, block, snapshot, *, protected=True, defaults=None):
             from dataclasses import replace
             from .state import RoleUnresolved
             try:
-                captured = state.role_capture(block.step.role)
+                captured = (state.role_capture(block.step.role) if mode is None else
+                            state.role_capture(block.step.role, mode))
                 live = captured.snapshot
             except RoleUnresolved:
                 return False

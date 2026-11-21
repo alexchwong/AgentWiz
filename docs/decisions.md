@@ -454,3 +454,10 @@ had the following sizes. Shipped source lines count newline-terminated lines in 
 | --- | ---: | ---: | ---: | ---: |
 | Published 0.2.2 | 685,707 | 175 | 2,340,355 | 37,388 |
 | Reviewed 0.2.3 | 679,864 | 175 | 2,315,326 | 36,897 |
+
+## AgentWiz 0.2.4 specification v2
+
+The owner retained all 13 model starter blocks and removed mandatory qualification from runtime
+eligibility. AgentWorkshop evaluation remains optional. 0.2.4 uses the existing offline and live
+checks without a shipped pass index or a new publication manifest. The owner approved the
+webSpell v0.2.0 pin. webSpell CI covers the service and AgentWiz verifies its integration boundary.

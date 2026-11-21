@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentWiz</title>
+<link rel="stylesheet" href="/assets/chat.css">
+<script src="/assets/session.js" defer></script>
+<script src="/assets/chat.js" defer></script>
+</head>
+<body>
+<header><strong>AgentWiz</strong><button id="new-chat" type="button">New chat</button></header>
+<main>
+<p id="notice" role="status" hidden></p>
+<section aria-labelledby="task-heading">
+<h1 id="task-heading">Task</h1>
+<textarea id="task" rows="4" aria-label="Task" placeholder="What would you like to do?"></textarea>
+<p id="follow-up-label" hidden></p>
+<div class="bar">
+<label>Mode <select id="mode"><option value="cloud">Cloud</option><option value="local">Local only</option></select></label>
+<label>Role <select id="role"><option value="fast">Quick chat</option></select></label>
+<span id="model" role="status"></span>
+<button id="attach" type="button">Attach</button>
+<button id="run" type="button" disabled>Run</button>
+<button id="stop" type="button" hidden>Stop</button>
+</div>
+<div id="documents"></div>
+<details id="settings">
+<summary>Settings</summary>
+<div class="bar">
+<label><input id="builtins" type="checkbox" checked> Built-in tools</label>
+<label><input id="webspell" type="checkbox" checked> webSpell</label>
+<button id="verify-webspell" type="button">Connect webSpell</button>
+<span id="web-status"></span>
+</div>
+<div class="bar">
+<label>Model profile <select id="profile"></select></label>
+<button id="bind" type="button">Use profile for this mode</button>
+<a id="workshop" rel="noreferrer">AgentWorkshop address</a>
+</div>
+<div class="bar">
+<label>OpenRouter session key <input id="key" type="password" autocomplete="off"></label>
+<button id="save-key" type="button">Set session key</button>
+<span id="key-status"></span>
+</div>
+</details>
+</section>
+<section aria-labelledby="activity-heading">
+<h2 id="activity-heading">Activity</h2>
+<div id="activity"></div>
+<div id="approval" hidden></div>
+</section>
+<section aria-labelledby="answer-heading">
+<h2 id="answer-heading">Answer</h2>
+<p id="outcome" role="status"></p>
+<div id="answer"></div>
+<ul id="sources"></ul>
+<div id="drafts"></div>
+<button id="follow-up" type="button" hidden>Ask follow-up</button>
+</section>
+</main>
+<dialog id="upload">
+<form method="dialog">
+<h2>Attach files</h2>
+<input id="files" type="file" multiple aria-label="Files">
+<div id="labels"></div>
+<div class="bar"><button value="cancel">Cancel</button><button value="attach">Attach</button></div>
+</form>
+</dialog>
+<dialog id="private-close">
+<form method="dialog">
+<h2>Start a new chat?</h2>
+<p>Private messages, staged copies and drafts will leave this chat. Download drafts or the answer first if you need them.</p>
+<button value="cancel">Keep working</button>
+<button value="close">Close private chat</button>
+</form>
+</dialog>
+</body>
+</html>

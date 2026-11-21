@@ -103,6 +103,7 @@ class Conversation:
 
     def __init__(self, workspace_path: Path, ident: str):
         self.id = ident
+        self.private = False
         self.lock = threading.Lock()
         self.drained = threading.Condition(self.lock)
         self.pending_writes = 0

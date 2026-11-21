@@ -17,3 +17,4 @@ htmlcov/
 /model_profiles/
 /mcp_servers/
 /config/model-servers.ini
+.env

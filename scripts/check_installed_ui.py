@@ -274,6 +274,13 @@ def main(argv=None):
         else:
             rows = required_rows(args.workflow_outcome) + PRIVATE_CHAT
             modules = [*MODULES, *(node for _, node in PRIVATE_CHAT)]
+        if version.split(".")[:2] == ["0", "2"] and int(version.split(".")[2]) >= 4:
+            split = (
+                ("Split-origins", "tests/test_024_surfaces.py::test_two_origins_and_tool_inventory"),
+                ("Private-reconnect-stop", "tests/test_024_surfaces.py::test_private_reconnect_then_stop"),
+            )
+            rows += split
+            modules += [node for _, node in split]
         print('Modules:', ' '.join(modules), flush=True)
         print('Required cases:', flush=True)
         for label, node in rows:

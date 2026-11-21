@@ -26,7 +26,15 @@ from .workspace import (NAME_RULE, InvalidDocument, Problem, check_format_versio
 from .task_settings import TaskSettingError, parse_defaults
 
 FILE = "roles.json"
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
+CHAT_MODELS = {
+    "fast": ("Quick chat", "openai/gpt-4.1-mini"),
+    "chat_reader": ("Reader and extractor", "openai/gpt-5.4-mini"),
+    "chat_writer": ("Writer and synthesiser", "anthropic/claude-sonnet-4.6"),
+    "reasoning": ("Planner and reasoner", "openai/gpt-5.4"),
+    "chat_code": ("Code and structured output", "qwen/qwen3-coder"),
+    "chat_verifier": ("Verifier", "deepseek/deepseek-v3.2"),
+}
 ROLE_LIMIT = 100
 DEFINITION_KEYS = {"description", "location", "family", "task_defaults"}
 DEFAULTS = {
@@ -91,6 +99,7 @@ class RolesFile:
     roles: Mapping[str, str] = field(default_factory=dict)
     raw: dict = field(default_factory=dict)
     definitions: Mapping = field(default_factory=dict)
+    mode_bindings: Mapping = field(default_factory=dict)
 
 
 def empty_raw() -> dict:
@@ -113,6 +122,16 @@ def parse_roles(value: object) -> dict[str, str]:
     return out
 
 
+def parse_bindings(value: object) -> dict:
+    if not isinstance(value, Mapping) or len(value) > ROLE_LIMIT:
+        raise RolesError("mode_bindings must be an object of role bindings")
+    for role, slots in value.items():
+        if (not valid_name(role) or not isinstance(slots, dict) or set(slots) - {"cloud", "local"}
+                or not all(valid_name(profile) for profile in slots.values())):
+            raise RolesError("mode_bindings requires valid role, mode and profile names")
+    return copy.deepcopy(dict(value))
+
+
 def read(folder: Path) -> RolesFile:
     """Read and validate `<folder>/roles.json` (Section 7.1)."""
     raw, problem = read_document(Path(folder) / FILE, FILE)
@@ -128,19 +147,22 @@ def read(folder: Path) -> RolesFile:
             raise InvalidDocument("roles is missing")
         roles = parse_roles(raw["roles"])
         definitions = {}
-        if raw["format_version"] in (2, 3):
+        if raw["format_version"] >= 2:
             definitions = parse_definitions(raw.get("definitions"))
             if not set(roles) <= set(definitions):
                 raise RolesError("every assigned role requires a definition")
+        mode_bindings = parse_bindings(raw.get("mode_bindings", {})) if raw["format_version"] == 4 else {}
     except (InvalidDocument, RolesError) as exc:
         return RolesFile(Problem(FILE, "invalid_field", str(exc)))
-    return RolesFile(None, exists=True, roles=roles, raw=raw, definitions=definitions)
+    return RolesFile(None, exists=True, roles=roles, raw=raw, definitions=definitions, mode_bindings=mode_bindings)
 
 
-def build_raw(previous: Mapping, roles: Mapping[str, str], definitions=None) -> dict:
+def build_raw(previous: Mapping, roles: Mapping[str, str], definitions=None, mode_bindings=None) -> dict:
     """The new file: the previous file's unknown top-level fields kept."""
     raw = copy.deepcopy(dict(previous))
-    raw["format_version"] = FORMAT_VERSION
+    raw["format_version"] = 4 if mode_bindings is not None or previous.get("format_version") == 4 else 3
+    if mode_bindings is not None:
+        raw["mode_bindings"] = copy.deepcopy(mode_bindings)
     raw["roles"] = dict(roles)
     kept = copy.deepcopy(previous.get("definitions", {}) if definitions is None else definitions)
     for name in roles:

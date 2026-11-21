@@ -19,6 +19,7 @@ Messages name rules and locations, never values.
 from __future__ import annotations
 
 import dataclasses
+from contextlib import contextmanager
 import json
 import secrets
 import threading
@@ -183,12 +184,18 @@ class Capture:
     branch: str                         # "tools" | "text"
     mcp_snapshots: dict                 # server -> mcp_client.Snapshot taken at capture
     role_captures: dict                 # role -> state.RoleCapture with the key resolved
+    mode: str | None = None
+    role: str = "fast"
 
 
-def _trusted(state: Any, snapshot: Any, revision: int):
+def _snapshot(state, revision, mode=None, role="fast"):
+    return state.snapshot(revision) if mode is None else state.chat_snapshot(revision, role, mode)
+
+
+def _trusted(state: Any, snapshot: Any, revision: int, mode=None, role="fast"):
     def unchanged() -> bool:
         try:
-            live = state.snapshot(revision)
+            live = _snapshot(state, revision, mode, role)
         except Exception:  # noqa: BLE001 - StaleRevision
             return False
         return live == snapshot
@@ -204,17 +211,40 @@ def plan(state: Any, conversation: Any, body: Mapping, *, for_send: bool) -> Cap
     revision = body.get("revision")
     if type(revision) is not int:
         raise AgentError("invalid", 400)
-    snapshot = state.snapshot(revision)                          # 409 stale_revision through the handler
+    mode, role = body.get("mode"), body.get("role", "fast")
+    if mode is not None and (mode not in ("cloud", "local") or not isinstance(role, str)):
+        raise AgentError("invalid", 400)
+    if mode == "cloud" and conversation is not None and conversation.private:
+        raise AgentError("private_conversation", 409, remedies=["new_conversation", "trusted_local_model"])
+    snapshot = _snapshot(state, revision, mode, role)
     if snapshot.model.strip() == "":
         raise AgentError("no_model", 409)
     task = parse_task(body.get("task"))
     arguments = model_call.task_arguments(task, snapshot.kind, snapshot.provider)   # TaskSettingError: 400
-    trusted = _trusted(state, snapshot, revision)
-    has_documents = bool(conversation.items) if conversation is not None else False
-    found = caps.inventory(state, conversation, trusted_local=trusted is not None, has_documents=has_documents)
+    trusted = _trusted(state, snapshot, revision, mode, role)
+    if mode == "local" and trusted is None:
+        raise AgentError("destination_refused", 409, remedies=["trusted_local_model"])
+    items = {item["id"]: item for item in conversation.items_view()} if conversation is not None else {}
+    selected = body.get("items", []) if mode is not None else list(items)
+    if not isinstance(selected, list) or any(not isinstance(i, str) or i not in items for i in selected):
+        raise AgentError("unknown_document", 400)
+    if mode == "cloud" and any(items[i]["local_only"] for i in selected):
+        raise AgentError("local_only_document", 409, remedies=["trusted_local_model"])
+    allowed = [i for i in selected if trusted is not None or not items[i]["local_only"]]
+    found = caps.inventory(state, conversation, trusted_local=trusted is not None,
+                           has_documents=bool(allowed if mode is not None else items),
+                           builtins=(body.get("builtins", True) is True
+                                     and (mode is None or state.chat_preferences()["builtins"])),
+                           mode=mode, web_on=bool(mode == "cloud" and state.chat_preferences()["webspell"]
+                                                  and body.get("webspell", True) is True))
     by_name = {c.name: c for c in found["capabilities"]}
-    ticked = body.get("capabilities", [])
-    if not isinstance(ticked, list) or len(ticked) > 200:
+    ticked = body.get("capabilities")
+    if "capabilities" not in body:
+        ticked = [{"name": c.name, **({"revision": c.revision} if c.revision is not None else {})}
+                  for c in found["capabilities"] if mode is not None and not c.excluded_reason
+                  and (c.kind == "builtin" or c.server == "webspell"
+                       or (c.kind == "block" and state.block_library.provenance(c.key)))]
+    if not isinstance(ticked, list):
         raise AgentError("invalid", 400)
     chosen = []
     for entry in ticked:
@@ -228,26 +258,28 @@ def plan(state: Any, conversation: Any, body: Mapping, *, for_send: bool) -> Cap
         if capability.revision is not None and entry.get("revision") != capability.revision:
             raise AgentError("configuration_changed", 409, capability=entry["name"])
         if capability.excluded_reason:
+            if mode is not None and for_send:
+                raise AgentError("capability_unavailable", 409, capability=capability.name)
             continue                                            # listed under exclusions, never offered
         chosen.append(capability)
     name = caps.collision(chosen)
     if name is not None:
         raise AgentError("capability_name_collision", 409, capability=name)
-    if len(chosen) > caps.CAPABILITY_LIMIT:
-        raise AgentError("capability_limit", 409, limit=caps.CAPABILITY_LIMIT)
     definitions = [ToolDefinition(c.name, c.description, c.parameters) for c in chosen]
     size = caps.definitions_size(chosen)
     if size > caps.DEFINITION_BYTES:
         raise AgentError("definition_limit", 409, limit=caps.DEFINITION_BYTES)
-    allowed, excluded = [], list(found["excluded"])
-    if conversation is not None:
-        for item in conversation.items_view():
-            if item["local_only"] and trusted is None:
-                excluded.append({"name": item["id"], "reason": "local_only_document"})
-            else:
-                allowed.append(item["id"])
-    memory = conversation.memory_entries() if conversation is not None else []
-    if conversation is not None:
+    excluded = list(found["excluded"]) + [
+        {"name": i, "reason": "local_only_document"} for i in selected if i not in allowed]
+    memory = conversation.memory_entries() if conversation is not None and mode is None else []
+    if mode is not None and body.get("follow_up") is not None:
+        parent = state.agent._run(body["follow_up"])
+        if parent.conversation is not conversation or parent.answer is None or parent.state_name == "running":
+            raise AgentError("invalid_follow_up", 409)
+        if mode == "cloud" and parent.restricted:
+            raise AgentError("private_conversation", 409)
+        memory = [docs.MemoryEntry(parent.message, parent.answer, [], parent.restricted)]
+    if conversation is not None and mode is None:
         view = conversation.memory_view()
         if view["on"] and view["entries"] >= docs.MEMORY_LIMIT:
             raise AgentError("memory_full", 409, remedies=["new_conversation", "clear_memory"])
@@ -272,17 +304,18 @@ def plan(state: Any, conversation: Any, body: Mapping, *, for_send: bool) -> Cap
                 step = capability.loaded.block.step
                 if step.kind == "model" and step.role not in role_captures:
                     try:
-                        role = state.role_capture(step.role)
+                        binding = state.role_capture(step.role) if mode is None else state.role_capture(step.role, mode)
                     except Exception:  # noqa: BLE001 - RoleUnresolved: refused when the block is called
                         continue
-                    key = outbound_policy.credential(role.snapshot.endpoint)
-                    snap = dataclasses.replace(role.snapshot, endpoint=dataclasses.replace(
-                        role.snapshot.endpoint, api_key=key, api_key_env=None))
-                    role_captures[step.role] = dataclasses.replace(role, snapshot=snap)
+                    key = outbound_policy.credential(binding.snapshot.endpoint)
+                    snap = dataclasses.replace(binding.snapshot, endpoint=dataclasses.replace(
+                        binding.snapshot.endpoint, api_key=key, api_key_env=None))
+                    role_captures[step.role] = dataclasses.replace(binding, snapshot=snap)
                 if step.mcp and step.server not in mcp_snapshots:
                     mcp_snapshots[step.server] = state.mcp_snapshot_for_block(step.server)
         # Re-verify every revision captured above (4.3 step 3).
-        state.snapshot(revision)
+        if _snapshot(state, revision, mode, role) != snapshot:
+            raise AgentError("configuration_changed", 409)
         if state.agent.store.revision() != found["classification_revision"]:
             raise AgentError("configuration_changed", 409)
         for capability in chosen:
@@ -292,29 +325,36 @@ def plan(state: Any, conversation: Any, body: Mapping, *, for_send: bool) -> Cap
                     raise AgentError("configuration_changed", 409, capability=capability.name)
     return Capture(revision, snapshot, task, arguments, trusted, chosen, {c.name: c for c in chosen}, definitions,
                    size, found["classification_revision"], allowed, excluded, memory,
-                   _limits(body.get("limits")), branch, mcp_snapshots, role_captures)
+                   _limits(body.get("limits")), branch, mcp_snapshots, role_captures, mode, role)
 
 
 def preview(state: Any, conversation: Any, body: Mapping) -> dict:
     """The panel's view before Send (4.1): destination, preflight, capabilities, exclusions and limits."""
-    snapshot = state.snapshot(body.get("revision")) if type(body.get("revision")) is int else None
+    mode, role = body.get("mode"), body.get("role", "fast")
+    snapshot = _snapshot(state, body["revision"], mode, role) if type(body.get("revision")) is int else None
     out: dict = {"format_version": 1, "preflight_note": PREFLIGHT_NOTE,
                  "limits": {name: {"default": d, "maximum": m} for name, (d, m) in LIMITS.items()},
                  "constants": {"corrections": CORRECTION_LIMIT, "approval_wait_s": caps.APPROVAL_WAIT_S,
-                               "child_sends": CHILD_SEND_LIMIT, "capabilities": caps.CAPABILITY_LIMIT,
+                               "child_sends": CHILD_SEND_LIMIT,
                                "definition_bytes": caps.DEFINITION_BYTES, "argument_bytes": ARGUMENT_BYTES,
                                "result_bytes": RESULT_BYTES, "request_bytes": REQUEST_BYTES,
                                "output_bytes": OUTPUT_BYTES},
                  "usage_note": "Token and cost ceilings act only after the backend reports usage; they cannot "
                                "prevent a request already sent."}
     if snapshot is not None:
-        trusted = _trusted(state, snapshot, body["revision"])
+        trusted = _trusted(state, snapshot, body["revision"], mode, role)
         out["destination"] = {"kind": snapshot.kind, "url": snapshot.endpoint.base_url, "model": snapshot.model,
                               "provider": snapshot.provider,
                               "locality": outbound_policy.locality(snapshot.endpoint.base_url),
                               "trusted_local": trusted is not None}
         found = caps.inventory(state, conversation, trusted_local=trusted is not None,
-                               has_documents=bool(conversation and conversation.items))
+                               has_documents=bool(conversation and (conversation.items if mode is None else
+                                   any(i["id"] in body.get("items", []) and
+                                       (trusted or not i["local_only"]) for i in conversation.items_view()))),
+                               builtins=(body.get("builtins", True) is True
+                                         and (mode is None or state.chat_preferences()["builtins"])),
+                               mode=mode, web_on=bool(mode == "cloud" and state.chat_preferences()["webspell"]
+                                                      and body.get("webspell", True) is True))
         out["capabilities"] = [c.view() for c in found["capabilities"]]
         out["excluded"] = list(found["excluded"])
         out["mcp_refused"] = found["mcp_refused"]
@@ -357,6 +397,14 @@ class AgentRun:
         self.conversation = conversation
         self.capture = capture
         self.message = message
+        from . import webspell
+        self.web_urls = webspell.prompt_urls(message)
+        self.web_sources: set[str] = set()
+        self.web_mixed = bool(capture.allowed or capture.memory or any(
+            c.kind == "mcp" and c.server != webspell.SERVER
+            or c.kind == "block" and (not self.state.block_library.provenance(c.key)
+                                      or c.loaded.workshop.get("revision_number") != 1)
+            for c in capture.capabilities))
         self.observer = _Safe(observer)
         self.lock = threading.Lock()
         self.token = runs.CancelToken()
@@ -379,7 +427,7 @@ class AgentRun:
         self.corrections = 0
         self.child_sends = 0
         self.nested_exceeded = False
-        self.restricted = False
+        self.restricted = capture.mode == "local"
         self.trace: list[dict] = []           # live, with payloads (in process memory only)
         self.saved_trace: list[dict] = []     # identities, outcomes, sizes and digests
         self.pending: caps.Approval | None = None
@@ -450,7 +498,7 @@ class AgentRun:
 
     def _config_unchanged(self) -> bool:
         try:
-            return self.state.snapshot(self.capture.revision) == self.capture.snapshot
+            return _snapshot(self.state, self.capture.revision, self.capture.mode, self.capture.role) == self.capture.snapshot
         except Exception:  # noqa: BLE001 - StaleRevision
             return False
 
@@ -472,6 +520,12 @@ class AgentRun:
                 self.nested_exceeded = True
                 return False
             return True
+
+    def _promote(self) -> None:
+        self.restricted = True
+        if self.capture.mode is not None:
+            with self.conversation.lock:
+                self.conversation.private = True
 
     def _still_running(self) -> bool:
         return not self.token.cancelled and time.monotonic() < self.deadline
@@ -575,7 +629,7 @@ class AgentRun:
         # The initial label covers everything the first request holds (8.3).
         if any(c.restricted_definition for c in self.capture.capabilities) or \
                 any(e.restricted for e in self.capture.memory):
-            self.restricted = True
+            self._promote()
 
     def _text_branch(self) -> None:
         result = self._send(tools=False)
@@ -709,13 +763,25 @@ class AgentRun:
                             approval=outcome.get("approval"), elapsed=time.monotonic() - started)
         self._emit({"type": "action", "state": "finished", "call_id": call.id, "capability": capability.name,
                     "outcome": outcome.get("outcome", status), "restricted": effective, "result_text": content})
+        if restricted and not self.restricted:
+            if self.capture.mode is not None:
+                self._promote()
+            if self.capture.trusted is None:
+                raise _End(outcome.get("end") or "restricted_result")
+            self._promote()
         if outcome.get("end"):
             raise _End(outcome["end"])
-        if restricted and not self.restricted:
-            # Promotion (8.3), before the result is added. A non-local orchestrator never receives it (F-29).
-            if self.capture.trusted is None:
-                raise _End("restricted_result")
-            self.restricted = True
+        from . import webspell
+        if capability.server == webspell.SERVER and envelope.get("ok"):
+            result = envelope.get("result")
+            if isinstance(result, dict):
+                urls = webspell.result_urls(result.get("structured"))
+                self.web_urls.update(urls)
+                with self.lock:
+                    self.web_sources.update(list(sorted(urls))[:max(0, 64 - len(self.web_sources))])
+            if len(self.web_urls) > 256:
+                self.web_urls.clear()
+        self.web_mixed = True
         self._append_turn(turn)
         self._append_output(call.id, content)
         if self.nested_exceeded:
@@ -775,7 +841,7 @@ class AgentRun:
                                                                      "message": FEEDBACK.get("refused")}},
                                              outcome="refused", code="restricted_result", restricted=True,
                                              end="restricted_result")
-                    self.restricted = True
+                    self._promote()
                 source = inspected[0]
                 if tool == "copy_to_draft":
                     content, copied = docs.copy_content(self.scope, arguments, inspected)
@@ -849,6 +915,19 @@ class AgentRun:
     def _mcp_guard(self, call: Any, capability: caps.Capability, snapshot: Any, arguments: Any,
                    restricted: bool) -> tuple[Any, dict | None]:
         """Steps 2-4 of 5.5 for the materialised arguments. Returns (the send-gate check, approval view)."""
+        from . import webspell
+        web = capability.server == webspell.SERVER
+        require_approval = capability.approval
+        if web:
+            if restricted or self.capture.mode != "cloud" or not self.state.chat_preferences()["webspell"]:
+                raise outbound_policy.Refused("destination_refused")
+            proposed = arguments.get("urls") or []
+            if "url" in arguments:
+                proposed = [arguments["url"]]
+            if any(not webspell.public_url(url) or url not in self.web_urls for url in proposed):
+                raise outbound_policy.Refused("destination_refused")
+            require_approval = ("query" in arguments and self.web_mixed
+                                or bool(arguments.get("domains")))
         found = self.state.mcp_client.observed_schema(snapshot.identity, capability.tool)
         if found is None or found[0] != capability.schema_digest:
             raise outbound_policy.Refused("configuration_changed")
@@ -869,7 +948,7 @@ class AgentRun:
                 snapshot, capability.tool), unchanged)
         approval_view = None
         approval = None
-        if capability.approval:
+        if require_approval:
             approval_view = self._approval(call, capability, destination, arguments_text, capability.schema_digest)
             approval = self.current_approval
 
@@ -881,7 +960,11 @@ class AgentRun:
                 raise outbound_policy.Refused("configuration_changed")
             row = self.state.agent.store.row(rows, snapshot.url, capability.server, capability.tool,
                                              capability.schema_digest)
-            if not row["enabled"] or not row["no_host_files"]:
+            if web:
+                if (self.restricted or not self.state.chat_preferences()["webspell"]
+                        or not webspell.compatible(self.state.mcp_client, snapshot)):
+                    raise outbound_policy.Refused("configuration_changed")
+            elif not row["enabled"] or not row["no_host_files"]:
                 raise outbound_policy.Refused("configuration_changed")
             current = self.state.mcp_client.observed_schema(snapshot.identity, capability.tool)
             if current is None or current[0] != capability.schema_digest:
@@ -1005,8 +1088,18 @@ class AgentRun:
                 decision["approval"] = view
                 return authorize
         observer = _ChildObserver(self, {})
+        dispatch = None
+        if role is not None and self.capture.mode is not None:
+            try:
+                dispatch = outbound_policy.block_dispatch(
+                    self.state, block, snapshot, protected=self.restricted or block.context_local_only
+                    or bool(loaded.workshop.get("protection_clear_pending"))
+                    or any(port.local_only for port in block.inputs),
+                    defaults=role.defaults, mode=self.capture.mode)
+            except outbound_policy.Refused:
+                return self._refusal("destination_refused")
         frozen = runner.FrozenSource(snapshot, False, {"agent_run": self.run_id, "call_id": call.id},
-                                     capture=role, protected=self.restricted, dispatch=None,
+                                     capture=role, protected=self.restricted, dispatch=dispatch,
                                      attempt_gate=self.child_gate, parent_guard=self.parent_guard,
                                      before_tool=before_tool)
 
@@ -1189,7 +1282,7 @@ class AgentRun:
                     "drafts": [{"id": i, "name": n} for i, n in self.drafts],
                     "routing": model_call.routing_record(self.capture.snapshot,
                         self.resolved_arguments or self.capture.arguments, self.routing_selection),
-                    "served_provider": self.served_provider,
+                    "served_provider": self.served_provider, "sources": sorted(self.web_sources),
                     "usage": dict(self.usage), "cost": self.cost if self.cost_reported else None,
                     "save_status": self.save_status, **self.save_detail}
 
@@ -1277,7 +1370,23 @@ class Manager:
                 raise AgentError("run_active", 409)
             return fn()
 
-    def start_conversation(self) -> dict:
+    @contextmanager
+    def public_discovery(self):
+        # Block competing private admissions while the configured public service is probed.
+        with self.lock:
+            conversation = self.conversation
+            if self.closed or self._busy_locked() or (conversation and conversation.private):
+                raise AgentError("destination_refused", 409)
+            reservation = Reservation(conversation)
+            self.reserved = reservation
+        try:
+            yield
+        finally:
+            with self.lock:
+                if self.reserved is reservation:
+                    self.reserved = None
+
+    def start_conversation(self, *, require_confirmation=False) -> dict:
         if self.state.workspace.read_only:
             raise AgentError("read_only", 409)
         with self.lock:
@@ -1285,6 +1394,8 @@ class Manager:
                 raise AgentError("shutting_down", 503)
             if self._busy_locked():
                 raise AgentError("run_active", 409)
+            if require_confirmation and self.conversation is not None and self.conversation.private:
+                raise AgentError("private_close_confirmation", 409)
             previous, self.conversation = self.conversation, None
             self.runs.clear()
         if previous is not None:
@@ -1298,13 +1409,16 @@ class Manager:
             self.conversation = conversation
         return self.view()
 
-    def close_conversation(self, conversation_id: object) -> dict:
+    def close_conversation(self, conversation_id: object, *, confirm=True) -> dict:
         conversation = self._require(conversation_id)
         with self.lock:
             if self._busy_locked():
                 raise AgentError("run_active", 409)
-            if self.conversation is conversation:
-                self.conversation = None
+            if self.conversation is not conversation:
+                raise AgentError("no_such_conversation", 404)
+            if conversation.private and not confirm:
+                raise AgentError("private_close_confirmation", 409)
+            self.conversation = None
             self.runs.clear()
         left = conversation.close()
         return {"closed": conversation.id, "left": left}
@@ -1312,10 +1426,12 @@ class Manager:
     def view(self) -> dict:
         with self.lock:
             conversation, active = self.conversation, self.active
+            recent = list(self.runs.values())
         out: dict = {"format_version": 1, "conversation": None, "active_run": None, "pending_approval": None}
         if conversation is not None:
             out["conversation"] = {"id": conversation.id, "documents": conversation.items_view(),
-                                   "memory": conversation.memory_view()}
+                                   "memory": conversation.memory_view(), "private": conversation.private,
+                                   "recent_runs": [run.run_id for run in recent if run.conversation is conversation]}
         if active is not None:
             view = active.view()
             out["active_run"] = active.run_id
@@ -1420,7 +1536,8 @@ class Manager:
         return preview(self.state, conversation, body)
 
     def prepare_run(self, body: Mapping, observer: Observer | None) -> AgentRun:
-        if set(body) - {"conversation", "revision", "task", "message", "capabilities", "limits"}:
+        if set(body) - {"conversation", "revision", "task", "message", "capabilities", "limits",
+                        "role", "mode", "items", "follow_up", "builtins", "webspell"}:
             raise AgentError("invalid", 400)
         conversation = self._require(body.get("conversation"))
         message = body.get("message")
@@ -1467,6 +1584,8 @@ class Manager:
                 raise AgentError("no_such_conversation", 404)
             self.reserved = None
             self.active = run
+            if run.capture.mode == "local":
+                run._promote()
             run.conversation.active_run = run
             self.runs[run.run_id] = run
             while len(self.runs) > RUNS_KEPT:

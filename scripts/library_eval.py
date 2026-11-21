@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 import tempfile
 import time
@@ -459,6 +460,8 @@ def main(argv=None) -> int:
     mode.add_argument("--apply-review", type=Path, help="import explicit case marks into --source-report")
     parser.add_argument("--source-report", type=Path, help="original report to update with --apply-review")
     parser.add_argument("--block", action="append", help="a catalog key; repeatable (default: every model block)")
+    parser.add_argument("--deidentify-source", type=Path,
+                        help="evaluate the deferred starter folder against an installed candidate")
     parser.add_argument("--trials", type=int, default=1)
     parser.add_argument("--set", dest="which", choices=["dev", "heldout", "all"], default="dev")
     parser.add_argument("--route", choices=("openrouter", "lmstudio", "openai_compat"),
@@ -499,6 +502,10 @@ def main(argv=None) -> int:
         return write_report(args.review, report)
 
     known = model_keys()
+    if args.deidentify_source is not None:
+        if args.route != "lmstudio" or args.block != ["deidentify_text"]:
+            parser.error("--deidentify-source requires --route lmstudio --block deidentify_text")
+        known = [*known, "deidentify_text"]
     blocks = args.block or known
     unknown = [b for b in blocks if b not in known]
     if unknown or args.trials < 1:
@@ -508,10 +515,26 @@ def main(argv=None) -> int:
     eval_reports.checkpoint(args.report, report)
     try:
         with tempfile.TemporaryDirectory(prefix="agentwiz-library-eval-") as tmp:
-            with eval_setup.session(Path(tmp), args.profile, args.route, args.profiles_dir, args.config) as ui:
-                report = evaluate(Client(ui, args.timeout), profile=args.profile, route=args.route, blocks=blocks, trials=args.trials,
-                                  which=args.which, report=report, report_path=args.report, case_delay=args.case_delay, progress=lambda k, r: print(
-                                      f"{k} {r['case']} trial {r['trial']}: {r['outcome']}", flush=True))
+            from agentwiz import library_install
+            original_library = library_install.LIBRARY
+            try:
+                if args.deidentify_source is not None:
+                    overlay = Path(tmp) / "candidate-library"
+                    shutil.copytree(original_library, overlay)
+                    candidate = overlay / "deidentify_text"
+                    shutil.copytree(args.deidentify_source, candidate, dirs_exist_ok=True)
+                    index_file = overlay / "index.json"
+                    index = json.loads(index_file.read_text(encoding="utf-8"))
+                    if "deidentify_text" not in index["keys"]:
+                        index["keys"].append("deidentify_text")
+                        index_file.write_text(json.dumps(index), encoding="utf-8")
+                    library_install.LIBRARY = overlay
+                with eval_setup.session(Path(tmp), args.profile, args.route, args.profiles_dir, args.config) as ui:
+                        report = evaluate(Client(ui, args.timeout), profile=args.profile, route=args.route, blocks=blocks, trials=args.trials,
+                                          which=args.which, report=report, report_path=args.report, case_delay=args.case_delay, progress=lambda k, r: print(
+                                              f"{k} {r['case']} trial {r['trial']}: {r['outcome']}", flush=True))
+            finally:
+                library_install.LIBRARY = original_library
     except KeyboardInterrupt:
         report.update(execution='interrupted', verdict='incomplete', reason='interrupted')
     except Exception as exc:

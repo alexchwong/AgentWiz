@@ -109,6 +109,34 @@ class Installer:
         self._lock = threading.Lock()
         self._refs: dict[tuple[str, str], str] = {}     # (as, definition digest) -> Workshop draft reference
 
+    def install_chat_starters(self) -> list[str]:
+        """Install shipped model blocks using the ordinary plan and save path."""
+        failures = []
+        if self.state.workspace.read_only:
+            return failures
+        used = set(self._blocks())
+        installed = {item.get("key") for key in used if (item := self.provenance(key))}
+        for key in index():
+            if key in installed or entry(key).group != "llm":
+                continue
+            name = key
+            counter = 1
+            while any(other.casefold() == name.casefold() for other in used):
+                counter += 1
+                name = f"{key}-{counter}"
+            planned = self._plan_one({"key": key, "as": name})
+            if planned["outcome"] != "planned":
+                failures.append(key)
+                continue
+            added = self._add({"key": key, "as": name, "binding": planned["binding"],
+                               "expected_plan": planned["expected_plan"],
+                               "confirmations": planned["required_confirmations"]})
+            if added["outcome"] == "added":
+                used.add(name)
+            else:
+                failures.append(key)
+        return failures
+
     @property
     def service(self):
         return self.state.workshop

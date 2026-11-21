@@ -195,3 +195,30 @@ model run off the OpenRouter release path.
   tests and during cleanup. The offline suite allows one macOS skip for the Linux-only PDF worker
   address-space test. The separate PDF wheel matrix still checks binary installation, licence notices
   and extraction through the installed worker on Linux and macOS.
+
+## AgentWiz 0.2.4 checks
+
+Keep the credential-free source, installed and PDF checks. Before the publication merge, run the
+established live Chat cohorts with both backends on the candidate. Live reports can remain in a
+local review folder.
+
+```bash
+python scripts/agent_eval.py --route openrouter --cohorts tests/agent_eval/cohorts.json --full-inventory --report reports/chat-cloud.json
+python scripts/agent_eval.py --route lmstudio --cohorts tests/agent_eval/cohorts.json --full-inventory --report reports/chat-local.json
+```
+
+For an already running split installation, supply `--session-file PATH` from
+`agentwiz --no-browser --session-file PATH` and select the route being exercised.
+Check all six preset bindings, the full eligible inventory on both routes, and one live Cloud Chat
+turn through the configured webSpell service. Use webSpell CI for service-level behavior. Run and
+review the dedicated ten-case, three-trial LM Studio `deidentify_text` check before deciding whether
+to include that additional Local only starter. Current packaging excludes it until the required
+verdict passes. The bundled 13 ordinary model starters remain available on eligible bindings.
+
+Run the deferred block against an installed candidate with the source checkout's evaluator:
+
+```bash
+python scripts/library_eval.py --profile lmstudio-eval --route lmstudio --block deidentify_text \
+  --deidentify-source agentwiz/library/deidentify_text --trials 3 --set all \
+  --report reports/deidentify-lmstudio.json
+```

@@ -62,10 +62,12 @@ class EvaluationBlocked(Exception):
 
 
 class Client:
-    def __init__(self, url: str):
+    def __init__(self, url: str, token=None, *, mode=None, workshop=None):
         parts = urllib.parse.urlsplit(url)
         self.root = f"{parts.scheme}://{parts.netloc}"
-        self.token = urllib.parse.parse_qs(parts.query).get("t", [""])[0]
+        self.token = token if token is not None else urllib.parse.parse_qs(parts.query).get("t", [""])[0]
+        self.mode = mode
+        self.workshop = workshop
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def call(self, path: str, body=None, raw: bytes | None = None, headers=None, timeout=60):
@@ -78,6 +80,50 @@ class Client:
     def json(self, path: str, body=None):
         with self.call(path, body) as response:
             return json.load(response)
+
+
+def context_for_case(client, case, *, synthetic):
+    mode = getattr(client, "mode", None)
+    if mode:
+        previous = client.json("/api/agent/conversation")["conversation"]
+        if previous and previous.get("private"):
+            client.json("/api/agent/conversation/close", {"format_version": 1,
+                        "conversation": previous["id"], "confirm": True})
+    conversation = client.json("/api/agent/conversation", {"format_version": 1})["conversation"]["id"]
+    for document in case.get("documents", []):
+        data = document["text"].encode("utf-8")
+        # The fixed cohorts use synthetic material and explicitly stage it for both routes.
+        local = mode == "local" or (not (mode == "cloud" and synthetic) and document.get("local_only", True))
+        with client.call("/api/agent/documents", raw=data, headers={
+            "Content-Type": "application/octet-stream", "Content-Length": str(len(data)),
+            "X-Filename": urllib.parse.quote(document["name"]), "X-Conversation": conversation,
+            "X-Local-Only": "true" if local else "false"}):
+            pass
+    state = chat_state(client)
+    if mode:
+        view = client.json("/api/agent/conversation")["conversation"]
+        context = {"mode": mode, "role": "fast", "items": [item["id"] for item in view["documents"]]}
+        inventory = client.json("/api/agent/inventory", {"format_version": 1, "revision": state["revision"], **context})
+    else:
+        context = {}
+        inventory = client.json("/api/agent/inventory?revision=" + str(state["revision"]))
+    return conversation, context, state, inventory
+
+
+def chat_state(client):
+    if not getattr(client, "mode", None):
+        return client.json("/api/state")
+    settings = client.json("/api/chat/settings")
+    slot = settings["roles"]["fast"][client.mode]
+    if slot is None:
+        raise EvaluationBlocked("Quick chat has no usable model binding")
+    state = {**slot, "revision": settings["revision"], "agentwiz_version": settings.get("agentwiz_version"),
+             "modelspell_version": settings.get("modelspell_version")}
+    state["routing_zdr"] = slot.get("zdr")
+    state["routing_data_collection"] = slot.get("data_collection")
+    state["roles"] = {"map": {"fast": slot["profile"]}, "unresolved": []}
+    state["profiles"] = {"details": {slot["profile"]: dict(state)}}
+    return state
 
 
 def model_target(state: dict) -> dict:
@@ -117,23 +163,20 @@ def run_case(client: Client, case: dict, timeout: float, target: dict | None = N
                  "first_arguments_valid": None, "answer_correct": None, "turns": None, "actions": None,
                  "seconds": None, "usage": None, "error": None}
     try:
-        conversation = client.json("/api/agent/conversation", {"format_version": 1})["conversation"]["id"]
-        for document in case.get("documents", []):
-            data = document["text"].encode("utf-8")
-            client.call("/api/agent/documents", raw=data, headers={
-                "Content-Type": "application/octet-stream", "Content-Length": str(len(data)),
-                "X-Filename": urllib.parse.quote(document["name"]), "X-Conversation": conversation,
-                "X-Local-Only": "true" if document.get("local_only", True) else "false"}).read()
-        state = client.json("/api/state")
+        conversation, context, state, inventory = context_for_case(client, case, synthetic=False)
         if target is not None:
-            check_target(state, target)
-        inventory = client.json("/api/agent/inventory?revision=" + str(state["revision"]))
+            check_target(state, target, require_fast=False)
         revisions = {c["name"]: c.get("revision") for c in inventory.get("capabilities", [])}
         capabilities = [{"name": n, **({"revision": revisions[n]} if revisions.get(n) is not None else {})}
                         for n in case.get("capabilities", [])]
-        with client.call("/api/agent/run", {"format_version": 1, "conversation": conversation,
-                                           "revision": state["revision"], "message": case["message"],
-                                           "capabilities": capabilities}, timeout=timeout) as response:
+        request = {"format_version": 1, "conversation": conversation,
+                   "revision": state["revision"], "message": case["message"], **context}
+        if not case.get("full_inventory"):
+            request["capabilities"] = capabilities
+        else:
+            row["offered"] = inventory.get("preflight", {}).get("offered", [])
+            row["definition_bytes"] = inventory.get("preflight", {}).get("definition_bytes")
+        with client.call("/api/agent/run", request, timeout=timeout) as response:
             events = [json.loads(line) for line in response if line.strip()]
         final = next((e for e in events if e.get("type") == "final"), None)
         if final is None:
@@ -146,6 +189,8 @@ def run_case(client: Client, case: dict, timeout: float, target: dict | None = N
         row["transport_ok"] = final["stop_reason"] not in ("model_error", "busy", "internal_error")
         row["stop_reason"] = final["stop_reason"]
         detail = view.get('stop_detail') or ''
+        if not row["transport_ok"]:
+            row["error"] = detail or row["stop_reason"]
         row['shared_target_unavailable'] = (final['stop_reason'] == 'configuration_changed' or
             any(detail.startswith(name + ':') for name in
                 ('AuthError', 'ConfigError', 'UnsupportedSetting', 'UnsupportedOperation', 'DestinationRefused')))
@@ -260,20 +305,13 @@ def run_cohort_case(client: Client, case: dict, names: list[str], blocks: dict, 
     try:
         if len(names) > COHORT_LIMIT:
             raise EvaluationBlocked(f"{case['id']}: a cohort offers at most {COHORT_LIMIT} capabilities")
-        conversation = client.json("/api/agent/conversation", {"format_version": 1})["conversation"]["id"]
-        for document in case.get("documents", []):
-            data = document["text"].encode("utf-8")
-            client.call("/api/agent/documents", raw=data, headers={
-                "Content-Type": "application/octet-stream", "Content-Length": str(len(data)),
-                "X-Filename": urllib.parse.quote(document["name"]), "X-Conversation": conversation,
-                "X-Local-Only": "true" if document.get("local_only", True) else "false"}).read()
-        state = client.json("/api/state")
-        check_target(state, target, require_fast=True)
-        inventory = client.json("/api/agent/inventory?revision=" + str(state["revision"]))
+        conversation, context, state, inventory = context_for_case(client, case, synthetic=True)
+        if target is not None:
+            check_target(state, target, require_fast=True)
         capabilities, mapping = resolve(names, inventory, blocks)
         with client.call("/api/agent/run", {"format_version": 1, "conversation": conversation,
                                            "revision": state["revision"], "message": case["message"],
-                                           "capabilities": capabilities}, timeout=timeout) as response:
+                                           "capabilities": capabilities, **context}, timeout=timeout) as response:
             events = [json.loads(line) for line in response if line.strip()]
         finals = [e for e in events if e.get("type") == "final"]
         if len(finals) != 1:
@@ -380,7 +418,7 @@ def run_cohorts(client: Client, spec: dict, timeout: float, target: dict, report
     every = {n for c in cohorts for n in c['capabilities']} | {n for case in gate for n in case['capabilities']}
     out['active'] = {'stage': 'setup'}
     save()
-    blocks = install_entries(client, sorted(n[len('library:'):] for n in every if n.startswith('library:')))
+    blocks = install_entries(getattr(client, "workshop", None) or client, sorted(n[len('library:'):] for n in every if n.startswith('library:')))
     out['installed'] = blocks
     def run(case, names):
         out['active'] = {'case': case['id'], 'stage': 'run'}
@@ -418,7 +456,9 @@ def run_cohorts(client: Client, spec: dict, timeout: float, target: dict, report
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--url", help="the address AgentWiz printed, with ?t=<token>")
+    access = parser.add_mutually_exclusive_group()
+    access.add_argument("--url", help="legacy combined UI address for older installations")
+    access.add_argument("--session-file", type=Path, help="private launch handoff from AgentWiz 0.2.4")
     which = parser.add_mutually_exclusive_group(required=True)
     which.add_argument("--cases", help="a JSON list of cases")
     which.add_argument("--cohorts", help="a cohorts file (tests/agent_eval/cohorts.json)")
@@ -428,12 +468,16 @@ def main(argv=None) -> int:
     parser.add_argument("--report", type=Path, default=Path("reports/agent_eval_report.json"),
                         help="where to write the JSON report (default: reports/agent_eval_report.json)")
     parser.add_argument("--route", choices=("openrouter", "lmstudio", "openai_compat"), help="assert the selected route")
+    parser.add_argument("--full-inventory", action="store_true",
+                        help="after the fixed cohorts, exercise the complete default inventory")
     parser.add_argument("--chat-template", default=None, help="the server's chat template, recorded as given")
     parser.add_argument("--timeout", type=float, default=eval_setup.timeout_default(), help="seconds per read of a run's stream")
     args = parser.parse_args(argv)
-    if args.url and any((args.profile, args.profiles_dir, args.config)):
+    if args.full_inventory and (not args.cohorts or args.url):
+        parser.error("--full-inventory requires --cohorts and a split installation")
+    if (args.url or args.session_file) and any((args.profile, args.profiles_dir, args.config)):
         parser.error("--url cannot be combined with disposable configuration options")
-    if not args.url and not (args.profile or args.route):
+    if not (args.url or args.session_file or args.profile or args.route):
         parser.error("disposable evaluation requires --route or --profile")
     report = {"chat_template": args.chat_template, "route": {"kind": args.route}}
     report.update(execution="running", verdict="incomplete")
@@ -442,14 +486,38 @@ def main(argv=None) -> int:
     try:
         if args.url:
             client = Client(args.url)
+        elif args.session_file:
+            if args.session_file.is_symlink() or args.session_file.stat().st_mode & 0o077:
+                raise EvaluationBlocked("session file must be private")
+            access_info = json.loads(args.session_file.read_text())
+            mode = "local" if args.route in ("lmstudio", "openai_compat") else "cloud"
+            workshop = Client(access_info["workshop"]["url"], access_info["workshop"]["session"])
+            client = Client(access_info["chat"]["url"], access_info["chat"]["session"], mode=mode, workshop=workshop)
         else:
             workdir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="agentwiz-chat-eval-")))
             profile = args.profile or args.route + "-eval"
-            ui = stack.enter_context(eval_setup.session(workdir, profile, args.route, args.profiles_dir, args.config))
-            client = Client(ui.url)
+            ui = stack.enter_context(eval_setup.session(workdir, profile, args.route, args.profiles_dir,
+                                                        args.config, split=True))
+            workshop = Client(ui.url, ui.authority.entry(ui.url)["session"])
+            chat = ui.chat_listener
+            state = workshop.json("/api/state")
+            if profile not in state["profiles"]["details"]:
+                state = workshop.json("/api/profiles/select", {"name": profile, "revision": state["revision"]})
+            selected = state["profiles"]["details"][profile]
+            mode = selected["location"]
+            client = Client(chat.url, chat.authority.entry(chat.url)["session"], mode=mode, workshop=workshop)
             client.ui = ui
-            eval_setup.select_chat(client, profile)
-        state = client.json("/api/state")
+            client.json("/api/chat/bindings", {"revision": state["roles"]["revision"],
+                                                "bindings": {"fast": {mode: profile}}})
+            if mode == "local":
+                from agentwiz import outbound_policy
+                binding = ui.state.role_capture("fast", mode)
+                target_dest = outbound_policy.model_identity(binding.snapshot)
+                checked = workshop.json("/api/workshop/destination-trust-preview",
+                                        {"format_version": 1, "destination": target_dest})
+                workshop.json("/api/workshop/destination-trust", {"format_version": 1,
+                              "destination": target_dest, "expected_revision": checked["revision"], "trusted": True})
+        state = chat_state(client)
         target = model_target(state)
         report.update(agentwiz_version=state.get("agentwiz_version"), modelspell_version=state.get("modelspell_version"),
                       route=target)
@@ -478,6 +546,17 @@ def evaluate(client: Client, target: dict, args, report: dict) -> int:
         with open(args.cohorts, encoding="utf-8") as fh:
             spec = json.load(fh)
         run_cohorts(client, spec, args.timeout, target, report=report, report_path=args.report)
+        if args.full_inventory and report["verdict"] == "passed":
+            case = {"id": "full-default-inventory", "full_inventory": True,
+                    "message": "Use the calculator tool to compute 19 * 23 and report the number.",
+                    "expected_first_capability": "aw_calculate", "expected_answer": {"contains": ["437"]},
+                    "documents": [{"name": "synthetic.txt", "text": "Example document.",
+                                   "local_only": client.mode == "local"}]}
+            check = run_case(client, case, args.timeout, target)
+            report["full_inventory"] = check
+            if (check.get("stop_reason") != "answered" or check.get("first_choice_correct") is not True
+                    or check.get("answer_correct") is not True or len(check.get("offered", [])) <= 24):
+                report["verdict"] = "failed"
         return {"passed": 0, "failed": 1, "blocked": 2, "incomplete": 3}[report["verdict"]]
     with open(args.cases, encoding="utf-8") as fh:
         cases = json.load(fh)

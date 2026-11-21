@@ -38,9 +38,10 @@ exclude = ["/agentwiz/library/deidentify_text"] # deferred until trusted local l
 
 [tool.hatch.build.targets.wheel.force-include]
 "config/model-servers.ini.template" = "agentwiz/model-servers.ini.template"
+".env.example" = "agentwiz/.env.example"
 
 [tool.hatch.build.targets.sdist]
-only-include = ["agentwiz", "config/model-servers.ini.template", "pyproject.toml", "README.md", "LICENSE"]
+only-include = ["agentwiz", "config/model-servers.ini.template", ".env.example", "pyproject.toml", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1729,3 +1729,24 @@ block selection.
 Engine recovery for a managed block uses its saved revision as a draft. Unmanaged recovery binds bounded
 in-memory captures to draft references in the workspace, including drafts derived by protected Assist Apply.
 Expired references are pruned. Recovery identifiers and raw captures stay out of saved metadata.
+
+## 0.2.4 browser surfaces and Chat admission
+
+The CLI creates an AgentWorkshop listener with the existing workspace owner and a second Chat
+listener that shares its ProcessState behind WorkspaceGate. The method/path allowlist is in
+`agentwiz/ui/surfaces.py`. The server validates Host, Origin and the scoped header on both ports.
+The bootstrap is a single-use URL fragment, with a short expiry. It is exchanged for an origin-scoped
+session value in browser session storage. Public assets and guarded data routes are separate.
+Workspace switch/reset rotates both grants and rewrites the optional private session handoff.
+
+Production Chat tool runs supply `mode`, `role`, the selected document/draft IDs in `items`, and an
+optional prior run ID in `follow_up`. `capabilities` remains an optional explicit narrowing list.
+The server captures eligibility, labels and bindings before dispatch. A protected selection refuses
+before route discovery. A Local only run marks the conversation private on admission. A later label
+promotion keeps the conversation private and stops a Cloud capture from forwarding restricted data.
+The private-close endpoint requires the conversation ID and explicit confirmation. History and native
+Gate review remain Workshop operations.
+
+The role store can write format 4 with a `mode_bindings` table. Standalone Workshop and workflows
+continue reading named legacy assignments, with their definition location constraint. Chat resolves
+Cloud and Local slots independently. A 0.2.3 executable treats a written format-4 file as newer/read-only.

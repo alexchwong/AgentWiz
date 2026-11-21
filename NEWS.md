@@ -1,5 +1,12 @@
 # NEWS
 
+## 0.2.4
+- AgentWiz Chat and AgentWorkshop open separately and share one workspace.
+- Local only conversations stay private until closed, including across refresh and follow-up.
+- Chat offers six model roles, scoped attachments, built-in tools, all 13 starter blocks and optional webSpell.
+- OpenRouter credentials can come from a private user configuration file.
+- Workshop preview output and raw answers now share one byte budget.
+
 ## 0.2.3
 - Checked request and Saved block runs are removed; Workshop Test and automatic repair cover them.
 - Workshop refuses to test a saved block changed since it was opened, keeping your inputs.

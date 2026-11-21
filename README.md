@@ -41,6 +41,38 @@ Model profiles, roles and MCP servers are shared settings. Credentials stay in p
 Python blocks run in scriptSpell's restricted runner: a language-level restriction, not an OS sandbox. Host
 Python (v3 script) blocks are retired. AgentWiz uses the pinned modelSpell 0.4.0 and scriptSpell 0.3.0 public APIs.
 
+## AgentWiz 0.2.4
+
+Launch `agentwiz` for AgentWiz Chat, `agentwiz --open workshop` for AgentWorkshop, or
+`agentwiz --open both` for both. Both listeners bind to separate loopback ports and share one
+workspace and lock. The terminal prints their public addresses. Browser access is initialized by the
+launcher. For API clients, use `--no-browser --session-file PATH` and send each endpoint’s scoped
+`session` value in the `X-Session-Token` header. The launch owns this private file and replaces its
+contents when the workspace changes.
+
+Chat starts in Cloud with Quick chat. Use a named profile in Settings to choose a different
+binding for a role and mode. Profile creation, trusted destinations, Workflows, and the Release Gate
+are in AgentWorkshop. Select files to include in the turn. Each attachment defaults to Local only.
+Follow-up context is selected explicitly. A private turn keeps its conversation Local only until
+you deliberately close it. Download a draft before closing if you need to retain it. To pass private
+material into a reviewed workflow, upload it inside AgentWorkshop and mark that input Local only.
+
+Built-ins and eligible bundled starters are offered by default. Chat has a separate Cloud-only
+webSpell switch. webSpell is a separately installed service. Download the approved v0.2.0 service ZIP,
+verify its SHA-256 is
+`1ba52d2dc9f861fdd7e4b2bf4f4c16e6bad2135f1e11863698a4312281db2acf`,
+and follow its installation instructions. Add its MCP endpoint using the name `webspell` in
+AgentWorkshop. Cloud Chat checks the server name and three expected tool schemas when connecting.
+Search queries and URL fetches go to the web service, whose controls are described in its own
+documentation. [webSpell v0.2.0](https://github.com/alexchwong/web-retrieval-mcp/releases/tag/v0.2.0)
+
+For the standard OpenRouter key binding, AgentWiz checks the session key first, then the process
+environment, then `~/.config/agentwiz/.env`. Set the file owner to your user and permissions to
+`0600`. It accepts a literal `OPENROUTER_API_KEY=` assignment. The file is read at startup and its value
+stays in server memory. Restart to reread it. Ordinary new Cloud presets request no data collection.
+A custom profile may opt into stricter policy.
+
+
 ## Install
 
 AgentWiz requires Python 3.10 or later.
@@ -80,7 +112,8 @@ damaged or unsupported, reinstall AgentWiz before using schema-dependent actions
 
 ```bash
 agentwiz                            # opens your browser at the printed address
-agentwiz --no-browser               # just print the address
+agentwiz --open both                # open both apps
+agentwiz --no-browser               # print the two loopback addresses
 agentwiz --port 8765                # fixed port (default: any free port)
 agentwiz --workspace work           # use the workspace "work" (default: default)
 agentwiz --workspaces-dir ~/aw      # folder holding workspaces (default: ./workspaces)
@@ -92,10 +125,8 @@ python -m agentwiz                  # same as agentwiz
 
 The three folders default to paths relative to the directory you launch AgentWiz from.
 
-AgentWiz listens on 127.0.0.1 only and prints an address such as
-`http://127.0.0.1:8765/?t=<token>`. The token changes every launch, and every request must carry it,
-so other web pages in your browser cannot use AgentWiz. Anyone who can read the terminal output can
-use it while it runs. Press Ctrl-C to stop.
+Both apps listen on 127.0.0.1. The launcher opens the selected browser surface and initializes its
+session. For headless access, request a private handoff with `--session-file`. Press Ctrl-C to stop.
 
 ### Workspaces
 

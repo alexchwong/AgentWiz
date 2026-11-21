@@ -1521,9 +1521,12 @@ class Service:
                     break
                 record = result.result
                 text = jsonio.encode_exact(record['outputs'])
-                complete = batch['preview_bytes'] + len(text.encode()) <= PREVIEW_LIMIT
+                output_bytes = len(text.encode('utf-8'))
                 machine = judgement(record['outputs'], row['example']['expectation'], row['example'].get('verified', False))
                 with self.lock:
+                    complete = batch['preview_bytes'] + output_bytes <= PREVIEW_LIMIT
+                    if complete:
+                        batch['preview_bytes'] += output_bytes
                     row.update(state='terminal', run_id=result.run.run_id, snapshot_id=capture.digest,
                                outcome=record['outcome'], result_digest=digest(record['outputs']),
                                outputs=record['outputs'] if complete else {}, preview_incomplete=not complete,
@@ -1539,9 +1542,6 @@ class Service:
                     if batch['action'] == 'contract_synthesize' and observer.model_error:
                         # Already sanitized by model_step; never expose a raw backend exception.
                         row['model_error'] = observer.model_error
-                if complete:
-                    batch['preview_bytes'] += len(text.encode())
-                with self.lock:
                     batch['active_run'] = None
                 if batch['action'] == 'contract_synthesize' and record['outcome'] == 'complete':
                     response = jsonio.decode_exact(record['outputs']['proposal']['text'])
