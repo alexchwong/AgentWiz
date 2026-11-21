@@ -119,12 +119,28 @@ launcher. For API clients, use `--no-browser --session-file PATH` and send each 
 `session` value in the `X-Session-Token` header. The launch owns this private file and replaces its
 contents when the workspace changes.
 
-Chat starts in Cloud with Quick chat. Use a named profile in Settings to choose a different
-binding for a role and mode. Profile creation, trusted destinations, Workflows, and the Release Gate
-are in AgentWorkshop. Select files to include in the turn. Each attachment defaults to Local only.
-Follow-up context is selected explicitly. A private turn keeps its conversation Local only until
-you deliberately close it. Download a draft before closing if you need to retain it. To pass private
-material into a reviewed workflow, upload it inside AgentWorkshop and mark that input Local only.
+Chat starts in Cloud with Quick chat. The composer stays below the scrolling transcript. Expand a
+turn's **Activity** bar to see its tool steps. Answers support Markdown, with Copy and Download
+available on completed turns. Pending approvals appear beneath the relevant prompt.
+
+Use the top-bar model picker to choose OpenRouter, LM Studio, or llama-server and filter the models
+by name or ID. Choosing a model applies to this chat. Use **Settings** to assign a named profile as
+a role default. Model server URLs use the configured endpoints. For a Local only run, review and trust
+the exact local model destination in AgentWorkshop. **Reasoning** beside **Send** lists the supported
+levels. llama-server uses its server default.
+
+**Use chat context** includes up to the six most recent completed prompt-and-answer pairs, limited
+to 64 KiB. Clear it for an independent request. Select any attachments or drafts for each turn.
+Uploads default to Local only. A Local only turn makes the conversation private until you close it.
+Download anything you want to keep before closing. To pass private material into a reviewed workflow,
+upload it inside AgentWorkshop and mark that input Local only.
+
+**History** opens or collapses the left sidebar. Turn on **Save this Cloud chat** to reopen it from
+this workspace, including after a restart. Saving is opt-in per chat. Saved transcripts retain up to
+20 recent turns and activity summaries. Attachments, draft files, and raw tool payloads belong to the
+live chat. A chat that becomes Local only leaves saved history. If an unclean shutdown interrupts a
+saved turn, AgentWiz marks the saved chat unavailable because it cannot confirm the final privacy state.
+Workspace settings for saved run records are independent of saved Chat history.
 
 Built-ins and eligible bundled starters are offered by default. Chat has a separate Cloud-only
 webSpell switch. The release installer automatically installs, configures and starts pinned webSpell
@@ -133,8 +149,8 @@ and three expected tool schemas when connecting.
 Search queries and URL fetches go to the web service, whose controls are described in its own
 documentation. [webSpell v0.2.1](https://github.com/alexchwong/web-retrieval-mcp/releases/tag/v0.2.1)
 
-For the standard OpenRouter key binding, AgentWiz checks the session key first, then the process
-environment, then `~/.config/agentwiz/.env`. Set the file owner to your user and permissions to
+Use **OpenRouter key** in the top bar to set or clear a session key. AgentWiz checks the session key
+first, then the process environment, then `~/.config/agentwiz/.env`. Set the file owner to your user and permissions to
 `0600`. It accepts a literal `OPENROUTER_API_KEY=` assignment. The file is read at startup and its value
 stays in server memory. Restart to reread it. Ordinary new Cloud presets request no data collection.
 A custom profile may opt into stricter policy.

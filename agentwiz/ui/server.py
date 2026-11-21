@@ -37,11 +37,11 @@ from .. import (__version__, attachments, checks, contract_schema, contract_serv
                 output_protocol, runner, runs, tool_forms, tutorial_topics, workshop)
 from .. import workspace as wsmod
 from .. import workspace_admin
-from .. import agent_documents, agent_loop, library_install, pdf_reader
+from .. import agent_documents, agent_loop, library_install, outbound_policy, pdf_reader
 from ..errors import SettingsHeld, ShuttingDown, report_internal  # noqa: F401  (re-exported; defined in errors.py since 0.1.4)
 from ..mcp_client import MCPError
 from ..model_call import SettingsError, describe_error
-from ..task_settings import TaskSettingError, parse_task
+from ..task_settings import REASONING_LEVELS, TaskSettingError, parse_task
 from ..tutorial import TutorialBusy
 from ..state import (SHUTDOWN_GRACE_S, BlockUnusable, DefaultConflict, NoSuchBlock, NoSuchProfile, NoSuchServer, ProcessState, ReadOnly,
                      RoleProfileMissing, RoleUnresolved, StaleRevision, WriteFailed)
@@ -616,6 +616,8 @@ class Handler(BaseHTTPRequestHandler):
                              "style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; "
                              "frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
             self.send_header("X-Frame-Options", "DENY")
+            if self.server.authority.surface == "chat":
+                self.send_header("X-DNS-Prefetch-Control", "off")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
         super().end_headers()
@@ -805,6 +807,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, *self.server.assets[path])
         if path == "/api/chat/settings":
             return self._send(200, self._chat_settings())
+        if path == "/api/chat/history":
+            return self._send(200, {"chats": self.server.state.agent.chat_history.listing()})
         if path == WORKSPACES_ROUTE:
             return self._workspaces_get()
         if path == WORKSPACES_ROUTE + "/launch":
@@ -873,6 +877,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, self.server.state.save_chat_preferences(self._body()))
         if path == "/api/chat/webspell":
             return self._webspell_discover(self._body())
+        if path == "/api/chat/models":
+            return self._chat_models(self._body())
+        if path.startswith("/api/chat/history/"):
+            return self._chat_history_post(path, self._body())
         if path.startswith(WORKSPACES_ROUTE + "/"):
             return self._workspaces_post(path)
         if path.startswith("/api/workshop/") and path != "/api/workshop/tickets":
@@ -948,9 +956,67 @@ class Handler(BaseHTTPRequestHandler):
                 "agentwiz_version": __version__, "modelspell_version": modelspell.__version__,
                 "bindings": view["roles"]["mode_bindings"], "tools": state.chat_preferences(),
                 "profiles": {name: details.get("kind") for name, details in profile_details.items()},
+                "reasoning_levels": {kind: [level for level in REASONING_LEVELS[1:]
+                                             if self._reasoning_supported(kind, level)]
+                                     for kind in model_call.KINDS},
                 "key_source": view["openrouter_key_source"], "webspell": web_status,
                 "starter_install_failures": state.starter_install_failures,
                 "workshop_url": self.server.owner.url}
+
+    def _chat_models(self, body):
+        kind, mode = body.get("kind"), body.get("mode")
+        if (set(body) != {"kind", "mode"} or kind not in model_call.KINDS
+                or mode != ("cloud" if kind == "openrouter" else "local")):
+            raise BodyError("choose a model source for the active mode")
+        state = self.server.state
+        with state.agent.idle_reservation(cloud_discovery=mode == "cloud", discovery=True):
+            endpoint = state.discovery_endpoint(kind, None, None)
+            self._base_url = endpoint.base_url
+            grants = []
+            if mode == "local":
+                try:
+                    url = outbound_policy.canonical_url(endpoint.base_url)
+                    # Discovery itself can be pointed only at an unproxied, literal loopback endpoint.
+                    target = {"kind": kind, "url": url}
+                    outbound_policy.decide(target, [target])
+                except outbound_policy.Refused:
+                    raise agent_loop.AgentError("destination_refused", 409) from None
+                try:
+                    _, grants = outbound_policy.read(state.workspace.path)
+                except outbound_policy.Refused:
+                    pass
+            entries = []
+            for info in modelspell.list_models(endpoint, timeout=5):
+                if not info.id.isprintable() or len(info.id) > 4096:
+                    continue
+                levels = [] if info.supports_reasoning is False else [
+                    level for level in REASONING_LEVELS[1:]
+                    if (info.reasoning_options is None or level in info.reasoning_options)
+                    and self._reasoning_supported(kind, level)]
+                trusted = (mode == "local" and
+                           {"kind": kind, "url": url, "model": info.id, "provider": ""} in grants)
+                entries.append({"id": info.id, "name": info.name, "trusted": trusted, "reasoning": levels})
+        self._send(200, {"models": entries})
+
+    @staticmethod
+    def _reasoning_supported(kind, level):
+        try:
+            modelspell.check_settings(kind, reasoning=level)
+        except ModelSpellError:
+            return False
+        return True
+
+    def _chat_history_post(self, path, body):
+        manager = self.server.state.agent
+        if path == "/api/chat/history/save" and set(body) == {"conversation", "enabled"}:
+            return self._send(200, manager.change_chat_save(body["conversation"], body["enabled"]))
+        if path == "/api/chat/history/open" and set(body) == {"id", "close_private"} and isinstance(body["id"], str):
+            return self._send(200, manager.start_conversation(require_confirmation=True, saved_id=body["id"],
+                                                             close_private=body["close_private"]))
+        if path == "/api/chat/history/delete" and set(body) == {"id"}:
+            manager.delete_saved_chat(body["id"])
+            return self._send(200, {"deleted": True})
+        raise BodyError("invalid Chat history action")
 
     def _webspell_discover(self, body):
         from .. import webspell
@@ -1736,7 +1802,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise BodyError("revision, task, capabilities and limits must be JSON") from None
             return self._send(200, manager.inventory(body))
         if path.startswith("runs/"):
-            return self._send(200, manager.run_view(path[len("runs/"):]))
+            return self._send(200, manager.run_view(path[len("runs/"):], chat=self.server.authority is not None))
         if path.startswith("drafts/"):
             conversation = query.get("conversation", [None])[0]
             name, data = manager.draft_bytes(path[len("drafts/"):], conversation)
@@ -1772,16 +1838,18 @@ class Handler(BaseHTTPRequestHandler):
         body = {k: v for k, v in body.items() if k != "format_version"}
         manager = self.server.state.agent
         if path == "conversation":
-            if body:
-                raise BodyError("starting a conversation takes no fields")
-            return self._send(200, manager.start_conversation(require_confirmation=self.server.authority is not None))
+            chat = self.server.authority is not None
+            if set(body) - ({"close_private"} if chat else set()):
+                raise BodyError("invalid new conversation fields")
+            return self._send(200, manager.start_conversation(require_confirmation=chat,
+                                                              close_private=body.get("close_private")))
         if path == "conversation/close":
             return self._send(200, manager.close_conversation(body.get("conversation"),
                 confirm=self.server.authority is None or body.get("confirm") is True))
         if path == "conversation/memory":
             return self._send(200, manager.memory(body))
         if path == "documents/update":
-            return self._send(200, manager.update_document(body))
+            return self._send(200, manager.update_document(body, chat=self.server.authority is not None))
         if path == "inventory":
             return self._send(200, manager.inventory(body))
         if path == "run":

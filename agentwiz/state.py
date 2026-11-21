@@ -787,12 +787,30 @@ class ProcessState:
         defaults = copy.deepcopy(self._role_definitions.get(role, {}).get("task_defaults", {}))
         return RoleCapture(role, name, snapshot, defaults, self._roles_revision)
 
-    def chat_snapshot(self, revision: int, role: str, mode: str) -> RequestSnapshot:
+    def chat_snapshot(self, revision: int, role: str, mode: str, choice=None) -> RequestSnapshot:
         with self._lock:
             self._refresh_locked()
             if revision != self._revision:
                 raise StaleRevision(self._revision)
-            return self._chat_role_locked(role, mode).snapshot
+            if choice is None:
+                return self._chat_role_locked(role, mode).snapshot
+            kind, model = choice["kind"], choice["model"]
+            settings = ModelSettings(kind=kind, model=model)
+            if self._location(settings) != mode:
+                raise SettingsError("the model source does not match the Chat mode")
+            if role not in self._role_definitions:
+                raise RoleUnresolved(role, "location")
+            try:
+                snapshot = self._chat_role_locked(role, mode).snapshot
+            except RoleUnresolved:
+                snapshot = None
+            if snapshot is not None and snapshot.kind == kind:
+                return dataclasses.replace(snapshot, model=model,
+                                           profile_modified=snapshot.model != model)
+            if kind == "openrouter":
+                return RequestSnapshot(self._resolved_endpoint(settings), model, kind, "",
+                                       routing_mode="automatic", routing_data_collection="deny")
+            return RequestSnapshot(self._resolved_endpoint(settings), model, kind, "")
 
     @_writes("chat bindings save")
     def save_mode_bindings(self, value, revision):

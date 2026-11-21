@@ -6,74 +6,130 @@
 <title>AgentWiz</title>
 <link rel="stylesheet" href="/assets/chat.css">
 <script src="/assets/session.js" defer></script>
+<script src="/assets/chat-markdown.js" defer></script>
 <script src="/assets/chat.js" defer></script>
 </head>
 <body>
-<header><strong>AgentWiz</strong><button id="new-chat" type="button">New chat</button></header>
-<main>
-<p id="notice" role="status" hidden></p>
-<section aria-labelledby="task-heading">
-<h1 id="task-heading">Task</h1>
-<textarea id="task" rows="4" aria-label="Task" placeholder="What would you like to do?"></textarea>
-<p id="follow-up-label" hidden></p>
-<div class="bar">
-<label>Mode <select id="mode"><option value="cloud">Cloud</option><option value="local">Local only</option></select></label>
-<label>Role <select id="role"><option value="fast">Quick chat</option></select></label>
-<span id="model" role="status"></span>
-<button id="attach" type="button">Attach</button>
-<button id="run" type="button" disabled>Run</button>
-<button id="stop" type="button" hidden>Stop</button>
+<header class="top-bar">
+  <div class="bar">
+    <button id="toggle-history" type="button" aria-controls="history" aria-expanded="true" data-test="toggle-history">History</button>
+    <strong class="brand">AgentWiz</strong>
+  </div>
+  <div class="bar">
+    <button id="model-picker-open" type="button" aria-haspopup="dialog" data-test="model-picker">Choose model</button>
+    <button id="key-open" type="button" aria-haspopup="dialog" data-test="openrouter-key">OpenRouter key</button>
+    <button id="settings-open" type="button" aria-haspopup="dialog" data-test="chat-settings">Settings</button>
+  </div>
+</header>
+<div class="workspace">
+  <aside id="history" aria-label="Chat history" data-test="chat-history">
+    <button id="new-chat" type="button" data-test="new-chat">New chat</button>
+    <section id="current-chat" aria-labelledby="current-chat-heading" hidden>
+      <h2 id="current-chat-heading">Current chat</h2>
+      <p id="current-title"></p>
+      <label id="save-chat-row"><input id="save-chat" type="checkbox" data-test="save-chat"> Save this Cloud chat</label>
+      <p id="history-status" role="status" hidden></p>
+    </section>
+    <section aria-labelledby="saved-heading">
+      <h2 id="saved-heading">Saved chats</h2>
+      <ul id="saved-chats" data-test="saved-chats"></ul>
+    </section>
+  </aside>
+  <main>
+    <p id="notice" role="status" hidden></p>
+    <div id="scrollback" class="scrollback" tabindex="0" aria-label="Conversation">
+      <div class="thread">
+        <p id="empty-chat">What would you like to do?</p>
+        <div id="transcript" data-test="chat-transcript"></div>
+      </div>
+    </div>
+    <form id="composer" class="composer">
+      <div class="composer-inner">
+        <p id="binding-notice" role="status" hidden></p>
+        <div id="documents"></div>
+        <textarea id="task" rows="2" aria-label="Message" placeholder="Message AgentWiz" data-test="chat-message"></textarea>
+        <div class="composer-controls">
+          <div class="bar">
+            <button id="attach" type="button">Attach</button>
+            <label><select id="mode" aria-label="Privacy mode"><option value="cloud">Cloud</option><option value="local">Local only</option></select></label>
+            <label class="check"><input id="use-context" type="checkbox" checked data-test="use-chat-context"> Use chat context</label>
+          </div>
+          <div class="bar">
+            <label>Reasoning <select id="reasoning" data-test="chat-reasoning"><option value="">Default</option></select></label>
+            <button id="run" class="primary" type="submit" disabled data-test="chat-send">Send</button>
+            <button id="stop" class="primary" type="button" hidden>Stop</button>
+          </div>
+        </div>
+      </div>
+    </form>
+  </main>
 </div>
-<div id="documents"></div>
-<details id="settings">
-<summary>Settings</summary>
-<div class="bar">
-<label><input id="builtins" type="checkbox" checked> Built-in tools</label>
-<label><input id="webspell" type="checkbox" checked> webSpell</label>
-<button id="verify-webspell" type="button">Connect webSpell</button>
-<span id="web-status"></span>
-</div>
-<div class="bar">
-<label>Model profile <select id="profile"></select></label>
-<button id="bind" type="button">Use profile for this mode</button>
-<a id="workshop" rel="noreferrer">AgentWorkshop address</a>
-</div>
-<div class="bar">
-<label>OpenRouter session key <input id="key" type="password" autocomplete="off"></label>
-<button id="save-key" type="button">Set session key</button>
-<span id="key-status"></span>
-</div>
-</details>
-</section>
-<section aria-labelledby="activity-heading">
-<h2 id="activity-heading">Activity</h2>
-<div id="activity"></div>
-<div id="approval" hidden></div>
-</section>
-<section aria-labelledby="answer-heading">
-<h2 id="answer-heading">Answer</h2>
-<p id="outcome" role="status"></p>
-<div id="answer"></div>
-<ul id="sources"></ul>
-<div id="drafts"></div>
-<button id="follow-up" type="button" hidden>Ask follow-up</button>
-</section>
-</main>
-<dialog id="upload">
-<form method="dialog">
-<h2>Attach files</h2>
-<input id="files" type="file" multiple aria-label="Files">
-<div id="labels"></div>
-<div class="bar"><button value="cancel">Cancel</button><button value="attach">Attach</button></div>
-</form>
+
+<dialog id="settings" aria-labelledby="settings-heading">
+  <div class="dialog-head"><h2 id="settings-heading">Settings</h2><button type="button" data-close="settings">Close</button></div>
+  <div class="settings-fields">
+    <label><input id="builtins" type="checkbox" checked> Built-in tools</label>
+    <div class="bar">
+      <label><input id="webspell" type="checkbox" checked> webSpell</label>
+      <button id="verify-webspell" type="button">Connect webSpell</button>
+      <span id="web-status" role="status"></span>
+    </div>
+    <label>Chat role <select id="role"><option value="fast">Quick chat</option></select></label>
+    <div class="bar">
+      <label>Role default <select id="profile"></select></label>
+      <button id="bind" type="button">Save role default</button>
+    </div>
+    <a id="workshop" rel="noreferrer" target="_blank">AgentWorkshop address</a>
+    <p id="settings-status" role="status" hidden></p>
+  </div>
 </dialog>
-<dialog id="private-close">
-<form method="dialog">
-<h2>Start a new chat?</h2>
-<p>Private messages, staged copies and drafts will leave this chat. Download drafts or the answer first if you need them.</p>
-<button value="cancel">Keep working</button>
-<button value="close">Close private chat</button>
-</form>
+
+<dialog id="key-dialog" aria-labelledby="key-heading">
+  <div class="dialog-head"><h2 id="key-heading">OpenRouter key</h2><button type="button" data-close="key-dialog">Close</button></div>
+  <form id="key-form" class="settings-fields">
+    <label>Session API key <input id="key" type="password" autocomplete="off" data-test="openrouter-key-input"></label>
+    <p id="key-status" role="status"></p>
+    <div class="bar">
+      <button id="save-key" class="primary" type="submit">Set session key</button>
+      <button id="clear-key" type="button">Clear session key</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="model-picker" aria-labelledby="model-heading">
+  <div class="dialog-head"><h2 id="model-heading">Choose model</h2><button type="button" data-close="model-picker">Close</button></div>
+  <div class="settings-fields">
+    <label>Source <select id="source" data-test="model-source">
+      <option value="openrouter">OpenRouter</option><option value="lmstudio">LM Studio</option><option value="openai_compat">llama-server</option>
+    </select></label>
+    <label>Model
+      <input id="model-search" type="search" role="combobox" aria-controls="model-options" aria-expanded="false"
+             aria-autocomplete="list" autocomplete="off" spellcheck="false" placeholder="Type a model name or ID" data-test="model-search">
+    </label>
+    <ul id="model-options" role="listbox" aria-label="Available models" hidden></ul>
+    <p id="model-status" role="status"></p>
+    <div class="bar">
+      <button id="model-refresh" type="button">Refresh models</button>
+      <button id="model-default" type="button">Use role default</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="upload" aria-labelledby="upload-heading">
+  <form method="dialog" class="settings-fields">
+    <h2 id="upload-heading">Attach files</h2>
+    <input id="files" type="file" multiple aria-label="Files">
+    <div id="labels"></div>
+    <div class="bar"><button value="cancel">Cancel</button><button class="primary" value="attach">Attach</button></div>
+  </form>
+</dialog>
+
+<dialog id="private-close" aria-labelledby="private-heading">
+  <form method="dialog" class="settings-fields">
+    <h2 id="private-heading">Leave this private chat?</h2>
+    <p>Private messages, staged copies and drafts will leave this chat. Download anything you need to keep first.</p>
+    <div class="bar"><button value="cancel" autofocus>Keep working</button><button value="close">Close private chat</button></div>
+  </form>
 </dialog>
 </body>
 </html>

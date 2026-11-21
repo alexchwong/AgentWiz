@@ -71,6 +71,7 @@ Paths in this table are relative to the repository root.
 | `agentwiz/python_authoring.py` | yes | **0.2.2.** Workshop **Describe it** for Python: examples, source generation and local checks through `YamlAuthoring`; at most three requests. No HTTP. |
 | `agentwiz/agent_tools.py` | yes | **0.2.2.** Built-in tool definitions; the utility registry (`REGISTRY` of `Utility(name, schema, result, description, limits, function)`, from which `UTILITY_TOOLS`, `SCHEMAS`, `DESCRIPTIONS` and `blocks.BUILTIN_TOOLS` derive) with fourteen pure utilities and `run_utility(name, arguments, *, result_limit, check)`; the eight document tool definitions and their effects. No HTTP. |
 | `agentwiz/agent_documents.py` | yes | **0.2.2.** Agentic Chat conversations: staged documents and drafts (`dir_fd`, `O_NOFOLLOW`/`O_EXCL`), labels, memory. No HTTP. |
+| `agentwiz/chat_history.py` | yes | **0.2.4.** Opt-in Cloud transcript checkpoints, bounded serialization and credential redaction. No HTTP. |
 | `agentwiz/agent_capabilities.py` | yes | **0.2.2.** MCP tool classifications and the capability inventory with exclusions. No HTTP. |
 | `agentwiz/agent_loop.py` | yes | **0.2.2.** The agent loop: capture, plan, preflight, model turns through `complete_with_tools`, validation, approval binding, dispatch, labels, records; `Manager`. No HTTP. |
 | `agentwiz/prompts/agent_system.md` | yes | Packaged Agentic Chat system prompt (`agent_system`, version 2). |
@@ -568,6 +569,26 @@ rescanned.
   `GET /api/agent/inventory` accepts an integer `revision` and JSON-encoded `task`, `capabilities` and
   `limits` in its query. `GET /api/agent/drafts/<id>` accepts an optional `conversation` query
   parameter and defaults to the live conversation.
+  On the scoped Chat surface, `GET /api/agent/runs/<id>` includes the submitted message and can
+  resolve turns from the currently reopened archive. The conversation view lists restored and recent
+  run IDs. The composer sends `use_context` to select up to six completed pairs within 64 KiB.
+  Document and draft IDs still need explicit selection. The resulting prior-answer context triggers the
+  same webSpell provenance checks as an explicit follow-up. Headless requests keep their existing default.
+  `model_choice` takes a source kind and model ID for the Chat orchestrator, checked at capture and dispatch.
+  Same-source overrides retain the role profile's routing policy. Child block role bindings remain independent.
+  `POST /api/chat/models` discovers only the configured source through modelSpell while holding the idle
+  reservation. Cloud lookup refuses a private conversation. Local discovery requires an unproxied literal
+  loopback endpoint. Local execution still requires the exact model destination grant.
+- **Saved Chat (0.2.4).** One live conversation per workspace. `/api/chat/history` lists saved conversations,
+  and its `save`, `open`, and `delete` POST routes are scoped to Chat. Each explicit opt-in has a versioned
+  owner-only, atomically replaced `chat-history-conv_<id>.json` checkpoint. Save up to 50 conversations.
+  A checkpoint holds at most 20 recent turns and 8 MiB, and redacts registered credentials. It contains
+  rendered answer source text, prompts, public source links, and action outcomes. Staged files, draft
+  contents, run approvals and raw tool payloads stay in live state. Reopening starts without staged files
+  and restores the saved model override. A writer reservation fences archive mutation and conversation
+  switching. A saved checkpoint is marked unavailable before a Cloud turn can begin, then replaced with an
+  eligible transcript after completion. If the chat becomes private, the archive is removed. Local only
+  turns remove the saved copy before dispatch. A checkpoint left unavailable after a crash cannot be resumed.
 - **Roles.** `roles.json` through `roles.py`, under the state lock, with its own revision; a save
   refuses a profile that does not exist. Resolution is live, at preparation (`state.resolve_role`).
   Version 2 retains the string assignment map and adds `definitions`, keyed by role, each containing

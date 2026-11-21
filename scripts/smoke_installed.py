@@ -111,6 +111,16 @@ def agent_turn(body):
 
 
 class Stub(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path != "/v1/models":
+            return self.send_error(404)
+        data = json.dumps({"data": [{"id": "agent-two-step"}]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_POST(self):
         received.append(json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}"))
         if received[-1].get("model") == "author":
@@ -208,6 +218,18 @@ try:
     def chat_api(path, body=None):
         return scoped(chat_root, chat_token, path, body)
 
+    # Chat's packaged transcript and model chooser, using the installed modelSpell transport.
+    with urllib.request.urlopen(chat_root + "/", timeout=10) as page:
+        markup = page.read()
+        check(b'id="composer"' in markup and b'id="history"' in markup and b'/assets/chat-markdown.js' in markup
+              and page.headers["X-DNS-Prefetch-Control"] == "off", "installed Chat transcript and guards")
+    with urllib.request.urlopen(chat_root + "/assets/chat-markdown.js", timeout=10) as script:
+        check(b"agentWizMarkdown" in script.read(), "installed Chat Markdown asset")
+    models = json.loads(chat_api("/api/chat/models", {"kind": "openai_compat", "mode": "local"}).read())
+    check(models["models"] == [{"id": "agent-two-step", "name": None, "trusted": False, "reasoning": []}],
+          "installed Chat local model discovery")
+    check(json.loads(chat_api("/api/chat/history").read()) == {"chats": []}, "Chat history starts empty")
+
     for base, grant, path in ((chat_root, chat_token, "/api/library"),
                               (root, "", "/api/state"), (root, chat_token, "/api/state"),
                               (root, token, "/api/agent/conversation"), (chat_root, chat_token, "/assets/contracts.js")):
@@ -231,7 +253,9 @@ try:
     check(initial["profiles"]["names"] == [] and initial["profiles"]["active"] is None,
           "fresh workspace has unexpected profiles")
     # S4 (0.1.2): the MCP library and task settings are usable; the retired settings are gone
-    check(initial["mcp"]["read_only"] is False and initial["mcp"]["servers"] == {}, f"MCP library: {initial['mcp']}")
+    servers = initial["mcp"]["servers"]
+    check(initial["mcp"]["read_only"] is False and set(servers) == {"webspell"}
+          and servers["webspell"]["url"] == "http://127.0.0.1:8765/mcp", f"MCP library: {initial['mcp']}")
     check(initial["task"]["read_only"] is False, f"task settings: {initial['task']}")
     check("reasoning" not in initial and "max_tokens" not in initial, "retired settings still in /api/state")
     # S4 (0.1.4, 0.2.2): no roles yet, and the Python budget is four

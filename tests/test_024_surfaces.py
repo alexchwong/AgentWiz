@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 import json
 import threading
+from types import SimpleNamespace
 import urllib.error
 import urllib.request
 
@@ -174,3 +175,195 @@ def test_openrouter_file_key_requires_private_file(tmp_path):
     link = tmp_path / "link"
     link.symlink_to(path)
     assert server_config.openrouter_file_key(link) is None
+
+
+def _chat_model_stub(monkeypatch, answer, calls):
+    import modelspell
+    from agentwiz import model_call
+
+    def complete(endpoint, model, messages, *, on_text, **arguments):
+        calls.append((endpoint.kind, model, list(messages), arguments))
+        on_text(answer)
+        return modelspell.Result(answer, None, None, None, "stop", False, model, None, None,
+                                 "chat_completions", None, None)
+
+    monkeypatch.setattr(model_call, "resolve_request", lambda _snapshot, arguments, **_kw: (arguments, None))
+    monkeypatch.setattr(modelspell, "complete", complete)
+    monkeypatch.setattr(modelspell, "complete_with_tools", lambda endpoint, model, messages, *, tools, **kwargs:
+                        SimpleNamespace(result=complete(endpoint, model, messages, **kwargs), clean=True, tool_calls=[]))
+
+
+def test_chat_picker_transcript_and_saved_sidebar(browser, tmp_path, server, monkeypatch):
+    import modelspell
+    from playwright.sync_api import expect
+
+    calls = []
+    _chat_model_stub(monkeypatch, """## Answer
+**Bold** and [public](https://example.org/).
+
+| A | B |
+| --- | --- |
+| one | two |
+
+<img src="https://example.org/unsafe.png">
+![remote](https://example.org/image.png)
+[unsafe](javascript:alert%281%29)
+""", calls)
+    lookups = []
+    catalog = {
+        "openrouter": ("demo/alternative", "Cloud Alternative", ["low", "medium"]),
+        "lmstudio": ("qwen-local", "Local Qwen", ["off"]),
+        "openai_compat": ("gguf-alias", "GGUF Alias", ["high"]),
+    }
+
+    def list_models(endpoint, **_kwargs):
+        lookups.append(endpoint.kind)
+        identifier, name, levels = catalog[endpoint.kind]
+        return [modelspell.ModelInfo(identifier, name, None, None, True, True, tuple(levels), None, {})]
+
+    monkeypatch.setattr(modelspell, "list_models", list_models)
+    with listeners(tmp_path, server.url + "/v1") as (workshop, chat):
+        other_kind = workshop.state.chat_snapshot(workshop.state.view()["revision"], "fast", "local",
+                                                  {"kind": "openai_compat", "model": "gguf-alias"})
+        outbound_policy.update(workshop.state, {"destination": outbound_policy.model_identity(other_kind),
+                                                "expected_revision": None, "trusted": True})
+        page = browser.new_page()
+        page_errors = []
+        page.on("pageerror", lambda exc: page_errors.append(str(exc)))
+        try:
+            page.goto(chat.authority.launch_url(origin(chat)))
+            page.locator('[data-test="toggle-history"]').click()
+            expect(page.locator('[data-test="chat-history"]')).to_be_hidden()
+            page.locator('[data-test="toggle-history"]').click()
+            expect(page.locator('[data-test="chat-history"]')).to_be_visible()
+
+            page.locator('[data-test="openrouter-key"]').click()
+            page.locator('[data-test="openrouter-key-input"]').fill("synthetic-key-not-a-real-credential")
+            page.locator("#save-key").click()
+            expect(page.locator("#key-dialog")).to_be_hidden()
+            page.locator('[data-test="chat-settings"]').click()
+            page.locator("#builtins").uncheck()
+            page.locator("#webspell").uncheck()
+            page.locator('[data-close="settings"]').click()
+
+            page.locator('[data-test="model-picker"]').click()
+            expect(page.get_by_role("option", name="Cloud Alternative", exact=False)).to_be_visible()
+            page.locator('[data-test="model-source"]').select_option("lmstudio")
+            expect(page.get_by_role("option", name="Local Qwen", exact=False)).to_be_visible()
+            page.locator('[data-test="model-source"]').select_option("openai_compat")
+            expect(page.get_by_role("option", name="GGUF Alias", exact=False)).to_be_visible()
+            page.locator('[data-test="model-search"]').fill("gguf")
+            page.locator('[data-test="model-search"]').press("ArrowDown")
+            page.locator('[data-test="model-search"]').press("Enter")
+            expect(page.locator("#mode")).to_have_value("local")
+            expect(page.locator('[data-test="chat-reasoning"]')).to_be_disabled()
+            page.locator("#mode").select_option("cloud")
+
+            page.locator('[data-test="model-picker"]').click()
+            page.locator('[data-test="model-search"]').fill("alternative")
+            expect(page.get_by_role("option", name="Cloud Alternative", exact=False)).to_be_visible()
+            page.locator('[data-test="model-search"]').press("Enter")
+            page.locator('[data-test="chat-reasoning"]').select_option("medium")
+            page.locator('[data-test="new-chat"]').wait_for()
+            page.locator('[data-test="chat-message"]').fill("Synthetic cloud question")
+            page.locator('[data-test="chat-send"]').click()
+
+            expect(page.locator('[data-test="prompt-bubble"]')).to_have_text("Synthetic cloud question")
+            expect(page.locator('[data-test="turn-answer"]').locator("h2")).to_have_text("Answer")
+            expect(page.locator('[data-test="turn-answer"]').locator("strong")).to_have_text("Bold")
+            expect(page.locator('[data-test="turn-answer"]').locator("td")).to_have_count(2)
+            expect(page.locator('[data-test="turn-answer"]').locator("a")).to_have_count(1)
+            expect(page.locator('[data-test="turn-answer"]').locator("img")).to_have_count(0)
+            expect(page.locator('[data-test="chat-message"]')).to_be_empty()
+            expect(page.locator('[data-test="saved-chats"]').get_by_role("button")).to_have_count(0)
+
+            page.locator('[data-test="save-chat"]').check()
+            saved = page.locator('[data-test="saved-chats"]').get_by_role("button", name="Synthetic cloud question", exact=True)
+            expect(saved).to_be_enabled()
+            page.locator('[data-test="new-chat"]').click()
+            expect(page.locator('[data-test="prompt-bubble"]')).to_have_count(0)
+            saved.click()
+            expect(page.locator('[data-test="prompt-bubble"]')).to_have_text("Synthetic cloud question")
+            expect(page.locator('[data-test="model-picker"]')).to_have_text("demo/alternative")
+            page.reload()
+            expect(page.locator('[data-test="turn-answer"]').locator("h2")).to_have_text("Answer")
+            assert calls[0][0:2] == ("openrouter", "demo/alternative")
+            assert calls[0][3]["reasoning"] == "medium"
+            assert lookups[:3] == ["openrouter", "lmstudio", "openai_compat"]
+            assert not page_errors
+        finally:
+            page.close()
+
+
+def test_saved_chat_restart_context_and_private_boundary(tmp_path, server, monkeypatch):
+    from agentwiz import chat_history
+
+    calls = []
+    _chat_model_stub(monkeypatch, "A cloud answer.", calls)
+
+    def run(workshop, conversation_id, message, **extra):
+        state = workshop.state
+        body = {"revision": state.view()["revision"], "conversation": conversation_id,
+                "mode": "cloud", "message": message, "builtins": False, "webspell": False, **extra}
+        agent_run = state.agent.prepare_run(body, None)
+        assert agent_run.run()["stop_reason"] == "answered"
+        return agent_run.run_id
+
+    with listeners(tmp_path, server.url + "/v1") as (workshop, chat):
+        workspace = workshop.state.workspace.path
+        ident = call(chat, "/api/agent/conversation", {"format_version": 1})[1]["conversation"]["id"]
+        key = "synthetic-archive-redaction-canary"
+        state = workshop.state
+        state.set_openrouter_key(key, state.view()["revision"])
+        first = run(workshop, ident, "Public question " + key)
+        archive = workspace / f"chat-history-{ident}.json"
+        assert not archive.exists()
+        assert call(chat, "/api/chat/history/save", {"conversation": ident, "enabled": True})[0] == 200
+        assert archive.stat().st_mode & 0o777 == 0o600
+        assert key not in archive.read_text()
+        assert call(workshop, "/api/chat/history")[0] == 403
+
+    with listeners(tmp_path, server.url + "/v1") as (workshop, chat):
+        state = workshop.state
+        status, view = call(chat, "/api/chat/history/open", {"id": ident, "close_private": None})
+        assert status == 200 and view["conversation"]["restored_runs"] == [first]
+        assert call(chat, "/api/agent/runs/" + first)[1]["message"] == "Public question ***"
+        run(workshop, ident, "Follow-up", use_context=True)
+        assert [(row["role"], row["content"]) for row in calls[-1][2][1:]] == [
+            ("user", "Public question ***"), ("assistant", "A cloud answer."), ("user", "Follow-up")]
+        run(workshop, ident, "Independent turn", use_context=False)
+        assert [row["content"] for row in calls[-1][2][1:]] == ["Independent turn"]
+
+        local = outbound_policy.model_identity(state.role_capture("fast", "local").snapshot)
+        outbound_policy.update(state, {"destination": local, "expected_revision": None, "trusted": True})
+        private = run(workshop, ident, "Private transcript canary", mode="local")
+        assert state.agent.view()["conversation"]["private"]
+        assert not archive.exists()
+        assert list(workspace.glob(f"{chat_history.PREFIX}*.json")) == []
+        assert call(chat, "/api/chat/models", {"kind": "openrouter", "mode": "cloud"})[0] == 409
+        assert call(chat, "/api/chat/history/save", {"conversation": ident, "enabled": True})[0] == 409
+        assert call(chat, "/api/chat/history/open", {"id": ident, "close_private": None})[0] == 409
+        assert state.agent.view()["conversation"]["recent_runs"][-1] == private
+        assert not any("Private transcript canary" in path.read_text()
+                       for path in workspace.glob("*.json") if path.is_file())
+        assert call(chat, "/api/agent/conversation", {"format_version": 1})[0] == 409
+        assert call(chat, "/api/agent/conversation", {"format_version": 1, "close_private": ident})[0] == 200
+
+
+def test_interrupted_archive_refuses_reopen(tmp_path, server, monkeypatch):
+    _chat_model_stub(monkeypatch, "Public answer", [])
+    with listeners(tmp_path, server.url + "/v1") as (workshop, chat):
+        state = workshop.state
+        ident = call(chat, "/api/agent/conversation", {"format_version": 1})[1]["conversation"]["id"]
+        run = state.agent.prepare_run({"revision": state.view()["revision"], "conversation": ident,
+                                       "mode": "cloud", "message": "Public question",
+                                       "builtins": False, "webspell": False}, None)
+        run.run()
+        state.agent.change_chat_save(ident, True)
+        state.agent.chat_history.suspend(ident)
+    with listeners(tmp_path, server.url + "/v1") as (_, chat):
+        assert call(chat, "/api/chat/history")[1]["chats"][0]["ready"] is False
+        status, error = call(chat, "/api/chat/history/open", {"id": ident, "close_private": None})
+        assert status == 409 and error["code"] == "chat_history_interrupted"
+        assert call(chat, "/api/chat/history/delete", {"id": ident})[0] == 200
+        assert not call(chat, "/api/chat/history")[1]["chats"]

@@ -2,28 +2,34 @@
 (async () => {
   const $ = id => document.getElementById(id);
   const token = await window.agentWizSession();
-  const revision = 1;
-  let settings, conversation, active, last, followUp, polling, sending = false;
-  const selected = new Set();
-  const completed = new Map();
-  const element = (tag, text) => Object.assign(document.createElement(tag), {textContent: text});
+  const markdown = window.agentWizMarkdown;
+  const backend = {openrouter: "OpenRouter", lmstudio: "LM Studio", openai_compat: "llama-server"};
+  const element = (tag, text, className = "") => Object.assign(document.createElement(tag), {textContent: text, className});
   const button = (text, fn) => Object.assign(element("button", text), {type: "button", onclick: fn});
-  function show(message) {
-    $("notice").textContent = message || "";
-    $("notice").hidden = !message;
+  let settings, conversation, active, sending = false, switching = false, discovering = false;
+  let choice, savedChats = [], lastHistoryRun, lookupSequence = 0, scrollFrame = 0;
+  let models = [], visibleModels = [], selectedModel = -1, currentRefresh;
+  const selected = new Set();
+  const turns = new Map();
+  const catalogs = new Map();
+  const mobile = matchMedia("(max-width: 690px)");
+  const modeFor = kind => kind === "openrouter" ? "cloud" : "local";
+
+  function status(id, message) {
+    $(id).textContent = message || "";
+    $(id).hidden = !message;
   }
-  function report(error) {
-    show(error.message.replaceAll("_", " "));
+  function report(error, id = "notice") {
+    status(id, error.message.replaceAll("_", " "));
   }
   if (!token) {
-    show("Open AgentWiz from the launcher.");
-    $("run").disabled = true;
+    status("notice", "Open AgentWiz from the launcher.");
     return;
   }
+
   async function request(path, body, headers = {}) {
-    const method = body === undefined ? "GET" : "POST";
     const response = await fetch(path, {
-      method,
+      method: body === undefined ? "GET" : "POST",
       headers: {"X-Session-Token": token, "Content-Type": "application/json", ...headers},
       body: body === undefined ? undefined : body instanceof Blob ? body : JSON.stringify(body),
     });
@@ -33,164 +39,432 @@
     }
     return response;
   }
-  async function api(path, body) {
-    return (await request(path, body)).json();
-  }
-  async function agent(path, body) {
-    return api("/api/agent/" + path, body === undefined ? undefined : {format_version: revision, ...body});
-  }
+  const api = async (path, body) => (await request(path, body)).json();
+  const agent = (path, body) => api("/api/agent/" + path, body === undefined ? undefined : {format_version: 1, ...body});
+  const roleBinding = () => settings.roles[$("role").value]?.[$("mode").value];
+  const effectiveChoice = () => choice && modeFor(choice.kind) === $("mode").value ? choice : null;
+  const isBusy = () => Boolean(active || sending || switching || discovering);
+  const restrictedSelection = () => Boolean(conversation?.documents.some(i => selected.has(i.id) && i.local_only));
+
   async function loadSettings() {
-    settings = await api("/api/chat/settings");
     const previous = $("role").value;
+    settings = await api("/api/chat/settings");
     $("role").replaceChildren(...Object.entries(settings.roles).map(([id, role]) => new Option(role.name, id)));
     $("role").value = settings.roles[previous] ? previous : "fast";
     $("builtins").checked = settings.tools.builtins;
     $("webspell").checked = settings.tools.webspell;
-    $("key-status").textContent = settings.key_source === "none" ? "No OpenRouter key" : "Key configured";
+    $("key-status").textContent = {
+      none: "No OpenRouter key configured.", session: "Using the session override.",
+      "env:OPENROUTER_API_KEY": "Using the process environment key.", file: "Using the configured .env key.",
+    }[settings.key_source] || "OpenRouter key configured.";
+    $("clear-key").disabled = settings.key_source !== "session";
     $("web-status").textContent = settings.webspell.replaceAll("_", " ");
     $("workshop").href = settings.workshop_url;
-    renderBinding();
+    renderControls();
     if (settings.starter_install_failures.length) {
-      show("Some starter blocks could not be installed. Review the catalogue in AgentWorkshop.");
+      status("notice", "Some starter blocks could not be installed. Review the catalogue in AgentWorkshop.");
     }
   }
-  function renderBinding() {
+
+  function renderControls() {
     const mode = $("mode").value;
-    const binding = settings.roles[$("role").value]?.[mode];
-    const profiles = Object.entries(settings.profiles).filter(([, kind]) =>
-      mode === "cloud" ? kind === "openrouter" : ["lmstudio", "openai_compat"].includes(kind));
-    $("profile").replaceChildren(new Option("Packaged default", ""), ...profiles.map(([name]) => new Option(name, name)));
-    $("profile").value = settings.bindings[$("role").value]?.[mode] || "";
+    const binding = roleBinding();
+    const override = effectiveChoice();
+    const kind = override?.kind || binding?.kind;
+    const model = override?.model || binding?.model;
+    const listed = catalogs.get(kind)?.find(entry => entry.id === model);
+    const busy = isBusy();
     let reason = "";
-    if (!binding?.model) reason = "Select a usable profile.";
-    else if (mode === "cloud" && conversation?.private) reason = "Start a new chat for Cloud.";
-    else if (mode === "local" && !binding.trusted) reason = "Review the Local destination in AgentWorkshop.";
-    else if (mode === "cloud" && settings.key_source === "none") reason = "Set an OpenRouter key in Settings.";
-    $("model").textContent = [binding?.model, reason].filter(Boolean).join(" · ");
-    $("model").title = [binding?.routing_mode, binding?.provider, binding?.data_collection,
-      binding?.zdr ? "ZDR requested. Account enforcement may require separate verification." : ""].filter(Boolean).join(" · ");
-    $("run").disabled = Boolean(reason || active || sending);
+    if (mode === "cloud" && conversation?.private) reason = "This chat is Local only. Start a new chat to use Cloud.";
+    else if (mode === "cloud" && restrictedSelection()) reason = "A selected attachment is Local only. Change mode to continue.";
+    else if (!model) reason = "Choose a model or set a role default.";
+    else if (mode === "local" && (override ? listed?.trusted === false : !binding?.trusted)) {
+      reason = "Review and trust this model destination in AgentWorkshop.";
+    } else if (kind === "openrouter" && settings.key_source === "none") reason = "Set your key using OpenRouter key.";
+    status("binding-notice", reason);
+
+    const modelButton = $("model-picker-open");
+    const policy = (!override || override.kind === binding?.kind) ? binding : null;
+    modelButton.textContent = model || "Choose model";
+    modelButton.title = [backend[kind], model, policy?.routing_mode, policy?.provider,
+      policy?.data_collection, policy?.zdr ? "ZDR requested" : ""].filter(Boolean).join(" · ");
+    modelButton.setAttribute("aria-label", model ? "Choose model · " + model : "Choose model");
+    modelButton.disabled = busy;
+
+    const reasoning = $("reasoning");
+    const level = reasoning.value;
+    const levels = listed?.reasoning ?? settings.reasoning_levels[kind] ?? [];
+    const optionsKey = [kind, ...levels].join("|");
+    if (reasoning.dataset.options !== optionsKey) {
+      const options = levels.map(value => new Option(value[0].toUpperCase() + value.slice(1), value));
+      reasoning.replaceChildren(new Option(kind === "openai_compat" ? "Server default" : "Default", ""), ...options);
+      reasoning.dataset.options = optionsKey;
+    }
+    reasoning.value = levels.includes(level) ? level : "";
+    reasoning.disabled = busy || !levels.length;
+
+    $("run").disabled = Boolean(reason || busy || !$("task").value.trim());
+    $("run").hidden = Boolean(active);
     $("stop").hidden = !active;
-    $("new-chat").disabled = Boolean(active || sending);
-    $("verify-webspell").disabled = mode !== "cloud" || Boolean(conversation?.private || active || sending) || !$("webspell").checked;
+    $("new-chat").disabled = busy;
+    $("mode").disabled = busy;
+    $("attach").disabled = busy;
+    $("bind").disabled = busy;
+    $("save-chat").disabled = busy || mode !== "cloud";
+    $("verify-webspell").disabled = mode !== "cloud" || Boolean(conversation?.private || busy) || !$("webspell").checked;
+    $("key-open").disabled = Boolean(active || sending || switching);
+    const profileOptions = Object.entries(settings.profiles).filter(([, source]) =>
+      mode === "cloud" ? source === "openrouter" : ["lmstudio", "openai_compat"].includes(source));
+    const profile = $("profile");
+    const profileKey = JSON.stringify([mode, $("role").value, settings.binding_revision, profileOptions]);
+    if (profile.dataset.options !== profileKey) {
+      profile.replaceChildren(new Option("Packaged default", ""), ...profileOptions.map(([name]) => new Option(name, name)));
+      profile.value = settings.bindings[$("role").value]?.[mode] || "";
+      profile.dataset.options = profileKey;
+    }
   }
+
   function renderFiles() {
     const rows = (conversation?.documents || []).map(item => {
       const label = element("label", "");
       const check = Object.assign(document.createElement("input"), {type: "checkbox", checked: selected.has(item.id)});
-      check.onchange = () => check.checked ? selected.add(item.id) : selected.delete(item.id);
+      check.setAttribute("aria-label", item.name);
+      check.onchange = () => {
+        if (check.checked) selected.add(item.id);
+        else selected.delete(item.id);
+        renderControls();
+      };
       label.append(check, " ", item.name, item.local_only ? " · Local only" : " · Cloud eligible");
       if (item.kind === "draft") label.append(" ", button("Download", () => downloadDraft(item).catch(report)));
       return label;
     });
     $("documents").replaceChildren(...rows);
   }
+
   function download(blob, name) {
     const url = URL.createObjectURL(blob);
-    const link = Object.assign(document.createElement("a"), {href: url, download: name});
-    link.click();
+    Object.assign(element("a"), {href: url, download: name}).click();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
+
   async function downloadDraft(item) {
-    const response = await request("/api/agent/drafts/" + encodeURIComponent(item.id) + "?conversation=" + encodeURIComponent(conversation.id));
+    const response = await request("/api/agent/drafts/" + encodeURIComponent(item.id)
+      + "?conversation=" + encodeURIComponent(conversation.id));
     download(await response.blob(), item.name);
   }
-  function renderRun(run) {
-    last = run;
-    $("answer").textContent = run.answer || run.partial || "";
-    const sources = (run.sources || []).map(source => {
-      const parsed = new URL(source);
-      if (!["https:", "http:"].includes(parsed.protocol)) return null;
-      const item = element("li", "");
-      item.append(Object.assign(element("a", source), {href: source, target: "_blank", rel: "noopener noreferrer"}));
-      return item;
-    }).filter(Boolean);
-    $("sources").replaceChildren(...sources);
-    $("outcome").textContent = run.state === "running" ? "Running" : (run.stop_detail || run.stop_reason || "").replaceAll("_", " ");
-    $("follow-up").hidden = !run.answer || run.state === "running";
-    const cards = [...completed.values()].flatMap(entry => entry.trace || []).concat(run.trace || []).map(action => {
-      const card = document.createElement("details");
-      card.dataset.state = action.outcome;
-      card.append(element("summary", [action.identity?.builtin || action.identity?.block || action.identity?.tool || action.capability,
-        action.outcome].filter(Boolean).join(" · ")), element("pre", action.result_text || action.code || ""));
-      return card;
-    });
-    $("activity").replaceChildren(...cards);
-    const drafts = (run.drafts || []).map(item => button("Download " + item.name, () => downloadDraft(item).catch(report)));
-    if (run.answer) drafts.push(button("Download answer", () => download(new Blob([run.answer], {type: "text/plain"}), "answer.txt")));
-    $("drafts").replaceChildren(...drafts);
-    const approvals = $("approval");
-    approvals.hidden = !run.pending_approval;
-    approvals.replaceChildren();
-    if (run.pending_approval) {
+
+  function keepScroll(change, force = false) {
+    const scroll = $("scrollback");
+    const atBottom = scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop < 80;
+    change();
+    if (atBottom || force) scroll.scrollTop = scroll.scrollHeight;
+  }
+
+  function createTurn(run) {
+    const root = element("article", "", "turn");
+    root.dataset.test = "chat-turn";
+    const prompt = element("p", run.message || "", "prompt");
+    prompt.dataset.test = "prompt-bubble";
+    const activity = element("details", "", "activity");
+    activity.dataset.test = "turn-activity";
+    const summary = element("summary", "Activity");
+    const steps = element("ol", "");
+    activity.append(summary, steps);
+    const approval = element("div", "", "approval");
+    const response = element("div", "", "answer");
+    response.dataset.test = "turn-answer";
+    const outcome = element("p", "", "turn-status");
+    const sources = element("ul", "", "sources");
+    const actions = element("div", "", "bar turn-actions");
+    root.append(prompt, activity, approval, response, outcome, sources, actions);
+    const refs = {root, prompt, activity, summary, steps, approval, response, outcome, sources, actions};
+    refs.data = run;
+    turns.set(run.run_id, refs);
+    $("transcript").append(root);
+    return refs;
+  }
+
+  function renderAnswer(refs, text) {
+    if (refs.renderedText !== text) {
+      refs.response.replaceChildren(markdown.render(text));
+      refs.renderedText = text;
+    }
+  }
+
+  function renderRun(run, force = false) {
+    keepScroll(() => {
+      const refs = turns.get(run.run_id) || createTurn(run);
+      if (run.state === "running" && refs.data.state === "ended") return;
+      refs.data = run;
+      if (run.message !== undefined && refs.prompt.textContent !== run.message) refs.prompt.textContent = run.message;
+      const text = run.answer || run.partial || "";
+      const modelTurn = run.counters?.model_turns || 0;
+      if (run.state !== "running" || modelTurn > (refs.modelTurn || 0)
+          || (modelTurn === (refs.modelTurn || 0) && text.length >= (refs.renderedText?.length || 0))) {
+        refs.modelTurn = modelTurn;
+        renderAnswer(refs, text);
+      }
+      const trace = run.trace || [];
+      const stepKey = JSON.stringify(trace);
+      if (stepKey !== refs.stepKey) {
+        refs.steps.replaceChildren(...trace.map(action => {
+          const row = element("li", "");
+          const title = [action.identity?.builtin || action.identity?.block || action.identity?.tool || action.capability,
+            action.outcome].filter(Boolean).join(" · ");
+          const details = action.result_text || action.code;
+          if (details) {
+            const group = element("details", "");
+            group.append(element("summary", title), element("pre", details));
+            row.append(group);
+          } else row.textContent = title;
+          return row;
+        }));
+        refs.stepKey = stepKey;
+      }
+      refs.summary.textContent = trace.length ? "Activity · " + trace.length : run.state === "running" ? "Activity · working" : "Activity";
+      refs.activity.hidden = !trace.length && run.state !== "running";
+      const outcome = run.state === "running" ? "Working…" :
+        run.stop_reason === "answered" ? "" : (run.stop_detail || run.stop_reason || "").replaceAll("_", " ");
+      if (refs.outcome.textContent !== outcome) refs.outcome.textContent = outcome;
+      refs.outcome.hidden = !outcome;
+
+      const sourceKey = JSON.stringify(run.sources || []);
+      if (sourceKey !== refs.sourceKey) {
+        refs.sources.replaceChildren(...(run.sources || []).flatMap(url => {
+          const link = markdown.safeLink(url, url);
+          if (!link) return [];
+          const item = element("li", "");
+          item.append(link);
+          return [item];
+        }));
+        refs.sources.hidden = !refs.sources.childElementCount;
+        refs.sourceKey = sourceKey;
+      }
+
+      const actionsKey = JSON.stringify([Boolean(run.state !== "running" && text), run.drafts]);
+      if (actionsKey !== refs.actionsKey) {
+        const actions = (run.drafts || []).map(item => button("Download " + item.name, () => downloadDraft(item).catch(report)));
+        if (run.state !== "running" && text) {
+          actions.push(button("Copy", () => navigator.clipboard.writeText(refs.renderedText).catch(report)),
+            button("Download answer", () => download(new Blob([refs.renderedText], {type: "text/plain"}), "answer.md")));
+        }
+        refs.actions.replaceChildren(...actions);
+        refs.actions.hidden = !actions.length;
+        refs.actionsKey = actionsKey;
+      }
       const approval = run.pending_approval;
-      const send = decision => agent("approve", {run_id: run.run_id, call_id: approval.call_id, decision}).catch(report);
-      approvals.append(element("strong", "Review external tool request"),
-        element("p", approval.destination?.url || ""), element("pre", approval.arguments_text || ""),
-        button("Approve", () => send("approve")), button("Deny", () => send("deny")));
-    }
+      refs.approval.hidden = !approval;
+      if (approval?.call_id !== refs.approvalId) {
+        refs.approvalId = approval?.call_id;
+        refs.approval.replaceChildren();
+        if (approval) {
+          const send = decision => agent("approve", {run_id: run.run_id, call_id: approval.call_id, decision})
+            .then(() => { for (const control of refs.approval.querySelectorAll("button")) control.disabled = true; })
+            .catch(report);
+          refs.approval.append(element("strong", "Review external tool request"),
+            element("p", approval.destination?.url || ""), element("pre", approval.arguments_text || ""),
+            button("Approve", () => send("approve")), button("Deny", () => send("deny")));
+        }
+      }
+      $("empty-chat").hidden = true;
+    }, force);
   }
-  async function refresh() {
-    const view = await agent("conversation");
-    conversation = view.conversation;
-    active = view.active_run;
-    const recent = conversation?.recent_runs || [];
-    const run = active || recent.at(-1);
-    for (const id of completed.keys()) {
-      if (!recent.includes(id) || id === run) completed.delete(id);
-    }
-    for (const id of recent) {
-      if (id !== run && !completed.has(id)) completed.set(id, await agent("runs/" + encodeURIComponent(id)));
-    }
-    if (run) renderRun(await agent("runs/" + encodeURIComponent(run)));
-    renderFiles();
-    renderBinding();
+
+  function setHistoryOpen(open) {
+    $("history").hidden = !open;
+    $("toggle-history").setAttribute("aria-expanded", String(open));
   }
-  function beginPolling() {
-    if (polling) return;
-    polling = setInterval(async () => {
-      try { await refresh(); }
-      catch (error) { report(error); clearInterval(polling); polling = null; }
-      if (!active && !sending) { clearInterval(polling); polling = null; }
-    }, 600);
+
+  function renderHistory() {
+    const first = turns.values().next().value;
+    $("current-chat").hidden = !conversation;
+    $("current-title").textContent = conversation?.private ? "Local only chat" :
+      (first?.data.message?.trim().replace(/\s+/g, " ").slice(0, 72) || "Untitled chat");
+    $("save-chat-row").hidden = Boolean(conversation?.private);
+    $("save-chat").checked = Boolean(conversation?.saved);
+    const saveWarning = conversation?.saved && $("mode").value === "local"
+      ? "Sending in Local only will remove this chat from saved history." : "";
+    status("history-status", conversation?.save_error?.replaceAll("_", " ") || saveWarning);
+    $("saved-chats").replaceChildren(...savedChats.map(chat => {
+      const row = element("li", "", "saved-row");
+      const open = button(chat.title, () => switchChat(chat.id).catch(report));
+      open.title = chat.ready ? chat.title : chat.title + " · Interrupted or unavailable";
+      open.disabled = !chat.ready || isBusy();
+      if (chat.id === conversation?.id) open.setAttribute("aria-current", "page");
+      const remove = button("Delete", async () => {
+        if (!confirm("Delete this saved chat from this workspace?")) return;
+        try {
+          await api("/api/chat/history/delete", {id: chat.id});
+          await refresh();
+          await refreshHistory();
+        } catch (error) { report(error); }
+      });
+      remove.setAttribute("aria-label", "Delete saved chat " + chat.title);
+      remove.disabled = isBusy();
+      row.append(open, remove);
+      return row;
+    }));
+    if (!savedChats.length) $("saved-chats").append(element("li", "No saved chats", "turn-status"));
   }
-  async function newChat() {
-    if (conversation?.private) {
-      const confirm = $("private-close");
-      confirm.returnValue = "cancel";
-      confirm.showModal();
-      await new Promise(resolve => confirm.addEventListener("close", resolve, {once: true}));
-      if (confirm.returnValue !== "close") return;
-      await agent("conversation/close", {conversation: conversation.id, confirm: true});
-    }
-    conversation = (await agent("conversation", {})).conversation;
-    $("mode").value = "cloud";
+
+  async function refreshHistory() {
+    savedChats = (await api("/api/chat/history")).chats;
+    renderHistory();
+  }
+
+  function adoptConversation(next, resetMode) {
+    conversation = next;
+    choice = next?.model_choice || null;
+    if (resetMode) $("mode").value = next?.private ? "local" : "cloud";
+    if (next?.private) catalogs.delete("openrouter");
     selected.clear();
-    completed.clear();
-    followUp = last = null;
-    for (const id of ["answer", "activity", "outcome", "drafts", "follow-up-label", "sources"]) $(id).replaceChildren();
-    $("follow-up").hidden = true;
-    $("approval").hidden = true;
-    $("task").value = "";
-    renderFiles();
-    renderBinding();
+    turns.clear();
+    $("transcript").replaceChildren();
+    $("empty-chat").hidden = false;
+    $("use-context").checked = true;
+    $("reasoning").value = "";
   }
+
+  async function readConversation() {
+    const view = await agent("conversation");
+    const next = view.conversation;
+    const changed = next?.id !== conversation?.id;
+    if (changed) adoptConversation(next, Boolean(conversation) || Boolean(next?.private));
+    else conversation = next;
+    active = view.active_run;
+    const visible = [...(conversation?.restored_runs || []), ...(conversation?.recent_runs || [])];
+    for (const id of visible) {
+      const shown = turns.get(id);
+      if (id === active || !shown || shown.data.state === "running") {
+        try {
+          renderRun(await agent("runs/" + encodeURIComponent(id)));
+        } catch (error) {
+          // Another browser may have switched chats after the manager supplied its run IDs.
+          if (error.message !== "no_such_run") throw error;
+        }
+      }
+    }
+    const valid = new Set(visible);
+    for (const [id, refs] of turns) {
+      if (!valid.has(id) && !(sending && refs.data.state === "running")) {
+        refs.root.remove();
+        turns.delete(id);
+      }
+    }
+    $("empty-chat").hidden = Boolean(turns.size);
+    if (changed || !active) renderFiles();
+    renderControls();
+    renderHistory();
+  }
+
+  function refresh() {
+    if (!currentRefresh) currentRefresh = readConversation().finally(() => { currentRefresh = null; });
+    return currentRefresh;
+  }
+
+  async function switchChat(id) {
+    if (isBusy() || (id && id === conversation?.id)) return;
+    switching = true;
+    renderControls();
+    renderHistory();
+    try {
+      if (currentRefresh) await currentRefresh;
+      let closePrivate = null;
+      if (conversation?.private) {
+        const dialog = $("private-close");
+        dialog.returnValue = "cancel";
+        dialog.showModal();
+        await new Promise(resolve => dialog.addEventListener("close", resolve, {once: true}));
+        if (dialog.returnValue !== "close") return;
+        closePrivate = conversation.id;
+      }
+      const view = id ? await api("/api/chat/history/open", {id, close_private: closePrivate})
+        : await agent("conversation", {close_private: closePrivate});
+      adoptConversation(view.conversation, true);
+      $("task").value = "";
+      resizeComposer();
+      status("notice", "");
+      if (mobile.matches) setHistoryOpen(false);
+      await refresh();
+      await refreshHistory();
+      $("task").focus();
+    } finally {
+      switching = false;
+      renderControls();
+      renderHistory();
+    }
+  }
+
+  function resizeComposer() {
+    const task = $("task");
+    task.style.height = "auto";
+    task.style.height = task.scrollHeight + "px";
+  }
+
   async function connectWeb() {
     await api("/api/chat/webspell", {mode: $("mode").value});
     await loadSettings();
   }
-  $("new-chat").onclick = () => newChat().catch(report);
-  $("mode").onchange = $("role").onchange = renderBinding;
-  $("verify-webspell").onclick = () => connectWeb().catch(report);
-  $("task").oninput = () => {
-    $("task").style.height = "auto";
-    $("task").style.height = $("task").scrollHeight + "px";
+
+  function changeMode() {
+    if (conversation?.private && $("mode").value === "cloud") catalogs.delete("openrouter");
+    renderControls();
+    renderHistory();
+  }
+
+  for (const close of document.querySelectorAll("[data-close]")) {
+    close.onclick = () => $(close.dataset.close).close();
+  }
+  $("settings-open").onclick = () => $("settings").showModal();
+  $("key-open").onclick = () => {
+    status("key-status", settings.key_source === "none" ? "No OpenRouter key configured." :
+      "OpenRouter key configured · " + settings.key_source);
+    $("key-dialog").showModal();
+    $("key").focus();
   };
-  $("builtins").onchange = $("webspell").onchange = async event => {
+  $("key-dialog").onclose = () => { $("key").value = ""; };
+  async function setKey(value) {
     try {
-      await api("/api/chat/tools", {[event.target.id]: event.target.checked});
+      await api("/api/openrouter-key", {revision: settings.revision, api_key: value});
+      catalogs.delete("openrouter");
       await loadSettings();
-    } catch (error) { report(error); }
+      $("key-dialog").close();
+      status("notice", "");
+    } catch (error) { report(error, "key-status"); }
+    finally { $("key").value = ""; }
+  }
+  $("key-form").onsubmit = event => {
+    event.preventDefault();
+    if ($("key").value.trim()) setKey($("key").value);
+  };
+  $("clear-key").onclick = () => setKey("");
+  $("new-chat").onclick = () => switchChat().catch(report);
+  $("toggle-history").onclick = () => {
+    setHistoryOpen($("history").hidden);
+    if (!$("history").hidden) refreshHistory().catch(report);
+  };
+  mobile.addEventListener("change", () => setHistoryOpen(!mobile.matches));
+  setHistoryOpen(!mobile.matches);
+  $("mode").onchange = changeMode;
+  $("role").onchange = renderControls;
+  $("task").oninput = () => { resizeComposer(); renderControls(); };
+  $("task").onkeydown = event => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      if (!$("run").disabled) $("composer").requestSubmit();
+    }
+  };
+  $("verify-webspell").onclick = () => connectWeb().catch(error => report(error, "settings-status"));
+  $("builtins").onchange = $("webspell").onchange = async event => {
+    const control = event.target;
+    try {
+      await api("/api/chat/tools", {[control.id]: control.checked});
+      await loadSettings();
+      status("settings-status", "");
+    } catch (error) {
+      control.checked = settings.tools[control.id];
+      report(error, "settings-status");
+    }
   };
   $("bind").onclick = async () => {
     const bindings = structuredClone(settings.bindings);
@@ -202,23 +476,135 @@
     try {
       await api("/api/chat/bindings", {revision: settings.binding_revision, bindings});
       await loadSettings();
-    } catch (error) { report(error); }
+      status("settings-status", "Role default updated.");
+    } catch (error) { report(error, "settings-status"); }
   };
-  $("save-key").onclick = async () => {
+  $("save-chat").onchange = async event => {
+    const enabled = event.target.checked;
+    if (!enabled && !confirm("Remove this chat from saved history? The open chat stays available.")) {
+      event.target.checked = true;
+      return;
+    }
     try {
-      await api("/api/openrouter-key", {revision: settings.revision, api_key: $("key").value});
-      await loadSettings();
-      show("");
-    } catch (error) { report(error); }
-    finally { $("key").value = ""; }
+      const view = await api("/api/chat/history/save", {conversation: conversation.id, enabled});
+      conversation = view.conversation;
+      await refreshHistory();
+    } catch (error) {
+      renderHistory();
+      report(error, "history-status");
+    }
   };
-  $("follow-up").onclick = () => {
-    followUp = last.run_id;
-    $("follow-up-label").hidden = false;
-    $("follow-up-label").replaceChildren("Following up on the previous answer. ",
-      button("Clear", () => { followUp = null; $("follow-up-label").hidden = true; }));
-    $("task").focus();
+
+  function filterModels() {
+    const query = $("model-search").value.trim().toLowerCase();
+    visibleModels = models.filter(model => query.split(/\s+/).every(term =>
+      model.id.toLowerCase().includes(term) || model.name?.toLowerCase().includes(term))).slice(0, 30);
+    selectedModel = -1;
+    $("model-options").replaceChildren(...visibleModels.map((model, index) => {
+      const option = element("li", model.name || model.id);
+      option.id = "model-option-" + index;
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", "false");
+      if (model.name && model.name !== model.id) option.append(element("small", model.id));
+      if (modeFor($("source").value) === "local" && !model.trusted) option.append(element("small", "Requires trust in AgentWorkshop"));
+      option.onpointerdown = event => event.preventDefault();
+      option.onclick = () => chooseModel(model);
+      return option;
+    }));
+    $("model-search").removeAttribute("aria-activedescendant");
+    $("model-options").hidden = !visibleModels.length;
+    $("model-search").setAttribute("aria-expanded", String(Boolean(visibleModels.length)));
+    if (models.length) status("model-status", visibleModels.length ? "" : "No models match.");
+  }
+
+  function chooseModel(model) {
+    const kind = $("source").value;
+    choice = {kind, model: model.id};
+    $("mode").value = modeFor(kind);
+    $("reasoning").value = "";
+    $("model-picker").close();
+    renderControls();
+    renderHistory();
+  }
+
+  async function lookupModels(resetField) {
+    const requestId = ++lookupSequence;
+    const kind = $("source").value;
+    if (resetField) $("model-search").value = "";
+    models = catalogs.get(kind) || [];
+    filterModels();
+    if (kind === "openrouter" && ($("mode").value !== "cloud" || conversation?.private || restrictedSelection())) {
+      status("model-status", "Cloud model lookup is unavailable for this private chat or selection.");
+      return;
+    }
+    discovering = true;
+    renderControls();
+    $("model-refresh").disabled = true;
+    $("source").disabled = true;
+    $("model-picker").setAttribute("aria-busy", "true");
+    status("model-status", "Looking up models…");
+    try {
+      const listed = (await api("/api/chat/models", {kind, mode: modeFor(kind)})).models;
+      if (requestId !== lookupSequence) return;
+      catalogs.set(kind, listed);
+      models = listed;
+      filterModels();
+      if (!listed.length) status("model-status", "No models found on this source.");
+    } catch (error) {
+      if (requestId === lookupSequence) report(error, "model-status");
+    } finally {
+      discovering = false;
+      $("model-refresh").disabled = false;
+      $("source").disabled = false;
+      $("model-picker").removeAttribute("aria-busy");
+      renderControls();
+      renderHistory();
+    }
+  }
+
+  $("model-picker-open").onclick = () => {
+    $("source").querySelector('[value="openrouter"]').disabled = Boolean($("mode").value !== "cloud" || conversation?.private || restrictedSelection());
+    $("source").value = effectiveChoice()?.kind || roleBinding()?.kind
+      || ($("mode").value === "local" ? "lmstudio" : "openrouter");
+    if ($("source").selectedOptions[0]?.disabled) $("source").value = "lmstudio";
+    $("model-picker").showModal();
+    $("model-search").focus();
+    lookupModels(true);
   };
+  $("source").onchange = () => lookupModels(true);
+  $("model-refresh").onclick = () => lookupModels(false);
+  $("model-default").onclick = () => {
+    choice = null;
+    $("mode").value = modeFor($("source").value);
+    $("reasoning").value = "";
+    $("model-picker").close();
+    renderControls();
+    renderHistory();
+  };
+  $("model-search").oninput = filterModels;
+  $("model-search").onkeydown = event => {
+    if (event.key === "Escape" && !$("model-options").hidden) {
+      event.preventDefault();
+      $("model-options").hidden = true;
+      $("model-search").setAttribute("aria-expanded", "false");
+      $("model-search").removeAttribute("aria-activedescendant");
+    } else if (event.key === "Enter" && !$("model-options").hidden && visibleModels.length) {
+      event.preventDefault();
+      chooseModel(visibleModels[Math.max(0, selectedModel)]);
+    } else if (["ArrowDown", "ArrowUp"].includes(event.key) && visibleModels.length) {
+      event.preventDefault();
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      selectedModel = selectedModel < 0 && delta < 0 ? visibleModels.length - 1
+        : (selectedModel + delta + visibleModels.length) % visibleModels.length;
+      const options = $("model-options");
+      options.hidden = false;
+      $("model-search").setAttribute("aria-expanded", "true");
+      [...options.children].forEach((item, index) => item.setAttribute("aria-selected", String(index === selectedModel)));
+      $("model-search").setAttribute("aria-activedescendant", options.children[selectedModel].id);
+      options.children[selectedModel].scrollIntoView({block: "nearest"});
+    }
+  };
+
   $("attach").onclick = () => {
     $("files").value = "";
     $("labels").replaceChildren();
@@ -235,36 +621,46 @@
   };
   $("upload").onclose = async () => {
     if ($("upload").returnValue !== "attach") return;
+    switching = true;
+    renderControls();
     try {
       if (!conversation) conversation = (await agent("conversation", {})).conversation;
       for (const [index, file] of Array.from($("files").files).entries()) {
-        const known = new Set(conversation.documents.map(item => item.id));
-        await request("/api/agent/documents", file, {
+        const response = await request("/api/agent/documents", file, {
           "Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(file.name),
           "X-Conversation": conversation.id, "X-Local-Only": String($("labels").querySelectorAll("input")[index].checked),
         });
-        conversation = (await agent("conversation")).conversation;
-        conversation.documents.filter(item => !known.has(item.id)).forEach(item => selected.add(item.id));
+        const info = await response.json();
+        conversation = info.conversation;
+        selected.add(info.document.id);
       }
       renderFiles();
     } catch (error) { report(error); }
+    finally {
+      switching = false;
+      renderControls();
+      renderHistory();
+    }
   };
+
   $("stop").onclick = () => active && agent("stop", {run_id: active}).catch(report);
-  $("run").onclick = async () => {
-    if (!$("task").value.trim() || sending || active) return;
+  $("composer").onsubmit = async event => {
+    event.preventDefault();
+    if ($("run").disabled || isBusy()) return;
+    const message = $("task").value;
+    sending = true;
+    renderControls();
+    renderHistory();
+    status("notice", "");
+    let streaming = "", streamingTurn = 0;
     try {
-      sending = true;
-      renderBinding();
-      show("");
       if (!conversation) conversation = (await agent("conversation", {})).conversation;
-      const protectedSelection = conversation.documents.some(i => selected.has(i.id) && i.local_only);
-      if ($("mode").value === "cloud" && settings.webspell === "verify_connection" && $("webspell").checked && !conversation.private && !protectedSelection) {
-        await connectWeb().catch(() => {});
-      }
-      beginPolling();
+      if ($("mode").value === "cloud" && settings.webspell === "verify_connection" && $("webspell").checked &&
+          !conversation.private && !restrictedSelection()) await connectWeb().catch(() => {});
       const response = await request("/api/agent/run", {
-        format_version: revision, revision: settings.revision, mode: $("mode").value, role: $("role").value,
-        conversation: conversation.id, message: $("task").value, items: [...selected], follow_up: followUp,
+        format_version: 1, revision: settings.revision, mode: $("mode").value, role: $("role").value,
+        conversation: conversation.id, message, items: [...selected], use_context: $("use-context").checked,
+        model_choice: effectiveChoice(), task: $("reasoning").value ? {reasoning: $("reasoning").value} : {},
       });
       const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
       let buffer = "";
@@ -277,20 +673,57 @@
         for (const line of lines) {
           if (!line) continue;
           const event = JSON.parse(line);
-          if (event.type === "started") { active = event.run_id; renderBinding(); }
-          if (event.type === "text") $("answer").textContent += event.text || "";
+          if (event.type === "started") {
+            active = event.run_id;
+            renderRun({run_id: active, message, state: "running"}, true);
+            if ($("task").value === message) $("task").value = "";
+            selected.clear();
+            renderFiles();
+            resizeComposer();
+            renderControls();
+          } else if (event.type === "text") {
+            if (streamingTurn !== event.model_turn) {
+              streamingTurn = event.model_turn;
+              streaming = "";
+            }
+            streaming += event.text || "";
+            if (!scrollFrame) scrollFrame = requestAnimationFrame(() => {
+              scrollFrame = 0;
+              const refs = turns.get(event.run_id);
+              if (refs?.data.state === "running" && streamingTurn >= (refs.modelTurn || 0)) {
+                refs.modelTurn = streamingTurn;
+                keepScroll(() => renderAnswer(refs, streaming));
+              }
+            });
+          } else if (event.type === "final" && event.view) {
+            renderRun({...event.view, message});
+            lastHistoryRun = event.run_id;
+          }
         }
       }
-      followUp = null;
-      $("follow-up-label").hidden = true;
-      $("task").value = "";
     } catch (error) { report(error); }
-    finally { sending = false; await refresh().catch(report); }
+    finally {
+      sending = false;
+      await refresh().catch(report);
+      await refreshHistory().catch(report);
+    }
   };
+
+  async function poll() {
+    if (active && !switching) {
+      try {
+        const previouslyActive = active;
+        await refresh();
+        if (!active && previouslyActive !== lastHistoryRun) await refreshHistory();
+      } catch (error) { report(error); }
+    }
+    setTimeout(poll, 650);
+  }
   await loadSettings();
   await refresh();
-  if (conversation?.private) { $("mode").value = "local"; renderBinding(); }
-  if (active) beginPolling();
+  await refreshHistory();
+  resizeComposer();
+  setTimeout(poll, 650);
 })().catch(error => {
   const notice = document.getElementById("notice");
   notice.hidden = false;

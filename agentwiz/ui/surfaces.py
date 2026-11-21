@@ -14,9 +14,10 @@ from pathlib import Path
 from socketserver import TCPServer
 
 HERE = Path(__file__).parent
-CHAT_GET = frozenset({"/api/agent/conversation", "/api/chat/settings"})
+CHAT_GET = frozenset({"/api/agent/conversation", "/api/chat/settings", "/api/chat/history"})
 CHAT_POST = frozenset({
-    "/api/openrouter-key", "/api/chat/bindings", "/api/chat/tools", "/api/chat/webspell",
+    "/api/openrouter-key", "/api/chat/bindings", "/api/chat/tools", "/api/chat/webspell", "/api/chat/models",
+    "/api/chat/history/save", "/api/chat/history/open", "/api/chat/history/delete",
     "/api/agent/conversation", "/api/agent/conversation/close", "/api/agent/documents",
     "/api/agent/documents/update", "/api/agent/inventory", "/api/agent/run", "/api/agent/stop", "/api/agent/approve",
 })
@@ -95,6 +96,7 @@ class ChatListener(ThreadingHTTPServer):
         self.assets = {f"/assets/{name}": ((HERE / name).read_bytes(), ctype)
                        for name, ctype in (
                            ("chat.js", "text/javascript; charset=utf-8"),
+                           ("chat-markdown.js", "text/javascript; charset=utf-8"),
                            ("chat.css", "text/css; charset=utf-8"),
                        )}
         super().__init__(("127.0.0.1", port), handler)
