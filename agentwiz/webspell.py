@@ -1,4 +1,4 @@
-"""AgentWiz's interface to the separately installed webSpell v0.2.0 service."""
+"""AgentWiz's interface to the separately installed, pinned webSpell service."""
 from __future__ import annotations
 
 import ipaddress
@@ -6,9 +6,9 @@ import re
 from urllib.parse import urlsplit
 
 SERVER = "webspell"
-VERSION = "0.2.0"
-ZIP_SHA256 = "1ba52d2dc9f861fdd7e4b2bf4f4c16e6bad2135f1e11863698a4312281db2acf"
-WHEEL_SHA256 = "b818da1a32b9c2c55f74f07c831d06100227dc44835566a90a789b85bd2e30cd"
+VERSION = "0.2.1"
+ZIP_SHA256 = "044e2b6b87f70ff74f744e41e4257722869a0738922772a593c4c8905d503b52"
+WHEEL_SHA256 = "02b000b4e523f04210f96281522bccc3df615a6d895eb4e72fe95ffc11dbe643"
 
 
 def _nullable(schema):
@@ -23,7 +23,14 @@ _QUERY = {"type": "string", "maxLength": 1000}
 _URL = {"type": "string", "maxLength": 4096}
 _SEARCH = {
     "query": _QUERY,
-    "recency": _nullable({"type": "string"}),
+    "category": {
+        **_nullable({"type": "string", "enum": ["general", "news", "science", "it"]}),
+        "description": "General web (default), news, science (papers) or it (software and repositories).",
+    },
+    "recency": {
+        **_nullable({"type": "string"}),
+        "description": 'Best-effort publication window. Use "1 day", "7 days" or "1 month". Omit for any date.',
+    },
     "domains": _nullable({"items": {"type": "string"}, "type": "array", "minItems": 1, "maxItems": 5}),
 }
 SCHEMAS = {

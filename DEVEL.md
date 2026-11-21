@@ -462,7 +462,7 @@ so this guide shows no eval block for it.
 
 `test_live_mcp` requires `AGENTWIZ_LIVE_MCP_URL`, `AGENTWIZ_LIVE_MCP_TOOL` and
 `AGENTWIZ_LIVE_MCP_ARGUMENTS` (JSON text); `AGENTWIZ_LIVE_MCP_TOKEN` is optional. With
-web-retrieval-mcp running, an example is `http://127.0.0.1:8765/mcp`, `search_web`,
+managed webSpell running, an example is `http://127.0.0.1:8765/mcp`, `web_search_results`,
 `{"query":"model context protocol"}`.
 
 ### Stop and block-repair checks

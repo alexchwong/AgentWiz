@@ -128,10 +128,10 @@ material into a reviewed workflow, upload it inside AgentWorkshop and mark that 
 
 Built-ins and eligible bundled starters are offered by default. Chat has a separate Cloud-only
 webSpell switch. The release installer automatically installs, configures and starts pinned webSpell
-v0.2.0, and registers its MCP endpoint as `webspell`. Cloud Chat checks the server name
+v0.2.1, and registers its MCP endpoint as `webspell`. Cloud Chat checks the server name
 and three expected tool schemas when connecting.
 Search queries and URL fetches go to the web service, whose controls are described in its own
-documentation. [webSpell v0.2.0](https://github.com/alexchwong/web-retrieval-mcp/releases/tag/v0.2.0)
+documentation. [webSpell v0.2.1](https://github.com/alexchwong/web-retrieval-mcp/releases/tag/v0.2.1)
 
 For the standard OpenRouter key binding, AgentWiz checks the session key first, then the process
 environment, then `~/.config/agentwiz/.env`. Set the file owner to your user and permissions to
@@ -893,41 +893,22 @@ sent to the model until you paste it into a request and press **Send**.
 - At most 8 tool operations run at once, stopped ones included until they finish; further ones are
   refused, not queued. One tool call runs per page at a time; a model request can run alongside it.
 - Results and their sizes are previewed like documents, with a provenance line such as
-  `[tool web.search_web arguments={"query":"lighthouse"}]`. When a result has both text and structured
+  `[tool webspell.web_search_results arguments={"query":"lighthouse"}]`. When a result has both text and structured
   content, **Copy structured content** copies the structured part instead of the text preview. The
   provenance line is copied with the text. Images and other items are listed, not copied.
 - Tool results and documents may contain instructions aimed at the model. AgentWiz shows them
   and never sends them by itself; they reach a model only if you paste them into a request. It does
   not sanitise them.
 
-### Example: web search with web-retrieval-mcp
+### Example: web search with managed webSpell
 
-[web-retrieval-mcp](https://github.com/alexchwong/web-retrieval-mcp) is one MCP server you can try;
-any Streamable HTTP MCP server is added the same way, and AgentWiz needs none of it.
-
-1. Prerequisites: Docker with Docker Compose, and `openssl`.
-2. Clone and start it:
-   ```bash
-   git clone https://github.com/alexchwong/web-retrieval-mcp.git
-   cd web-retrieval-mcp
-   ./setup.sh
-   ```
-   `setup.sh` creates `.env` with a fresh SearxNG secret and starts SearxNG and the MCP server, both
-   listening on this machine only.
-3. Check with `docker compose ps` that both services are up. The MCP endpoint is
-   `http://localhost:8765/mcp`.
-4. In AgentWiz press **MCP servers** in the header, then **Add**: name `web`, URL
-   `http://127.0.0.1:8765/mcp`, no token (the server listens on this machine only and has none).
-   Press **Save**.
-5. On the **MCP tools** tab choose `web` and press **Load tools**: `search_web` and `read_url` appear, with the era. An image
-   built before FastMCP 4 shows 2025-11-25; a fresh build shows 2026-07-28. Both work.
-6. Choose `search_web`, type a query, press **Run**. Read the passages, press **Copy**, paste them
-   into the input of **Chat**, add a question, and press **Send**.
-7. Try `read_url` on one of the cited URLs, and press **Stop** while it runs.
-8. Afterwards: `docker compose down`.
-
-Notes: web-retrieval-mcp fetches the open web from the machine it runs on; its `settings.toml` tunes
-how much it returns; under WSL2, use the address where Docker publishes port 8765.
+1. On the **MCP tools** tab choose `webspell` and press **Load tools**. The installer registers
+   the service at `http://127.0.0.1:8765/mcp` by default; no duplicate entry is needed.
+2. Choose `web_search_results`, enter a query and press **Run**. Optionally filter by category
+   (`general`, `news`, `science` or `it`) and a best-effort recency window such as `7 days`.
+3. Use `web_evidence_passages` for passages, or `web_page_text` to read one known URL. When
+   supplying URLs directly to `web_evidence_passages`, omit category, recency and domains.
+4. To use a result in Chat, review it first, then press **Copy**, paste it into Chat, and add your question.
 
 ## Contracts
 

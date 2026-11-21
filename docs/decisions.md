@@ -460,4 +460,5 @@ had the following sizes. Shipped source lines count newline-terminated lines in 
 The owner retained all 13 model starter blocks and removed mandatory qualification from runtime
 eligibility. AgentWorkshop evaluation remains optional. 0.2.4 uses the existing offline and live
 checks without a shipped pass index or a new publication manifest. The owner approved the
-webSpell v0.2.0 pin. webSpell CI covers the service and AgentWiz verifies its integration boundary.
+original webSpell v0.2.0 pin, later superseded by v0.2.1. webSpell CI covers the service and
+AgentWiz verifies its integration boundary.

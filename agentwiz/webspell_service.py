@@ -26,7 +26,7 @@ from .mcp_library import Library, ServerConfig, build_raw
 
 DEFAULT_URL = "http://127.0.0.1:8765/mcp"
 ARCHIVE_URL = (
-    "https://github.com/alexchwong/webSpell/releases/download/"
+    "https://github.com/alexchwong/web-retrieval-mcp/releases/download/"
     f"v{webspell.VERSION}/webSpell-{webspell.VERSION}.zip"
 )
 DEFAULT_HOME = Path.home() / ".local" / "share" / "agentwiz" / "webspell" / ("v" + webspell.VERSION.replace(".", "_"))
