@@ -97,6 +97,7 @@ def main(argv: list[str] | None = None) -> None:
     from .ui.server import Handler, UIServer
     from .ui.surfaces import ChatListener, SessionFile, origin
     from .workspace import WorkspaceError, WorkspaceInUse, open_workspace
+    from .webspell_service import ServiceError, ensure_server_entry
 
     parser = argparse.ArgumentParser(
         prog="agentwiz",
@@ -121,6 +122,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--version", action="version",
                         version=f"AgentWiz {__version__} (modelSpell {modelspell.__version__})")
     args = parser.parse_args(argv)
+
+    # Shared MCP entry is created automatically. Configuration errors fail closed
+    # instead of silently disabling the mandatory webSpell service.
+    try:
+        ensure_server_entry(args.mcp_servers_dir)
+    except (ServiceError, OSError) as exc:
+        _say(f"cannot configure webSpell: {exc}", err=True)
+        sys.exit(1)
 
     try:
         server_config.initialize(args.config)

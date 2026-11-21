@@ -22,6 +22,7 @@ dev = ["pytest", "playwright==1.63.0"]
 
 [project.scripts]
 agentwiz = "agentwiz.__main__:main"
+agentwiz-webspell = "agentwiz.webspell_service:main"
 
 [project.urls]
 Source = "https://github.com/alexchwong/AgentWiz"

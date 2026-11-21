@@ -1,5 +1,74 @@
 # AgentWiz
 
+## Quick start (AgentWiz 0.2.4)
+
+**Prerequisites:** Python 3.10+, Docker with Docker Compose, and an internet
+connection for first-time setup. On Windows, use WSL2 with Docker available.
+Start Docker before installing; webSpell is a compulsory bundled service.
+
+**Install:** From a normal terminal, run the AgentWiz release installer:
+
+```bash
+curl -fsSL https://github.com/alexchwong/AgentWiz/releases/latest/download/install.sh | bash
+```
+
+The installer creates `.venv`, installs AgentWiz and **automatically installs,
+configures, starts and checks webSpell** (including SearXNG). No manual webSpell
+repository clone, MCP registration or API key is required for public web search.
+
+**Run:** From the same directory where you installed AgentWiz:
+
+```bash
+.venv/bin/agentwiz
+```
+
+AgentWiz Chat opens in your browser. Choose a Cloud model and use the webSpell
+tools for public research. Local only conversations never send anything through
+webSpell. For OpenRouter, set your API key in the AgentWiz configuration.
+
+**Manage webSpell (separate background service):**
+
+```bash
+.venv/bin/agentwiz-webspell status
+.venv/bin/agentwiz-webspell stop
+.venv/bin/agentwiz-webspell start
+.venv/bin/agentwiz-webspell restart
+.venv/bin/agentwiz-webspell logs
+```
+
+Stopping AgentWiz does not stop webSpell; stopping webSpell does not prevent
+ordinary AgentWiz chat. Docker's `unless-stopped` policy restarts unexpectedly
+stopped containers, but respects a deliberate `stop`.
+
+**Change the MCP port:** Edit `mcp_servers/servers.json` alongside your
+AgentWiz installation. Change only the `webspell.url` entry, e.g.:
+
+```json
+{
+  "format_version": 1,
+  "servers": {
+    "webspell": {"url": "http://127.0.0.1:8766/mcp"}
+  }
+}
+```
+
+Keep all other server entries if the file already has them. Apply the port
+change with `.venv/bin/agentwiz-webspell restart`, then restart AgentWiz. The
+managed MCP URL must use `127.0.0.1`, port 1024–65535, and path `/mcp`.
+To use a custom MCP settings directory, pass `--mcp-servers-dir PATH` to
+**both** `agentwiz` and `agentwiz-webspell`, or set
+`AGENTWIZ_MCP_SERVERS_DIR` for the lifecycle command.
+
+**Problems:** Ensure Docker is running, then use `agentwiz-webspell status` and
+`agentwiz-webspell logs`. A failed initial webSpell setup makes the installer
+report failure; fix the prerequisite and rerun the installer. The pinned
+webSpell release is verified by SHA-256. To use AgentWiz from the source checkout,
+run `scripts/dev_setup.sh`, then `python -m agentwiz.webspell_service install`
+from the checkout root (the published installer is for release wheels).
+
+For detailed configuration, privacy, development and troubleshooting guidance,
+continue below.
+
 A local browser UI for building and testing LLM steps, built on
 [modelSpell](https://github.com/alexchwong/modelSpell).
 
@@ -58,11 +127,9 @@ you deliberately close it. Download a draft before closing if you need to retain
 material into a reviewed workflow, upload it inside AgentWorkshop and mark that input Local only.
 
 Built-ins and eligible bundled starters are offered by default. Chat has a separate Cloud-only
-webSpell switch. webSpell is a separately installed service. Download the approved v0.2.0 service ZIP,
-verify its SHA-256 is
-`1ba52d2dc9f861fdd7e4b2bf4f4c16e6bad2135f1e11863698a4312281db2acf`,
-and follow its installation instructions. Add its MCP endpoint using the name `webspell` in
-AgentWorkshop. Cloud Chat checks the server name and three expected tool schemas when connecting.
+webSpell switch. The release installer automatically installs, configures and starts pinned webSpell
+v0.2.0, and registers its MCP endpoint as `webspell`. Cloud Chat checks the server name
+and three expected tool schemas when connecting.
 Search queries and URL fetches go to the web service, whose controls are described in its own
 documentation. [webSpell v0.2.0](https://github.com/alexchwong/web-retrieval-mcp/releases/tag/v0.2.0)
 

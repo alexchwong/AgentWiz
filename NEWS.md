@@ -3,7 +3,9 @@
 ## 0.2.4
 - AgentWiz Chat and AgentWorkshop open separately and share one workspace.
 - Local only conversations stay private until closed, including across refresh and follow-up.
-- Chat offers six model roles, scoped attachments, built-in tools, all 13 starter blocks and optional webSpell.
+- Chat offers six model roles, scoped attachments, built-in tools, all 13 starter blocks and managed webSpell.
+- webSpell v0.2.0 is installed, verified and started automatically with Docker Compose; its MCP URL is configurable via the shared MCP servers file.
+- `agentwiz-webspell` manages independent service start, stop, restart, status and logs.
 - OpenRouter credentials can come from a private user configuration file.
 - Workshop preview output and raw answers now share one byte budget.
 

@@ -170,6 +170,13 @@ printf 'Installing AgentWiz and its dependencies...\n'
 "$venv_python" -m pip "${pip_args[@]}" "$target" >/dev/null 2>&1 \
     || die "pip could not install $(basename "$wheel_path"); check network access and the wheel's compatibility"
 
+# Mandatory webSpell deployment: install the pinned ZIP, create the MCP entry,
+# launch the independent Compose stack and verify its actual tools and schemas.
+# Rerunning the installer preserves .env secrets and the other MCP servers.
+printf 'Setting up webSpell (Docker Compose)...\n'
+"$venv_python" -m agentwiz.webspell_service install --mcp-servers-dir "$(pwd)/mcp_servers" \
+    || die "webSpell setup failed; check Docker / Compose and run agentwiz-webspell logs"
+
 "$venv_python" -c 'from pathlib import Path; from agentwiz.server_config import initialize; initialize(Path("config/model-servers.ini"))' >/dev/null 2>&1 \
     || die "cannot initialize config/model-servers.ini"
 printf 'Model server configuration: %s/config/model-servers.ini (restart after editing)\n' "$(pwd)"
