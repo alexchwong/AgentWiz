@@ -840,7 +840,9 @@ Routes are top-level, not Workshop routes, and all mutations are POST with integ
 Error codes are `invalid_workspace_name` (400), `confirmation_required` (400), `no_such_workspace`
 (404), `workspace_exists`/`workspace_in_use`/`workspace_busy`/`workspace_is_current`/
 `tutorial_active`/`workspace_admin_disabled`/`unsafe_entry`/`workspace_too_large`/
-`shared_data_inside_workspace` (409), `workspace_io_error` (500) and `workspace_unavailable` (503).
+`shared_data_inside_workspace`/`private_close_confirmation` (409), `workspace_io_error` (500)
+and `workspace_unavailable` (503). Switching to a different workspace, including create and switch,
+requires closing any private conversation from AgentWiz Chat after downloading any drafts to keep.
 The page hides workspace administration when `/api/state.workspace.admin` is false. A switch or
 current reset reloads the page after the Workshop dirty-draft guard; clone/delete/reset-other refresh
 the dialog list only. Session API keys and MCP tokens are not transferred: they are memory-only and

@@ -350,6 +350,37 @@ def test_saved_chat_restart_context_and_private_boundary(tmp_path, server, monke
         assert call(chat, "/api/agent/conversation", {"format_version": 1, "close_private": ident})[0] == 200
 
 
+def test_workspace_change_preserves_private_chat_until_confirmed_close(tmp_path, server, monkeypatch):
+    _chat_model_stub(monkeypatch, "Private answer.", [])
+    with listeners(tmp_path, server.url + "/v1") as (workshop, chat):
+        root = workshop.workspace_root
+        open_workspace(root, "existing").close()
+        state = workshop.state
+        local = outbound_policy.model_identity(state.role_capture("fast", "local").snapshot)
+        outbound_policy.update(state, {"destination": local, "expected_revision": None, "trusted": True})
+        ident = call(chat, "/api/agent/conversation", {"format_version": 1})[1]["conversation"]["id"]
+        run = state.agent.prepare_run({"revision": state.view()["revision"], "conversation": ident,
+                                       "mode": "local", "message": "Make a private draft",
+                                       "builtins": False, "webspell": False}, None)
+        assert run.run()["stop_reason"] == "answered"
+        draft = run.conversation.create_draft(run.run_id, "private", "txt", "Private draft.", True,
+                                              lambda: True)
+        for action, name in (("switch", "existing"), ("create", "new")):
+            status, body = call(workshop, f"/api/workspaces/{action}", {"format_version": 1, "name": name})
+            assert (status, body.get("code")) == (409, "private_close_confirmation")
+        assert not (root / "new").exists()
+        assert call(workshop, "/api/workspaces/switch", {"format_version": 1, "name": "test"})[0] == 200
+        assert call(chat, "/api/agent/conversation")[1]["conversation"]["id"] == ident
+        base = origin(chat)
+        request = urllib.request.Request(f"{base}/api/agent/drafts/{draft.id}?conversation={ident}",
+                                         headers={"X-Session-Token": chat.authority.entry(base)["session"]})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            assert response.read() == b"Private draft."
+        assert call(chat, "/api/agent/conversation", {"format_version": 1, "close_private": ident})[0] == 200
+        status, body = call(workshop, "/api/workspaces/switch", {"format_version": 1, "name": "existing"})
+        assert status == 200 and body["workspace"]["name"] == "existing"
+
+
 def test_interrupted_archive_refuses_reopen(tmp_path, server, monkeypatch):
     _chat_model_stub(monkeypatch, "Public answer", [])
     with listeners(tmp_path, server.url + "/v1") as (workshop, chat):

@@ -293,6 +293,16 @@ class UIServer(ThreadingHTTPServer):
                 "workspace_busy", "stop running requests and Workshop batches before changing workspaces", 409,
                 active=active)
 
+    def _require_no_private_chat(self) -> None:
+        agent = self.state.agent
+        with agent.lock:
+            if agent.conversation is not None and agent.conversation.private:
+                raise workspace_admin.WorkspaceAdminError(
+                    "private_close_confirmation",
+                    "Download any drafts you want to keep, then close the private chat in AgentWiz Chat "
+                    "before changing workspaces.",
+                    409)
+
     def _discard_state(self, state: ProcessState | None, workspace: Workspace) -> None:
         if state is not None:
             try:
@@ -320,6 +330,7 @@ class UIServer(ThreadingHTTPServer):
         else:
             workspace_admin.validate_existing(self.workspace_root, name)
         self._require_idle()
+        self._require_no_private_chat()
         try:
             target_ws = wsmod.open_workspace(self.workspace_root, name)
         except wsmod.WorkspaceInUse as exc:
@@ -343,6 +354,8 @@ class UIServer(ThreadingHTTPServer):
             with self.workspace_gate.admin():
                 if self._active_work():
                     self._require_idle()
+                # A Chat request may have made the conversation private while the target was opening.
+                self._require_no_private_chat()
                 old_state, old_ws = self.state, self.workspace
                 old_state.shutdown(grace_s=self.grace_s, wait=True)
                 old_ws.close()
