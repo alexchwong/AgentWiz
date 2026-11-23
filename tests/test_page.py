@@ -2811,7 +2811,10 @@ def test_page_workshop_compare_loads_attempts_only_on_demand(ui, server, open_pa
     reopened = send(ui, "preview", key="big")["draft"]
     reopened["definition_text"] = jsonio.encode_exact(definition)
     second = plan_save(ui, reopened, reopened["base_digest"])
-    server.reply(answer(jsonio.encode_exact({"out": "x" * (512 * 1024)})))
+    reply = answer(jsonio.encode_exact({"out": "x" * (512 * 1024)}))
+    # Keep Compare running until the browser attaches. A large completed response can
+    # otherwise be the first poll, making initial attachment depend on runner timing.
+    server.reply(Reply(hold_headers=True, body=reply.body, headers=reply.headers), reply)
     examples = [{"id": f"e{n}", "version": 1, "label": f"e{n}", "inputs": {"text": str(n)},
                  "expectation": {"kind": "review", "criterion": ""}, "verified": False} for n in range(20)]
     started = start_planned(ui, "batches", {"candidates": [{"key": "big", "revision": first["durable_id"]},
@@ -2821,11 +2824,15 @@ def test_page_workshop_compare_loads_attempts_only_on_demand(ui, server, open_pa
     page = open_page(ui)
     page.on("request", lambda r: seen.append(r.url) if "/api/attempts/" in r.url else None)
     page.goto(ui.url + "#workshop/big/compare")
+    trials = page.locator('[data-test="ws-trial"]')
+    try:
+        assert server.wait_holding(1)
+        expect(trials).to_have_count(40, timeout=WAIT)
+    finally:
+        server.release.set()
     batch = completed(ui, started["batch_id"])
     assert batch["state"] == "complete" and not any(r.get("preview_incomplete") for r in batch["rows"])
-    trials = page.locator('[data-test="ws-trial"]')
-    expect(trials).to_have_count(40)
-    expect(page.locator('[data-test="ws-trial"][data-outcome="complete"]')).to_have_count(40)
+    expect(page.locator('[data-test="ws-trial"][data-outcome="complete"]')).to_have_count(40, timeout=WAIT)
     assert seen == []
     trial = trials.first
     with page.expect_response(lambda response: response.url.endswith("?view=compact")) as compact:

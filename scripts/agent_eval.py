@@ -21,14 +21,16 @@ A cases file is a JSON list. Each case:
 "equals_casefold" (a trimmed, case-insensitive exact match). The report keeps transport success, valid first
 calls and correct answers apart. This script is not shipped in the wheel.
 
-Cohorts (starter blocks addendum, 7.2). The full library cannot be offered in one run (24 capabilities, 65,536
-definition bytes), so library selection is measured on small fixed cohorts instead:
+Cohorts (starter blocks addendum, 7.2) use fixed capability sets for reproducible selection checks.
+For the 0.2.4 release, add --full-inventory to a split Chat run to check the complete default
+inventory separately:
 
-    python scripts/agent_eval.py --url 'http://127.0.0.1:PORT/?t=TOKEN' --cohorts tests/agent_eval/cohorts.json \
+    python scripts/agent_eval.py --cohorts tests/agent_eval/cohorts.json --full-inventory \
         --route openrouter --report reports/agent_eval_report.json
 
-Without --url, the workspace and fast binding are prepared automatically.
-With --url, use a disposable workspace with fast already bound; evaluation modifies its data. Each `library:<key>` capability
+Disposable mode prepares the workspace and fast binding automatically. For an installed split
+server, use --session-file with a disposable workspace and configure the binding first.
+The older --url option attaches to a single-surface server. Each `library:<key>` capability
 is added through the installer (plan, then add
 with the plan's confirmations) unless an installed copy of that entry already exists, and its capability name and
 revision are resolved from the inventory after install. A cohort offers at most 8 capabilities. Each case lists

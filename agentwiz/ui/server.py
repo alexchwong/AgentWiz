@@ -300,7 +300,7 @@ class UIServer(ThreadingHTTPServer):
                 raise workspace_admin.WorkspaceAdminError(
                     "private_close_confirmation",
                     "Download any drafts you want to keep, then close the private chat in AgentWiz Chat "
-                    "before changing workspaces.",
+                    "before switching or resetting the workspace.",
                     409)
 
     def _discard_state(self, state: ProcessState | None, workspace: Workspace) -> None:
@@ -398,6 +398,7 @@ class UIServer(ThreadingHTTPServer):
         with self.workspace_gate.admin():
             if self._active_work():
                 self._require_idle()
+            self._require_no_private_chat()
             old_state = self.state
             old_state.shutdown(grace_s=self.grace_s, wait=True)
             try:

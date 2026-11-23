@@ -601,10 +601,11 @@ rescanned.
   (trimmed nonblank text, at most 64 characters; absent means General in the editor). Version 3 adds
   optional `task_defaults` with only `temperature` and `reasoning`, validated by
   `task_settings.parse_defaults` (zero is kept, a blank reasoning level means none, anything else is refused).
-  Formats 1 and 2 are read unchanged; `roles.build_raw` always writes 3, keeps unknown top-level fields and
-  retains existing definitions, so an assignment-only save never downgrades the file or drops a default; an older
-  AgentWiz refuses the newer file rather than dropping behaviour. Unassigned definitions are
-  allowed; every v2 and v3 assignment needs a definition. Missing files expose unconfigured `fast`,
+  Version 4 adds `mode_bindings` for Cloud and Local only Chat profiles. `roles.build_raw` writes
+  version 4 when those bindings are saved or already present, and version 3 otherwise. The writer
+  preserves unknown top-level fields, existing definitions, and mode bindings on assignment-only
+  saves. Older AgentWiz releases open format 4 read-only. Unassigned definitions are allowed, and
+  assignments in formats 2–4 need definitions. Missing files expose unconfigured `fast`,
   `assistant`, `reasoning` definitions in memory only. Version-1 assignments remain readable with
   no imposed location constraint until explicitly configured in the editor. Legacy API saves retain
   existing v2 policies for retained assignments; they cannot bypass location enforcement.
@@ -848,6 +849,7 @@ Error codes are `invalid_workspace_name` (400), `confirmation_required` (400), `
 `shared_data_inside_workspace`/`private_close_confirmation` (409), `workspace_io_error` (500)
 and `workspace_unavailable` (503). Switching to a different workspace, including create and switch,
 requires closing any private conversation from AgentWiz Chat after downloading any drafts to keep.
+Resetting the current workspace uses the same guard before shutting down the active session.
 The page hides workspace administration when `/api/state.workspace.admin` is false. A switch or
 current reset reloads the page after the Workshop dirty-draft guard; clone/delete/reset-other refresh
 the dialog list only. Session API keys and MCP tokens are not transferred: they are memory-only and

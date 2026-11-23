@@ -394,6 +394,9 @@ def test_workspace_change_preserves_private_chat_until_confirmed_close(tmp_path,
         for action, name in (("switch", "existing"), ("create", "new")):
             status, body = call(workshop, f"/api/workspaces/{action}", {"format_version": 1, "name": name})
             assert (status, body.get("code")) == (409, "private_close_confirmation")
+        status, body = call(workshop, "/api/workspaces/reset",
+                            {"format_version": 1, "name": "test", "confirm": "test"})
+        assert (status, body.get("code")) == (409, "private_close_confirmation")
         assert not (root / "new").exists()
         assert call(workshop, "/api/workspaces/switch", {"format_version": 1, "name": "test"})[0] == 200
         assert call(chat, "/api/agent/conversation")[1]["conversation"]["id"] == ident

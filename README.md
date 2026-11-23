@@ -2,9 +2,9 @@
 
 ## Quick start (AgentWiz 0.2.4)
 
-**Prerequisites:** Python 3.10+, Docker with Docker Compose, and an internet
+**Prerequisites:** Python 3.10+, Docker with Docker Compose, OpenSSL, and an internet
 connection for first-time setup. On Windows, use WSL2 with Docker available.
-Start Docker before installing; webSpell is a compulsory bundled service.
+Start Docker before using the release installer, which sets up the bundled webSpell service.
 
 **Install:** From a normal terminal, run the AgentWiz release installer:
 
@@ -23,8 +23,9 @@ repository clone, MCP registration or API key is required for public web search.
 ```
 
 AgentWiz Chat opens in your browser. Choose a Cloud model and use the webSpell
-tools for public research. Local only conversations never send anything through
-webSpell. For OpenRouter, set your API key in the AgentWiz configuration.
+tools for public research. webSpell is available only in Cloud mode. Set your OpenRouter
+key using **OpenRouter key** in the Chat toolbar, or configure it as described under
+[AgentWiz 0.2.4](#agentwiz-024).
 
 **Manage webSpell (separate background service):**
 
@@ -150,8 +151,10 @@ Built-ins and eligible bundled starters are offered by default. Chat has a separ
 webSpell switch. The release installer automatically installs, configures and starts pinned webSpell
 v0.2.1, and registers its MCP endpoint as `webspell`. Cloud Chat checks the server name
 and three expected tool schemas when connecting.
-Search queries and URL fetches go to the web service, whose controls are described in its own
-documentation. [webSpell v0.2.1](https://github.com/alexchwong/web-retrieval-mcp/releases/tag/v0.2.1)
+Search queries and URL fetches go to the web service. Chat asks for approval before sending
+free-form queries influenced by an attachment, draft, earlier answer, or tool result. An eligible
+page read uses an exact URL supplied in the prompt or returned by webSpell in the current run.
+The service controls are described in its own documentation. [webSpell v0.2.1](https://github.com/alexchwong/web-retrieval-mcp/releases/tag/v0.2.1)
 
 Use **OpenRouter key** in the top bar to set or clear a session key. AgentWiz checks the session key
 first, then the process environment, then `~/.config/agentwiz/.env`. Set the file owner to your user and permissions to
