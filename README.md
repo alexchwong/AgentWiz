@@ -119,15 +119,16 @@ launcher. For API clients, use `--no-browser --session-file PATH` and send each 
 `session` value in the `X-Session-Token` header. The launch owns this private file and replaces its
 contents when the workspace changes.
 
-Chat starts in Cloud with Quick chat. The composer stays below the scrolling transcript. Expand a
+Chat starts in Cloud with the General chat task. The composer stays below the scrolling transcript. Expand a
 turn's **Activity** bar to see its tool steps. Answers support Markdown, with Copy and Download
 available on completed turns. Pending approvals appear beneath the relevant prompt.
 
 Use the top-bar model picker to choose OpenRouter, LM Studio, or llama-server and filter the models
 by name or ID. Choosing a model applies to this chat. Use **Settings** to assign a named profile as
-a role default. Model server URLs use the configured endpoints. For a Local only run, review and trust
-the exact local model destination in AgentWorkshop. **Reasoning** beside **Send** lists the supported
-levels. llama-server uses its server default.
+the default model for the selected mode. For a Local only run, review and trust the exact destination
+in AgentWorkshop. **Chat task** adds instructions for the current turn, such as Executive summary
+or Adversarial critic. **Reasoning** beside **Send** lists the supported effort levels. llama-server
+uses its server default.
 
 **Use chat context** includes up to the six most recent completed prompt-and-answer pairs, limited
 to 64 KiB. Clear it for an independent request. Select any attachments or drafts for each turn.
@@ -135,9 +136,12 @@ Uploads default to Local only. A Local only turn makes the conversation private 
 Download anything you want to keep before closing. To pass private material into a reviewed workflow,
 upload it inside AgentWorkshop and mark that input Local only.
 
-**History** opens or collapses the left sidebar. Turn on **Save this Cloud chat** to reopen it from
-this workspace, including after a restart. Saving is opt-in per chat. Saved transcripts retain up to
-20 recent turns and activity summaries. Attachments, draft files, and raw tool payloads belong to the
+**History** opens or collapses the left sidebar. Cloud chats save by default after the first finished
+turn. Clear **Save this Cloud chat** to opt out. Use the **⋯** menu on a saved chat to rename or
+delete it. Saved transcripts retain up to 20 recent turns and activity summaries. Each new response
+shows the primary server, model and reported provider, plus the turn's combined model token counts
+and reported cost. Conversation totals in the sidebar survive reopening and transcript trimming.
+Missing billing figures are shown as unreported or partial. Attachments, draft files, and raw tool payloads belong to the
 live chat. A chat that becomes Local only leaves saved history. If an unclean shutdown interrupts a
 saved turn, AgentWiz marks the saved chat unavailable because it cannot confirm the final privacy state.
 Workspace settings for saved run records are independent of saved Chat history.

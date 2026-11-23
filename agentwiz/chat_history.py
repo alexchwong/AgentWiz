@@ -1,6 +1,7 @@
-"""Opt-in workspace transcripts for AgentWiz Chat. Private turns are never written here."""
+"""Workspace transcripts for AgentWiz Chat. Private turns are never written here."""
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 
@@ -35,6 +36,52 @@ def model_choice(value):
     return dict(value)
 
 
+USAGE_FIELDS = ("input_tokens", "output_tokens", "cost")
+
+
+def usage_summary(result):
+    """An attempted call contributes known values and explicitly marks missing values."""
+    result = result or {}
+    usage = result.get("usage") or {}
+    values = {key: usage.get(key) for key in USAGE_FIELDS[:2]}
+    values["cost"] = result.get("cost")
+    for key, value in values.items():
+        if not _usage_value(key, value):
+            values[key] = None
+    return {**values, "partial": [key for key in USAGE_FIELDS if values[key] is None]}
+
+
+def _usage_value(key, value):
+    if key == "cost":
+        return type(value) in (int, float) and 0 <= value <= 1e100 and math.isfinite(value)
+    return type(value) is int and value >= 0
+
+
+def merge_usage(current, change):
+    if current is None:
+        return change
+    if change is None:
+        return current
+    totals = {key: None if current[key] is None and change[key] is None else
+              (current[key] or 0) + (change[key] or 0) for key in USAGE_FIELDS}
+    return {**totals, "partial": [key for key in USAGE_FIELDS
+                                   if key in current["partial"] or key in change["partial"]]}
+
+
+def _usage_valid(value):
+    return (isinstance(value, dict) and set(value) == {*USAGE_FIELDS, "partial"}
+            and isinstance(value["partial"], list)
+            and all(key in USAGE_FIELDS for key in value["partial"])
+            and all((value[key] is None and key in value["partial"]) or _usage_value(key, value[key])
+                    for key in USAGE_FIELDS))
+
+
+def _route_valid(value):
+    return (isinstance(value, dict) and set(value) == {"kind", "model", "provider"}
+            and value["kind"] in model_call.KINDS and isinstance(value["model"], str)
+            and (value["provider"] is None or isinstance(value["provider"], str)))
+
+
 def turn_snapshot(view):
     """Keep displayable turns without staged-file handles, raw tool payloads or route credentials."""
     return {
@@ -43,12 +90,16 @@ def turn_snapshot(view):
         "trace": [{"capability": action["capability"], "outcome": action["outcome"]}
                   for action in view["trace"]],
         "sources": view["sources"],
+        **{key: view[key] for key in ("accounting", "served_route") if key in view},
     }
 
 
 def _turn_valid(turn):
     return (isinstance(turn, dict)
-            and set(turn) == {"run_id", "message", "answer", "partial", "stop_reason", "trace", "sources"}
+            and set(turn) - {"accounting", "served_route"} ==
+            {"run_id", "message", "answer", "partial", "stop_reason", "trace", "sources"}
+            and (turn.get("accounting") is None or _usage_valid(turn["accounting"]))
+            and ("served_route" not in turn or _route_valid(turn["served_route"]))
             and runs.valid_run_id(turn["run_id"]) and isinstance(turn["message"], str)
             and all(turn[field] is None or isinstance(turn[field], str)
                     for field in ("answer", "partial", "stop_reason"))
@@ -85,8 +136,10 @@ class History:
         if result.data is not None:
             try:
                 row = jsonio.decode_file(result.data)
-                if (set(row) == {"format_version", "id", "private", "ready", "updated", "title", "model", "turns"}
-                        and type(row["format_version"]) is int and row["format_version"] == 1
+                if (type(row.get("format_version")) is int and row["format_version"] in (1, 2)
+                        and set(row) == ({"format_version", "id", "private", "ready", "updated", "title", "model", "turns"}
+                                         | ({"totals"} if row["format_version"] == 2 else set()))
+                        and (row.get("totals") is None or _usage_valid(row["totals"]))
                         and row["id"] == ident and row["private"] is False and type(row["ready"]) is bool
                         and isinstance(row["updated"], str) and isinstance(row["title"], str)
                         and isinstance(row["turns"], list) and 0 < len(row["turns"]) <= MAX_TURNS
@@ -94,7 +147,7 @@ class History:
                         and len({turn["run_id"] for turn in row["turns"]}) == len(row["turns"])):
                     model_choice(row["model"])
                     return row
-            except (ValueError, RecursionError):
+            except (ValueError, AttributeError, RecursionError):
                 pass
         raise HistoryError("chat_history_unavailable")
 
@@ -135,7 +188,7 @@ class History:
         if row and row["ready"]:
             self._write({**row, "ready": False})
 
-    def save(self, ident, turns, model, credentials):
+    def save(self, ident, turns, model, totals, credentials):
         if not turns:
             return
         before = self._read(ident)
@@ -149,11 +202,24 @@ class History:
             model_choice(content["model"])
         except ValueError:
             content["model"] = None
-        # Preserve app-owned identifiers even if a credential happens to match one.
-        content["turns"] = [{**safe, "run_id": turn["run_id"]}
-                            for safe, turn in zip(content["turns"], turns)]
-        self._write({**content, "format_version": 1, "id": ident, "private": False, "ready": True,
+        # Keep schema fields intact while redacting backend-supplied identity strings.
+        for safe, turn in zip(content["turns"], turns):
+            safe["run_id"] = turn["run_id"]
+            if "accounting" in turn:
+                safe["accounting"] = turn["accounting"]
+            if "served_route" in turn:
+                safe["served_route"]["kind"] = turn["served_route"]["kind"]
+        self._write({**content, "format_version": 2, "id": ident, "private": False, "ready": True, "totals": totals,
                      "updated": runs.utc_now()})
+
+    def rename(self, ident, title, credentials):
+        if not isinstance(title, str) or not 0 < len(title) <= 120 or not title.isprintable() or not title.strip():
+            raise HistoryError("invalid_chat_title")
+        row = self._read(ident)
+        if row is None:
+            raise HistoryError("no_such_chat")
+        safe, _ = history.redact({"title": title.strip()}, credentials)
+        self._write({**row, "title": safe["title"]})
 
     def delete(self, ident):
         try:

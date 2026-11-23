@@ -10,7 +10,7 @@ import os
 import pytest
 
 from agentwiz import agent_capabilities, agent_loop, jsonio
-from conftest import (Reply, add_server, configure, failure_of, get_state, iter_events, load_tools, python_block,
+from conftest import (Reply, add_server, configure, delta, failure_of, get_state, iter_events, load_tools, python_block,
                       read_run_files, read_until, request, run_folders, save_profile, save_roles, simple_tool,
                       switch_history, text_result, wait_until, write_block)
 from agent_helpers import (final, run, sent_bodies, stage, start_conversation, text_turn, tool_call, tool_calls)
@@ -403,8 +403,8 @@ def test_a_v3_host_script_block_is_unusable_and_never_offered(ui, server, agent)
 
 
 # --- privacy (8) -------------------------------------------------------------------------------------------------------
-def cloud_model_block(ui, server, local_input=False):
-    save_profile(ui, "cloud", kind="openai_compat", model="cloud-model")
+def cloud_model_block(ui, server, local_input=False, *, kind="openai_compat"):
+    save_profile(ui, "cloud", kind=kind, model="cloud-model")
     save_roles(ui, {"fast": "cloud"})
     configure(ui, server)                                                   # the orchestrator stays model m
     write_block(ui, "ask", {"format_version": 4, "name": "ask", "description": "asks a model",
@@ -415,6 +415,29 @@ def cloud_model_block(ui, server, local_input=False):
     preview = request(ui, f"/api/agent/inventory?revision={get_state(ui)['revision']}")
     return next(c for c in preview["capabilities"] if c["kind"] == "block")
 
+
+
+def test_turn_usage_counts_tool_loop_and_child_repair(ui, server, agent):
+    block = cloud_model_block(ui, server, kind="openrouter")
+    configure(ui, server, kind="openrouter", model="example/model", api_key="synthetic-key",
+              provider="eligible", routing_mode="manual")
+
+    def with_usage(reply, input_tokens, output_tokens, cost=None):
+        usage = {"prompt_tokens": input_tokens, "completion_tokens": output_tokens}
+        if cost is not None:
+            usage["cost"] = cost
+        reply.body.insert(-1, delta(usage=usage))
+        return reply
+
+    server.reply(with_usage(tool_call(block["name"], {"text": "hi"}), 10, 2, 0.01),
+                 with_usage(text_turn("not the required JSON"), 20, 3),
+                 with_usage(text_turn('{"out":"hi"}'), 30, 4, 0.02),
+                 with_usage(text_turn("Done"), 40, 5, 0.01))
+    events = run(ui, agent, "go", [{"name": block["name"], "revision": block["revision"]}])
+    view = final(events)["view"]
+    assert view["answer"] == "Done" and view["trace"][0]["outcome"] == "completed"
+    assert view["accounting"] == {"input_tokens": 100, "output_tokens": 14, "cost": 0.04, "partial": ["cost"]}
+    assert len(model_requests(server, "cloud-model")) == 2
 
 def model_requests(server, model):
     return [b for b in sent_bodies(server) if b.get("model") == model]

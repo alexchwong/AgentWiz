@@ -940,7 +940,7 @@ class Handler(BaseHTTPRequestHandler):
         handler(body)
 
     def _chat_settings(self) -> dict:
-        from .. import roles, webspell
+        from .. import chat_tasks, roles, webspell
         state = self.server.state
         view = state.view()
         bindings = {}
@@ -968,6 +968,7 @@ class Handler(BaseHTTPRequestHandler):
         return {"revision": view["revision"], "binding_revision": view["roles"]["revision"], "roles": bindings,
                 "agentwiz_version": __version__, "modelspell_version": modelspell.__version__,
                 "bindings": view["roles"]["mode_bindings"], "tools": state.chat_preferences(),
+                "chat_tasks": [{"id": key, "label": name} for key, (name, _) in chat_tasks.TASKS.items()],
                 "profiles": {name: details.get("kind") for name, details in profile_details.items()},
                 "reasoning_levels": {kind: [level for level in REASONING_LEVELS[1:]
                                              if self._reasoning_supported(kind, level)]
@@ -1026,6 +1027,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/chat/history/open" and set(body) == {"id", "close_private"} and isinstance(body["id"], str):
             return self._send(200, manager.start_conversation(require_confirmation=True, saved_id=body["id"],
                                                              close_private=body["close_private"]))
+        if path == "/api/chat/history/rename" and set(body) == {"id", "title"}:
+            manager.rename_saved_chat(body["id"], body["title"])
+            return self._send(200, {"renamed": True})
         if path == "/api/chat/history/delete" and set(body) == {"id"}:
             manager.delete_saved_chat(body["id"])
             return self._send(200, {"deleted": True})

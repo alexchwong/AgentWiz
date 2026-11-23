@@ -108,6 +108,7 @@ class Conversation:
         self.chat_save_error = None
         self.chat_turns = []
         self.chat_model = None
+        self.chat_totals = None
         self.lock = threading.Lock()
         self.drained = threading.Condition(self.lock)
         self.pending_writes = 0

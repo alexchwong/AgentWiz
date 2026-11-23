@@ -24,9 +24,10 @@
 <div class="workspace">
   <aside id="history" aria-label="Chat history" data-test="chat-history">
     <button id="new-chat" type="button" data-test="new-chat">New chat</button>
-    <section id="current-chat" aria-labelledby="current-chat-heading" hidden>
+    <section aria-labelledby="current-chat-heading">
       <h2 id="current-chat-heading">Current chat</h2>
       <p id="current-title"></p>
+      <p id="chat-totals" class="usage" data-test="chat-totals" hidden></p>
       <label id="save-chat-row"><input id="save-chat" type="checkbox" data-test="save-chat"> Save this Cloud chat</label>
       <p id="history-status" role="status" hidden></p>
     </section>
@@ -55,6 +56,7 @@
             <label class="check"><input id="use-context" type="checkbox" checked data-test="use-chat-context"> Use chat context</label>
           </div>
           <div class="bar">
+            <label>Chat task <select id="chat-task" data-test="chat-task"><option value="general">General</option></select></label>
             <label>Reasoning <select id="reasoning" data-test="chat-reasoning"><option value="">Default</option></select></label>
             <button id="run" class="primary" type="submit" disabled data-test="chat-send">Send</button>
             <button id="stop" class="primary" type="button" hidden>Stop</button>
@@ -74,10 +76,9 @@
       <button id="verify-webspell" type="button">Connect webSpell</button>
       <span id="web-status" role="status"></span>
     </div>
-    <label>Chat role <select id="role"><option value="fast">Quick chat</option></select></label>
     <div class="bar">
       <label>Role default <select id="profile"></select></label>
-      <button id="bind" type="button">Save role default</button>
+      <button id="bind" type="button">Save default model</button>
     </div>
     <a id="workshop" rel="noreferrer" target="_blank">AgentWorkshop address</a>
     <p id="settings-status" role="status" hidden></p>
@@ -110,7 +111,7 @@
     <p id="model-status" role="status"></p>
     <div class="bar">
       <button id="model-refresh" type="button">Refresh models</button>
-      <button id="model-default" type="button">Use role default</button>
+      <button id="model-default" type="button">Use default model</button>
     </div>
   </div>
 </dialog>
@@ -121,6 +122,17 @@
     <input id="files" type="file" multiple aria-label="Files">
     <div id="labels"></div>
     <div class="bar"><button value="cancel">Cancel</button><button class="primary" value="attach">Attach</button></div>
+  </form>
+</dialog>
+
+<dialog id="rename-chat" aria-labelledby="rename-chat-heading">
+  <form method="dialog" class="settings-fields">
+    <h2 id="rename-chat-heading">Rename chat</h2>
+    <label>Title <input id="chat-title" maxlength="120" required autofocus></label>
+    <div class="bar">
+      <button value="cancel" formnovalidate>Cancel</button>
+      <button value="rename" class="primary">Rename</button>
+    </div>
   </form>
 </dialog>
 

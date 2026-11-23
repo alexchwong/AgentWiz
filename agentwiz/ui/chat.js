@@ -41,16 +41,16 @@
   }
   const api = async (path, body) => (await request(path, body)).json();
   const agent = (path, body) => api("/api/agent/" + path, body === undefined ? undefined : {format_version: 1, ...body});
-  const roleBinding = () => settings.roles[$("role").value]?.[$("mode").value];
+  const defaultBinding = () => settings.roles.fast?.[$("mode").value];
   const effectiveChoice = () => choice && modeFor(choice.kind) === $("mode").value ? choice : null;
   const isBusy = () => Boolean(active || sending || switching || discovering);
   const restrictedSelection = () => Boolean(conversation?.documents.some(i => selected.has(i.id) && i.local_only));
 
   async function loadSettings() {
-    const previous = $("role").value;
+    const task = $("chat-task").value;
     settings = await api("/api/chat/settings");
-    $("role").replaceChildren(...Object.entries(settings.roles).map(([id, role]) => new Option(role.name, id)));
-    $("role").value = settings.roles[previous] ? previous : "fast";
+    $("chat-task").replaceChildren(...settings.chat_tasks.map(({id, label}) => new Option(label, id)));
+    $("chat-task").value = settings.chat_tasks.some(({id}) => id === task) ? task : "general";
     $("builtins").checked = settings.tools.builtins;
     $("webspell").checked = settings.tools.webspell;
     $("key-status").textContent = {
@@ -68,7 +68,7 @@
 
   function renderControls() {
     const mode = $("mode").value;
-    const binding = roleBinding();
+    const binding = defaultBinding();
     const override = effectiveChoice();
     const kind = override?.kind || binding?.kind;
     const model = override?.model || binding?.model;
@@ -77,7 +77,7 @@
     let reason = "";
     if (mode === "cloud" && conversation?.private) reason = "This chat is Local only. Start a new chat to use Cloud.";
     else if (mode === "cloud" && restrictedSelection()) reason = "A selected attachment is Local only. Change mode to continue.";
-    else if (!model) reason = "Choose a model or set a role default.";
+    else if (!model) reason = "Choose a model or set a default model.";
     else if (mode === "local" && (override ? listed?.trusted === false : !binding?.trusted)) {
       reason = "Review and trust this model destination in AgentWorkshop.";
     } else if (kind === "openrouter" && settings.key_source === "none") reason = "Set your key using OpenRouter key.";
@@ -102,6 +102,7 @@
     }
     reasoning.value = levels.includes(level) ? level : "";
     reasoning.disabled = busy || !levels.length;
+    $("chat-task").disabled = busy;
 
     $("run").disabled = Boolean(reason || busy || !$("task").value.trim());
     $("run").hidden = Boolean(active);
@@ -116,10 +117,10 @@
     const profileOptions = Object.entries(settings.profiles).filter(([, source]) =>
       mode === "cloud" ? source === "openrouter" : ["lmstudio", "openai_compat"].includes(source));
     const profile = $("profile");
-    const profileKey = JSON.stringify([mode, $("role").value, settings.binding_revision, profileOptions]);
+    const profileKey = JSON.stringify([mode, settings.binding_revision, profileOptions]);
     if (profile.dataset.options !== profileKey) {
       profile.replaceChildren(new Option("Packaged default", ""), ...profileOptions.map(([name]) => new Option(name, name)));
-      profile.value = settings.bindings[$("role").value]?.[mode] || "";
+      profile.value = settings.bindings.fast?.[mode] || "";
       profile.dataset.options = profileKey;
     }
   }
@@ -175,9 +176,12 @@
     response.dataset.test = "turn-answer";
     const outcome = element("p", "", "turn-status");
     const sources = element("ul", "", "sources");
+    const usage = element("p", "", "usage");
+    usage.dataset.test = "turn-usage";
+    usage.hidden = true;
     const actions = element("div", "", "bar turn-actions");
-    root.append(prompt, activity, approval, response, outcome, sources, actions);
-    const refs = {root, prompt, activity, summary, steps, approval, response, outcome, sources, actions};
+    root.append(prompt, activity, approval, response, outcome, sources, usage, actions);
+    const refs = {root, prompt, activity, summary, steps, approval, response, outcome, sources, usage, actions};
     refs.data = run;
     turns.set(run.run_id, refs);
     $("transcript").append(root);
@@ -189,6 +193,20 @@
       refs.response.replaceChildren(markdown.render(text));
       refs.renderedText = text;
     }
+  }
+
+  const currency = new Intl.NumberFormat("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 9});
+  const tokens = new Intl.NumberFormat();
+  function usageText(usage) {
+    if (!usage) return "Usage unreported";
+    const fields = [["input_tokens", "input tokens", tokens], ["output_tokens", "output tokens", tokens],
+      ["cost", "cost", currency]];
+    return fields.map(([key, label, formatter]) => {
+      if (usage[key] == null) return label + " unreported";
+      const formatted = formatter.format(usage[key]);
+      return (key === "cost" ? "US$" + formatted : formatted + " " + label) +
+        (usage.partial.includes(key) ? " (partial)" : "");
+    }).join(" · ");
   }
 
   function renderRun(run, force = false) {
@@ -241,6 +259,14 @@
         refs.sourceKey = sourceKey;
       }
 
+      if (run.state !== "running") {
+        const route = run.served_route;
+        const identity = route ? [backend[route.kind] || route.kind, route.model,
+          route.provider || (route.kind === "openrouter" ? "Provider unreported" : "Direct")].join(" · ") : "";
+        refs.usage.textContent = [identity, usageText(run.accounting)].filter(Boolean).join(" · ");
+        refs.usage.hidden = false;
+      }
+
       const actionsKey = JSON.stringify([Boolean(run.state !== "running" && text), run.drafts]);
       if (actionsKey !== refs.actionsKey) {
         const actions = (run.drafts || []).map(item => button("Download " + item.name, () => downloadDraft(item).catch(report)));
@@ -275,13 +301,44 @@
     $("toggle-history").setAttribute("aria-expanded", String(open));
   }
 
+  async function updateHistory(path, body, clearComposer = false) {
+    switching = true;
+    renderControls();
+    renderHistory();
+    try {
+      if (currentRefresh) await currentRefresh;
+      await api("/api/chat/history/" + path, body);
+      if (clearComposer) {
+        $("task").value = "";
+        resizeComposer();
+      }
+      await refresh();
+      await refreshHistory();
+    } finally {
+      switching = false;
+      renderControls();
+      renderHistory();
+    }
+  }
+
+  async function renameChat(chat) {
+    const dialog = $("rename-chat");
+    $("chat-title").value = chat.title;
+    dialog.returnValue = "cancel";
+    dialog.showModal();
+    await new Promise(resolve => dialog.addEventListener("close", resolve, {once: true}));
+    const title = $("chat-title").value.trim();
+    if (dialog.returnValue === "rename" && title) await updateHistory("rename", {id: chat.id, title});
+  }
+
   function renderHistory() {
     const first = turns.values().next().value;
-    $("current-chat").hidden = !conversation;
+    const saved = savedChats.find(chat => chat.id === conversation?.id);
     $("current-title").textContent = conversation?.private ? "Local only chat" :
-      (first?.data.message?.trim().replace(/\s+/g, " ").slice(0, 72) || "Untitled chat");
+      (saved?.title || first?.data.message?.trim().replace(/\s+/g, " ").slice(0, 72) || "Untitled chat");
+    status("chat-totals", conversation?.totals ? "Conversation total · " + usageText(conversation.totals) : "");
     $("save-chat-row").hidden = Boolean(conversation?.private);
-    $("save-chat").checked = Boolean(conversation?.saved);
+    $("save-chat").checked = conversation?.saved ?? true;
     const saveWarning = conversation?.saved && $("mode").value === "local"
       ? "Sending in Local only will remove this chat from saved history." : "";
     status("history-status", conversation?.save_error?.replaceAll("_", " ") || saveWarning);
@@ -291,17 +348,26 @@
       open.title = chat.ready ? chat.title : chat.title + " · Interrupted or unavailable";
       open.disabled = !chat.ready || isBusy();
       if (chat.id === conversation?.id) open.setAttribute("aria-current", "page");
-      const remove = button("Delete", async () => {
-        if (!confirm("Delete this saved chat from this workspace?")) return;
-        try {
-          await api("/api/chat/history/delete", {id: chat.id});
-          await refresh();
-          await refreshHistory();
-        } catch (error) { report(error); }
+      const menu = element("details", "", "chat-menu");
+      const trigger = element("summary", "⋯");
+      trigger.setAttribute("aria-label", "Actions for " + chat.title);
+      trigger.dataset.test = "chat-menu";
+      const actions = element("div", "", "chat-menu-actions");
+      const rename = button("Rename", () => {
+        menu.open = false;
+        renameChat(chat).catch(report);
       });
-      remove.setAttribute("aria-label", "Delete saved chat " + chat.title);
+      rename.disabled = !chat.ready || isBusy();
+      const remove = button("Delete", () => {
+        menu.open = false;
+        if (confirm("Delete this saved chat from this workspace?")) {
+          updateHistory("delete", {id: chat.id}, chat.id === conversation?.id).catch(report);
+        }
+      });
       remove.disabled = isBusy();
-      row.append(open, remove);
+      actions.append(rename, remove);
+      menu.append(trigger, actions);
+      row.append(open, menu);
       return row;
     }));
     if (!savedChats.length) $("saved-chats").append(element("li", "No saved chats", "turn-status"));
@@ -322,6 +388,7 @@
     $("transcript").replaceChildren();
     $("empty-chat").hidden = false;
     $("use-context").checked = true;
+    $("chat-task").value = "general";
     $("reasoning").value = "";
   }
 
@@ -446,7 +513,6 @@
   mobile.addEventListener("change", () => setHistoryOpen(!mobile.matches));
   setHistoryOpen(!mobile.matches);
   $("mode").onchange = changeMode;
-  $("role").onchange = renderControls;
   $("task").oninput = () => { resizeComposer(); renderControls(); };
   $("task").onkeydown = event => {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -468,7 +534,7 @@
   };
   $("bind").onclick = async () => {
     const bindings = structuredClone(settings.bindings);
-    const role = $("role").value;
+    const role = "fast";
     const mode = $("mode").value;
     bindings[role] ||= {};
     if ($("profile").value) bindings[role][mode] = $("profile").value;
@@ -476,7 +542,7 @@
     try {
       await api("/api/chat/bindings", {revision: settings.binding_revision, bindings});
       await loadSettings();
-      status("settings-status", "Role default updated.");
+      status("settings-status", "Default model updated.");
     } catch (error) { report(error, "settings-status"); }
   };
   $("save-chat").onchange = async event => {
@@ -485,15 +551,35 @@
       event.target.checked = true;
       return;
     }
+    switching = true;
+    renderControls();
     try {
+      if (!conversation) conversation = (await agent("conversation", {})).conversation;
       const view = await api("/api/chat/history/save", {conversation: conversation.id, enabled});
       conversation = view.conversation;
       await refreshHistory();
     } catch (error) {
+      report(error);
+    } finally {
+      switching = false;
+      renderControls();
       renderHistory();
-      report(error, "history-status");
     }
   };
+
+  function closeHistoryMenus(target) {
+    for (const menu of document.querySelectorAll(".chat-menu[open]")) {
+      if (!menu.contains(target)) menu.open = false;
+    }
+  }
+  document.addEventListener("click", event => closeHistoryMenus(event.target));
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+      const menu = document.activeElement?.closest(".chat-menu[open]");
+      if (menu) menu.querySelector("summary").focus();
+      closeHistoryMenus(null);
+    }
+  });
 
   function filterModels() {
     const query = $("model-search").value.trim().toLowerCase();
@@ -564,7 +650,7 @@
 
   $("model-picker-open").onclick = () => {
     $("source").querySelector('[value="openrouter"]').disabled = Boolean($("mode").value !== "cloud" || conversation?.private || restrictedSelection());
-    $("source").value = effectiveChoice()?.kind || roleBinding()?.kind
+    $("source").value = effectiveChoice()?.kind || defaultBinding()?.kind
       || ($("mode").value === "local" ? "lmstudio" : "openrouter");
     if ($("source").selectedOptions[0]?.disabled) $("source").value = "lmstudio";
     $("model-picker").showModal();
@@ -658,7 +744,7 @@
       if ($("mode").value === "cloud" && settings.webspell === "verify_connection" && $("webspell").checked &&
           !conversation.private && !restrictedSelection()) await connectWeb().catch(() => {});
       const response = await request("/api/agent/run", {
-        format_version: 1, revision: settings.revision, mode: $("mode").value, role: $("role").value,
+        format_version: 1, revision: settings.revision, mode: $("mode").value, chat_task: $("chat-task").value,
         conversation: conversation.id, message, items: [...selected], use_context: $("use-context").checked,
         model_choice: effectiveChoice(), task: $("reasoning").value ? {reasoning: $("reasoning").value} : {},
       });

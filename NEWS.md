@@ -2,11 +2,12 @@
 
 ## 0.2.4
 - AgentWiz Chat and AgentWorkshop open separately and share one workspace.
-- Chat has a pinned composer, Markdown answers, per-turn activity and collapsible, opt-in Cloud history.
+- Chat has a pinned composer, Markdown answers, per-turn activity and collapsible Cloud history, saved by default with rename and delete.
 - Pick an OpenRouter, LM Studio or llama-server model by typing its name or ID. Reasoning is beside Send,
   and the top bar opens the session-key and Settings dialogs.
 - Local only conversations stay private until closed, including across refresh and follow-up.
-- Chat offers six model roles, scoped attachments, built-in tools, all 13 starter blocks and managed webSpell.
+- Chat offers per-turn task instructions and model usage totals, scoped attachments, built-in tools,
+  all 13 starter blocks and managed webSpell.
 - webSpell v0.2.1 is installed, verified and started automatically with Docker Compose; its MCP URL is configurable via the shared MCP servers file. Web searches support category and recency filters.
 - `agentwiz-webspell` manages independent service start, stop, restart, status and logs.
 - OpenRouter credentials can come from a private user configuration file.

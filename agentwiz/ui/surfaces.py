@@ -17,7 +17,7 @@ HERE = Path(__file__).parent
 CHAT_GET = frozenset({"/api/agent/conversation", "/api/chat/settings", "/api/chat/history"})
 CHAT_POST = frozenset({
     "/api/openrouter-key", "/api/chat/bindings", "/api/chat/tools", "/api/chat/webspell", "/api/chat/models",
-    "/api/chat/history/save", "/api/chat/history/open", "/api/chat/history/delete",
+    "/api/chat/history/save", "/api/chat/history/open", "/api/chat/history/delete", "/api/chat/history/rename",
     "/api/agent/conversation", "/api/agent/conversation/close", "/api/agent/documents",
     "/api/agent/documents/update", "/api/agent/inventory", "/api/agent/run", "/api/agent/stop", "/api/agent/approve",
 })

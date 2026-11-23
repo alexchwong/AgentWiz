@@ -177,14 +177,16 @@ def test_openrouter_file_key_requires_private_file(tmp_path):
     assert server_config.openrouter_file_key(link) is None
 
 
-def _chat_model_stub(monkeypatch, answer, calls):
+def _chat_model_stub(monkeypatch, answer, calls, *, with_usage=False):
     import modelspell
     from agentwiz import model_call
 
     def complete(endpoint, model, messages, *, on_text, **arguments):
         calls.append((endpoint.kind, model, list(messages), arguments))
         on_text(answer)
-        return modelspell.Result(answer, None, None, None, "stop", False, model, None, None,
+        usage = modelspell.Usage(10, 2, 12) if with_usage else None
+        return modelspell.Result(answer, None, usage, 0.01 if with_usage else None, "stop", False, model,
+                                 "Example provider" if with_usage else None, None,
                                  "chat_completions", None, None)
 
     monkeypatch.setattr(model_call, "resolve_request", lambda _snapshot, arguments, **_kw: (arguments, None))
@@ -208,7 +210,7 @@ def test_chat_picker_transcript_and_saved_sidebar(browser, tmp_path, server, mon
 <img src="https://example.org/unsafe.png">
 ![remote](https://example.org/image.png)
 [unsafe](javascript:alert%281%29)
-""", calls)
+""", calls, with_usage=True)
     lookups = []
     catalog = {
         "openrouter": ("demo/alternative", "Cloud Alternative", ["low", "medium"]),
@@ -263,6 +265,7 @@ def test_chat_picker_transcript_and_saved_sidebar(browser, tmp_path, server, mon
             page.locator('[data-test="model-search"]').fill("alternative")
             expect(page.get_by_role("option", name="Cloud Alternative", exact=False)).to_be_visible()
             page.locator('[data-test="model-search"]').press("Enter")
+            page.locator('[data-test="chat-task"]').select_option("conclusion_first")
             page.locator('[data-test="chat-reasoning"]').select_option("medium")
             page.locator('[data-test="new-chat"]').wait_for()
             page.locator('[data-test="chat-message"]').fill("Synthetic cloud question")
@@ -275,10 +278,19 @@ def test_chat_picker_transcript_and_saved_sidebar(browser, tmp_path, server, mon
             expect(page.locator('[data-test="turn-answer"]').locator("a")).to_have_count(1)
             expect(page.locator('[data-test="turn-answer"]').locator("img")).to_have_count(0)
             expect(page.locator('[data-test="chat-message"]')).to_be_empty()
-            expect(page.locator('[data-test="saved-chats"]').get_by_role("button")).to_have_count(0)
-
-            page.locator('[data-test="save-chat"]').check()
-            saved = page.locator('[data-test="saved-chats"]').get_by_role("button", name="Synthetic cloud question", exact=True)
+            expect(page.locator('[data-test="save-chat"]')).to_be_checked()
+            expect(page.locator('[data-test="turn-usage"]')).to_contain_text("demo/alternative")
+            expect(page.locator('[data-test="turn-usage"]')).to_contain_text("Example provider")
+            expect(page.locator('[data-test="chat-totals"]')).to_contain_text("US$0.01")
+            sidebar = page.locator('[data-test="saved-chats"]')
+            saved = sidebar.get_by_role("button", name="Synthetic cloud question", exact=True)
+            expect(saved).to_be_enabled()
+            sidebar.locator('[data-test="chat-menu"]').click()
+            sidebar.get_by_role("button", name="Rename").click()
+            dialog = page.locator("#rename-chat")
+            dialog.get_by_role("textbox").fill("Renamed question")
+            dialog.get_by_role("button", name="Rename").click()
+            saved = sidebar.get_by_role("button", name="Renamed question", exact=True)
             expect(saved).to_be_enabled()
             page.locator('[data-test="new-chat"]').click()
             expect(page.locator('[data-test="prompt-bubble"]')).to_have_count(0)
@@ -289,6 +301,12 @@ def test_chat_picker_transcript_and_saved_sidebar(browser, tmp_path, server, mon
             expect(page.locator('[data-test="turn-answer"]').locator("h2")).to_have_text("Answer")
             assert calls[0][0:2] == ("openrouter", "demo/alternative")
             assert calls[0][3]["reasoning"] == "medium"
+            assert "Lead with the direct answer" in calls[0][2][0]["content"]
+            page.once("dialog", lambda confirmation: confirmation.accept())
+            sidebar.locator('[data-test="chat-menu"]').click()
+            sidebar.get_by_role("button", name="Delete").click()
+            expect(saved).to_have_count(0)
+            expect(page.locator('[data-test="prompt-bubble"]')).to_have_count(0)
             assert lookups[:3] == ["openrouter", "lmstudio", "openai_compat"]
             assert not page_errors
         finally:
@@ -299,7 +317,7 @@ def test_saved_chat_restart_context_and_private_boundary(tmp_path, server, monke
     from agentwiz import chat_history
 
     calls = []
-    _chat_model_stub(monkeypatch, "A cloud answer.", calls)
+    _chat_model_stub(monkeypatch, "A cloud answer.", calls, with_usage=True)
 
     def run(workshop, conversation_id, message, **extra):
         state = workshop.state
@@ -315,10 +333,11 @@ def test_saved_chat_restart_context_and_private_boundary(tmp_path, server, monke
         key = "synthetic-archive-redaction-canary"
         state = workshop.state
         state.set_openrouter_key(key, state.view()["revision"])
-        first = run(workshop, ident, "Public question " + key)
         archive = workspace / f"chat-history-{ident}.json"
         assert not archive.exists()
-        assert call(chat, "/api/chat/history/save", {"conversation": ident, "enabled": True})[0] == 200
+        first = run(workshop, ident, "Public question " + key, chat_task="tldr")
+        assert "Give the gist" in calls[0][2][0]["content"]
+        assert call(chat, "/api/chat/history/rename", {"id": ident, "title": "My chat " + key})[0] == 200
         assert archive.stat().st_mode & 0o777 == 0o600
         assert key not in archive.read_text()
         assert call(workshop, "/api/chat/history")[0] == 403
@@ -327,8 +346,15 @@ def test_saved_chat_restart_context_and_private_boundary(tmp_path, server, monke
         state = workshop.state
         status, view = call(chat, "/api/chat/history/open", {"id": ident, "close_private": None})
         assert status == 200 and view["conversation"]["restored_runs"] == [first]
-        assert call(chat, "/api/agent/runs/" + first)[1]["message"] == "Public question ***"
+        initial = call(chat, "/api/agent/runs/" + first)[1]
+        assert initial["message"] == "Public question ***"
+        assert initial["accounting"] == {"input_tokens": 10, "output_tokens": 2, "cost": 0.01, "partial": []}
+        assert initial["served_route"]["provider"] == "Example provider"
+        assert call(chat, "/api/chat/history")[1]["chats"][0]["title"] == "My chat ***"
         run(workshop, ident, "Follow-up", use_context=True)
+        assert "Give the gist" not in calls[-1][2][0]["content"]
+        assert state.agent.view()["conversation"]["totals"]["input_tokens"] == 20
+        assert call(chat, "/api/chat/history")[1]["chats"][0]["title"] == "My chat ***"
         assert [(row["role"], row["content"]) for row in calls[-1][2][1:]] == [
             ("user", "Public question ***"), ("assistant", "A cloud answer."), ("user", "Follow-up")]
         run(workshop, ident, "Independent turn", use_context=False)
@@ -397,4 +423,55 @@ def test_interrupted_archive_refuses_reopen(tmp_path, server, monkeypatch):
         status, error = call(chat, "/api/chat/history/open", {"id": ident, "close_private": None})
         assert status == 409 and error["code"] == "chat_history_interrupted"
         assert call(chat, "/api/chat/history/delete", {"id": ident})[0] == 200
+        assert not call(chat, "/api/chat/history")[1]["chats"]
+
+
+
+def test_legacy_chat_history_marks_missing_totals(tmp_path, server, monkeypatch):
+    _chat_model_stub(monkeypatch, "Answer.", [], with_usage=True)
+    with listeners(tmp_path, server.url + "/v1") as (workshop, chat):
+        state = workshop.state
+        ident = "conv_00000001"
+        archive = state.workspace.path / f"chat-history-{ident}.json"
+        archive.write_text(json.dumps({"format_version": 1, "id": ident, "private": False, "ready": True,
+                                       "updated": "2026-01-01T00:00:00Z", "title": "Old chat", "model": None,
+                                       "turns": [{"run_id": "000000000001", "message": "Old prompt", "answer": "Answer",
+                                                  "partial": None, "stop_reason": "answered", "trace": [],
+                                                  "sources": []}]}))
+        status, view = call(chat, "/api/chat/history/open", {"id": ident, "close_private": None})
+        assert status == 200, view
+        body = {"revision": state.view()["revision"], "conversation": ident, "mode": "cloud",
+                "message": "New prompt", "builtins": False, "webspell": False}
+        state.agent.prepare_run(body, None).run()
+        stored = state.agent.chat_history.reopen(ident)
+        assert stored["format_version"] == 2 and len(stored["turns"]) == 2
+        assert stored["totals"] == {"input_tokens": 10, "output_tokens": 2, "cost": 0.01,
+                                    "partial": ["input_tokens", "output_tokens", "cost"]}
+
+def test_chat_opt_out_trimmed_totals_and_active_delete(tmp_path, server, monkeypatch):
+    from agentwiz import chat_history
+
+    _chat_model_stub(monkeypatch, "Answer.", [], with_usage=True)
+    monkeypatch.setattr(chat_history, "MAX_TURNS", 2)
+    monkeypatch.setattr("agentwiz.agent_loop.RUNS_KEPT", 2)
+
+    with listeners(tmp_path, server.url + "/v1") as (workshop, chat):
+        state = workshop.state
+        ident = call(chat, "/api/agent/conversation", {"format_version": 1})[1]["conversation"]["id"]
+        assert call(chat, "/api/chat/history/save", {"conversation": ident, "enabled": False})[0] == 200
+        body = {"revision": state.view()["revision"], "conversation": ident, "mode": "cloud",
+                "message": "Prompt", "builtins": False, "webspell": False}
+        state.agent.prepare_run(body, None).run()
+        assert not call(chat, "/api/chat/history")[1]["chats"]
+        assert call(chat, "/api/chat/history/save", {"conversation": ident, "enabled": True})[0] == 200
+        for _ in range(2):
+            state.agent.prepare_run(body, None).run()
+        assert len(state.agent.chat_history.reopen(ident)["turns"]) == 2
+        assert call(chat, "/api/agent/conversation")[1]["conversation"]["totals"]["cost"] == 0.03
+
+    with listeners(tmp_path, server.url + "/v1") as (workshop, chat):
+        status, view = call(chat, "/api/chat/history/open", {"id": ident, "close_private": None})
+        assert status == 200 and view["conversation"]["totals"]["input_tokens"] == 30
+        assert call(chat, "/api/chat/history/delete", {"id": ident})[0] == 200
+        assert call(chat, "/api/agent/conversation")[1]["conversation"] is None
         assert not call(chat, "/api/chat/history")[1]["chats"]

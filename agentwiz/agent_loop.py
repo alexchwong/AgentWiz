@@ -32,7 +32,7 @@ import modelspell
 from modelspell import (Cancelled, ConfigError, ModelSpellError, ToolDefinition, ToolOutput,
                         UnsupportedOperation, UnsupportedSetting)
 
-from . import (__version__, agent_capabilities as caps, agent_documents as docs, agent_tools, chat_history, checks, jsonio,
+from . import (__version__, agent_capabilities as caps, agent_documents as docs, agent_tools, chat_history, chat_tasks, checks, jsonio,
                model_call, outbound_policy, python_step, runner, runs)
 from .agent_tools import ToolError
 from .errors import report_internal
@@ -163,7 +163,10 @@ class _ChildObserver(runner.Observer):
                 pass
 
     def attempt_committed(self, record: dict) -> None:
-        self.parent.add_usage(record.get("result") if isinstance(record.get("result"), dict) else None)
+        if record.get("routing", {}).get("probe_usage") == "unreported":
+            self.parent.note_unreported_usage()
+        if record.get("model_called") and record.get("sent") is not False:
+            self.parent.add_usage(record.get("result") or record.get("partial"))
 
 
 # --- capture (4.3) -------------------------------------------------------------------------------------------------
@@ -189,6 +192,7 @@ class Capture:
     mode: str | None = None
     role: str = "fast"
     model_choice: dict | None = None
+    chat_task: str = "general"
 
 
 def _snapshot(state, revision, mode=None, role="fast", choice=None):
@@ -230,6 +234,9 @@ def plan(state: Any, conversation: Any, body: Mapping, *, for_send: bool) -> Cap
     if mode == "cloud" and conversation is not None and conversation.private:
         raise AgentError("private_conversation", 409, remedies=["new_conversation", "trusted_local_model"])
     choice = _model_choice(body, mode)
+    chat_task = body.get("chat_task", "general")
+    if not isinstance(chat_task, str) or chat_task not in chat_tasks.TASKS or ("chat_task" in body and mode is None):
+        raise AgentError("invalid_chat_task", 400)
     use_context = body.get("use_context", False)
     if (type(use_context) is not bool or (use_context and body.get("follow_up") is not None)
             or (mode is None and use_context)):
@@ -347,7 +354,7 @@ def plan(state: Any, conversation: Any, body: Mapping, *, for_send: bool) -> Cap
                     raise AgentError("configuration_changed", 409, capability=capability.name)
     return Capture(revision, snapshot, task, arguments, trusted, chosen, {c.name: c for c in chosen}, definitions,
                    size, found["classification_revision"], allowed, excluded, memory,
-                   _limits(body.get("limits")), branch, mcp_snapshots, role_captures, mode, role, choice)
+                   _limits(body.get("limits")), branch, mcp_snapshots, role_captures, mode, role, choice, chat_task)
 
 
 def preview(state: Any, conversation: Any, body: Mapping) -> dict:
@@ -446,6 +453,7 @@ class AgentRun:
         self.resolved_arguments = None
         self.routing_selection = None
         self.served_provider = None
+        self.served_model = None
         self.turns = 0
         self.actions = 0
         self.corrections = 0
@@ -465,6 +473,7 @@ class AgentRun:
         self.drafts: list = []
         self.reservation: Reservation | None = None
         self.usage = {"input_tokens": 0, "output_tokens": 0, "reported": 0, "unreported": 0}
+        self.accounting = None
         self.cost = 0.0
         self.cost_reported = False
         self.sent_flags: list = []
@@ -495,27 +504,34 @@ class AgentRun:
     def _emit(self, event: dict) -> None:
         self.observer.event({**event, "run_id": self.run_id})
 
-    def add_usage(self, result: dict | None) -> None:
-        usage = result.get("usage") if isinstance(result, dict) else None
+    def note_unreported_usage(self) -> None:
         with self.lock:
-            if isinstance(usage, dict) and isinstance(usage.get("input_tokens"), int) \
-                    and isinstance(usage.get("output_tokens"), int):
-                self.usage["input_tokens"] += usage["input_tokens"]
-                self.usage["output_tokens"] += usage["output_tokens"]
-                self.usage["reported"] += 1
-            else:
-                self.usage["unreported"] += 1
-            cost = result.get("cost") if isinstance(result, dict) else None
-            if isinstance(cost, (int, float)) and not isinstance(cost, bool):
-                self.cost += cost
+            self.accounting = chat_history.merge_usage(self.accounting, chat_history.usage_summary(None))
+
+    def add_usage(self, result: dict | None) -> None:
+        accounting = chat_history.usage_summary(result)
+        with self.lock:
+            self.accounting = chat_history.merge_usage(self.accounting, accounting)
+            for key in ("input_tokens", "output_tokens"):
+                self.usage[key] += accounting[key] or 0
+            reported = all(accounting[key] is not None for key in ("input_tokens", "output_tokens"))
+            self.usage["reported" if reported else "unreported"] += 1
+            if accounting["cost"] is not None:
+                self.cost += accounting["cost"]
                 self.cost_reported = True
+
+    def _record_chat_model(self, result) -> None:
+        with self.lock:
+            self.served_provider = result.provider
+            self.served_model = result.model
+        self.add_usage(model_call.result_to_dict(result))
 
     def _ceilings(self) -> None:
         limits = self.capture.limits
         with self.lock:
             tokens = self.usage["input_tokens"] + self.usage["output_tokens"]
             cost, reported = self.cost, self.cost_reported
-        if limits["tokens"] is not None and self.usage["reported"] and tokens >= limits["tokens"]:
+        if limits["tokens"] is not None and tokens >= limits["tokens"]:
             raise _End("token_limit")
         if limits["cost"] is not None and reported and cost >= limits["cost"]:
             raise _End("cost_limit")
@@ -616,14 +632,19 @@ class AgentRun:
         self.turn_output = 0
         self.partial = ""
         snap, arguments = self.capture.snapshot, self.capture.arguments
+        completing = False
         try:
             if self.resolved_arguments is None:
                 self.resolved_arguments, self.routing_selection = model_call.resolve_request(
                     snap, arguments, tools=self.capture.definitions if tools else None,
                     cancel=self.handle, timeout=max(0.001, min(30.0, self.deadline - time.monotonic())))
+                if self.routing_selection and snap.routing_mode == "automatic":
+                    # ModelSpell's routing probes have no public token or cost results.
+                    self.note_unreported_usage()
             arguments = self.resolved_arguments
             self._gate_send()
             self.turns += 1
+            completing = True
             if tools:
                 return modelspell.complete_with_tools(
                     snap.endpoint, snap.model, self.transcript, tools=self.capture.definitions,
@@ -634,15 +655,29 @@ class AgentRun:
                                        **arguments)
         except Cancelled as exc:
             self.sent_flags.append(exc.sent)
+            if completing and exc.sent is not False:
+                if exc.partial is not None:
+                    self._record_chat_model(exc.partial)
+                else:
+                    self.note_unreported_usage()
+            elif not completing and exc.sent is not False:
+                self.note_unreported_usage()
             raise _End(self._stop_code()) from None
         except ModelSpellError as exc:
+            if ((completing and getattr(exc, "sent", None) is not False)
+                    or isinstance(exc, modelspell.ProviderSelectionError) and exc.evidence.get("attempts")):
+                self.note_unreported_usage()
             raise _End("model_error", model_call.describe_error(exc, snap.endpoint.base_url)) from None
         finally:
             budget.release()
 
     # --- the loop (4.4) -----------------------------------------------------------------------------------------
     def _initial(self) -> None:
-        self._append({"role": "system", "content": _system_text()}, 0)
+        name, instruction = chat_tasks.TASKS[self.capture.chat_task]
+        system = _system_text()
+        if instruction:
+            system += f"\n\nChat task — {name}\n{instruction} Follow the existing privacy and tool rules."
+        self._append({"role": "system", "content": system}, 0)
         self.transcript_bytes = len(self.transcript[0]["content"].encode("utf-8"))
         for entry in self.capture.memory:
             self._append({"role": "user", "content": entry.question}, len(entry.question.encode("utf-8")))
@@ -658,8 +693,7 @@ class AgentRun:
 
     def _text_branch(self) -> None:
         result = self._send(tools=False)
-        self.served_provider = result.provider
-        self.add_usage(model_call.result_to_dict(result))
+        self._record_chat_model(result)
         outcome = model_call.classify_outcome(result)
         if outcome == "complete":
             self.answer = result.text
@@ -672,8 +706,7 @@ class AgentRun:
     def _tool_branch(self) -> None:
         while True:
             turn = self._send(tools=True)
-            self.served_provider = turn.result.provider
-            self.add_usage(model_call.result_to_dict(turn.result))
+            self._record_chat_model(turn.result)
             self._ceilings()
             if not turn.clean:
                 self.partial = turn.result.text or self.partial
@@ -1279,7 +1312,7 @@ class AgentRun:
         with self.lock:
             self.state_name = "ended"
             self.save_status = status
-        self.manager.save_completed_chat(self)
+        self.manager.finish_chat_turn(self)
         self._emit({"type": "final", "stop_reason": self.stop_reason, "answer": self.answer,
                     "partial": self.partial if self.answer is None else None, "restricted": self.restricted,
                     "save_status": status, "view": self.view()})
@@ -1310,6 +1343,10 @@ class AgentRun:
                     "routing": model_call.routing_record(self.capture.snapshot,
                         self.resolved_arguments or self.capture.arguments, self.routing_selection),
                     "served_provider": self.served_provider, "sources": sorted(self.web_sources),
+                    "served_route": {"kind": self.capture.snapshot.kind,
+                                     "model": self.served_model or self.capture.snapshot.model,
+                                     "provider": self.served_provider},
+                    "accounting": self.accounting,
                     "usage": dict(self.usage), "cost": self.cost if self.cost_reported else None,
                     "save_status": self.save_status, **self.save_detail}
             if chat:
@@ -1449,8 +1486,9 @@ class Manager:
                 conversation = docs.Conversation(self.state.workspace.path, ident)
             except (OSError, docs.StagingError):
                 raise AgentError("staging_unavailable", 409) from None
+            conversation.chat_save = require_confirmation or saved is not None
             if saved:
-                conversation.chat_save = True
+                conversation.chat_totals = (saved["totals"] if "totals" in saved else chat_history.usage_summary(None))
                 conversation.chat_turns = saved["turns"]
                 conversation.chat_model = saved["model"]
             with self.lock:
@@ -1489,7 +1527,7 @@ class Manager:
         if conversation.private or any(turn.get("restricted") for turn in turns):
             raise chat_history.HistoryError("private_conversation")
         self.chat_history.save(conversation.id, [chat_history.turn_snapshot(turn) for turn in turns],
-                               conversation.chat_model, self.state.credentials())
+                               conversation.chat_model, conversation.chat_totals, self.state.credentials())
 
     def change_chat_save(self, conversation_id, enabled):
         if not isinstance(conversation_id, str) or type(enabled) is not bool:
@@ -1515,14 +1553,27 @@ class Manager:
         if self.state.workspace.read_only:
             raise AgentError("read_only", 409)
         with self.state.writing("chat history"), self.idle_reservation() as conversation:
+            current = conversation is not None and conversation.id == ident
+            if current and conversation.private:
+                raise AgentError("private_close_confirmation", 409)
             try:
                 self.chat_history.delete(ident)
             except chat_history.HistoryError as exc:
                 raise AgentError(str(exc), 409) from None
-            if conversation is not None and conversation.id == ident:
+            if current:
                 with self.lock:
-                    conversation.chat_save = False
-                    conversation.chat_save_error = None
+                    self.conversation = None
+                    self.runs.clear()
+                conversation.close()
+
+    def rename_saved_chat(self, ident, title):
+        if self.state.workspace.read_only:
+            raise AgentError("read_only", 409)
+        with self.state.writing("rename chat"), self.idle_reservation():
+            try:
+                self.chat_history.rename(ident, title, self.state.credentials())
+            except chat_history.HistoryError as exc:
+                raise AgentError(str(exc), 409) from None
 
     def suspend_chat_save(self, run):
         conversation = run.conversation
@@ -1538,9 +1589,13 @@ class Manager:
             except chat_history.HistoryError as exc:
                 raise AgentError(str(exc), 409) from None
 
-    def save_completed_chat(self, run):
+    def finish_chat_turn(self, run):
+        if run.capture.mode is None:
+            return
         conversation = run.conversation
-        if run.capture.mode is None or not conversation.chat_save:
+        with self.lock:
+            conversation.chat_totals = chat_history.merge_usage(conversation.chat_totals, run.accounting)
+        if not conversation.chat_save:
             return
         error = None
         try:
@@ -1572,7 +1627,7 @@ class Manager:
             recent = list(self.runs.values())
             chat = ({"saved": conversation.chat_save, "save_error": conversation.chat_save_error,
                      "restored_runs": [turn["run_id"] for turn in conversation.chat_turns],
-                     "model_choice": conversation.chat_model}
+                     "model_choice": conversation.chat_model, "totals": conversation.chat_totals}
                     if conversation is not None else {})
         out: dict = {"format_version": 1, "conversation": None, "active_run": None, "pending_approval": None}
         if conversation is not None:
@@ -1701,7 +1756,7 @@ class Manager:
     def prepare_run(self, body: Mapping, observer: Observer | None) -> AgentRun:
         if set(body) - {"conversation", "revision", "task", "message", "capabilities", "limits",
                         "role", "mode", "items", "follow_up", "builtins", "webspell",
-                        "model_choice", "use_context"}:
+                        "model_choice", "use_context", "chat_task"}:
             raise AgentError("invalid", 400)
         conversation = self._require(body.get("conversation"))
         message = body.get("message")
