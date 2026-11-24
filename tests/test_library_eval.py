@@ -315,11 +315,14 @@ def test_agent_cli_disposable_and_attached_modes(tmp_path, monkeypatch, server, 
                                       "expected_answer": {"equals": "pong"}}]))
     report = tmp_path / (destination or "reports/agent_eval_report.json")
     report_args = ["--report", str(report)] if destination else []
+    monkeypatch.setenv("AGENTWIZ_LIVE_LMSTUDIO_MODEL", "legacy-model")
     server.reply(responses_answer("pong"))
-    assert agent_eval.main(["--route", "lmstudio", "--cases", str(cases_path), *report_args]) == 0
+    assert agent_eval.main(["--route", "lmstudio", "--model", "cli-model",
+                            "--cases", str(cases_path), *report_args]) == 0
     data = json.loads(report.read_text())
     assert data["totals"]["answer_correct"] == 1
     assert data["route"]["kind"] == "lmstudio"
+    assert data["route"]["model"] == "cli-model"
     configure(ui, server)
     server.reply(text_turn("pong"))
     assert agent_eval.main(["--url", ui.url, "--cases", str(cases_path), "--report", str(report)]) == 0
@@ -351,6 +354,27 @@ def test_evaluation_overrides_are_explicit(tmp_path, monkeypatch):
     assert not (tmp_path / "absent.ini").exists()
 
 
+def test_disposable_privacy_targets_keep_local_and_cloud_profiles_separate(tmp_path, monkeypatch):
+    import eval_setup
+    from agentwiz import profiles, server_config
+
+    monkeypatch.setenv("AGENTWIZ_LIVE_LMSTUDIO_URL", "http://127.0.0.1:1234/v1")
+    monkeypatch.setenv("AGENTWIZ_LIVE_LMSTUDIO_KEY", "test-token")
+    monkeypatch.setenv("AGENTWIZ_LIVE_OPENROUTER_MODEL", "legacy/model")
+    folder, config, servers = eval_setup.materialize(
+        tmp_path, "lmstudio-eval", "lmstudio", model="local-model",
+        base_url="http://127.0.0.1:4321/v1",
+        cloud_summary=("privacy-summary-cloud", "cloud/model", "selected-provider"))
+    targets = profiles.read_profiles(folder).profiles
+    assert targets["lmstudio-eval"].model == "local-model"
+    cloud = targets["privacy-summary-cloud"]
+    assert (cloud.kind, cloud.model, cloud.provider, cloud.routing_mode) == (
+        "openrouter", "cloud/model", "selected-provider", "manual")
+    assert servers["lmstudio"].base_url == "http://127.0.0.1:4321/v1"
+    assert servers["lmstudio"].api_key == "test-token"
+    assert server_config.load(config)["lmstudio"].api_key is None
+
+
 @pytest.mark.parametrize("destination", [None, "custom/nested/library.json"])
 def test_library_cli_disposable_startup(tmp_path, monkeypatch, server, destination):
     monkeypatch.chdir(tmp_path)
@@ -361,11 +385,12 @@ def test_library_cli_disposable_startup(tmp_path, monkeypatch, server, destinati
     server.reply(*(responses_answer(json.dumps(case["stub"])) for case in fixture["cases"]))
     report_path = tmp_path / (destination or "reports/library_eval_report.json")
     report_args = ["--report", destination] if destination else []
-    result = library_eval.main(["--profile", "lmstudio-eval", "--route", "lmstudio",
+    result = library_eval.main(["--route", "lmstudio", "--model", "cli-model",
                                "--block", "classify_text", *report_args])
     report = json.loads(report_path.read_text())
     assert result in (0, 3), report
     assert report["resolved"]["classify_text"]["kind"] == "lmstudio"
+    assert report["resolved"]["classify_text"]["model"] == "cli-model"
     assert all(row["outcome"] == "correct" for row in report["blocks"]["classify_text"]["runs"])
     assert not (tmp_path / "config").exists()
 

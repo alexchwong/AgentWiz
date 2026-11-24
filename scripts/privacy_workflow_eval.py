@@ -22,6 +22,7 @@ import eval_setup
 from library_eval import Client, Refused
 
 POLICY = 1
+CLOUD_SUMMARY_PROFILE = 'privacy-summary-cloud'
 FAMILIES = (
     ('email', 'Reply about the draft to {needle}.', 'atlas{n}@example.invalid'),
     ('phone', 'The private callback number is {needle}.', '+1 202 555 {n:04d}'),
@@ -256,12 +257,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--backend', choices=('offline','openrouter','lmstudio'), required=True)
     parser.add_argument('--set', choices=('dev','heldout','all'), default='dev')
-    parser.add_argument('--model')
-    parser.add_argument('--provider')
+    eval_setup.add_target_options(parser)
     parser.add_argument('--trials', type=int)
     parser.add_argument('--qualify', action='store_true')
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--cloud-summary-profile')
+    parser.add_argument('--cloud-summary-model', type=eval_setup.nonempty, help='OpenRouter model ID for the connected summary check')
+    parser.add_argument('--cloud-summary-provider', type=eval_setup.nonempty, help='OpenRouter provider pin for the connected summary check')
     parser.add_argument('--profiles-dir', type=Path)
     parser.add_argument('--config', type=Path)
     parser.add_argument('--report', type=Path, required=True)
@@ -272,17 +274,25 @@ def main():
         parser.error('--trials must be between 1 and 10')
     if args.resume and (args.backend == 'offline' or not args.report.is_file()):
         parser.error('--resume requires an existing live report')
-    if (args.profiles_dir or args.config) and (args.model or args.provider):
-        parser.error('put model and provider in the explicit profile when using --profiles-dir or --config')
-    if args.cloud_summary_profile and args.backend != 'lmstudio':
-        parser.error('--cloud-summary-profile is for the LM Studio qualification lane')
+    target_options = eval_setup.target_options(args)
+    cloud_options = (args.cloud_summary_model, args.cloud_summary_provider)
+    if any(value is not None for value in cloud_options) and not all(cloud_options):
+        parser.error('--cloud-summary-model and --cloud-summary-provider must be supplied together')
+    if (args.profiles_dir or args.config) and (target_options or any(cloud_options)):
+        parser.error('put live targets in the explicit profile/config when using --profiles-dir or --config')
+    if (args.cloud_summary_profile or any(cloud_options)) and args.backend != 'lmstudio':
+        parser.error('connected summary options require --backend lmstudio')
+    if args.cloud_summary_profile and any(cloud_options):
+        parser.error('--cloud-summary-profile cannot be combined with cloud summary model/provider options')
+    if args.backend == 'offline' and target_options:
+        parser.error('live target options require a live backend')
+    cloud_profile = args.cloud_summary_profile
+    if all(cloud_options):
+        cloud_profile = CLOUD_SUMMARY_PROFILE
+        target_options['cloud_summary'] = (cloud_profile, *cloud_options)
     if args.backend == 'openrouter' and args.set != 'dev':
         parser.error('OpenRouter tuning uses development fixtures only')
-    import os
     import hashlib
-    for field in ('model', 'provider'):
-        if getattr(args, field):
-            os.environ['AGENTWIZ_LIVE_' + args.backend.upper() + '_' + field.upper()] = getattr(args, field)
     cohort = cases()
     selected = [case for case in cohort if args.set in ('all', case['set'])]
     schedule = [(case, trial) for case in selected for trial in
@@ -305,13 +315,14 @@ def main():
         mode = args.backend + '-eval'
         try:
             with tempfile.TemporaryDirectory(prefix='agentwiz-privacy-eval-') as folder:
-                with eval_setup.session(Path(folder), mode, args.backend, args.profiles_dir, args.config) as ui:
+                with eval_setup.session(Path(folder), mode, args.backend, args.profiles_dir, args.config,
+                                        **target_options) as ui:
                     client = Client(ui)
                     run_detector(ui, client, args, schedule, report)
                     if args.backend == 'lmstudio':
                         report['native_local'] = [run_native(client) for _ in range(3 if args.qualify else 1)]
-                        if args.cloud_summary_profile:
-                            select_cloud_summary(client, args.cloud_summary_profile)
+                        if cloud_profile:
+                            select_cloud_summary(client, cloud_profile)
                             report['connected_development'] = run_native(client, cloud=True)
                         if args.qualify:
                             expected = redaction_cases()

@@ -1625,28 +1625,32 @@ supplied report in place rather than using the default output path.
 
 ### Disposable evaluation configuration
 
-The non-shipped `scripts/eval_setup.py` prepares both live evaluators. Seeds under
+The non-shipped `scripts/eval_setup.py` prepares the library, Chat and privacy evaluators. Seeds under
 `tests/eval_profiles/profiles.json` contain non-secret OpenRouter and LM Studio targets.
 They are resolved relative to the repository, validated with the ordinary profile reader, and
 materialized in temporary storage before workspace seeding; library locks never touch the seeds.
 The ordinary installer, role resolver and run APIs remain the execution path.
 
-Without external overrides, `AGENTWIZ_LIVE_<BACKEND>_MODEL` overrides the seed model;
-`AGENTWIZ_LIVE_LMSTUDIO_URL` and `_KEY` configure its server, and
-`AGENTWIZ_LIVE_OPENROUTER_PROVIDER` switches Automatic routing to a Manual pin.
+With bundled profiles, `--model`, `--provider` (OpenRouter) and `--base-url` (local backend)
+override their corresponding `AGENTWIZ_LIVE_<BACKEND>_MODEL`, `_PROVIDER` and `_URL`
+variables. Unspecified options fall back to those variables and then to the seeds.
+`AGENTWIZ_LIVE_LMSTUDIO_KEY` supplies optional LM Studio authentication in memory.
+The privacy evaluator can add a separate Manual OpenRouter profile for the connected summary
+check using `--cloud-summary-model` and `--cloud-summary-provider` together.
 OpenRouter uses `OPENROUTER_API_KEY`; endpoint overrides require explicit server configuration.
 Privacy settings remain those of the selected profile. With `--profiles-dir` or `--config`,
-backend model/URL/key/provider variables are rejected rather than ambiguously merged; explicit
+backend target options and model/URL/key/provider variables are rejected rather than ambiguously merged; explicit
 profiles/configuration plus remaining checked-in defaults define the target. The external profile
 library is read without mutation and copied into the temporary library; an explicit server file
 must already exist. Credentials and session tokens are not report fields.
 
-Both runners create workspaces, defaults libraries, MCP libraries and default server configuration
+The evaluators create workspaces, defaults libraries, MCP libraries and default server configuration
 inside owned temporary storage and release workspace ownership on exit. Agentic Chat also selects
 the profile and binds `fast` through the normal APIs, then verifies destination equality. Library
-qualification retains its role and destination checks. `--timeout` takes precedence over
-`AGENTWIZ_LIVE_TIMEOUT` (600 seconds by default). Missing/invalid setup blocks the evaluation.
-Neither runner silently reads application profiles/configuration from the caller's directory.
+qualification retains its role and destination checks. For Chat and library evaluations,
+`--timeout` takes precedence over `AGENTWIZ_LIVE_TIMEOUT` (600 seconds by default).
+The privacy evaluator uses the environment setting. Missing or invalid setup blocks the evaluation.
+The evaluators do not silently read application profiles/configuration from the caller's directory.
 
 Agentic Chat's explicit `--url` mode instead evaluates an already configured server. It does not
 change the selected model or role bindings, but it does install catalog entries and create case
