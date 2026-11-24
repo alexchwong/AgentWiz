@@ -276,6 +276,12 @@ python scripts/privacy_workflow_eval.py --backend openrouter --model qwen/qwen3.
 The default is one trial on the development set. Add `--provider PROVIDER_SLUG` for a manual pin
 or `--trials N` for up to ten trials. Requests are billable.
 
+The evaluator writes progress and diagnostics to stderr. Use `--log-level summary` for run totals
+only or `--log-level verbose` to see passes and all span decisions. Normal output includes lines
+such as `[FAIL] case="dev-context" trial=1 stage="grade" code="severity_below_minimum"`.
+The JSON report retains the diagnostic details at every log level. For older v1 reports, use a fresh
+report path rather than `--resume`; rerunning is required to obtain the missing evidence.
+
 ### LM Studio qualification run and connected OpenRouter smoke
 
 ```bash

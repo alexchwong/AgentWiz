@@ -257,7 +257,7 @@ def redact(source, located, classification):
                          'issues': issues[:MAX_OCCURRENCES]}}
 
 
-def assess(candidate, response):
+def assess(candidate, response, *, rejection_codes=None):
     severity = {'direct_identifier': 'high', 'identifying_combination': 'high',
                 'potential_identifier': 'medium', 'linkable_context': 'medium', 'ambiguity': 'low'}
     findings, incomplete = [], False
@@ -265,8 +265,16 @@ def assess(candidate, response):
         quotes = row['quotes']
         located = [{'start': match.start(), 'end': match.end()} for quote in quotes
                    for match in re.finditer(re.escape(quote), candidate)]
-        if (not quotes or any(not quote or quote not in candidate for quote in quotes)
-                or (row['category'] == 'identifying_combination' and len(set(quotes)) < 2)):
+        code = None
+        if not quotes or any(not quote for quote in quotes):
+            code = 'missing_quote'
+        elif any(quote not in candidate for quote in quotes):
+            code = 'quote_not_found'
+        elif row['category'] == 'identifying_combination' and len(set(quotes)) < 2:
+            code = 'insufficient_distinct_quotes'
+        if code:
+            if rejection_codes is not None:
+                rejection_codes.append(code)
             incomplete = True
             continue
         findings.append({**row, 'severity': severity[row['category']], 'locations': located[:64],

@@ -1652,6 +1652,13 @@ qualification retains its role and destination checks. For Chat and library eval
 The privacy evaluator uses the environment setting. Missing or invalid setup blocks the evaluation.
 The evaluators do not silently read application profiles/configuration from the caller's directory.
 
+Privacy report v2 checkpoints finalized trials atomically and records any interrupted trial separately.
+Resume requires a matching report format and evaluation identity; it skips finalized detector trials,
+including grading failures. Native checks are rerun. Detector diagnostics separate workflow execution,
+output decoding, evidence assessment and grading. They record categories, severity, candidate character offsets and stable codes, not model
+quotes or explanations. An unknown serving provider is distinct from a configured provider. Terminal
+verbosity does not affect reported evidence, scoring, or qualification.
+
 Agentic Chat's explicit `--url` mode instead evaluates an already configured server. It does not
 change the selected model or role bindings, but it does install catalog entries and create case
 data. It is intended for disposable workspaces, not personal sessions. `workshop_experiment.py`

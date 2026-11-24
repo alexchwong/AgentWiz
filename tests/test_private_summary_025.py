@@ -1,6 +1,8 @@
 """Native private-summary workflow through the reviewed Workshop HTTP path."""
 import json
 
+import pytest
+
 from conftest import KEY, answer, save_profile, save_roles
 from test_release_gate import decide, done, review, trust
 from test_workshop import send
@@ -309,7 +311,7 @@ def test_evaluator_uses_native_cloud_summary_and_grades_exact_redaction(ui, serv
     assert sum(len(case['targets']) for case in evaluate.redaction_cases()) == 200
 
 
-def test_evaluator_checkpoints_and_resumes_exact_detector_binding(ui, server, monkeypatch, tmp_path):
+def test_evaluator_checkpoints_and_resumes_exact_detector_binding(ui, server, monkeypatch, tmp_path, capsys):
     from pathlib import Path
     from types import SimpleNamespace
 
@@ -318,19 +320,55 @@ def test_evaluator_checkpoints_and_resumes_exact_detector_binding(ui, server, mo
 
     save_profile(ui, 'openrouter-eval', model='synthetic', kind='openrouter', base_url=server.url + '/v1',
                  provider='OpenAI', routing_mode='manual', api_key=KEY)
-    case = next(row for row in evaluate.cases() if row['id'] == 'dev-address')
-    response = {'findings': [{'category': 'direct_identifier', 'quotes': [case['target']], 'reason': 'Exact home address'}]}
-    server.reply(answer(json.dumps(response)))
-    args = SimpleNamespace(backend='openrouter', resume=False, report=tmp_path / 'report.json')
-    schedule = [(case, 1)]
-    initial = {'build': {}, 'fixtures_digest': 'test', 'policy': 1, 'schedule': [[case['id'], 1]], 'results': []}
+    cases = {row['id']: row for row in evaluate.cases()}
+    spot, context = cases['dev-spot'], cases['dev-context']
+    sentinel = 'DO_NOT_LOG_MODEL_REASON_579'
+
+    def findings(category, quote):
+        return answer(json.dumps({'findings': [{'category': category, 'quotes': [quote], 'reason': sentinel}]}))
+
+    server.reply(findings('ambiguity', 'Spot'), answer('{"findings":[]}'),
+                 findings('linkable_context', 'rural branch'), findings('ambiguity', context['target']),
+                 findings('linkable_context', 'not in fixture'), answer('{"findings":[]}'),
+                 findings('linkable_context', context['target']))
+    args = SimpleNamespace(backend='openrouter', resume=False, report=tmp_path / 'report.json', log_level='verbose')
+    schedule = [(spot, 1)] + [(context, trial) for trial in range(1, 6)]
+    initial = {'format_version': evaluate.REPORT_VERSION, 'build': {}, 'fixtures_digest': 'test',
+               'policy': 1, 'schedule': [[case['id'], trial] for case, trial in schedule], 'results': []}
     report = dict(initial, results=[])
     client = evaluate.Client(ui)
-    evaluate.run_detector(ui, client, args, schedule, report)
-    assert report['results'][0]['rank_ok']
-    assert len(server.requests) == 1
+    original_assess = evaluate.privacy.assess
+
+    def interrupt_last_trial(*args, **kwargs):
+        if len(report['results']) == 5:
+            raise KeyboardInterrupt
+        return original_assess(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(evaluate.privacy, 'assess', interrupt_last_trial)
+        with pytest.raises(KeyboardInterrupt):
+            evaluate.run_detector(ui, client, args, schedule, report)
+    saved = args.report.read_text()
+    output = capsys.readouterr().err
+    assert sentinel not in saved and sentinel not in output
+    checkpoint = json.loads(saved)
+    interrupted = checkpoint['interrupted_trial']
+    assert (interrupted['id'], interrupted['trial'], interrupted['stage']) == ('dev-context', 5, 'assessment')
+    diagnostics = [row['diagnostics'] for row in checkpoint['results']]
+    assert [row['code'] for row in diagnostics] == ['unexpected_finding', 'no_findings', 'no_qualifying_span',
+                                                   'severity_below_minimum', 'assessment_unavailable']
+    assert diagnostics[0]['grade']['findings'][0]['spans'] == [{'start': 0, 'end': 4, 'decision': 'unexpected'}]
+    assert diagnostics[2]['grade']['findings'][0]['spans'][0]['decision'] == 'partial_overlap'
+    assert diagnostics[3]['grade']['best_matched_severity'] == 'low'
+    assert diagnostics[4]['assessment']['rejection_codes'] == ['quote_not_found']
+    assert 'code="severity_below_minimum"' in output
+    assert len(server.requests) == 6
     args.resume = True
+    args.log_level = 'summary'
     resumed = dict(initial, results=[])
     evaluate.run_detector(ui, client, args, schedule, resumed)
-    assert resumed['results'] == report['results']
-    assert len(server.requests) == 1
+    assert resumed['results'][:-1] == checkpoint['results']
+    assert resumed['results'][-1]['rank_ok']
+    assert 'interrupted_trial' not in json.loads(args.report.read_text())
+    assert 'code=' not in capsys.readouterr().err
+    assert len(server.requests) == 7
