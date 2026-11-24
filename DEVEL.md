@@ -240,6 +240,161 @@ Keep check reports factual and task-specific; do not copy historical passes into
 validation claims. Nothing in this guide, `docs/`, `.clinerules`, `tests/`, `scripts/` or `.github/`
 ships in the release wheel.
 
+## 0.2.5 privacy workflow release evidence
+
+Run these Bash commands from the AgentWiz candidate checkout on your workstation. Use the
+0.2.5 versions of the evaluator and tests. The evaluator starts a disposable AgentWiz workspace
+and uses built-in synthetic inputs.
+
+### Set up the checkout and OpenRouter key
+
+```bash
+scripts/dev_setup.sh
+. .venv/bin/activate
+mkdir -p reports
+
+if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+  read -r -s -p 'OpenRouter API key: ' OPENROUTER_API_KEY
+  printf '\n'
+fi
+export OPENROUTER_API_KEY
+```
+
+Use a key for the OpenRouter account whose routing policy you want to test. The prompt hides
+the key from the terminal display. Keep it out of commands, report files and Git.
+
+### Offline checks
+
+```bash
+python scripts/privacy_workflow_eval.py --backend offline --set all \
+  --report reports/privacy-offline.json
+
+python -m pytest -m 'not live'
+```
+
+For a focused offline rerun, use:
+
+```bash
+python -m pytest -q tests/test_private_summary_025.py tests/test_release_gate.py \
+  tests/test_workflows.py tests/test_core_v3.py
+```
+
+### OpenRouter detector development run
+
+Set the model to the exact OpenRouter model ID and, for a pinned run, the exact OpenRouter
+provider slug or name. The following prompts set both parameters and start the run. Leave the
+provider blank to use automatic routing. This lane tests the synthetic detector development
+cases. The live gated summary is tested by the connected check in the LM Studio command below.
+
+```bash
+read -r -p 'OpenRouter detector model ID (organisation/model): ' OPENROUTER_MODEL
+read -r -p 'OpenRouter detector provider (Enter for automatic): ' OPENROUTER_PROVIDER
+
+detector_provider=()
+if [ -n "$OPENROUTER_PROVIDER" ]; then
+  detector_provider=(--provider "$OPENROUTER_PROVIDER")
+fi
+
+env -u AGENTWIZ_LIVE_OPENROUTER_MODEL -u AGENTWIZ_LIVE_OPENROUTER_PROVIDER \
+  python scripts/privacy_workflow_eval.py --backend openrouter --set dev \
+  --model "${OPENROUTER_MODEL:?Enter an OpenRouter detector model ID}" \
+  "${detector_provider[@]}" --trials 1 --report reports/privacy-openrouter.json
+```
+
+`--model` selects the detector model. `--provider` selects manual routing to one provider.
+`--trials` accepts 1–10 for development and exploration.
+
+### LM Studio qualification run and connected OpenRouter smoke
+
+In LM Studio, load the exact **GPT-OSS-20B 4-bit** artifact you intend to qualify and start
+its local API server. The default URL is `http://127.0.0.1:1234/v1`. Copy the model ID exposed
+by that server. For a server with authentication enabled, use the LM Studio token. Choose
+the OpenRouter model ID and a specific provider for the connected summary call. This can
+be a different model from the detector used in the development run.
+
+Run the block below in the same shell as the OpenRouter key setup. It writes disposable
+evaluation profiles in a private temporary directory. The OpenRouter key stays in the shell.
+If LM Studio authentication is enabled, its token is written to the private temporary server
+configuration and removed when the command block exits.
+
+```bash
+(
+  set -eu
+  umask 077
+  EVAL_PROFILES="$(mktemp -d)"
+  trap 'rm -rf -- "$EVAL_PROFILES"' EXIT
+  export EVAL_PROFILES
+
+  read -r -p 'LM Studio model ID for the loaded GPT-OSS-20B 4-bit model: ' LMSTUDIO_MODEL
+  read -r -p 'LM Studio API URL [http://127.0.0.1:1234/v1]: ' LMSTUDIO_URL
+  read -r -s -p 'LM Studio token (Enter if authentication is off): ' LMSTUDIO_TOKEN
+  printf '\n'
+  read -r -p 'OpenRouter summary model ID (organisation/model): ' CLOUD_SUMMARY_MODEL
+  read -r -p 'OpenRouter summary provider (required): ' CLOUD_SUMMARY_PROVIDER
+
+  : "${OPENROUTER_API_KEY:?Set the OpenRouter API key first}"
+  : "${LMSTUDIO_MODEL:?Enter the loaded LM Studio model ID}"
+  : "${CLOUD_SUMMARY_MODEL:?Enter an OpenRouter summary model ID}"
+  : "${CLOUD_SUMMARY_PROVIDER:?Enter one OpenRouter summary provider}"
+  export LMSTUDIO_MODEL LMSTUDIO_URL LMSTUDIO_TOKEN CLOUD_SUMMARY_MODEL CLOUD_SUMMARY_PROVIDER
+
+  python - <<'PY'
+import configparser
+import json
+import os
+from pathlib import Path
+
+env = os.environ
+folder = Path(env['EVAL_PROFILES'])
+profiles = json.loads(Path('tests/eval_profiles/profiles.json').read_text(encoding='utf-8'))
+profiles['profiles']['lmstudio-eval']['model'] = env['LMSTUDIO_MODEL']
+profiles['profiles']['privacy-summary-cloud'] = {
+    **profiles['profiles']['openrouter-eval'],
+    'model': env['CLOUD_SUMMARY_MODEL'],
+    'provider': env['CLOUD_SUMMARY_PROVIDER'],
+    'routing_mode': 'manual',
+}
+(folder / 'profiles.json').write_text(json.dumps(profiles, indent=2) + '\n', encoding='utf-8')
+
+config = configparser.ConfigParser(interpolation=None)
+config.read('config/model-servers.ini.template', encoding='utf-8')
+config['lmstudio']['base_url'] = env['LMSTUDIO_URL'] or 'http://127.0.0.1:1234/v1'
+if env['LMSTUDIO_TOKEN']:
+    config['lmstudio']['api_key'] = env['LMSTUDIO_TOKEN']
+with (folder / 'model-servers.ini').open('w', encoding='utf-8') as stream:
+    config.write(stream)
+PY
+  unset LMSTUDIO_TOKEN
+  unset AGENTWIZ_LIVE_LMSTUDIO_MODEL AGENTWIZ_LIVE_LMSTUDIO_PROVIDER
+  unset AGENTWIZ_LIVE_LMSTUDIO_URL AGENTWIZ_LIVE_LMSTUDIO_KEY
+
+  python scripts/privacy_workflow_eval.py --backend lmstudio --set heldout --qualify \
+    --profiles-dir "$EVAL_PROFILES" --config "$EVAL_PROFILES/model-servers.ini" \
+    --cloud-summary-profile privacy-summary-cloud --report reports/privacy-lmstudio.json
+)
+```
+
+For this command, select models in the generated `profiles.json`, with the prompts above.
+The evaluator rejects `--model` and `--provider` when `--profiles-dir` or `--config` is supplied.
+`--qualify` selects the prescribed trial schedule and rejects `--trials`. For a shorter live
+smoke, replace `--set heldout --qualify` with `--set dev --trials 1` and use a different report path.
+To resume detector cases after an interruption, add `--resume` with the same report path,
+build, model, provider and schedule. Native workflow checks can rerun on resume.
+
+### Collect the evidence
+
+Keep `reports/privacy-offline.json`, `reports/privacy-openrouter.json` and
+`reports/privacy-lmstudio.json` with the tested build. For the LM Studio run, also record the
+model artifact filename and quantisation, LM Studio version, and loaded context length. Share
+the JSON reports and those settings for review. The reports use synthetic examples and the
+commands do not require you to share any keys or tokens.
+
+Exit `0` means the evaluated lane passed, `1` means a conclusive failure, and `2` means
+incomplete evidence. The current live evaluator can report completed cases and still exit
+`2`. Review `blocked`, `pending`, `connected_development`, and `remaining_evidence`
+in the JSON. A live release verdict still requires full attribution evidence and the measured
+supported input range.
+
 ## 0.2.4 live release evidence
 
 Run from the candidate checkout after `scripts/dev_setup.sh`. Activate `.venv`, start LM

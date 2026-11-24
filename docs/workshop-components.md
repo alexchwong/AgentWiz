@@ -14,23 +14,6 @@ At the Gate, inspect the exact candidate, destination, known-original matches, d
 
 The templates display **Unqualified** pending live evidence for the exact profile and operating range. Use synthetic data for development checks. The saved roles and any trust grants remain workspace configuration.
 
-```sh
-python -m pytest -q tests/test_private_summary_025.py tests/test_release_gate.py tests/test_workflows.py tests/test_core_v3.py
-```
-
-## Synthetic evaluation
-
-Run from a development checkout with the dev dependencies installed.
-
-```sh
-python scripts/privacy_workflow_eval.py --backend offline --set all --report reports/privacy-offline.json
-python scripts/privacy_workflow_eval.py --backend openrouter --model "$OPENROUTER_MODEL" --set dev \
-  --report reports/privacy-openrouter.json
-python scripts/privacy_workflow_eval.py --backend lmstudio --set heldout --qualify \
-  --profiles-dir "$EVAL_PROFILES" --cloud-summary-profile "$CLOUD_SUMMARY_PROFILE" \
-  --report reports/privacy-lmstudio.json
-```
-
-Use a disposable configuration directory containing a `profiles.json` with an `lmstudio-eval` profile for the exact GPT-OSS-20B 4-bit artifact and a manually pinned OpenRouter summary profile. The evaluation uses the regular OpenRouter credential setup. If the LM Studio server is on a nondefault loopback port, supply its configuration with `--config`. The connected smoke sends a synthetic development case after its automated test operator validates the expected candidate. Offline test success and the component-only OpenRouter lane carry no live qualification claim. The evaluator measures exact spans, checks basic synthetic summary facts, and produces versioned evidence. The final attribution cases and the measured supported range still require qualification.
+For setup, credentials, model selection, and the offline and live evaluation commands, see [0.2.5 privacy workflow release evidence](../DEVEL.md#025-privacy-workflow-release-evidence).
 
 The scripted test worker saves its producer identity with existing private workflow evidence when Save runs is enabled. The artifact handles are run-scoped and expire when the worker closes.
