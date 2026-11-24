@@ -38,7 +38,19 @@ class Graph:
                             assessment_prompt=release_gate.ASSESSMENT_PROMPT, assessment_contract=release_gate.ASSESSMENT_CONTRACT)
         self.digest = digest(identity)
         self.blocks = {node: opened.parsed.block for node, opened in self.captures.items()}
-        self.assessments = {node: release_gate.assessment_capture(config, stack) for node, config in self.gates.items()}
+        self.assessments = {}
+        for node, config in self.gates.items():
+            if release_gate.version2(config):
+                from . import private_templates as privacy
+                from .workflow_definition import open_snapshot
+                expected = privacy.snapshot(privacy.model('privacy_detect', {'candidate': privacy.port('text')},
+                                                            {'findings': privacy.port(privacy.FINDINGS)}, repairs=0))
+                ident = config['assessment']['snapshot_id']
+                if config['assessment']['role'] != privacy.ROLE_LOCAL or ident != digest(expected):
+                    problem('snapshot_unusable', f'nodes.{node}.assessment', 'expected the protected privacy detector')
+                self.assessments[node] = open_snapshot(ident, bundle['snapshots'][ident], stack, f'nodes.{node}.assessment')
+            else:
+                self.assessments[node] = release_gate.assessment_capture(config, stack)
         self.blocks.update({node: release_gate.block(config, definition['nodes'][node]['bindings'])
                             for node, config in self.gates.items()})
         self.sources = {}
@@ -390,8 +402,36 @@ class Graph:
                 issues.append({**found, 'facts': fact, 'remedy': action})
         if required > self.definition.get('budget', {}).get('max_model_attempts', 32):
             issues.append(issue('budget_exceeded', 'budget.max_model_attempts', 'budget is below the required initial model calls'))
+        for node, config in self.gates.items():
+            if not release_gate.version2(config):
+                continue
+            consumer = self.v2_consumer(node)
+            snapshot = self.runtime.get(consumer, (None, None, None))[0]
+            if (snapshot is None or snapshot.kind != 'openrouter' or snapshot.routing_mode != 'manual'
+                    or not snapshot.provider
+                    or {n for n, v in destinations.items() if not v.get('protected')} != {consumer}):
+                issues.append(issue('private_summary_route', f'nodes.{node}',
+                                    'select one manual OpenRouter provider for the private-summary role'))
         self.destination_views = destinations
         return destinations, issues, private
+
+    def v2_consumer(self, gate):
+        from . import private_templates as privacy
+        released = ('node', gate, 'released')
+        consumers = [node for node, ports in self.bindings.items()
+                     if any(value[0] == released for value in ports.values())]
+        if len(consumers) != 1:
+            return None
+        consumer = consumers[0]
+        bindings = self.bindings[consumer]
+        block = self.blocks[consumer]
+        if (set(bindings) != {'candidate'} or bindings['candidate'][:2] != (released, [])
+                or block.step.kind != 'model' or block.step.role != privacy.ROLE_CLOUD
+                or block.step.raw != privacy.model('privacy_summary_cloud',
+                    {'candidate': privacy.port('text', local=False)},
+                    {'summary': privacy.port('text', local=False)}, cloud=True)['steps'][0]):
+            return None
+        return consumer
 
     def gate_findings(self):
         issues = []
@@ -402,6 +442,15 @@ class Graph:
             scan = self.bindings[node].get('scan')
             if scan and scan[0] not in self.restricted:
                 issues.append(issue('scan_unrestricted', f'nodes.{node}.scan', 'identifier mapping must be local-only'))
+            if release_gate.version2(self.gates[node]):
+                coverage = self.bindings[node].get('coverage')
+                producer = binding[0] if binding else ()
+                if (len(producer) != 3 or coverage is None or coverage[0] != producer
+                        or coverage[0] not in self.restricted or coverage[1] != ['coverage']
+                        or binding[1] != ['candidate'] or scan is None or scan[0] != producer
+                        or scan[1] != ['scan_pairs'] or self.blocks[producer[1]].step.raw.get('operation') != 'privacy_redact'):
+                    issues.append(issue('coverage_invalid', f'nodes.{node}.coverage',
+                                        'connect restricted candidate, scan and coverage from the same redaction'))
         return issues
 
     def preflight(self, inputs):
@@ -666,11 +715,11 @@ class Job(runner.Observer):
     def decide_release(self, body):
         from .workflow_definition import record
         record(body, ('token', 'payload_digest', 'executable_digest', 'scope_digest', 'checks_digest', 'decision'),
-               ('acknowledge_identifiers', 'acknowledge_assessment'), 'release')
-        for key in ('acknowledge_identifiers', 'acknowledge_assessment'):
+               ('acknowledge_identifiers', 'acknowledge_assessment', 'acknowledge_coverage'), 'release')
+        for key in ('acknowledge_identifiers', 'acknowledge_assessment', 'acknowledge_coverage'):
             if key in body and type(body[key]) is not bool:
                 problem('invalid', 'release', 'acknowledgements must be booleans', 400)
-        if body['decision'] not in ('release', 'reject') or not isinstance(body['token'], str):
+        if body['decision'] not in ('release', 'reject', 'rerun') or not isinstance(body['token'], str):
             problem('invalid', 'release', 'expected release or reject and a decision token', 400)
         request_digest = digest(body)
         with self.lock:
@@ -685,11 +734,17 @@ class Job(runner.Observer):
                     or any(body[key] != current[key] for key in
                            ('payload_digest', 'executable_digest', 'scope_digest', 'checks_digest'))):
                 problem('release_stale', 'release', 'this release review is no longer current')
+            v2 = 'coverage' in current
+            if not v2 and (body['decision'] == 'rerun' or 'acknowledge_coverage' in body):
+                problem('invalid', 'release', 'this Gate has no discovery coverage', 400)
             if body['decision'] == 'release':
+                if v2 and (current['coverage']['status'] == 'incomplete' or current['assessment']['status'] == 'unavailable'
+                           ) and not body.get('acknowledge_coverage', False):
+                    problem('release_acknowledgement_required', 'release', 'acknowledge incomplete coverage')
                 if current['identifier_check']['hits'] and not body.get('acknowledge_identifiers', False):
                     problem('release_acknowledgement_required', 'release', 'acknowledge the identifier matches')
                 assessment = current['assessment']
-                if (assessment['status'] == 'unavailable' or assessment.get('findings')) and not body.get('acknowledge_assessment', False):
+                if ((not v2 and assessment['status'] == 'unavailable') or assessment.get('findings')) and not body.get('acknowledge_assessment', False):
                     problem('release_acknowledgement_required', 'release', 'acknowledge the assessment concerns or unavailability')
             self.release_choice = {key: value for key, value in body.items() if key != 'token'}
             self.phase = 'deciding_release'
@@ -705,7 +760,22 @@ class Job(runner.Observer):
         text = release_gate.representation(value, block.contracts['outputs']['released'].parsed)
         scan_binding = graph.bindings[node].get('scan')
         mapping = select(values[scan_binding[0]], scan_binding[1], scan_binding[2]) if scan_binding else []
-        scan = release_gate.identifier_check(value, mapping, configured=scan_binding is not None)
+        v2 = release_gate.version2(config)
+        coverage = None
+        if v2:
+            from . import private_transform
+            bound = graph.bindings[node]['coverage']
+            coverage, _ = bound_value(values, bound, block.contracts['inputs']['coverage'].parsed)
+            if (coverage['candidate_digest'] != private_transform.sha(text)
+                    or bool(coverage['issues']) != (coverage['status'] == 'incomplete')
+                    or any(item.get('location') and not item['location']['start'] < item['location']['end']
+                           for item in coverage['issues'])):
+                problem('coverage_invalid', node, 'coverage does not describe this candidate')
+            if not isinstance(text, str) or len(text) > private_transform.MAX_CANDIDATE:
+                problem('payload_limit', node, 'candidate exceeds the native privacy limit')
+            scan = private_transform.scan(text, mapping)
+        else:
+            scan = release_gate.identifier_check(value, mapping, configured=scan_binding is not None)
         assessment = {'status': 'not_configured', 'findings': []}
         assessment_trace = None
         opened = graph.assessments[node]
@@ -719,8 +789,11 @@ class Job(runner.Observer):
             frozen = runner.FrozenSource(snapshot, False, {'workflow_node': node, 'release_assessment': True},
                                          owner=opened, capture=role, protected=True, dispatch=guard,
                                          attempt_gate=self.allow_attempt)
+            detector_inputs = {'candidate': text}
+            if not v2:
+                detector_inputs['mapping'] = jsonio.encode_exact(mapping)
             assessment_trace = runner.run_block(self.state, load_capture(opened, opened.parsed.block.name),
-                {'candidate': text, 'mapping': jsonio.encode_exact(mapping)}, self, frozen=frozen).result
+                                                detector_inputs, self, frozen=frozen).result
             with self.lock:
                 self.child = None
             if self.reason is not None:
@@ -728,8 +801,11 @@ class Job(runner.Observer):
             if self.evidence and self.evidence.error:
                 raise EvidenceError('assessment evidence could not be written')
             if assessment_trace['outcome'] == 'complete':
-                findings = jsonio.decode_exact(assessment_trace['outputs']['assessment']['text'])['findings']
-                assessment = {'status': 'complete', 'findings': findings}
+                if v2:
+                    assessment = private_transform.assess(text, jsonio.decode_exact(assessment_trace['outputs']['findings']['text']))
+                else:
+                    findings = jsonio.decode_exact(assessment_trace['outputs']['assessment']['text'])['findings']
+                    assessment = {'status': 'complete', 'findings': findings}
             else:
                 failures = [step.get('failure') for step in assessment_trace.get('steps', [])]
                 failures.extend((step.get('operation') or {}).get('reason') for step in assessment_trace.get('steps', []))
@@ -745,6 +821,8 @@ class Job(runner.Observer):
                   'executable_digest': graph.digest, 'destinations': scope, 'scope_digest': digest(scope),
                   'identifier_check': scan, 'assessment': assessment,
                   'checks_digest': digest([scan, assessment])}
+        if v2:
+            review.update(coverage=coverage, checks_digest=digest([coverage, scan, assessment]))
         if self.evidence:
             self.evidence.release_record(node, 'review', {**review, 'max_release_wait_seconds': wait,
                                                          'assessment_trace': assessment_trace})
@@ -768,7 +846,7 @@ class Job(runner.Observer):
             self.pending_release = None
             self.phase = 'running'
         outcome = ('stopped' if stopped == runs.USER_STOP else 'budget_exceeded') if stopped else (
-            'release_expired' if choice is None else 'release_rejected' if choice['decision'] == 'reject' else 'complete')
+            'release_expired' if choice is None else 'release_rejected' if choice['decision'] != 'release' else 'complete')
         self._start_budget(remaining)
         decision = {key: review[key] for key in ('run_id', 'example_index', 'gate', 'payload_digest',
                     'executable_digest', 'destinations', 'scope_digest', 'checks_digest')}
@@ -779,11 +857,36 @@ class Job(runner.Observer):
                         assessment_status=assessment['status'],
                         acknowledge_identifiers=bool(choice and choice.get('acknowledge_identifiers')),
                         acknowledge_assessment=bool(choice and choice.get('acknowledge_assessment')))
+        if v2:
+            decision.update(coverage_status=coverage['status'],
+                            acknowledge_coverage=bool(choice and choice.get('acknowledge_coverage')))
+            if outcome == 'complete':
+                self.private_release = (node, self.release_deadline, text)
         if self.evidence:
             self.evidence.release_record(node, 'decision', decision)
         return {'outcome': outcome, 'release_decision': decision, 'release_review': review,
                 'assessment_trace': assessment_trace,
                 'outputs': {'released': {'format': review['format'], 'text': text}} if outcome == 'complete' else {}}
+
+    def private_dispatch(self, guard, snapshot, role, block, gate, candidate):
+        from types import SimpleNamespace
+        from . import model_call
+
+        prepared = runner.model_messages(block, {'candidate': candidate}, role.defaults)
+        expected_messages = model_call.build_messages(prepared.system_sent, prepared.prompt)
+        expected_policy = model_call.task_arguments(prepared.effective.task, snapshot.kind, snapshot.provider)
+        expected_policy = model_call.preflight_request(snapshot, expected_policy)
+
+        def verify_request(live, model, messages, arguments):
+            guard.check()
+            with self.lock:
+                approved = self.private_release
+                if (self.reason or not approved or approved[0] != gate or approved[2] != candidate
+                        or time.monotonic() >= approved[1] or live != snapshot or model != snapshot.model
+                        or messages != expected_messages or arguments != expected_policy):
+                    raise outbound_policy.Refused('destination_changed')
+                self.private_release = None
+        return SimpleNamespace(check=guard.check, verify_request=verify_request)
 
     def execute_node(self, graph, node, values):
         if node in graph.gates:
@@ -791,23 +894,36 @@ class Job(runner.Observer):
         opened, block = graph.captures[node], graph.blocks[node]
         texts = {name: bound_value(values, binding, block.contracts['inputs'][name].parsed)[1]
                  for name, binding in graph.bindings[node].items()}
+        if block.name == 'privacy_classify' and texts.get('queue') == '[]':
+            return {'outcome': 'complete', 'outputs': {'decisions': {'format': 'json', 'text': '[]'}}}
         if self.evidence:
             self.evidence.pending(node)
         with self.lock:
             if self.reason is None:
                 self.live_rows[node] = {'outcome': 'dispatch_pending'}
         snapshot, role, guard = graph.runtime.get(node, (None, None, None))
+        for gate, config in graph.gates.items():
+            if release_gate.version2(config) and graph.v2_consumer(gate) == node:
+                guard = self.private_dispatch(guard, snapshot, role, block, gate, texts['candidate'])
         frozen = runner.FrozenSource(snapshot, False, {'workflow_node': node}, owner=opened, capture=role,
                                      protected=node in graph.protected_nodes, dispatch=guard,
                                      attempt_gate=self.allow_attempt)
-        return runner.run_block(self.state, load_capture(opened, block.name), texts, self, frozen=frozen).result
+        result = runner.run_block(self.state, load_capture(opened, block.name), texts, self, frozen=frozen).result
+        if block.name == 'privacy_classify' and result['outcome'] == 'failed' and not self.reason:
+            steps = result.get('steps', [])
+            errors = [item.get('failure', '') for item in steps]
+            if errors and all(error in ('contract_error', 'repairs_exhausted', 'truncated', 'blank_answer', 'check_incomplete') for error in errors):
+                return {**result, 'outcome': 'complete', 'outputs': {'decisions': {'format': 'json', 'text': '[]'}}}
+        return result
 
-    def execute(self, graph, inputs):
+    def execute(self, graph, inputs, *, parent_budget=False):
         budget = graph.definition.get('budget', {})
         timeout = budget.get('max_seconds', 1800)
-        self.attempt_limit = budget.get('max_model_attempts', 32)
-        self.attempts = 0
-        self._start_budget(timeout)
+        self.private_release = None
+        if not parent_budget:
+            self.attempt_limit = budget.get('max_model_attempts', 32)
+            self.attempts = 0
+            self._start_budget(timeout)
         rows = {node: {'outcome': 'not_run'} for node in graph.order}
         with self.lock:
             self.live_rows = dict(rows)
@@ -872,9 +988,11 @@ class Job(runner.Observer):
         except runner.Busy:
             issues, outcome = [issue('admission_busy', 'workflow', 'a child execution slot is busy')], 'rejected'
         finally:
-            self.budget_timer.cancel()
+            if not parent_budget:
+                self.budget_timer.cancel()
             with self.lock:
-                self.budget_epoch += 1
+                if not parent_budget:
+                    self.budget_epoch += 1
                 self.pending_release = None
                 self.phase = 'running'
                 if self.reason is not None or (not self.budget_paused and time.monotonic() >= self.deadline):

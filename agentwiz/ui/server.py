@@ -185,7 +185,7 @@ class UIServer(ThreadingHTTPServer):
 
     def __init__(self, port: int = 0, *, workspace: Workspace, profiles_dir: Path, page_timeout: float = 30.0,
                  request_limit: int = 8, mcp_servers_dir: Path | None = None, servers=None, config_path=None,
-                 production: bool = False):
+                 production: bool = False, component_pool: Path | None = None):
         self.authority = surfaces.Authority("workshop") if production else None
         self.chat_listener = None
         self.generation_changed = lambda: None
@@ -195,6 +195,7 @@ class UIServer(ThreadingHTTPServer):
         self.tutorial_session = None
         self.workspace = workspace  # the current workspace; close_workspace() closes it
         self.profiles_dir = Path(profiles_dir).resolve()
+        self.component_pool = Path(component_pool or './component_pool').absolute()
         self.mcp_servers_dir = (Path(mcp_servers_dir) if mcp_servers_dir is not None
                                 else Path("./mcp_servers")).resolve()
         self.workspace_root = Path(workspace.path).parent.resolve()
@@ -238,6 +239,7 @@ class UIServer(ThreadingHTTPServer):
         state = ProcessState(workspace, self.request_limit, profiles_dir=self.profiles_dir,
                              mcp_servers_dir=self.mcp_servers_dir, servers=self.servers,
                              config_path=self.config_path)
+        state.component_pool = self.component_pool
         state.chat_surfaces = self.authority is not None
         if self.authority is not None:
             try:
@@ -1118,7 +1120,12 @@ class Handler(BaseHTTPRequestHandler):
         service = self.server.state.workshop
         parts = path.split('/')
         query = parse_qs(urlparse(self.path).query)
-        if path == 'workflow-active':
+        if path == 'privacy-templates':
+            from ..private_templates import NAMES
+            result = {'names': NAMES}
+        elif path == 'components':
+            result = service.components.listing()
+        elif path == 'workflow-active':
             result = service.workflows.active_view()
         elif path == 'workflows':
             result = service.workflows.listing()
@@ -1186,7 +1193,28 @@ class Handler(BaseHTTPRequestHandler):
             raise workshop.WorkshopError('invalid', 400)
         body = {k: v for k, v in body.items() if k != 'format_version'}
         parts = path.split('/')
-        if path == 'workflow-definition':
+        if path in ('skill-plan', 'skill-install'):
+            from ..skill_drafts import review
+            result = review(service, body, install=path == 'skill-install')
+        elif path == 'skill-proposal':
+            from ..skill_drafts import propose
+            result = propose(service, body)
+        elif path == 'component-plan':
+            result = service.components.plan(body)[0]
+        elif path == 'component-install':
+            result = service.components.install(body)
+        elif path == 'component-block-fork':
+            result = service.components.fork_block(body)
+        elif path == 'component-share':
+            result = service.components.share(body)
+        elif path == 'workflow-fork':
+            result = service.workflows.fork(body)
+        elif path == 'component-workflow':
+            result = service.workflows.read(None, body['capture'], body.get('path', []))
+        elif path == 'privacy-correction':
+            from ..private_transform import correction
+            result = correction(body['source'], body['start'], body['end'], body['kind'])
+        elif path == 'workflow-definition':
             if set(body) != {'editor'}:
                 raise workshop.WorkshopError('invalid', 400)
             result = {'definition_text': jsonio.encode_exact(service.workflows.editor_definition(body['editor']), indent=2)}

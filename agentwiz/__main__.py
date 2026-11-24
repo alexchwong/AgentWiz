@@ -117,6 +117,7 @@ def main(argv: list[str] | None = None) -> None:
                         help="shared default profiles, created if missing (default: ./model_profiles)")
     parser.add_argument("--mcp-servers-dir", type=Path, default=Path("./mcp_servers"), metavar="PATH",
                         help="shared MCP server library, created if missing (default: ./mcp_servers)")
+    parser.add_argument("--component-pool-dir", type=Path, default=Path("./component_pool"))
     parser.add_argument("--config", type=Path, default=Path("./config/model-servers.ini"), metavar="PATH",
                         help="model server configuration (default: ./config/model-servers.ini)")
     parser.add_argument("--version", action="version",
@@ -159,7 +160,7 @@ def main(argv: list[str] | None = None) -> None:
                     session_file = SessionFile(args.session_file)
                 server = UIServer(args.workshop_port, workspace=ws, profiles_dir=args.profiles_dir,
                                   mcp_servers_dir=args.mcp_servers_dir, servers=servers,
-                                  config_path=args.config.absolute(), production=True)
+                                  config_path=args.config.absolute(), production=True, component_pool=args.component_pool_dir)
                 chat = ChatListener(args.port, server, Handler)
                 server.chat_listener = chat
 

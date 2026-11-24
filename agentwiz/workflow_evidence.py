@@ -41,7 +41,7 @@ def safe_id(ident):
 
 
 class Evidence:
-    def __init__(self, state, ident, bundle, plan):
+    def __init__(self, state, ident, bundle, plan, *, producer=None):
         self.state = state
         root = directory(state.workspace.path, create=True)
         folder = Path(tempfile.mkdtemp(prefix='.workflow-', dir=root))
@@ -56,6 +56,8 @@ class Evidence:
                    'definition': bundle['definition'], 'snapshots': bundle['snapshots'], 'bundle_format_version': bundle['format_version'],
                    'review': {key: plan[key] for key in ('executable_digest', 'order', 'destinations', 'limits', 'examples',
                                                         'mcp_confirmation', 'repetitions', 'restricted_sources', 'saving')}}
+        if producer is not None:
+            capture['producer'] = producer
         if any('gate' in row for row in bundle['definition']['nodes'].values()):
             capture['gate_assessment'] = {'version': release_gate.ASSESSMENT_VERSION,
                                           'prompt': release_gate.ASSESSMENT_PROMPT,

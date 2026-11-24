@@ -1120,6 +1120,10 @@ class AgentRun:
         if live is None or live.revision != capability.revision:
             return self._refusal("configuration_changed")
         step = block.step
+        if step.kind == 'transform':
+            from .private_transform import OPERATIONS
+            if step.raw['operation'] in OPERATIONS:
+                return self._refusal('refused')
         snapshot, role = None, None
         if step.kind == "model":
             role = self.capture.role_captures.get(step.role)

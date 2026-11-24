@@ -267,6 +267,8 @@ class Service:
         self.recoveries = OrderedDict()
         from .workflow_service import Workflows
         self.workflows = Workflows(self)
+        from .components import Components
+        self.components = Components(self)
         from .python_authoring import Authoring
         self.python = Authoring(state)                  # Python authoring flows (0.2.2, 10.7)
 

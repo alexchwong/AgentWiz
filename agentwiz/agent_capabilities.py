@@ -278,6 +278,10 @@ def block_candidate(state: Any, loaded: Any, mcp: dict[tuple, Capability]) -> tu
     step = block.step
     if step.kind not in ("model", "tool", "transform", "python"):
         return None, "kind"
+    if step.kind == "transform":
+        from .private_transform import OPERATIONS
+        if step.raw["operation"] in OPERATIONS:
+            return None, "native_workshop_only"
     properties = {}
     for declared in block.inputs:
         node = _port_schema(block, declared)

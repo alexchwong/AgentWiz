@@ -22,9 +22,29 @@ ASSESSMENT_CONTRACT = {'format': 'json', 'schema': {
                                        for key in ('concern', 'location', 'explanation')},
         'required': ['concern', 'location', 'explanation'], 'additionalProperties': False}}},
     'required': ['findings'], 'additionalProperties': False}}
+COVERAGE_CODES = ['discovery_incomplete', 'unresolved_span', 'uncertain_identity', 'unexpected_classification']
+COVERAGE_CONTRACT = {'format': 'json', 'schema': {
+    'type': 'object', 'additionalProperties': False,
+    'required': ['candidate_digest', 'status', 'issues'],
+    'properties': {
+        'candidate_digest': {'type': 'string', 'minLength': 64, 'maxLength': 64},
+        'status': {'type': 'string', 'enum': ['complete', 'incomplete']},
+        'issues': {'type': 'array', 'maxItems': 512, 'items': {
+            'type': 'object', 'additionalProperties': False, 'required': ['code'],
+            'properties': {'code': {'type': 'string', 'enum': COVERAGE_CODES},
+                           'location': {'type': 'object', 'additionalProperties': False,
+                                        'required': ['space', 'start', 'end'],
+                                        'properties': {'space': {'type': 'string', 'enum': ['source', 'candidate']},
+                                                       'start': {'type': 'integer', 'minimum': 0, 'maximum': 64000},
+                                                       'end': {'type': 'integer', 'minimum': 1, 'maximum': 64000}}}}}},
+    }}}
 SCAN_ENTRIES = identifier_pairs.ENTRY_LIMIT
 SCAN_HITS = 1000
 SCAN_WORK = 16 << 20
+
+
+def version2(config):
+    return config.get('assessment', {}).get('version') == 2
 
 
 def parse(config, location):
@@ -33,7 +53,12 @@ def parse(config, location):
         problem('invalid', location, 'expected a release gate with a bounded title', 400)
     integer(config.get('max_release_wait_seconds', 1800), 60, 86400, location + '.max_release_wait_seconds')
     assessment = config.get('assessment', {'enabled': False})
-    record(assessment, ('enabled',), ('role',), location + '.assessment')
+    if version2(config):
+        record(assessment, ('enabled', 'role', 'version', 'snapshot_id'), (), location + '.assessment')
+        if assessment['enabled'] is not True or not isinstance(assessment['snapshot_id'], str):
+            problem('invalid', location + '.assessment', 'expected a captured v2 detector', 400)
+    else:
+        record(assessment, ('enabled',), ('role',), location + '.assessment')
     boolean(assessment['enabled'], location + '.assessment.enabled')
     role = assessment.get('role', '')
     if not isinstance(role, str) or (role and not valid_name(role)) or (assessment['enabled'] and not role):
@@ -49,6 +74,8 @@ def block(config, bindings):
     ports = {'value': contract}
     if 'scan' in bindings:
         ports['scan'] = checks.parse_contract({'format': 'json'})
+    if version2(config):
+        ports['coverage'] = checks.parse_contract(COVERAGE_CONTRACT)
     inputs = tuple(blocks.Declared(key, '', value) for key, value in ports.items())
     return SimpleNamespace(
         inputs=inputs, outputs=(blocks.Declared('released', '', contract),), context_local_only=False,
@@ -59,6 +86,8 @@ def block(config, bindings):
 
 
 def assessment_capture(config, stack):
+    if version2(config):
+        raise ValueError('v2 assessments require a native snapshot')
     if not config.get('assessment', {}).get('enabled', False):
         return None
     definition = {

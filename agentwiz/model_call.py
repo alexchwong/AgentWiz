@@ -181,7 +181,7 @@ def call_model(snapshot: RequestSnapshot, messages: list[dict], arguments: Mappi
                model_info: ModelInfo | None = None,
                on_text: Callable[[str], None], on_reasoning: Callable[[str], None],
                cancel: modelspell.CancelHandle | None = None, routing: dict | None = None,
-               resolved_policy: Mapping | None = None, before_complete=None) -> Result:
+               resolved_policy: Mapping | None = None, before_complete=None, verify_request=None) -> Result:
     """Resolve routing then complete, with no workload retries. The run handle cancels both stages."""
     model = model_info if model_info is not None else snapshot.model
     if routing is not None and resolved_policy is None:
@@ -202,6 +202,8 @@ def call_model(snapshot: RequestSnapshot, messages: list[dict], arguments: Mappi
             routing.update(routing_record(snapshot, arguments, selection))
     if before_complete is not None:
         before_complete()
+    if verify_request is not None:
+        verify_request(snapshot, model, messages, arguments)
     return modelspell.complete(snapshot.endpoint, model, messages,
                                on_text=on_text, on_reasoning=on_reasoning, cancel=cancel, **arguments)
 

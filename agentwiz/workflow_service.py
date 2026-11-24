@@ -9,7 +9,7 @@ import copy
 from types import SimpleNamespace
 from contextlib import ExitStack
 
-from . import checks, outbound_policy, runs, workflow_evidence, workflow_settings
+from . import checks, outbound_policy, private_templates, runs, workflow_evidence, workflow_settings
 from .errors import report_internal
 from .workflow_definition import Store, capture, digest, names, problem, record, unmanaged
 from .workflow_runner import Graph, Job
@@ -100,8 +100,18 @@ class Workflows:
             problem('snapshot_unusable', 'source', 'The selected block could not be opened.')
         return {'block': self.block_view(block), 'version': version, 'selection': selection}
 
-    def read(self, name):
-        bundle, token = self.store.read(name)
+    def read(self, name, capture_id=None, path=None):
+        native = capture_id is None and name in private_templates.NAMES
+        if capture_id is not None:
+            bundle = self.workshop.components.bundle(capture_id, path)
+            name = bundle['definition']['name']
+        elif native:
+            bundle = private_templates.bundle(name == private_templates.NAMES[1])
+        else:
+            bundle, token = self.store.read(name)
+        immutable = native or capture_id is not None
+        if immutable:
+            token = digest(bundle)
         if bundle is None:
             problem('missing', name, 'workflow does not exist', 404)
         with ExitStack() as stack:
@@ -118,6 +128,10 @@ class Workflows:
                 if 'gate' in row:
                     row['gate']['contract'] = exact(row['gate']['contract'])
             return {'format_version': 1, 'file_token': token, 'definition_text': exact(definition),
+                    'immutable': immutable, 'qualification': 'unqualified' if native or any(
+                        block.step.kind == 'transform' and block.step.raw.get('operation') == 'privacy_locate'
+                        for block in graph.blocks.values()) else None,
+                    'package_run': {'capture': capture_id, 'path': path} if capture_id else None,
                     'editor': editor, 'node_ports': {node: self.effective_view(graph, node) for node in graph.blocks},
                     'restriction': graph.explain(),
                     'input_ports': {port: contract.format for port, contract in graph.contracts['inputs'].items()},
@@ -125,6 +139,34 @@ class Workflows:
                     'sources': {node: (bundle['snapshots'][row['snapshot_id']]['provenance'] if 'snapshot_id' in row else
                                       {'title': row['gate']['title'], 'kind': 'gate'})
                                 for node, row in graph.definition['nodes'].items()}}
+
+    def fork(self, body):
+        record(body, ('request',), ('expected_plan', 'confirmations'), 'fork')
+        request = record(body['request'], ('target',), ('template', 'capture', 'path'), 'request')
+        name = request['target']
+        if name in private_templates.NAMES or not valid_name(name):
+            problem('invalid', 'target', 'choose a new workflow name')
+        if 'capture' in request and 'template' not in request:
+            source = self.workshop.components.bundle(request['capture'], request.get('path', []))
+        elif request.get('template') in private_templates.NAMES and 'capture' not in request:
+            source = private_templates.bundle(request['template'] == private_templates.NAMES[1])
+        else:
+            problem('invalid', 'source', 'choose a captured component or a native template')
+        _, old_token = self.store.read(name)
+        if old_token is not None:
+            problem('stale', 'target', 'choose an unused workflow name')
+        copied = {**source, 'definition': {**source['definition'], 'name': name}}
+        with ExitStack() as stack:
+            graph = Graph(copied, name, stack)
+            self.check_capture_credentials(graph)
+        descriptor = {'target': name, 'source_digest': digest(source), 'executable_digest': graph.digest,
+                      'visibility': 'private', 'qualification': 'unqualified'}
+        plan = self.plan_view('workflow_fork', request, descriptor, 'workflow_fork')
+        if 'expected_plan' not in body:
+            return plan
+        self.workshop.check_plan(plan, body)
+        self.store.publish(name, None, copied)
+        return self.read(name)
 
     def editor_definition(self, editor):
         from .jsonio import decode_exact
@@ -150,6 +192,8 @@ class Workflows:
         record(request, ('name', 'file_token'), () if action == 'workflow_delete' else
                ('definition_text', 'editor', 'selections', 'layout', 'examples'), 'request')
         name = request['name']
+        if name in private_templates.NAMES:
+            problem('reserved_name', name, 'choose another name for an editable workflow')
         current, token = self.store.read(name)
         if token != request['file_token']:
             problem('stale', name, 'the workflow changed since review')
@@ -212,6 +256,13 @@ class Workflows:
             if 'gate' in row:
                 if 'snapshot_id' in row or node in selections:
                     problem('invalid', f'nodes.{node}', 'a gate cannot capture a block', 400)
+                assessment = row['gate'].get('assessment')
+                if isinstance(assessment, dict) and assessment.get('version') == 2:
+                    ident = assessment.get('snapshot_id')
+                    if not isinstance(ident, str) or ident not in snapshots:
+                        problem('snapshot_unusable', f'nodes.{node}.gate.assessment',
+                                'fork a native Gate workflow to preserve its detector capture')
+                    copied[ident] = snapshots[ident]
                 continue
             old_id = old_nodes.get(node, {}).get('snapshot_id')
             if node in selections:
@@ -395,11 +446,19 @@ class Workflows:
             self.workshop.mark_examples([example], labels, old)
 
     def prepare_run(self, request, stack):
-        record(request, ('name',), ('inputs', 'examples'), 'request')
+        record(request, ('name',), ('inputs', 'examples', 'capture', 'path'), 'request')
         if ('inputs' in request) == ('examples' in request):
             problem('invalid', 'request', 'select examples or supply one-off inputs', 400)
         name = request['name']
-        bundle, _ = self.store.read(name)
+        if 'capture' in request:
+            bundle = self.workshop.components.bundle(request['capture'], request.get('path', []))
+        else:
+            from . import private_templates
+            if name in private_templates.NAMES:
+                bundle = private_templates.bundle(name == private_templates.NAMES[1])
+                request = {**request, 'inputs': {'corrections': '[]', **request.get('inputs', {})}}
+            else:
+                bundle, _ = self.store.read(name)
         if bundle is None:
             problem('missing', name, 'workflow does not exist', 404)
         graph = Graph(bundle, name, stack)
