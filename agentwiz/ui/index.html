@@ -1003,7 +1003,11 @@ function fillDialog() {
 
 $("open-settings").onclick = () => { fillDialog(); settingsMsg(""); $("settings").showModal(); };
 $("kind").onchange = () => {
-  if ($("kind").value === "openrouter") $("routing-mode").value = "automatic";
+  if ($("kind").value === "openrouter") {
+    $("routing-mode").value = "automatic";
+    $("routing-preset").value = "balanced";
+    $("routing-data").value = "deny";
+  }
   syncDialogVisibility();
 };
 $("open-openrouter-key").onclick = () => { $("openrouter-key-input").value = ""; $("openrouter-key-msg").textContent = ""; $("openrouter-key-dialog").showModal(); };

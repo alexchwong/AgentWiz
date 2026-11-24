@@ -1,5 +1,20 @@
 # NEWS
 
+## 0.2.4
+- AgentWiz Chat and AgentWorkshop open separately and share one workspace.
+- Chat has a pinned composer, Markdown answers, and expandable per-turn activity.
+- Cloud chats save by default. Use the sidebar to reopen, rename, or delete them.
+- Pick an OpenRouter, LM Studio, or llama-server model by name or ID.
+- Choose a Chat task and reasoning level beside Send.
+- Each response shows model routing and usage. Saved chats retain conversation totals.
+- Local only conversations stay private until closed, including across refresh and follow-up.
+- Chat offers scoped attachments, built-in tools, and 13 bundled model starter blocks.
+- The release installer verifies and starts webSpell v0.2.1 using Docker Compose.
+- Public web searches support category and recency filters.
+- Manage the separate webSpell service with `agentwiz-webspell`.
+- OpenRouter credentials can come from a private user configuration file.
+- Workshop preview output and raw answers share one byte budget.
+
 ## 0.2.3
 - Checked request and Saved block runs are removed; Workshop Test and automatic repair cover them.
 - Workshop refuses to test a saved block changed since it was opened, keeping your inputs.

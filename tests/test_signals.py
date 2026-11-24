@@ -31,13 +31,15 @@ BOOT = ("import sys, threading\n"
 class Running:
     def __init__(self, tmp_path, hook="none"):
         self.tmp = tmp_path
+        session = tmp_path / "ui-session"
         self.proc = subprocess.Popen(
-            [sys.executable, "-c", BOOT, hook, "--no-browser", "--workspaces-dir", str(tmp_path / "workspaces"),
+            [sys.executable, "-c", BOOT, hook, "--no-browser", "--session-file", str(session), "--workspaces-dir", str(tmp_path / "workspaces"),
              "--profiles-dir", str(tmp_path / "profiles"), "--mcp-servers-dir", str(tmp_path / "mcp")],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(tmp_path))
         first = self.proc.stdout.readline().strip().removeprefix("[AgentWiz] ")
         assert first.startswith("http://127.0.0.1:"), first
-        self.base, self.token = first.split("/?t=")[0], first.split("/?t=")[1]
+        workshop = json.loads(session.read_text())["workshop"]
+        self.base, self.token = workshop["url"], workshop["session"]
         self.block_dir = tmp_path / "workspaces" / "default" / "blocks" / "py"
 
     def post(self, path, body, timeout=60):

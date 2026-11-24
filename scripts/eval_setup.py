@@ -70,22 +70,32 @@ def materialize(workdir, profile, route=None, profiles_dir=None, config=None):
 
 
 @contextmanager
-def session(workdir, profile, route=None, profiles_dir=None, config=None):
-    from agentwiz.ui.server import UIServer
+def session(workdir, profile, route=None, profiles_dir=None, config=None, *, split=False):
+    from agentwiz.ui.server import Handler, UIServer
+    from agentwiz.ui.surfaces import ChatListener
     from agentwiz.workspace import open_workspace
 
     folder, config_path, servers = materialize(workdir, profile, route, profiles_dir, config)
     workspace = open_workspace(workdir / "workspaces", "live-eval")
     ui = None
-    thread = None
+    thread = chat_thread = None
     try:
         ui = UIServer(0, workspace=workspace, profiles_dir=folder,
-                      mcp_servers_dir=workdir / "mcp_servers", servers=servers, config_path=config_path)
+                      mcp_servers_dir=workdir / "mcp_servers", servers=servers, config_path=config_path,
+                      production=split)
         thread = threading.Thread(target=ui.serve_forever, daemon=True)
         thread.start()
+        if split:
+            ui.chat_listener = ChatListener(0, ui, Handler)
+            chat_thread = threading.Thread(target=ui.chat_listener.serve_forever, daemon=True)
+            chat_thread.start()
         yield ui
     finally:
         if ui is not None:
+            if chat_thread is not None:
+                ui.chat_listener.shutdown()
+                chat_thread.join()
+                ui.chat_listener.server_close()
             if thread is not None:
                 ui.shutdown()
                 thread.join()

@@ -111,6 +111,16 @@ def agent_turn(body):
 
 
 class Stub(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path != "/v1/models":
+            return self.send_error(404)
+        data = json.dumps({"data": [{"id": "agent-two-step"}]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_POST(self):
         received.append(json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}"))
         if received[-1].get("model") == "author":
@@ -175,39 +185,59 @@ Path("config/model-servers.ini").write_text(
     f"[lmstudio]\nbase_url = {stub_url}\n[openrouter]\nbase_url = https://openrouter.ai/api/v1\n"
     f"[openai_compat]\nbase_url = {stub_url}\n", encoding="utf-8")
 
-# S4: launch the installed command; page served with the token, refused without
-proc = subprocess.Popen([str(exe), "--no-browser"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+# S4: start both installed listeners and check the distinct app authorities.
+session_file = Path("installed-session.json").absolute()
+proc = subprocess.Popen([str(exe), "--no-browser", "--session-file", str(session_file)],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 try:
     lines = []
     reader = threading.Thread(target=lambda: lines.append(proc.stdout.readline()), daemon=True)
     reader.start()
     reader.join(15)
-    check(lines and lines[0].startswith("[AgentWiz] http://127.0.0.1:"), f"no address printed: {lines}")
-    address = lines[0].split(" ", 1)[1].strip()
-    root, token = address.split("/?t=", 1)
-    page = urllib.request.urlopen(address, timeout=10)
-    check(page.status == 200 and page.headers["Content-Type"].startswith("text/html"), "page not served")
-    try:
-        urllib.request.urlopen(root + "/", timeout=10)
-        check(False, "page served without the token")
-    except urllib.error.HTTPError as e:
-        check(e.code == 403, f"tokenless GET returned {e.code}")
-    # The packaged contract editor script (overhaul spec 15.4): served from the installed wheel, token required,
-    # as JavaScript, exactly as the page loads it.
-    script = urllib.request.urlopen(root + "/assets/contracts.js?t=" + token, timeout=10)
+    check(lines and lines[0].startswith("[AgentWiz] http://127.0.0.1:"), "no address printed")
+    launch = json.loads(session_file.read_text())
+    root, token = launch["workshop"]["url"], launch["workshop"]["session"]
+    chat_root, chat_token = launch["chat"]["url"], launch["chat"]["session"]
+    check(root != chat_root and token != chat_token and "?t=" not in lines[0], "scoped listener handoff")
+    for address in (root, chat_root):
+        with urllib.request.urlopen(address + "/", timeout=10) as page:
+            check(page.status == 200 and page.headers["X-Frame-Options"] == "DENY", "page guards")
+    script = urllib.request.urlopen(root + "/assets/contracts.js", timeout=10)
     check(script.status == 200 and script.headers["Content-Type"].startswith("text/javascript")
           and b"window.AgentWizContracts" in script.read(), "contracts.js not served from the installed wheel")
-    try:
-        urllib.request.urlopen(root + "/assets/contracts.js", timeout=10)
-        check(False, "contracts.js served without the token")
-    except urllib.error.HTTPError as e:
-        check(e.code == 403, f"tokenless script GET returned {e.code}")
+
+    def scoped(base, grant, path, body=None):
+        req = urllib.request.Request(base + path, method="GET" if body is None else "POST",
+                                     data=None if body is None else json.dumps(body).encode(),
+                                     headers={"X-Session-Token": grant, "Content-Type": "application/json"})
+        return urllib.request.urlopen(req, timeout=30)
 
     def api(path, body=None):
-        req = urllib.request.Request(root + path, method="GET" if body is None else "POST",
-                                     data=None if body is None else json.dumps(body).encode(),
-                                     headers={"X-Session-Token": token, "Content-Type": "application/json"})
-        return urllib.request.urlopen(req, timeout=30)
+        return scoped(root, token, path, body)
+
+    def chat_api(path, body=None):
+        return scoped(chat_root, chat_token, path, body)
+
+    # Chat's packaged transcript and model chooser, using the installed modelSpell transport.
+    with urllib.request.urlopen(chat_root + "/", timeout=10) as page:
+        markup = page.read()
+        check(b'id="composer"' in markup and b'id="history"' in markup and b'/assets/chat-markdown.js' in markup
+              and page.headers["X-DNS-Prefetch-Control"] == "off", "installed Chat transcript and guards")
+    with urllib.request.urlopen(chat_root + "/assets/chat-markdown.js", timeout=10) as script:
+        check(b"agentWizMarkdown" in script.read(), "installed Chat Markdown asset")
+    models = json.loads(chat_api("/api/chat/models", {"kind": "openai_compat", "mode": "local"}).read())
+    check(models["models"] == [{"id": "agent-two-step", "name": None, "trusted": False, "reasoning": []}],
+          "installed Chat local model discovery")
+    check(json.loads(chat_api("/api/chat/history").read()) == {"chats": []}, "Chat history starts empty")
+
+    for base, grant, path in ((chat_root, chat_token, "/api/library"),
+                              (root, "", "/api/state"), (root, chat_token, "/api/state"),
+                              (root, token, "/api/agent/conversation"), (chat_root, chat_token, "/assets/contracts.js")):
+        try:
+            scoped(base, grant, path)
+            check(False, "unexpected authority")
+        except urllib.error.HTTPError as exc:
+            check(exc.code == 403, f"surface boundary status {exc.code}")
 
     # S4 (0.1.1): the default workspace was created here, and AgentWiz found its files valid
     initial = json.loads(api("/api/state").read())
@@ -223,7 +253,9 @@ try:
     check(initial["profiles"]["names"] == [] and initial["profiles"]["active"] is None,
           "fresh workspace has unexpected profiles")
     # S4 (0.1.2): the MCP library and task settings are usable; the retired settings are gone
-    check(initial["mcp"]["read_only"] is False and initial["mcp"]["servers"] == {}, f"MCP library: {initial['mcp']}")
+    servers = initial["mcp"]["servers"]
+    check(initial["mcp"]["read_only"] is False and set(servers) == {"webspell"}
+          and servers["webspell"]["url"] == "http://127.0.0.1:8765/mcp", f"MCP library: {initial['mcp']}")
     check(initial["task"]["read_only"] is False, f"task settings: {initial['task']}")
     check("reasoning" not in initial and "max_tokens" not in initial, "retired settings still in /api/state")
     # S4 (0.1.4, 0.2.2): no roles yet, and the Python budget is four
@@ -526,14 +558,22 @@ try:
 
     # S18-S22 (0.2.2): agentic Chat and Python authoring against the scripted stub
     def agent(path, body=None):
-        return json.loads(api('/api/agent/' + path, None if body is None else {'format_version': 1, **body}).read())
+        return json.loads(chat_api('/api/agent/' + path, None if body is None else {'format_version': 1, **body}).read())
 
     def agent_run(model, message, capabilities):
         state = json.loads(api("/api/state").read())
-        state = json.loads(api("/api/config", {"revision": state["revision"], "kind": "openai_compat", "model": model}).read())
-        return [json.loads(line) for line in api('/api/agent/run', {
-            'format_version': 1, 'conversation': conversation, 'revision': state['revision'], 'message': message,
-            'capabilities': capabilities}).read().splitlines() if line]
+        state = json.loads(api("/api/profiles/save", {"name": model, "kind": "openai_compat", "model": model,
+                                                      "provider": "", "revision": state["revision"]}).read())
+        dest = {"kind": "openai_compat", "url": stub_url, "model": model, "provider": ""}
+        preview = workshop("destination-trust-preview", {"destination": dest})
+        workshop("destination-trust", {"destination": dest, "trusted": True,
+                                       "expected_revision": preview["revision"]})
+        new = json.loads(chat_api('/api/chat/bindings', {"revision": state['roles']['revision'],
+                         "bindings": {"fast": {"local": model}}}).read())
+        ids = [item["id"] for item in agent("conversation")["conversation"]["documents"]]
+        return [json.loads(line) for line in chat_api('/api/agent/run', {
+            'format_version': 1, 'conversation': conversation, 'revision': new['revision'], 'message': message,
+            'mode': 'local', 'items': ids, 'capabilities': capabilities}).read().splitlines() if line]
 
     conversation = agent('conversation', {})['conversation']['id']
     # S18: one scripted two-step agent run
@@ -543,8 +583,8 @@ try:
           and [t['outcome'] for t in final['view']['trace']] == ['completed', 'completed'], f'agent two-step: {events}')
     # S19: one search-read-draft run over a staged document; the draft downloads
     data = b"bin B17 holds part 007\n"
-    staged = urllib.request.Request(root + '/api/agent/documents', data=data, method='POST', headers={
-        'X-Session-Token': token, 'X-Filename': 'bins.txt', 'X-Conversation': conversation, 'X-Local-Only': 'false',
+    staged = urllib.request.Request(chat_root + '/api/agent/documents', data=data, method='POST', headers={
+        'X-Session-Token': chat_token, 'X-Filename': 'bins.txt', 'X-Conversation': conversation, 'X-Local-Only': 'false',
         'Content-Length': str(len(data))})
     check(json.loads(urllib.request.urlopen(staged, timeout=30).read())['document']['lines'] == 1, 'agent staging')
     events = agent_run('agent-docs', 'summarise B17', [{'name': n} for n in
@@ -552,7 +592,7 @@ try:
     final = events[-1]
     check(final['stop_reason'] == 'answered' and len(final['view']['drafts']) == 1, f'agent documents: {events}')
     draft_id = final['view']['drafts'][0]['id']
-    check(api('/api/agent/drafts/' + draft_id).read() == b'# B17 holds part 007', 'agent draft download')
+    check(chat_api('/api/agent/drafts/' + draft_id).read() == b'# B17 holds part 007', 'agent draft download')
     # S20 is S13's standalone Python block run. S21: one Python authoring flow (Describe it, Generate and check)
     state = json.loads(api("/api/state").read())
     state = json.loads(api("/api/profiles/save", {"name": "author", "kind": "openai_compat", "model": "author",
@@ -567,7 +607,7 @@ try:
     check(all(isinstance(v, str) for ex in applied['examples'] for v in ex['inputs'].values()), 'authored examples')
     # S22: one scripted agent run that calls a saved Python block (the S13 block counts words here)
     (block_dir / "scripts" / "go.py").write_text("def transform(inputs):\n    return {'x': inputs['a'], 'y': len(inputs['a'].split())}\n")
-    inventory = agent('inventory?revision=' + str(json.loads(api("/api/state").read())['revision']))
+    inventory = agent('inventory', {'revision': json.loads(api("/api/state").read())['revision'], 'mode': 'local'})
     block = next(c for c in inventory['capabilities'] if c['kind'] == 'block' and c['identity']['block'] == 'echo_python')
     original = agent_turn
     globals()['agent_turn'] = lambda body: (tool_call(block['name'], {'a': 'one two three'})
@@ -583,7 +623,7 @@ try:
 
     # S23 (0.2.2): add three library Tool blocks through the installer and run them as a workflow
     library = json.loads(api('/api/library').read())
-    check(len(library['entries']) == 29 and {e['status'] for e in library['entries']} == {'available'} and
+    check(len(library['entries']) == 29 and {e['status'] for e in library['entries']} == {'available', 'installed'} and
           'deidentify_text' not in {e['key'] for e in library['entries']},
           'installed library listing')
     planned = json.loads(api('/api/library/plan', {'format_version': 1, 'entries': [
@@ -636,8 +676,8 @@ try:
         extracted = json.loads(urllib.request.urlopen(upload, timeout=60).read())
         check(extracted['format'] == 'pdf' and extracted['coverage']['pages_with_text'] == pages_with_text,
               f'PDF on the Chat route ({name}): {extracted.get("coverage")}')
-        staged = urllib.request.Request(root + '/api/agent/documents', data=data, method='POST', headers={
-            'X-Session-Token': token, 'X-Filename': name + '.pdf', 'X-Conversation': conversation,
+        staged = urllib.request.Request(chat_root + '/api/agent/documents', data=data, method='POST', headers={
+            'X-Session-Token': chat_token, 'X-Filename': name + '.pdf', 'X-Conversation': conversation,
             'X-Local-Only': 'false', 'Content-Length': str(len(data))})
         document = json.loads(urllib.request.urlopen(staged, timeout=60).read())['document']
         check(document['format'] == 'pdf' and document['coverage']['pages_with_text'] == pages_with_text,
@@ -645,10 +685,11 @@ try:
     check(extracted['coverage']['warnings'] == [{'code': 'no_text_layer', 'page': 2}], 'partial coverage warning')
 
     # S25 (0.2.2): one scripted agent run that copies a passage to a draft, then revises that draft
+    agent('conversation/close', {'conversation': conversation, 'confirm': True})
     conversation = agent('conversation', {})['conversation']['id']
     data = b"Actions\nTom will review Hull's routes by 15 April.\n"
-    staged = urllib.request.Request(root + '/api/agent/documents', data=data, method='POST', headers={
-        'X-Session-Token': token, 'X-Filename': 'ops.txt', 'X-Conversation': conversation, 'X-Local-Only': 'false',
+    staged = urllib.request.Request(chat_root + '/api/agent/documents', data=data, method='POST', headers={
+        'X-Session-Token': chat_token, 'X-Filename': 'ops.txt', 'X-Conversation': conversation, 'X-Local-Only': 'false',
         'Content-Length': str(len(data))})
     urllib.request.urlopen(staged, timeout=30).read()
     events = agent_run('agent-draft', 'copy and revise', [{'name': n} for n in
@@ -657,11 +698,11 @@ try:
     check(final['stop_reason'] == 'answered' and [t['outcome'] for t in final['view']['trace']] == ['completed'] * 3
           and len(final['view']['drafts']) == 2, f'agent copy and revise: {events}')
     revised = final['view']['drafts'][-1]['id']
-    check(api('/api/agent/drafts/' + revised).read().rstrip(b'\n')
+    check(chat_api('/api/agent/drafts/' + revised).read().rstrip(b'\n')
           == b"Thomas will review Hull's routes by 15 April.", 'revised draft download')
 
     # S26 (0.2.3): routes retired in 0.2.3 refuse a request that was well formed for 0.2.2, by their router's own
-    # not-found body (never the old handlers' codes), and the Checked request source is refused on the source rule.
+    # surface or route refusal (never the old handlers' codes), and the Checked request source is refused.
     def refusal(path, body):
         try:
             api(path, body).read()
@@ -676,7 +717,7 @@ try:
     attempt = next(e for e in chat if e["type"] == "final")["record"]["id"]
     for path in ("/api/repair/preview", "/api/repair"):
         got = refusal(path, {"attempt_id": attempt})
-        check(got == (404, {"error": "not found"}), f"{path}: {got}")
+        check(got == (403, {"code": "surface_refused"}), f"{path}: {got}")
     got = refusal("/api/contracts/instructions", {"format_version": 2, **ref})
     check(got == (404, {"error": "not found"}), f"/api/contracts/instructions: {got}")
     got = refusal("/api/workshop/synthesis-inline", {"format_version": 1, "draft": {}, "proposal_id": "0" * 12,

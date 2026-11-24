@@ -29,7 +29,6 @@ LIMIT = 1 << 20
 ROW_LIMIT = 512
 EFFECTS = ("read-only", "changes state", "unknown")
 NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
-CAPABILITY_LIMIT = 24
 DEFINITION_BYTES = 65_536
 DESCRIPTION_LIMIT = 1024
 APPROVAL_WAIT_S = 120.0
@@ -201,15 +200,28 @@ def _bounded(text: object) -> str:
     return text[:DESCRIPTION_LIMIT] if isinstance(text, str) else ""
 
 
-def mcp_candidates(state: Any, rows: list[dict]) -> tuple[list[Capability], list[dict]]:
+def mcp_candidates(state: Any, rows: list[dict], *, mode=None, web_on=True) -> tuple[list[Capability], list[dict]]:
     """Every observed tool of every configured server: (eligible capabilities, ineligible rows with reasons)."""
+    from . import outbound_policy, webspell
     from .state import NoSuchServer
     eligible, refused = [], []
     servers = state.view()["mcp"]["servers"]
+    try:
+        web_destination = state.mcp_snapshot_for_block(webspell.SERVER).url
+    except NoSuchServer:
+        web_destination = None
     for server in servers:
         try:
             snapshot = state.mcp_snapshot_for_block(server)
         except NoSuchServer:
+            continue
+        web = (server == webspell.SERVER or snapshot.url == web_destination
+               or state.mcp_client.observed_server_name(snapshot.identity) == webspell.SERVER)
+        if web:
+            if mode != "cloud" or not web_on or server != webspell.SERVER or not webspell.compatible(
+                    state.mcp_client, snapshot):
+                continue
+        elif mode == "local" and outbound_policy.locality(snapshot.url) != "local":
             continue
         entry = state.mcp_client.entry(snapshot.identity)
         for tool in state.mcp_client.observed_tools(snapshot.identity):
@@ -221,6 +233,9 @@ def mcp_candidates(state: Any, rows: list[dict]) -> tuple[list[Capability], list
             base = {"url": snapshot.url, "server": server, "tool": tool, "schema_digest": digest,
                     "classification": {k: row[k] for k in DEFAULTS}}
             reason = None
+            if web:
+                row = {**row, "enabled": True, "no_host_files": True,
+                       "effects": "read-only", "results_local_only": False}
             if not row["enabled"]:
                 reason = "not_enabled"
             elif not row["no_host_files"]:
@@ -294,12 +309,13 @@ def block_candidate(state: Any, loaded: Any, mcp: dict[tuple, Capability]) -> tu
     return capability, None
 
 
-def inventory(state: Any, conversation: Any, *, trusted_local: bool, has_documents: bool) -> dict:
+def inventory(state: Any, conversation: Any, *, trusted_local: bool, has_documents: bool,
+              builtins: bool = True, mode=None, web_on=True) -> dict:
     """Every capability the panel can tick, the excluded items with reasons, and the classification revision.
     Exclusion for a non-local orchestrator (8.2) never changes a label."""
     revision, rows = state.agent.store.read()
-    capabilities = builtin_capabilities(has_documents)
-    mcp, refused = mcp_candidates(state, rows)
+    capabilities = builtin_capabilities(has_documents) if builtins else []
+    mcp, refused = mcp_candidates(state, rows, mode=mode, web_on=web_on)
     by_identity = {(c.url, c.server, c.tool): c for c in mcp}
     excluded: list[dict] = []
     for capability in mcp:
@@ -316,7 +332,9 @@ def inventory(state: Any, conversation: Any, *, trusted_local: bool, has_documen
         if capability is None:
             blocks_refused.append({"block": loaded.name, "revision": loaded.revision, "reason": reason})
             continue
-        if not trusted_local and (capability.restricted_definition or capability.results_local_only):
+        if mode == "cloud" and any(port.local_only for port in loaded.block.inputs):
+            capability.excluded_reason = "local_only_input"
+        elif not trusted_local and (capability.restricted_definition or capability.results_local_only):
             capability.excluded_reason = "protected_design" if capability.restricted_definition else "local_only_output"
         capabilities.append(capability)
     for capability in capabilities:

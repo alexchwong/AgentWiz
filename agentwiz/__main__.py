@@ -94,8 +94,10 @@ def main(argv: list[str] | None = None) -> None:
 
     from . import __version__
     from . import server_config
-    from .ui.server import UIServer
+    from .ui.server import Handler, UIServer
+    from .ui.surfaces import ChatListener, SessionFile, origin
     from .workspace import WorkspaceError, WorkspaceInUse, open_workspace
+    from .webspell_service import ServiceError, ensure_server_entry
 
     parser = argparse.ArgumentParser(
         prog="agentwiz",
@@ -103,6 +105,10 @@ def main(argv: list[str] | None = None) -> None:
                     "Binds to 127.0.0.1 only.")
     parser.add_argument("--port", type=int, default=0, help="port to bind (default: any free port)")
     parser.add_argument("--no-browser", action="store_true", help="do not open a browser")
+    parser.add_argument("--open", choices=("chat", "workshop", "both"), default="chat",
+                        help="which UI to open (default: chat)")
+    parser.add_argument("--workshop-port", type=int, default=0, help="AgentWorkshop port (default: free port)")
+    parser.add_argument("--session-file", type=Path, help="write scoped script credentials to a private file")
     parser.add_argument("--workspaces-dir", default="./workspaces", metavar="PATH",
                         help="folder holding workspaces, created if missing (default: ./workspaces)")
     parser.add_argument("--workspace", type=_workspace_name, default="default", metavar="NAME",
@@ -116,6 +122,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--version", action="version",
                         version=f"AgentWiz {__version__} (modelSpell {modelspell.__version__})")
     args = parser.parse_args(argv)
+
+    # Shared MCP entry is created automatically. Configuration errors fail closed
+    # instead of silently disabling the mandatory webSpell service.
+    try:
+        ensure_server_entry(args.mcp_servers_dir)
+    except (ServiceError, OSError) as exc:
+        _say(f"cannot configure webSpell: {exc}", err=True)
+        sys.exit(1)
 
     try:
         server_config.initialize(args.config)
@@ -137,21 +151,45 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
 
     controller = SignalController()
-    server = None
+    server = chat = chat_thread = session_file = None
     try:
         try:
             try:
-                server = UIServer(args.port, workspace=ws, profiles_dir=args.profiles_dir,
+                if args.session_file is not None:
+                    session_file = SessionFile(args.session_file)
+                server = UIServer(args.workshop_port, workspace=ws, profiles_dir=args.profiles_dir,
                                   mcp_servers_dir=args.mcp_servers_dir, servers=servers,
-                                  config_path=args.config.absolute())
+                                  config_path=args.config.absolute(), production=True)
+                chat = ChatListener(args.port, server, Handler)
+                server.chat_listener = chat
+
+                def publish_sessions(rotate=False):
+                    if rotate:
+                        server.authority.rotate()
+                        chat.authority.rotate()
+                    if session_file:
+                        session_file.write({"chat": chat.authority.entry(origin(chat)),
+                                            "workshop": server.authority.entry(origin(server))})
+                    if not args.no_browser:
+                        listeners = [chat, server] if args.open == "both" else [
+                            server if args.open == "workshop" else chat]
+                        for listener in listeners:
+                            url = listener.authority.launch_url(origin(listener))
+                            timer = threading.Timer(0.3, _open_browser, args=(url,))
+                            timer.daemon = True
+                            timer.start()
+
+                publish_sessions()
+                server.generation_changed = lambda: publish_sessions(rotate=True)
             except (OSError, OverflowError) as exc:
                 reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
-                _say(f"cannot listen on 127.0.0.1:{args.port}: {reason}", err=True)
+                _say(f"cannot start the local listeners or session handoff: {reason}", err=True)
                 sys.exit(1)
             controller.install()
 
-            _say(server.url)
-            _say("this machine only; the address carries a one-time session token. Ctrl-C to stop.")
+            _say(chat.url)
+            _say(f"AgentWorkshop {server.url}")
+            _say("Loopback listeners. Ctrl-C to stop.")
             _say(f"workspace '{ws.name}' at {ws.path}" + (" (created)" if ws.created else ""))
             _say(f"MCP servers at {server.state.mcp_library.folder}")
             problems = server.state.problems
@@ -159,10 +197,8 @@ def main(argv: list[str] | None = None) -> None:
                 _say(f"warning: {problem.file}: {problem.message}")
             if problems:
                 _say("repair or restore the file, then restart AgentWiz.")
-            if not args.no_browser:
-                timer = threading.Timer(0.3, _open_browser, args=(server.url,))
-                timer.daemon = True
-                timer.start()
+            chat_thread = threading.Thread(target=chat.serve_forever, daemon=True)
+            chat_thread.start()
             try:
                 server.serve_forever()
             except (KeyboardInterrupt, TerminationRequested):
@@ -173,7 +209,14 @@ def main(argv: list[str] | None = None) -> None:
         finally:
             # Reached by every path, including a first signal that landed between serve_forever() and the inner
             # finally: the drain happens before the workspace is released. server_close() is idempotent.
-            controller.begin_shutdown()
+            controller.begin_shutdown()          # every exit path: from here a signal forces the exit
+            if chat is not None:
+                if chat_thread is not None and chat_thread.is_alive():
+                    chat.shutdown()
+                    chat_thread.join()
+                chat.server_close()
+            if session_file is not None:
+                session_file.close()
             left: list[str] = []
             if server is not None:
                 try:

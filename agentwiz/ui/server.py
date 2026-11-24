@@ -37,14 +37,14 @@ from .. import (__version__, attachments, checks, contract_schema, contract_serv
                 output_protocol, runner, runs, tool_forms, tutorial_topics, workshop)
 from .. import workspace as wsmod
 from .. import workspace_admin
-from .. import agent_documents, agent_loop, library_install, pdf_reader
+from .. import agent_documents, agent_loop, library_install, outbound_policy, pdf_reader
 from ..errors import SettingsHeld, ShuttingDown, report_internal  # noqa: F401  (re-exported; defined in errors.py since 0.1.4)
 from ..mcp_client import MCPError
 from ..model_call import SettingsError, describe_error
-from ..task_settings import TaskSettingError, parse_task
+from ..task_settings import REASONING_LEVELS, TaskSettingError, parse_task
 from ..tutorial import TutorialBusy
 from ..state import (SHUTDOWN_GRACE_S, BlockUnusable, DefaultConflict, NoSuchBlock, NoSuchProfile, NoSuchServer, ProcessState, ReadOnly,
-                     RoleProfileMissing, StaleRevision, WriteFailed)
+                     RoleProfileMissing, RoleUnresolved, StaleRevision, WriteFailed)
 from ..workspace import NAME_RE, Workspace
 
 INDEX = Path(__file__).with_name("index.html")
@@ -177,11 +177,18 @@ class WorkspaceGate:
             self._condition.notify_all()
 
 
+from . import surfaces
+
+
 class UIServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, port: int = 0, *, workspace: Workspace, profiles_dir: Path, page_timeout: float = 30.0,
-                 request_limit: int = 8, mcp_servers_dir: Path | None = None, servers=None, config_path=None):
+                 request_limit: int = 8, mcp_servers_dir: Path | None = None, servers=None, config_path=None,
+                 production: bool = False):
+        self.authority = surfaces.Authority("workshop") if production else None
+        self.chat_listener = None
+        self.generation_changed = lambda: None
         self.token = secrets.token_urlsafe(24)
         from ..tutorial import Tutorial
         self.tutorial = Tutorial(self)
@@ -206,6 +213,8 @@ class UIServer(ThreadingHTTPServer):
         self.page_timeout = page_timeout
         self.grace_s = SHUTDOWN_GRACE_S               # tests lower it; the tutorial's Exit uses it for its bounded waits
         self.index = INDEX.read_bytes()
+        if self.authority:
+            self.index = surfaces.workshop_page(self.index)
         self.assets = {route: (path.read_bytes(), ctype) for route, (path, ctype) in ASSETS.items()}
         super().__init__(("127.0.0.1", port), Handler)
 
@@ -216,6 +225,8 @@ class UIServer(ThreadingHTTPServer):
 
     @property
     def url(self) -> str:
+        if self.authority:
+            return surfaces.origin(self)
         return f"http://127.0.0.1:{self.server_address[1]}/?t={self.token}"
 
     def handle_error(self, request, client_address) -> None:  # last resort; never prints messages
@@ -224,9 +235,17 @@ class UIServer(ThreadingHTTPServer):
             report_internal("connection", exc)
 
     def _new_state(self, workspace: Workspace) -> ProcessState:
-        return ProcessState(workspace, self.request_limit, profiles_dir=self.profiles_dir,
-                            mcp_servers_dir=self.mcp_servers_dir, servers=self.servers,
-                            config_path=self.config_path)
+        state = ProcessState(workspace, self.request_limit, profiles_dir=self.profiles_dir,
+                             mcp_servers_dir=self.mcp_servers_dir, servers=self.servers,
+                             config_path=self.config_path)
+        state.chat_surfaces = self.authority is not None
+        if self.authority is not None:
+            try:
+                state.starter_install_failures = state.block_library.install_chat_starters()
+            except BaseException:
+                state.shutdown()
+                raise
+        return state
 
     @property
     def workspace_admin_enabled(self) -> bool:
@@ -274,6 +293,16 @@ class UIServer(ThreadingHTTPServer):
                 "workspace_busy", "stop running requests and Workshop batches before changing workspaces", 409,
                 active=active)
 
+    def _require_no_private_chat(self) -> None:
+        agent = self.state.agent
+        with agent.lock:
+            if agent.conversation is not None and agent.conversation.private:
+                raise workspace_admin.WorkspaceAdminError(
+                    "private_close_confirmation",
+                    "Download any drafts you want to keep, then close the private chat in AgentWiz Chat "
+                    "before switching or resetting the workspace.",
+                    409)
+
     def _discard_state(self, state: ProcessState | None, workspace: Workspace) -> None:
         if state is not None:
             try:
@@ -301,6 +330,7 @@ class UIServer(ThreadingHTTPServer):
         else:
             workspace_admin.validate_existing(self.workspace_root, name)
         self._require_idle()
+        self._require_no_private_chat()
         try:
             target_ws = wsmod.open_workspace(self.workspace_root, name)
         except wsmod.WorkspaceInUse as exc:
@@ -324,12 +354,15 @@ class UIServer(ThreadingHTTPServer):
             with self.workspace_gate.admin():
                 if self._active_work():
                     self._require_idle()
+                # A Chat request may have made the conversation private while the target was opening.
+                self._require_no_private_chat()
                 old_state, old_ws = self.state, self.workspace
                 old_state.shutdown(grace_s=self.grace_s, wait=True)
                 old_ws.close()
                 self.state, self.workspace = new_state, target_ws
                 new_state = None
                 swapped = True
+                self.generation_changed()
             return self._workspace_view()
         finally:
             if not swapped:
@@ -365,6 +398,7 @@ class UIServer(ThreadingHTTPServer):
         with self.workspace_gate.admin():
             if self._active_work():
                 self._require_idle()
+            self._require_no_private_chat()
             old_state = self.state
             old_state.shutdown(grace_s=self.grace_s, wait=True)
             try:
@@ -379,6 +413,7 @@ class UIServer(ThreadingHTTPServer):
                     "workspace_unavailable", "the workspace was reset but could not be reopened; restart AgentWiz",
                     503, path=str(path)) from None
             self.state = new_state
+            self.generation_changed()
         return {"name": name, "path": str(path), "reset": True}
 
     def clone_workspace_from(self, source: str, target: str, include_evidence: bool = False) -> dict:
@@ -547,6 +582,7 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"  # each response closes its connection, which delimits the stream
 
     def setup(self) -> None:
+        self._nonce = secrets.token_urlsafe(24)
         self._base_url = ""  # endpoint named in discovery error descriptions
         self.timeout = self.server.page_timeout  # R0-13: bounds every read and write on this connection
         super().setup()
@@ -564,7 +600,46 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def parse_request(self):
+        if not super().parse_request():
+            return False
+        authority = self.server.authority
+        if authority is None:
+            return True
+        expected = surfaces.origin(self.server)
+        host = expected.removeprefix("http://")
+        origins = self.headers.get_all("Origin", [])
+        if (self.headers.get_all("Host", []) != [host] or (origins and origins != [expected])
+                or not self.path.startswith("/") or self.path.startswith("//")):
+            self._send(403, {"code": "origin_refused"})
+            return False
+        path = urlparse(self.path).path
+        if self.command == "GET" and (path == "/" or path == "/assets/session.js" or path in self.server.assets):
+            return True
+        if self.command == "POST" and path == "/api/session/bootstrap" and origins == [expected]:
+            return True
+        if surfaces.permitted(authority.surface, self.command, path) and self._authorised():
+            return True
+        self._send(403, {"code": "surface_refused"})
+        return False
+
+    def end_headers(self):
+        if self.server.authority is not None:
+            self.send_header("Content-Security-Policy",
+                             f"default-src 'none'; script-src 'self' 'nonce-{self._nonce}'; "
+                             "style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; "
+                             "frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+            self.send_header("X-Frame-Options", "DENY")
+            if self.server.authority.surface == "chat":
+                self.send_header("X-DNS-Prefetch-Control", "off")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+        super().end_headers()
+
     def _authorised(self) -> bool:
+        authority = self.server.authority
+        if authority is not None:
+            return authority.allows(self.headers.get("X-Session-Token", ""))
         supplied = self.headers.get("X-Session-Token")
         if supplied is None:
             supplied = parse_qs(urlparse(self.path).query).get("t", [""])[0]
@@ -651,6 +726,8 @@ class Handler(BaseHTTPRequestHandler):
             self._reply_safely(409, {"error": str(exc), "code": "block_unusable", "problem": exc.problem.view()})
         except runs.NoSuchRunInMemory:
             self._reply_safely(404, {"error": "no such run", "code": "no_such_run"})
+        except RoleUnresolved:
+            self._reply_safely(409, {"error": "Select a usable role binding for this mode.", "code": "role_unavailable"})
         except RoleProfileMissing as exc:  # names the role, never the profile
             self._reply_safely(400, {"error": str(exc), "code": "no_such_profile", "role": exc.role})
         except NoSuchBlock:
@@ -728,12 +805,24 @@ class Handler(BaseHTTPRequestHandler):
             self._dispatch_gated(path, lambda: self._get(path))
 
     def _get(self, path: str) -> None:
+        if self.server.authority is not None:
+            if path == "/":
+                html = self.server.index.replace(b"<script>", f'<script nonce="{self._nonce}">'.encode())
+                return self._send(200, html, "text/html; charset=utf-8")
+            if path == "/assets/session.js":
+                return self._send(200, (surfaces.HERE / "session.js").read_bytes(), "text/javascript; charset=utf-8")
+            if path in self.server.assets:
+                return self._send(200, *self.server.assets[path])
         if not self._authorised():
             return self._send(403, {"error": "missing or invalid session token"})
         if path == "/":
             return self._send(200, self.server.index, "text/html; charset=utf-8")
         if path in self.server.assets:
             return self._send(200, *self.server.assets[path])
+        if path == "/api/chat/settings":
+            return self._send(200, self._chat_settings())
+        if path == "/api/chat/history":
+            return self._send(200, {"chats": self.server.state.agent.chat_history.listing()})
         if path == WORKSPACES_ROUTE:
             return self._workspaces_get()
         if path == WORKSPACES_ROUTE + "/launch":
@@ -788,8 +877,24 @@ class Handler(BaseHTTPRequestHandler):
             self._dispatch_gated(path, lambda: self._post(path))
 
     def _post(self, path: str) -> None:
+        if path == "/api/session/bootstrap" and self.server.authority is not None:
+            body = self._body()
+            result = self.server.authority.exchange(body.get("bootstrap"))
+            return self._send(200 if result else 403, {"session": result} if result else {"code": "bootstrap_expired"})
         if not self._authorised():
             return self._send(403, {"error": "missing or invalid session token"})
+        if path == "/api/chat/bindings":
+            body = self._body()
+            self.server.state.save_mode_bindings(body.get("bindings"), _revision(body))
+            return self._send(200, self._chat_settings())
+        if path == "/api/chat/tools":
+            return self._send(200, self.server.state.save_chat_preferences(self._body()))
+        if path == "/api/chat/webspell":
+            return self._webspell_discover(self._body())
+        if path == "/api/chat/models":
+            return self._chat_models(self._body())
+        if path.startswith("/api/chat/history/"):
+            return self._chat_history_post(path, self._body())
         if path.startswith(WORKSPACES_ROUTE + "/"):
             return self._workspaces_post(path)
         if path.startswith("/api/workshop/") and path != "/api/workshop/tickets":
@@ -835,6 +940,118 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "not found"})
         handler(body)
 
+    def _chat_settings(self) -> dict:
+        from .. import chat_tasks, roles, webspell
+        state = self.server.state
+        view = state.view()
+        bindings = {}
+        for role, (name, _) in roles.CHAT_MODELS.items():
+            slots = {}
+            for mode in ("cloud", "local"):
+                try:
+                    snapshot = state.chat_snapshot(view["revision"], role, mode)
+                    trusted = agent_loop._trusted(state, snapshot, view["revision"], mode, role)
+                    slots[mode] = {"model": snapshot.model, "profile": snapshot.profile_name,
+                                   "kind": snapshot.kind, "base_url": snapshot.endpoint.base_url,
+                                   "routing_preset": snapshot.routing_preset,
+                                   "trusted": bool(trusted), "provider": snapshot.provider,
+                                   "routing_mode": snapshot.routing_mode, "zdr": snapshot.routing_zdr,
+                                   "data_collection": snapshot.routing_data_collection}
+                except (RoleUnresolved, StaleRevision):
+                    slots[mode] = None
+            bindings[role] = {"name": name, **slots}
+        try:
+            snap = state.mcp_snapshot_for_block(webspell.SERVER)
+            web_status = "ready" if webspell.compatible(state.mcp_client, snap) else "verify_connection"
+        except NoSuchServer:
+            web_status = "configure_in_workshop"
+        profile_details = view["profiles"].get("details", {})
+        return {"revision": view["revision"], "binding_revision": view["roles"]["revision"], "roles": bindings,
+                "agentwiz_version": __version__, "modelspell_version": modelspell.__version__,
+                "bindings": view["roles"]["mode_bindings"], "tools": state.chat_preferences(),
+                "chat_tasks": [{"id": key, "label": name} for key, (name, _) in chat_tasks.TASKS.items()],
+                "profiles": {name: details.get("kind") for name, details in profile_details.items()},
+                "reasoning_levels": {kind: [level for level in REASONING_LEVELS[1:]
+                                             if self._reasoning_supported(kind, level)]
+                                     for kind in model_call.KINDS},
+                "key_source": view["openrouter_key_source"], "webspell": web_status,
+                "starter_install_failures": state.starter_install_failures,
+                "workshop_url": self.server.owner.url}
+
+    def _chat_models(self, body):
+        kind, mode = body.get("kind"), body.get("mode")
+        if (set(body) != {"kind", "mode"} or kind not in model_call.KINDS
+                or mode != ("cloud" if kind == "openrouter" else "local")):
+            raise BodyError("choose a model source for the active mode")
+        state = self.server.state
+        with state.agent.idle_reservation(cloud_discovery=mode == "cloud", discovery=True):
+            endpoint = state.discovery_endpoint(kind, None, None)
+            self._base_url = endpoint.base_url
+            grants = []
+            if mode == "local":
+                try:
+                    url = outbound_policy.canonical_url(endpoint.base_url)
+                    # Discovery itself can be pointed only at an unproxied, literal loopback endpoint.
+                    target = {"kind": kind, "url": url}
+                    outbound_policy.decide(target, [target])
+                except outbound_policy.Refused:
+                    raise agent_loop.AgentError("destination_refused", 409) from None
+                try:
+                    _, grants = outbound_policy.read(state.workspace.path)
+                except outbound_policy.Refused:
+                    pass
+            entries = []
+            for info in modelspell.list_models(endpoint, timeout=5):
+                if not info.id.isprintable() or len(info.id) > 4096:
+                    continue
+                levels = [] if info.supports_reasoning is False else [
+                    level for level in REASONING_LEVELS[1:]
+                    if (info.reasoning_options is None or level in info.reasoning_options)
+                    and self._reasoning_supported(kind, level)]
+                trusted = (mode == "local" and
+                           {"kind": kind, "url": url, "model": info.id, "provider": ""} in grants)
+                entries.append({"id": info.id, "name": info.name, "trusted": trusted, "reasoning": levels})
+        self._send(200, {"models": entries})
+
+    @staticmethod
+    def _reasoning_supported(kind, level):
+        try:
+            modelspell.check_settings(kind, reasoning=level)
+        except ModelSpellError:
+            return False
+        return True
+
+    def _chat_history_post(self, path, body):
+        manager = self.server.state.agent
+        if path == "/api/chat/history/save" and set(body) == {"conversation", "enabled"}:
+            return self._send(200, manager.change_chat_save(body["conversation"], body["enabled"]))
+        if path == "/api/chat/history/open" and set(body) == {"id", "close_private"} and isinstance(body["id"], str):
+            return self._send(200, manager.start_conversation(require_confirmation=True, saved_id=body["id"],
+                                                             close_private=body["close_private"]))
+        if path == "/api/chat/history/rename" and set(body) == {"id", "title"}:
+            manager.rename_saved_chat(body["id"], body["title"])
+            return self._send(200, {"renamed": True})
+        if path == "/api/chat/history/delete" and set(body) == {"id"}:
+            manager.delete_saved_chat(body["id"])
+            return self._send(200, {"deleted": True})
+        raise BodyError("invalid Chat history action")
+
+    def _webspell_discover(self, body):
+        from .. import webspell
+        state = self.server.state
+        conversation = state.agent.view()["conversation"]
+        if (body != {"mode": "cloud"} or (conversation and conversation["private"])
+                or not state.chat_preferences()["webspell"]):
+            return self._send(409, {"code": "destination_refused"})
+        snap = state.mcp_snapshot_for_block(webspell.SERVER)
+        client = state.mcp_client
+        with state.agent.public_discovery():
+            op = state.mcp_ops.start("discovery", snap, lambda ctx: client.discover(ctx, snap))
+            committed = self._wait_committed(op)
+        if not committed or "error" in committed or not webspell.compatible(client, snap):
+            return self._send(409, {"code": "webspell_unavailable"})
+        return self._send(200, {"status": "ready"})
+
     def _state_body(self, view: dict) -> dict:
         from .. import python_step
         out = {**view, "agentwiz_version": __version__, "modelspell_version": modelspell.__version__,
@@ -876,6 +1093,8 @@ class Handler(BaseHTTPRequestHandler):
             raise workspace_admin.WorkspaceAdminError("confirmation_required",
                                                       "type the workspace name exactly to confirm", 400)
         with self.server._admin_lock:
+            if not self._authorised():
+                return self._send(403, {"code": "surface_refused"})
             if action == "switch":
                 result = self.server.switch_workspace(name)
             elif action == "create":
@@ -1197,7 +1416,10 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, self._state_body(self.server.state.apply_config(body, revision)))
 
     def _openrouter_key(self, body: dict) -> None:
-        self._send(200, self._state_body(self.server.state.set_openrouter_key(body.get("api_key"), _revision(body))))
+        view = self.server.state.set_openrouter_key(body.get("api_key"), _revision(body))
+        if self.server.authority is not None and self.server.authority.surface == "chat":
+            return self._send(200, self._chat_settings())
+        self._send(200, self._state_body(view))
 
     def _profile_save(self, body: dict) -> None:
         _profile_name(body)
@@ -1598,7 +1820,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise BodyError("revision, task, capabilities and limits must be JSON") from None
             return self._send(200, manager.inventory(body))
         if path.startswith("runs/"):
-            return self._send(200, manager.run_view(path[len("runs/"):]))
+            return self._send(200, manager.run_view(path[len("runs/"):], chat=self.server.authority is not None))
         if path.startswith("drafts/"):
             conversation = query.get("conversation", [None])[0]
             name, data = manager.draft_bytes(path[len("drafts/"):], conversation)
@@ -1634,16 +1856,23 @@ class Handler(BaseHTTPRequestHandler):
         body = {k: v for k, v in body.items() if k != "format_version"}
         manager = self.server.state.agent
         if path == "conversation":
-            if body:
-                raise BodyError("starting a conversation takes no fields")
-            return self._send(200, manager.start_conversation())
+            chat = self.server.authority is not None
+            if set(body) - ({"close_private"} if chat else set()):
+                raise BodyError("invalid new conversation fields")
+            return self._send(200, manager.start_conversation(require_confirmation=chat,
+                                                              close_private=body.get("close_private")))
         if path == "conversation/close":
-            return self._send(200, manager.close_conversation(body.get("conversation")))
+            return self._send(200, manager.close_conversation(body.get("conversation"),
+                confirm=self.server.authority is None or body.get("confirm") is True))
         if path == "conversation/memory":
             return self._send(200, manager.memory(body))
         if path == "documents/update":
-            return self._send(200, manager.update_document(body))
+            return self._send(200, manager.update_document(body, chat=self.server.authority is not None))
+        if path == "inventory":
+            return self._send(200, manager.inventory(body))
         if path == "run":
+            if self.server.authority is not None and body.get("mode") not in ("cloud", "local"):
+                raise BodyError("an explicit Chat mode is required")
             return self._agent_run(body)
         if path == "stop":
             if set(body) != {"run_id"}:

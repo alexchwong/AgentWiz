@@ -19,6 +19,7 @@ Messages name rules and locations, never values.
 from __future__ import annotations
 
 import dataclasses
+from contextlib import contextmanager
 import json
 import secrets
 import threading
@@ -31,7 +32,7 @@ import modelspell
 from modelspell import (Cancelled, ConfigError, ModelSpellError, ToolDefinition, ToolOutput,
                         UnsupportedOperation, UnsupportedSetting)
 
-from . import (__version__, agent_capabilities as caps, agent_documents as docs, agent_tools, checks, jsonio,
+from . import (__version__, agent_capabilities as caps, agent_documents as docs, agent_tools, chat_history, chat_tasks, checks, jsonio,
                model_call, outbound_policy, python_step, runner, runs)
 from .agent_tools import ToolError
 from .errors import report_internal
@@ -50,7 +51,9 @@ ARGUMENT_BYTES = 262_144
 RESULT_BYTES = 32_768
 REQUEST_BYTES = 1 << 20
 OUTPUT_BYTES = 1 << 20
-RUNS_KEPT = 20
+RUNS_KEPT = chat_history.MAX_TURNS
+CHAT_CONTEXT_TURNS = 6
+CHAT_CONTEXT_BYTES = 64 << 10
 ROUTE_REMEDIES = {"lmstudio": "choose a reasoning level other than Off, or clear the setting the route does not send",
                   "openrouter": "choose Automatic routing or pin one provider in Model settings",
                   "openai_compat": "clear the reasoning level"}
@@ -160,7 +163,10 @@ class _ChildObserver(runner.Observer):
                 pass
 
     def attempt_committed(self, record: dict) -> None:
-        self.parent.add_usage(record.get("result") if isinstance(record.get("result"), dict) else None)
+        if record.get("routing", {}).get("probe_usage") == "unreported":
+            self.parent.note_unreported_usage()
+        if record.get("model_called") and record.get("sent") is not False:
+            self.parent.add_usage(record.get("result") or record.get("partial"))
 
 
 # --- capture (4.3) -------------------------------------------------------------------------------------------------
@@ -183,12 +189,20 @@ class Capture:
     branch: str                         # "tools" | "text"
     mcp_snapshots: dict                 # server -> mcp_client.Snapshot taken at capture
     role_captures: dict                 # role -> state.RoleCapture with the key resolved
+    mode: str | None = None
+    role: str = "fast"
+    model_choice: dict | None = None
+    chat_task: str = "general"
 
 
-def _trusted(state: Any, snapshot: Any, revision: int):
+def _snapshot(state, revision, mode=None, role="fast", choice=None):
+    return state.snapshot(revision) if mode is None else state.chat_snapshot(revision, role, mode, choice)
+
+
+def _trusted(state: Any, snapshot: Any, revision: int, mode=None, role="fast", choice=None):
     def unchanged() -> bool:
         try:
-            live = state.snapshot(revision)
+            live = _snapshot(state, revision, mode, role, choice)
         except Exception:  # noqa: BLE001 - StaleRevision
             return False
         return live == snapshot
@@ -198,23 +212,64 @@ def _trusted(state: Any, snapshot: Any, revision: int):
         return None
 
 
+def _model_choice(body, mode):
+    try:
+        choice = chat_history.model_choice(body.get("model_choice"))
+    except ValueError:
+        raise AgentError("invalid_model_choice", 400) from None
+    if mode is None and choice is not None:
+        raise AgentError("invalid", 400)
+    return choice
+
+
 def plan(state: Any, conversation: Any, body: Mapping, *, for_send: bool) -> Capture:
     """Filter the inventory and choose the branch. The panel's preview and Send use this one function, so the
     preview never shows a refusal that Send would not make, or the reverse (4.2)."""
     revision = body.get("revision")
     if type(revision) is not int:
         raise AgentError("invalid", 400)
-    snapshot = state.snapshot(revision)                          # 409 stale_revision through the handler
+    mode, role = body.get("mode"), body.get("role", "fast")
+    if mode is not None and (mode not in ("cloud", "local") or not isinstance(role, str)):
+        raise AgentError("invalid", 400)
+    if mode == "cloud" and conversation is not None and conversation.private:
+        raise AgentError("private_conversation", 409, remedies=["new_conversation", "trusted_local_model"])
+    choice = _model_choice(body, mode)
+    chat_task = body.get("chat_task", "general")
+    if not isinstance(chat_task, str) or chat_task not in chat_tasks.TASKS or ("chat_task" in body and mode is None):
+        raise AgentError("invalid_chat_task", 400)
+    use_context = body.get("use_context", False)
+    if (type(use_context) is not bool or (use_context and body.get("follow_up") is not None)
+            or (mode is None and use_context)):
+        raise AgentError("invalid", 400)
+    snapshot = _snapshot(state, revision, mode, role, choice)
     if snapshot.model.strip() == "":
         raise AgentError("no_model", 409)
     task = parse_task(body.get("task"))
     arguments = model_call.task_arguments(task, snapshot.kind, snapshot.provider)   # TaskSettingError: 400
-    trusted = _trusted(state, snapshot, revision)
-    has_documents = bool(conversation.items) if conversation is not None else False
-    found = caps.inventory(state, conversation, trusted_local=trusted is not None, has_documents=has_documents)
+    trusted = _trusted(state, snapshot, revision, mode, role, choice)
+    if mode == "local" and trusted is None:
+        raise AgentError("destination_refused", 409, remedies=["trusted_local_model"])
+    items = {item["id"]: item for item in conversation.items_view()} if conversation is not None else {}
+    selected = body.get("items", []) if mode is not None else list(items)
+    if not isinstance(selected, list) or any(not isinstance(i, str) or i not in items for i in selected):
+        raise AgentError("unknown_document", 400)
+    if mode == "cloud" and any(items[i]["local_only"] for i in selected):
+        raise AgentError("local_only_document", 409, remedies=["trusted_local_model"])
+    allowed = [i for i in selected if trusted is not None or not items[i]["local_only"]]
+    found = caps.inventory(state, conversation, trusted_local=trusted is not None,
+                           has_documents=bool(allowed if mode is not None else items),
+                           builtins=(body.get("builtins", True) is True
+                                     and (mode is None or state.chat_preferences()["builtins"])),
+                           mode=mode, web_on=bool(mode == "cloud" and state.chat_preferences()["webspell"]
+                                                  and body.get("webspell", True) is True))
     by_name = {c.name: c for c in found["capabilities"]}
-    ticked = body.get("capabilities", [])
-    if not isinstance(ticked, list) or len(ticked) > 200:
+    ticked = body.get("capabilities")
+    if "capabilities" not in body:
+        ticked = [{"name": c.name, **({"revision": c.revision} if c.revision is not None else {})}
+                  for c in found["capabilities"] if mode is not None and not c.excluded_reason
+                  and (c.kind == "builtin" or c.server == "webspell"
+                       or (c.kind == "block" and state.block_library.provenance(c.key)))]
+    if not isinstance(ticked, list):
         raise AgentError("invalid", 400)
     chosen = []
     for entry in ticked:
@@ -228,26 +283,32 @@ def plan(state: Any, conversation: Any, body: Mapping, *, for_send: bool) -> Cap
         if capability.revision is not None and entry.get("revision") != capability.revision:
             raise AgentError("configuration_changed", 409, capability=entry["name"])
         if capability.excluded_reason:
+            if mode is not None and for_send:
+                raise AgentError("capability_unavailable", 409, capability=capability.name)
             continue                                            # listed under exclusions, never offered
         chosen.append(capability)
     name = caps.collision(chosen)
     if name is not None:
         raise AgentError("capability_name_collision", 409, capability=name)
-    if len(chosen) > caps.CAPABILITY_LIMIT:
-        raise AgentError("capability_limit", 409, limit=caps.CAPABILITY_LIMIT)
     definitions = [ToolDefinition(c.name, c.description, c.parameters) for c in chosen]
     size = caps.definitions_size(chosen)
     if size > caps.DEFINITION_BYTES:
         raise AgentError("definition_limit", 409, limit=caps.DEFINITION_BYTES)
-    allowed, excluded = [], list(found["excluded"])
-    if conversation is not None:
-        for item in conversation.items_view():
-            if item["local_only"] and trusted is None:
-                excluded.append({"name": item["id"], "reason": "local_only_document"})
-            else:
-                allowed.append(item["id"])
-    memory = conversation.memory_entries() if conversation is not None else []
-    if conversation is not None:
+    excluded = list(found["excluded"]) + [
+        {"name": i, "reason": "local_only_document"} for i in selected if i not in allowed]
+    memory = conversation.memory_entries() if conversation is not None and mode is None else []
+    if use_context and conversation is not None:
+        memory = state.agent.chat_context(conversation)
+        if mode == "cloud" and any(entry.restricted for entry in memory):
+            raise AgentError("private_conversation", 409)
+    if mode is not None and body.get("follow_up") is not None:
+        parent = state.agent._run(body["follow_up"])
+        if parent.conversation is not conversation or parent.answer is None or parent.state_name == "running":
+            raise AgentError("invalid_follow_up", 409)
+        if mode == "cloud" and parent.restricted:
+            raise AgentError("private_conversation", 409)
+        memory = [docs.MemoryEntry(parent.message, parent.answer, [], parent.restricted)]
+    if conversation is not None and mode is None:
         view = conversation.memory_view()
         if view["on"] and view["entries"] >= docs.MEMORY_LIMIT:
             raise AgentError("memory_full", 409, remedies=["new_conversation", "clear_memory"])
@@ -272,17 +333,18 @@ def plan(state: Any, conversation: Any, body: Mapping, *, for_send: bool) -> Cap
                 step = capability.loaded.block.step
                 if step.kind == "model" and step.role not in role_captures:
                     try:
-                        role = state.role_capture(step.role)
+                        binding = state.role_capture(step.role) if mode is None else state.role_capture(step.role, mode)
                     except Exception:  # noqa: BLE001 - RoleUnresolved: refused when the block is called
                         continue
-                    key = outbound_policy.credential(role.snapshot.endpoint)
-                    snap = dataclasses.replace(role.snapshot, endpoint=dataclasses.replace(
-                        role.snapshot.endpoint, api_key=key, api_key_env=None))
-                    role_captures[step.role] = dataclasses.replace(role, snapshot=snap)
+                    key = outbound_policy.credential(binding.snapshot.endpoint)
+                    snap = dataclasses.replace(binding.snapshot, endpoint=dataclasses.replace(
+                        binding.snapshot.endpoint, api_key=key, api_key_env=None))
+                    role_captures[step.role] = dataclasses.replace(binding, snapshot=snap)
                 if step.mcp and step.server not in mcp_snapshots:
                     mcp_snapshots[step.server] = state.mcp_snapshot_for_block(step.server)
         # Re-verify every revision captured above (4.3 step 3).
-        state.snapshot(revision)
+        if _snapshot(state, revision, mode, role, choice) != snapshot:
+            raise AgentError("configuration_changed", 409)
         if state.agent.store.revision() != found["classification_revision"]:
             raise AgentError("configuration_changed", 409)
         for capability in chosen:
@@ -292,29 +354,38 @@ def plan(state: Any, conversation: Any, body: Mapping, *, for_send: bool) -> Cap
                     raise AgentError("configuration_changed", 409, capability=capability.name)
     return Capture(revision, snapshot, task, arguments, trusted, chosen, {c.name: c for c in chosen}, definitions,
                    size, found["classification_revision"], allowed, excluded, memory,
-                   _limits(body.get("limits")), branch, mcp_snapshots, role_captures)
+                   _limits(body.get("limits")), branch, mcp_snapshots, role_captures, mode, role, choice, chat_task)
 
 
 def preview(state: Any, conversation: Any, body: Mapping) -> dict:
     """The panel's view before Send (4.1): destination, preflight, capabilities, exclusions and limits."""
-    snapshot = state.snapshot(body.get("revision")) if type(body.get("revision")) is int else None
+    mode, role = body.get("mode"), body.get("role", "fast")
+    choice = _model_choice(body, mode)
+    snapshot = (_snapshot(state, body["revision"], mode, role, choice)
+                if type(body.get("revision")) is int else None)
     out: dict = {"format_version": 1, "preflight_note": PREFLIGHT_NOTE,
                  "limits": {name: {"default": d, "maximum": m} for name, (d, m) in LIMITS.items()},
                  "constants": {"corrections": CORRECTION_LIMIT, "approval_wait_s": caps.APPROVAL_WAIT_S,
-                               "child_sends": CHILD_SEND_LIMIT, "capabilities": caps.CAPABILITY_LIMIT,
+                               "child_sends": CHILD_SEND_LIMIT,
                                "definition_bytes": caps.DEFINITION_BYTES, "argument_bytes": ARGUMENT_BYTES,
                                "result_bytes": RESULT_BYTES, "request_bytes": REQUEST_BYTES,
                                "output_bytes": OUTPUT_BYTES},
                  "usage_note": "Token and cost ceilings act only after the backend reports usage; they cannot "
                                "prevent a request already sent."}
     if snapshot is not None:
-        trusted = _trusted(state, snapshot, body["revision"])
+        trusted = _trusted(state, snapshot, body["revision"], mode, role, choice)
         out["destination"] = {"kind": snapshot.kind, "url": snapshot.endpoint.base_url, "model": snapshot.model,
                               "provider": snapshot.provider,
                               "locality": outbound_policy.locality(snapshot.endpoint.base_url),
                               "trusted_local": trusted is not None}
         found = caps.inventory(state, conversation, trusted_local=trusted is not None,
-                               has_documents=bool(conversation and conversation.items))
+                               has_documents=bool(conversation and (conversation.items if mode is None else
+                                   any(i["id"] in body.get("items", []) and
+                                       (trusted or not i["local_only"]) for i in conversation.items_view()))),
+                               builtins=(body.get("builtins", True) is True
+                                         and (mode is None or state.chat_preferences()["builtins"])),
+                               mode=mode, web_on=bool(mode == "cloud" and state.chat_preferences()["webspell"]
+                                                      and body.get("webspell", True) is True))
         out["capabilities"] = [c.view() for c in found["capabilities"]]
         out["excluded"] = list(found["excluded"])
         out["mcp_refused"] = found["mcp_refused"]
@@ -357,6 +428,14 @@ class AgentRun:
         self.conversation = conversation
         self.capture = capture
         self.message = message
+        from . import webspell
+        self.web_urls = webspell.prompt_urls(message)
+        self.web_sources: set[str] = set()
+        self.web_mixed = bool(capture.allowed or capture.memory or any(
+            c.kind == "mcp" and c.server != webspell.SERVER
+            or c.kind == "block" and (not self.state.block_library.provenance(c.key)
+                                      or c.loaded.workshop.get("revision_number") != 1)
+            for c in capture.capabilities))
         self.observer = _Safe(observer)
         self.lock = threading.Lock()
         self.token = runs.CancelToken()
@@ -374,12 +453,13 @@ class AgentRun:
         self.resolved_arguments = None
         self.routing_selection = None
         self.served_provider = None
+        self.served_model = None
         self.turns = 0
         self.actions = 0
         self.corrections = 0
         self.child_sends = 0
         self.nested_exceeded = False
-        self.restricted = False
+        self.restricted = capture.mode == "local"
         self.trace: list[dict] = []           # live, with payloads (in process memory only)
         self.saved_trace: list[dict] = []     # identities, outcomes, sizes and digests
         self.pending: caps.Approval | None = None
@@ -393,6 +473,7 @@ class AgentRun:
         self.drafts: list = []
         self.reservation: Reservation | None = None
         self.usage = {"input_tokens": 0, "output_tokens": 0, "reported": 0, "unreported": 0}
+        self.accounting = None
         self.cost = 0.0
         self.cost_reported = False
         self.sent_flags: list = []
@@ -423,34 +504,42 @@ class AgentRun:
     def _emit(self, event: dict) -> None:
         self.observer.event({**event, "run_id": self.run_id})
 
-    def add_usage(self, result: dict | None) -> None:
-        usage = result.get("usage") if isinstance(result, dict) else None
+    def note_unreported_usage(self) -> None:
         with self.lock:
-            if isinstance(usage, dict) and isinstance(usage.get("input_tokens"), int) \
-                    and isinstance(usage.get("output_tokens"), int):
-                self.usage["input_tokens"] += usage["input_tokens"]
-                self.usage["output_tokens"] += usage["output_tokens"]
-                self.usage["reported"] += 1
-            else:
-                self.usage["unreported"] += 1
-            cost = result.get("cost") if isinstance(result, dict) else None
-            if isinstance(cost, (int, float)) and not isinstance(cost, bool):
-                self.cost += cost
+            self.accounting = chat_history.merge_usage(self.accounting, chat_history.usage_summary(None))
+
+    def add_usage(self, result: dict | None) -> None:
+        accounting = chat_history.usage_summary(result)
+        with self.lock:
+            self.accounting = chat_history.merge_usage(self.accounting, accounting)
+            for key in ("input_tokens", "output_tokens"):
+                self.usage[key] += accounting[key] or 0
+            reported = all(accounting[key] is not None for key in ("input_tokens", "output_tokens"))
+            self.usage["reported" if reported else "unreported"] += 1
+            if accounting["cost"] is not None:
+                self.cost += accounting["cost"]
                 self.cost_reported = True
+
+    def _record_chat_model(self, result) -> None:
+        with self.lock:
+            self.served_provider = result.provider
+            self.served_model = result.model
+        self.add_usage(model_call.result_to_dict(result))
 
     def _ceilings(self) -> None:
         limits = self.capture.limits
         with self.lock:
             tokens = self.usage["input_tokens"] + self.usage["output_tokens"]
             cost, reported = self.cost, self.cost_reported
-        if limits["tokens"] is not None and self.usage["reported"] and tokens >= limits["tokens"]:
+        if limits["tokens"] is not None and tokens >= limits["tokens"]:
             raise _End("token_limit")
         if limits["cost"] is not None and reported and cost >= limits["cost"]:
             raise _End("cost_limit")
 
     def _config_unchanged(self) -> bool:
         try:
-            return self.state.snapshot(self.capture.revision) == self.capture.snapshot
+            return _snapshot(self.state, self.capture.revision, self.capture.mode, self.capture.role,
+                             self.capture.model_choice) == self.capture.snapshot
         except Exception:  # noqa: BLE001 - StaleRevision
             return False
 
@@ -472,6 +561,12 @@ class AgentRun:
                 self.nested_exceeded = True
                 return False
             return True
+
+    def _promote(self) -> None:
+        self.restricted = True
+        if self.capture.mode is not None:
+            with self.conversation.lock:
+                self.conversation.private = True
 
     def _still_running(self) -> bool:
         return not self.token.cancelled and time.monotonic() < self.deadline
@@ -516,7 +611,7 @@ class AgentRun:
     def _on_text(self, text: str) -> None:
         self.partial += text
         self._count(text)
-        self._emit({"type": "text", "text": text})
+        self._emit({"type": "text", "text": text, "model_turn": self.turns})
 
     def _on_reasoning(self, text: str) -> None:
         self.reasoning += text
@@ -537,14 +632,19 @@ class AgentRun:
         self.turn_output = 0
         self.partial = ""
         snap, arguments = self.capture.snapshot, self.capture.arguments
+        completing = False
         try:
             if self.resolved_arguments is None:
                 self.resolved_arguments, self.routing_selection = model_call.resolve_request(
                     snap, arguments, tools=self.capture.definitions if tools else None,
                     cancel=self.handle, timeout=max(0.001, min(30.0, self.deadline - time.monotonic())))
+                if self.routing_selection and snap.routing_mode == "automatic":
+                    # ModelSpell's routing probes have no public token or cost results.
+                    self.note_unreported_usage()
             arguments = self.resolved_arguments
             self._gate_send()
             self.turns += 1
+            completing = True
             if tools:
                 return modelspell.complete_with_tools(
                     snap.endpoint, snap.model, self.transcript, tools=self.capture.definitions,
@@ -555,15 +655,29 @@ class AgentRun:
                                        **arguments)
         except Cancelled as exc:
             self.sent_flags.append(exc.sent)
+            if completing and exc.sent is not False:
+                if exc.partial is not None:
+                    self._record_chat_model(exc.partial)
+                else:
+                    self.note_unreported_usage()
+            elif not completing and exc.sent is not False:
+                self.note_unreported_usage()
             raise _End(self._stop_code()) from None
         except ModelSpellError as exc:
+            if ((completing and getattr(exc, "sent", None) is not False)
+                    or isinstance(exc, modelspell.ProviderSelectionError) and exc.evidence.get("attempts")):
+                self.note_unreported_usage()
             raise _End("model_error", model_call.describe_error(exc, snap.endpoint.base_url)) from None
         finally:
             budget.release()
 
     # --- the loop (4.4) -----------------------------------------------------------------------------------------
     def _initial(self) -> None:
-        self._append({"role": "system", "content": _system_text()}, 0)
+        name, instruction = chat_tasks.TASKS[self.capture.chat_task]
+        system = _system_text()
+        if instruction:
+            system += f"\n\nChat task — {name}\n{instruction} Follow the existing privacy and tool rules."
+        self._append({"role": "system", "content": system}, 0)
         self.transcript_bytes = len(self.transcript[0]["content"].encode("utf-8"))
         for entry in self.capture.memory:
             self._append({"role": "user", "content": entry.question}, len(entry.question.encode("utf-8")))
@@ -575,12 +689,11 @@ class AgentRun:
         # The initial label covers everything the first request holds (8.3).
         if any(c.restricted_definition for c in self.capture.capabilities) or \
                 any(e.restricted for e in self.capture.memory):
-            self.restricted = True
+            self._promote()
 
     def _text_branch(self) -> None:
         result = self._send(tools=False)
-        self.served_provider = result.provider
-        self.add_usage(model_call.result_to_dict(result))
+        self._record_chat_model(result)
         outcome = model_call.classify_outcome(result)
         if outcome == "complete":
             self.answer = result.text
@@ -593,8 +706,7 @@ class AgentRun:
     def _tool_branch(self) -> None:
         while True:
             turn = self._send(tools=True)
-            self.served_provider = turn.result.provider
-            self.add_usage(model_call.result_to_dict(turn.result))
+            self._record_chat_model(turn.result)
             self._ceilings()
             if not turn.clean:
                 self.partial = turn.result.text or self.partial
@@ -709,13 +821,25 @@ class AgentRun:
                             approval=outcome.get("approval"), elapsed=time.monotonic() - started)
         self._emit({"type": "action", "state": "finished", "call_id": call.id, "capability": capability.name,
                     "outcome": outcome.get("outcome", status), "restricted": effective, "result_text": content})
+        if restricted and not self.restricted:
+            if self.capture.mode is not None:
+                self._promote()
+            if self.capture.trusted is None:
+                raise _End(outcome.get("end") or "restricted_result")
+            self._promote()
         if outcome.get("end"):
             raise _End(outcome["end"])
-        if restricted and not self.restricted:
-            # Promotion (8.3), before the result is added. A non-local orchestrator never receives it (F-29).
-            if self.capture.trusted is None:
-                raise _End("restricted_result")
-            self.restricted = True
+        from . import webspell
+        if capability.server == webspell.SERVER and envelope.get("ok"):
+            result = envelope.get("result")
+            if isinstance(result, dict):
+                urls = webspell.result_urls(result.get("structured"))
+                self.web_urls.update(urls)
+                with self.lock:
+                    self.web_sources.update(list(sorted(urls))[:max(0, 64 - len(self.web_sources))])
+            if len(self.web_urls) > 256:
+                self.web_urls.clear()
+        self.web_mixed = True
         self._append_turn(turn)
         self._append_output(call.id, content)
         if self.nested_exceeded:
@@ -775,7 +899,7 @@ class AgentRun:
                                                                      "message": FEEDBACK.get("refused")}},
                                              outcome="refused", code="restricted_result", restricted=True,
                                              end="restricted_result")
-                    self.restricted = True
+                    self._promote()
                 source = inspected[0]
                 if tool == "copy_to_draft":
                     content, copied = docs.copy_content(self.scope, arguments, inspected)
@@ -849,6 +973,19 @@ class AgentRun:
     def _mcp_guard(self, call: Any, capability: caps.Capability, snapshot: Any, arguments: Any,
                    restricted: bool) -> tuple[Any, dict | None]:
         """Steps 2-4 of 5.5 for the materialised arguments. Returns (the send-gate check, approval view)."""
+        from . import webspell
+        web = capability.server == webspell.SERVER
+        require_approval = capability.approval
+        if web:
+            if restricted or self.capture.mode != "cloud" or not self.state.chat_preferences()["webspell"]:
+                raise outbound_policy.Refused("destination_refused")
+            proposed = arguments.get("urls") or []
+            if "url" in arguments:
+                proposed = [arguments["url"]]
+            if any(not webspell.public_url(url) or url not in self.web_urls for url in proposed):
+                raise outbound_policy.Refused("destination_refused")
+            require_approval = ("query" in arguments and self.web_mixed
+                                or bool(arguments.get("domains")))
         found = self.state.mcp_client.observed_schema(snapshot.identity, capability.tool)
         if found is None or found[0] != capability.schema_digest:
             raise outbound_policy.Refused("configuration_changed")
@@ -869,7 +1006,7 @@ class AgentRun:
                 snapshot, capability.tool), unchanged)
         approval_view = None
         approval = None
-        if capability.approval:
+        if require_approval:
             approval_view = self._approval(call, capability, destination, arguments_text, capability.schema_digest)
             approval = self.current_approval
 
@@ -881,7 +1018,11 @@ class AgentRun:
                 raise outbound_policy.Refused("configuration_changed")
             row = self.state.agent.store.row(rows, snapshot.url, capability.server, capability.tool,
                                              capability.schema_digest)
-            if not row["enabled"] or not row["no_host_files"]:
+            if web:
+                if (self.restricted or not self.state.chat_preferences()["webspell"]
+                        or not webspell.compatible(self.state.mcp_client, snapshot)):
+                    raise outbound_policy.Refused("configuration_changed")
+            elif not row["enabled"] or not row["no_host_files"]:
                 raise outbound_policy.Refused("configuration_changed")
             current = self.state.mcp_client.observed_schema(snapshot.identity, capability.tool)
             if current is None or current[0] != capability.schema_digest:
@@ -1005,8 +1146,18 @@ class AgentRun:
                 decision["approval"] = view
                 return authorize
         observer = _ChildObserver(self, {})
+        dispatch = None
+        if role is not None and self.capture.mode is not None:
+            try:
+                dispatch = outbound_policy.block_dispatch(
+                    self.state, block, snapshot, protected=self.restricted or block.context_local_only
+                    or bool(loaded.workshop.get("protection_clear_pending"))
+                    or any(port.local_only for port in block.inputs),
+                    defaults=role.defaults, mode=self.capture.mode)
+            except outbound_policy.Refused:
+                return self._refusal("destination_refused")
         frozen = runner.FrozenSource(snapshot, False, {"agent_run": self.run_id, "call_id": call.id},
-                                     capture=role, protected=self.restricted, dispatch=None,
+                                     capture=role, protected=self.restricted, dispatch=dispatch,
                                      attempt_gate=self.child_gate, parent_guard=self.parent_guard,
                                      before_tool=before_tool)
 
@@ -1081,6 +1232,7 @@ class AgentRun:
                                                        handle=self.handle)
             self.run_id = self.store_run.run_id
             try:
+                self.manager.suspend_chat_save(self)
                 self.manager.attach(self)
             except BaseException:
                 # No `started` event and no model request; the store entry and the writer go with it.
@@ -1160,6 +1312,7 @@ class AgentRun:
         with self.lock:
             self.state_name = "ended"
             self.save_status = status
+        self.manager.finish_chat_turn(self)
         self._emit({"type": "final", "stop_reason": self.stop_reason, "answer": self.answer,
                     "partial": self.partial if self.answer is None else None, "restricted": self.restricted,
                     "save_status": status, "view": self.view()})
@@ -1176,10 +1329,10 @@ class AgentRun:
             self._emit({"type": "save", "save_status": saved["save_status"], **detail})
         return record
 
-    def view(self) -> dict:
+    def view(self, *, chat=False) -> dict:
         with self.lock:
             pending = self.pending.view() if self.pending is not None else None
-            return {"run_id": self.run_id, "state": self.state_name, "stop_reason": self.stop_reason,
+            out = {"run_id": self.run_id, "state": self.state_name, "stop_reason": self.stop_reason,
                     "stop_detail": self.stop_detail, "answer": self.answer,
                     "partial": self.partial if self.answer is None else None,
                     "restricted": self.restricted, "branch": self.capture.branch,
@@ -1189,9 +1342,16 @@ class AgentRun:
                     "drafts": [{"id": i, "name": n} for i, n in self.drafts],
                     "routing": model_call.routing_record(self.capture.snapshot,
                         self.resolved_arguments or self.capture.arguments, self.routing_selection),
-                    "served_provider": self.served_provider,
+                    "served_provider": self.served_provider, "sources": sorted(self.web_sources),
+                    "served_route": {"kind": self.capture.snapshot.kind,
+                                     "model": self.served_model or self.capture.snapshot.model,
+                                     "provider": self.served_provider},
+                    "accounting": self.accounting,
                     "usage": dict(self.usage), "cost": self.cost if self.cost_reported else None,
                     "save_status": self.save_status, **self.save_detail}
+            if chat:
+                out["message"] = self.message
+            return out
 
     def decide(self, call_id: str, decision: str) -> str:
         with self.lock:
@@ -1236,6 +1396,7 @@ class Manager:
     def __init__(self, state: Any):
         self.state = state
         self.store = caps.Store(state.workspace.path)
+        self.chat_history = chat_history.History(state.workspace.path)
         self.lock = threading.Lock()
         self.conversation: docs.Conversation | None = None
         self.active: AgentRun | None = None
@@ -1277,45 +1438,202 @@ class Manager:
                 raise AgentError("run_active", 409)
             return fn()
 
-    def start_conversation(self) -> dict:
-        if self.state.workspace.read_only:
-            raise AgentError("read_only", 409)
+    @contextmanager
+    def idle_reservation(self, *, conversation_id=None, cloud_discovery=False, discovery=False):
+        """Own the idle slot through discovery or a chat lifecycle change, without holding locks over I/O."""
         with self.lock:
+            conversation = self.conversation
             if self.closed:
                 raise AgentError("shutting_down", 503)
+            if cloud_discovery and conversation and conversation.private:
+                raise AgentError("destination_refused", 409)
             if self._busy_locked():
-                raise AgentError("run_active", 409)
-            previous, self.conversation = self.conversation, None
-            self.runs.clear()
-        if previous is not None:
-            previous.close()
-        ident = "conv_" + secrets.token_hex(4)
+                raise AgentError("destination_refused" if discovery else "run_active", 409)
+            if conversation_id is not None and (conversation is None or conversation.id != conversation_id):
+                raise AgentError("no_such_conversation", 404)
+            reservation = Reservation(conversation)
+            self.reserved = reservation
         try:
-            conversation = docs.Conversation(self.state.workspace.path, ident)
-        except (OSError, docs.StagingError):
-            raise AgentError("staging_unavailable", 409) from None
+            yield conversation
+        finally:
+            with self.lock:
+                if self.reserved is reservation:
+                    self.reserved = None
+
+    def public_discovery(self):
+        return self.idle_reservation(cloud_discovery=True, discovery=True)
+
+    def start_conversation(self, *, require_confirmation=False, saved_id=None, close_private=None) -> dict:
+        if self.state.workspace.read_only:
+            raise AgentError("read_only", 409)
+        with self.state.writing("start conversation"), self.idle_reservation() as previous:
+            if (require_confirmation and previous is not None and previous.private
+                    and close_private != previous.id):
+                raise AgentError("private_close_confirmation", 409)
+            try:
+                saved = self.chat_history.reopen(saved_id) if saved_id is not None else None
+            except chat_history.HistoryError as exc:
+                raise AgentError(str(exc), 409) from None
+            if saved and previous is not None and saved_id == previous.id:
+                return self.view()
+            ident = saved_id
+            if saved is None:
+                while True:
+                    ident = "conv_" + secrets.token_hex(4)
+                    if not self.chat_history.contains(ident) and (previous is None or ident != previous.id):
+                        break
+            try:
+                conversation = docs.Conversation(self.state.workspace.path, ident)
+            except (OSError, docs.StagingError):
+                raise AgentError("staging_unavailable", 409) from None
+            conversation.chat_save = require_confirmation or saved is not None
+            if saved:
+                conversation.chat_totals = (saved["totals"] if "totals" in saved else chat_history.usage_summary(None))
+                conversation.chat_turns = saved["turns"]
+                conversation.chat_model = saved["model"]
+            with self.lock:
+                self.conversation = conversation
+                self.runs.clear()
+            if previous is not None:
+                previous.close()
+            return self.view()
+
+    def _chat_views(self, conversation):
         with self.lock:
-            self.conversation = conversation
+            live = [run for run in self.runs.values()
+                    if run.conversation is conversation and run.capture.mode is not None]
+            restored = list(conversation.chat_turns)
+        return restored + [run.view(chat=True) for run in live]
+
+    def chat_context(self, conversation):
+        memory = []
+        remaining = CHAT_CONTEXT_BYTES
+        for turn in reversed(self._chat_views(conversation)):
+            if turn["stop_reason"] != "answered" or not turn["answer"]:
+                continue
+            if turn.get("state", "ended") != "ended":
+                continue
+            question, answer = turn["message"], turn["answer"]
+            remaining -= len(question.encode("utf-8")) + len(answer.encode("utf-8"))
+            if remaining < 0:
+                break
+            memory.append(docs.MemoryEntry(question, answer, [], turn.get("restricted", False)))
+            if len(memory) >= CHAT_CONTEXT_TURNS:
+                break
+        return list(reversed(memory))
+
+    def _save_chat(self, conversation):
+        turns = self._chat_views(conversation)
+        if conversation.private or any(turn.get("restricted") for turn in turns):
+            raise chat_history.HistoryError("private_conversation")
+        self.chat_history.save(conversation.id, [chat_history.turn_snapshot(turn) for turn in turns],
+                               conversation.chat_model, conversation.chat_totals, self.state.credentials())
+
+    def change_chat_save(self, conversation_id, enabled):
+        if not isinstance(conversation_id, str) or type(enabled) is not bool:
+            raise AgentError("invalid", 400)
+        if self.state.workspace.read_only:
+            raise AgentError("read_only", 409)
+        with self.state.writing("chat history"), self.idle_reservation(conversation_id=conversation_id) as conversation:
+            if conversation.private:
+                raise AgentError("private_conversation", 409)
+            try:
+                if enabled:
+                    self._save_chat(conversation)
+                else:
+                    self.chat_history.delete(conversation.id)
+            except chat_history.HistoryError as exc:
+                raise AgentError(str(exc), 409) from None
+            with self.lock:
+                conversation.chat_save = enabled
+                conversation.chat_save_error = None
         return self.view()
 
-    def close_conversation(self, conversation_id: object) -> dict:
-        conversation = self._require(conversation_id)
+    def delete_saved_chat(self, ident):
+        if self.state.workspace.read_only:
+            raise AgentError("read_only", 409)
+        with self.state.writing("chat history"), self.idle_reservation() as conversation:
+            current = conversation is not None and conversation.id == ident
+            if current and conversation.private:
+                raise AgentError("private_close_confirmation", 409)
+            try:
+                self.chat_history.delete(ident)
+            except chat_history.HistoryError as exc:
+                raise AgentError(str(exc), 409) from None
+            if current:
+                with self.lock:
+                    self.conversation = None
+                    self.runs.clear()
+                conversation.close()
+
+    def rename_saved_chat(self, ident, title):
+        if self.state.workspace.read_only:
+            raise AgentError("read_only", 409)
+        with self.state.writing("rename chat"), self.idle_reservation():
+            try:
+                self.chat_history.rename(ident, title, self.state.credentials())
+            except chat_history.HistoryError as exc:
+                raise AgentError(str(exc), 409) from None
+
+    def suspend_chat_save(self, run):
+        conversation = run.conversation
+        if run.capture.mode is not None and conversation.chat_save:
+            try:
+                if run.capture.mode == "local":
+                    self.chat_history.delete(conversation.id)
+                    with self.lock:
+                        conversation.chat_save = False
+                        conversation.chat_save_error = None
+                else:
+                    self.chat_history.suspend(conversation.id)
+            except chat_history.HistoryError as exc:
+                raise AgentError(str(exc), 409) from None
+
+    def finish_chat_turn(self, run):
+        if run.capture.mode is None:
+            return
+        conversation = run.conversation
         with self.lock:
-            if self._busy_locked():
-                raise AgentError("run_active", 409)
-            if self.conversation is conversation:
+            conversation.chat_totals = chat_history.merge_usage(conversation.chat_totals, run.accounting)
+        if not conversation.chat_save:
+            return
+        error = None
+        try:
+            if conversation.private:
+                self.chat_history.delete(conversation.id)
+            else:
+                self._save_chat(conversation)
+        except chat_history.HistoryError as exc:
+            error = str(exc)
+        with self.lock:
+            conversation.chat_save_error = error
+            if conversation.private:
+                conversation.chat_save = False
+
+    def close_conversation(self, conversation_id: object, *, confirm=True) -> dict:
+        conversation = self._require(conversation_id)
+        with self.state.writing("close conversation"), self.idle_reservation(conversation_id=conversation.id):
+            with self.lock:
+                if conversation.private and not confirm:
+                    raise AgentError("private_close_confirmation", 409)
                 self.conversation = None
-            self.runs.clear()
-        left = conversation.close()
-        return {"closed": conversation.id, "left": left}
+                self.runs.clear()
+            left = conversation.close()
+            return {"closed": conversation.id, "left": left}
 
     def view(self) -> dict:
         with self.lock:
             conversation, active = self.conversation, self.active
+            recent = list(self.runs.values())
+            chat = ({"saved": conversation.chat_save, "save_error": conversation.chat_save_error,
+                     "restored_runs": [turn["run_id"] for turn in conversation.chat_turns],
+                     "model_choice": conversation.chat_model, "totals": conversation.chat_totals}
+                    if conversation is not None else {})
         out: dict = {"format_version": 1, "conversation": None, "active_run": None, "pending_approval": None}
         if conversation is not None:
             out["conversation"] = {"id": conversation.id, "documents": conversation.items_view(),
-                                   "memory": conversation.memory_view()}
+                                   "memory": conversation.memory_view(), "private": conversation.private,
+                                   "recent_runs": [run.run_id for run in recent if run.conversation is conversation], **chat}
         if active is not None:
             view = active.view()
             out["active_run"] = active.run_id
@@ -1377,7 +1695,7 @@ class Manager:
             document_view["coverage"] = coverage
         return {"document": document_view, **self.view()}
 
-    def update_document(self, body: Mapping) -> dict:
+    def update_document(self, body: Mapping, *, chat=False) -> dict:
         conversation = self._require(body.get("conversation"))
         ident = body.get("id")
         if set(body) - {"conversation", "id", "local_only", "remove"} or not isinstance(ident, str):
@@ -1391,7 +1709,23 @@ class Manager:
                 item = self.while_idle(conversation.id, lambda: conversation.unregister(ident))
                 conversation.unlink(item)
                 return self.view()
-            cleared = self.while_idle(conversation.id, lambda: conversation.set_label(ident, local_only))
+            if chat and local_only:
+                with self.state.writing("tighten Chat document label"), self.idle_reservation(
+                        conversation_id=conversation.id):
+                    item = conversation.item(ident)
+                    if item is not None and not item.local_only:
+                        # Previously rendered answers can quote this item. Keep them private too.
+                        if conversation.chat_save:
+                            self.chat_history.delete(conversation.id)
+                        with self.lock, conversation.lock:
+                            conversation.private = True
+                            conversation.chat_save = False
+                            conversation.chat_save_error = None
+                    cleared = conversation.set_label(ident, local_only)
+            else:
+                cleared = self.while_idle(conversation.id, lambda: conversation.set_label(ident, local_only))
+        except chat_history.HistoryError as exc:
+            raise AgentError(str(exc), 409) from None
         except docs.StagingError as exc:
             raise AgentError(exc.code, exc.status) from None
         return {**self.view(), "memory_cleared": cleared}
@@ -1420,7 +1754,9 @@ class Manager:
         return preview(self.state, conversation, body)
 
     def prepare_run(self, body: Mapping, observer: Observer | None) -> AgentRun:
-        if set(body) - {"conversation", "revision", "task", "message", "capabilities", "limits"}:
+        if set(body) - {"conversation", "revision", "task", "message", "capabilities", "limits",
+                        "role", "mode", "items", "follow_up", "builtins", "webspell",
+                        "model_choice", "use_context", "chat_task"}:
             raise AgentError("invalid", 400)
         conversation = self._require(body.get("conversation"))
         message = body.get("message")
@@ -1467,10 +1803,17 @@ class Manager:
                 raise AgentError("no_such_conversation", 404)
             self.reserved = None
             self.active = run
+            if run.capture.mode is not None:
+                run.conversation.chat_model = run.capture.model_choice
+                if run.capture.mode == "local":
+                    run._promote()
             run.conversation.active_run = run
             self.runs[run.run_id] = run
             while len(self.runs) > RUNS_KEPT:
                 self.runs.popitem(last=False)
+            excess = len(run.conversation.chat_turns) + len(self.runs) - RUNS_KEPT
+            if excess > 0:
+                del run.conversation.chat_turns[:excess]
 
     def detach(self, run: AgentRun) -> None:
         with self.lock:
@@ -1488,8 +1831,14 @@ class Manager:
             raise AgentError("no_such_run", 404)
         return run
 
-    def run_view(self, run_id: object) -> dict:
-        return self._run(run_id).view()
+    def run_view(self, run_id: object, *, chat=False) -> dict:
+        if chat:
+            with self.lock:
+                if self.conversation is not None:
+                    for turn in self.conversation.chat_turns:
+                        if turn["run_id"] == run_id:
+                            return {**turn, "state": "ended"}
+        return self._run(run_id).view(chat=chat)
 
     def stop(self, run_id: object) -> dict:
         run = self._run(run_id)

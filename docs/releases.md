@@ -6,10 +6,10 @@ and documentation placement are governed by `../DEVEL.md`.
 
 ## Validation and optional review
 
-Automated release gates are the offline CI matrix, the release tooling checks and the installed-wheel
-smoke. For 0.2.3, use the [installed-wheel gate below](#023-installed-wheel-gate). No API key, live
-model or owner walkthrough is required. The 0.2.2 live qualifications are recorded in
-[the decision history](decisions.md#18-november-2026--022-release-close-out-disposition).
+The offline CI matrix, release tooling checks, and installed-wheel smoke apply to each candidate.
+The [0.2.4 release gates](#agentwiz-024-release-gates) also require live evidence. The historical
+[0.2.3 installed-wheel gate](#023-installed-wheel-gate) was credential-free. The 0.2.2 live
+qualifications are recorded in [the decision history](decisions.md#18-november-2026--022-release-close-out-disposition).
 
 Subjective UI review is optional. Use the built-in sandbox tutorial to check readability, spacing,
 guidance and discoverability. Objective regression checks belong in automation. Report WSL2
@@ -38,9 +38,10 @@ python scripts/build_release.py --smoke --no-isolation --modelspell-wheel ../age
 
 `--modelspell-wheel` and `--scriptspell-wheel` each refuse a file whose name is not the pinned URL's file name
 or whose sha256 is not the pin; the smoke then installs the wheels with `pip install --no-index --no-deps` and runs
-`pip check`. Prepare `jsonschema>=4.26,<5` and its transitive wheels in the directory supplied
-with `--dependency-wheels`; they are installed with `--no-index --find-links`. Without that
-option the validator dependencies are installed from the package index. Without a local modelSpell
+`pip check`. Prepare `jsonschema>=4.26,<5`, `PyYAML>=6,<7`, `pydantic-monty==1.5.0` and
+`pypdfium2>=5.13,<6` with their transitive wheels in the directory supplied with
+`--dependency-wheels`; they are installed with `--no-index --find-links`. Without that option
+these runtime dependencies are installed from the package index. Without a local modelSpell
 wheel pip fetches the pinned URL. A warm pip cache
 can hide a missing prerequisite, so it is not preparation.
 
@@ -98,8 +99,8 @@ judgement.
 2. Confirm the offline CI matrix passes on Ubuntu and macOS, Python 3.10 and 3.13. A Linux-only
    local pass covers Linux. Check the installed-wheel gate and the PDF wheel matrix in the same run.
 3. Run `python scripts/build_release.py --smoke` on the intended committed tree and require
-   RC1–RC3, `pip check` and S1–S26 to pass. Run the pull request checks against the proposed merge
-   before merging. Merging into `main` can publish the release automatically.
+   RC1–RC3, `pip check` and S1–S26 to pass. Finish the version-specific checks below and run the pull
+   request checks against the proposed merge. Merging into `main` can publish the release automatically.
 4. Merge `devel` into `main` when authorized. The release workflow reruns tests and checks
    before publishing. Verify that the tag points to the tested merge commit and that the release has
    the wheel and installer. Compare the wheel's SHA-256 with the install line in the release notes.
@@ -195,3 +196,41 @@ model run off the OpenRouter release path.
   tests and during cleanup. The offline suite allows one macOS skip for the Linux-only PDF worker
   address-space test. The separate PDF wheel matrix still checks binary installation, licence notices
   and extraction through the installed worker on Linux and macOS.
+
+## AgentWiz 0.2.4 release gates
+
+Use the same candidate and synthetic fixtures for all checks. Retain the commit, route, model and
+provider or local endpoint with each report. Owner walkthrough and review are optional. The
+publication workflow runs offline checks, so record the live verdicts before merging to `main`.
+
+| Gate | Evidence to retain |
+| --- | --- |
+| Offline | Hosted Ubuntu/macOS × Python 3.10/3.13 source and installed-wheel checks, PDF wheel matrix, and RC1–RC3 plus S1–S26 on the release candidate. |
+| Live Chat | The same fixed cohorts, five end-to-end scenarios, and full default inventory on OpenRouter and LM Studio. Record the effective Chat binding. |
+| Shipped Cloud catalogue | Reuse matching evidence from the [accepted 13-block baseline](decisions.md#prior-live-starter-block-evidence). Run only blocks without a matching passing report for the intended binding. |
+| Managed webSpell | Install the pinned v0.2.1 bundle. Check all three operations on public fixtures. Capture a live Cloud Chat tool turn, a refused operation, and zero webSpell availability and dispatch in Local only mode. |
+
+The Local only `deidentify_text` starter is not a 0.2.4 gate. It remains out of
+`agentwiz/library/index.json` and the wheel. Retained LM Studio reports are reference evidence
+only: neither a pass nor a failure blocks publication, permits inclusion, or requires a rerun.
+A later release may replace it with improved identifier redaction. The evaluator's
+`--deidentify-source` option remains available for optional source-checkout runs.
+
+Catalogue evaluation is release evidence. Chat and Workshop use the runtime eligibility rules
+recorded in the [0.2.4 specification decision](decisions.md#agentwiz-024-specification-v2).
+The Chat composer selects task instructions, while model defaults and existing block role bindings
+determine routing. Preserve the active Cloud policy and record the actual provider.
+
+Run the [live release quickstart](../DEVEL.md#024-live-release-evidence) from the candidate
+checkout. Use the intended release bindings when comparing evidence. For Chat against an
+installed wheel, launch it in a disposable workspace with
+`agentwiz --no-browser --session-file PATH` and add `--session-file PATH` to the evaluation
+command. Configure the binding and trust before running it. The evaluator changes that
+workspace, including its live Chat session. The library evaluator launches its own server
+from the candidate source.
+
+The full catalogue threshold is at least 29/30 contract executions and 24/30 correct outputs per
+block, with every critical case correct in all three trials and all hard invariants satisfied.
+Treat a report awaiting rubric review as pending. A direct MCP check and the webSpell service's own
+CI are supporting evidence. The AgentWiz webSpell release test checks the live service and
+exercises its Chat discovery, dispatch and approval paths.

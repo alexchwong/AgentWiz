@@ -91,3 +91,29 @@ def initialize(path: Path) -> None:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+def openrouter_file_key(path: Path | None = None, *, forbidden_roots=()) -> str | None:
+    """Read a literal key from a private regular file, without exporting it."""
+    import stat
+
+    path = path or Path.home() / ".config" / "agentwiz" / ".env"
+    try:
+        resolved = path.resolve()
+        if any(resolved.is_relative_to(root.resolve()) for root in forbidden_roots):
+            return None
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077
+                    or info.st_uid != os.getuid() or info.st_size > 4096):
+                return None
+            raw = stream.read(4097)
+        if len(raw) > 4096:
+            return None
+        lines = [line.strip() for line in raw.decode("utf-8").splitlines()
+                 if line.strip() and not line.lstrip().startswith("#")]
+        if len(lines) != 1 or not lines[0].startswith("OPENROUTER_API_KEY="):
+            return None
+        return validate_key(lines[0].partition("=")[2]) or None
+    except (OSError, RuntimeError, ValueError, SettingsError):
+        return None

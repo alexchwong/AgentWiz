@@ -22,6 +22,7 @@ dev = ["pytest", "playwright==1.63.0"]
 
 [project.scripts]
 agentwiz = "agentwiz.__main__:main"
+agentwiz-webspell = "agentwiz.webspell_service:main"
 
 [project.urls]
 Source = "https://github.com/alexchwong/AgentWiz"
@@ -34,13 +35,14 @@ path = "agentwiz/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agentwiz"]
-exclude = ["/agentwiz/library/deidentify_text"] # deferred until trusted local live qualification
+exclude = ["/agentwiz/library/deidentify_text"] # excluded from 0.2.4; may be replaced by improved identifier redaction
 
 [tool.hatch.build.targets.wheel.force-include]
 "config/model-servers.ini.template" = "agentwiz/model-servers.ini.template"
+".env.example" = "agentwiz/.env.example"
 
 [tool.hatch.build.targets.sdist]
-only-include = ["agentwiz", "config/model-servers.ini.template", "pyproject.toml", "README.md", "LICENSE"]
+only-include = ["agentwiz", "config/model-servers.ini.template", ".env.example", "pyproject.toml", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

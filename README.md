@@ -1,5 +1,75 @@
 # AgentWiz
 
+## Quick start (AgentWiz 0.2.4)
+
+**Prerequisites:** Python 3.10+, Docker with Docker Compose, OpenSSL, and an internet
+connection for first-time setup. On Windows, use WSL2 with Docker available.
+Start Docker before using the release installer, which sets up the bundled webSpell service.
+
+**Install:** From a normal terminal, run the AgentWiz release installer:
+
+```bash
+curl -fsSL https://github.com/alexchwong/AgentWiz/releases/latest/download/install.sh | bash
+```
+
+The installer creates `.venv`, installs AgentWiz and **automatically installs,
+configures, starts and checks webSpell** (including SearXNG). No manual webSpell
+repository clone, MCP registration or API key is required for public web search.
+
+**Run:** From the same directory where you installed AgentWiz:
+
+```bash
+.venv/bin/agentwiz
+```
+
+AgentWiz Chat opens in your browser. Choose a Cloud model and use the webSpell
+tools for public research. webSpell is available only in Cloud mode. Set your OpenRouter
+key using **OpenRouter key** in the Chat toolbar, or configure it as described under
+[AgentWiz 0.2.4](#agentwiz-024).
+
+**Manage webSpell (separate background service):**
+
+```bash
+.venv/bin/agentwiz-webspell status
+.venv/bin/agentwiz-webspell stop
+.venv/bin/agentwiz-webspell start
+.venv/bin/agentwiz-webspell restart
+.venv/bin/agentwiz-webspell logs
+```
+
+Stopping AgentWiz does not stop webSpell; stopping webSpell does not prevent
+ordinary AgentWiz chat. Docker's `unless-stopped` policy restarts unexpectedly
+stopped containers, but respects a deliberate `stop`.
+
+**Change the MCP port:** Edit `mcp_servers/servers.json` alongside your
+AgentWiz installation. Change only the `webspell.url` entry, e.g.:
+
+```json
+{
+  "format_version": 1,
+  "servers": {
+    "webspell": {"url": "http://127.0.0.1:8766/mcp"}
+  }
+}
+```
+
+Keep all other server entries if the file already has them. Apply the port
+change with `.venv/bin/agentwiz-webspell restart`, then restart AgentWiz. The
+managed MCP URL must use `127.0.0.1`, port 1024–65535, and path `/mcp`.
+To use a custom MCP settings directory, pass `--mcp-servers-dir PATH` to
+**both** `agentwiz` and `agentwiz-webspell`, or set
+`AGENTWIZ_MCP_SERVERS_DIR` for the lifecycle command.
+
+**Problems:** Ensure Docker is running, then use `agentwiz-webspell status` and
+`agentwiz-webspell logs`. A failed initial webSpell setup makes the installer
+report failure; fix the prerequisite and rerun the installer. The pinned
+webSpell release is verified by SHA-256. To use AgentWiz from the source checkout,
+run `scripts/dev_setup.sh`, then `python -m agentwiz.webspell_service install`
+from the checkout root (the published installer is for release wheels).
+
+For detailed configuration, privacy, development and troubleshooting guidance,
+continue below.
+
 A local browser UI for building and testing LLM steps, built on
 [modelSpell](https://github.com/alexchwong/modelSpell).
 
@@ -7,7 +77,7 @@ You choose a model backend (LM Studio, OpenRouter, or any OpenAI-compatible serv
 llama-server), type an optional system prompt and an input, and watch the reasoning and the answer
 stream back, followed by token usage, cost and a clear outcome.
 
-AgentWiz 0.2.3 includes:
+AgentWiz 0.2.4 includes:
 
 - **Agentic Chat:** a switch in Chat that lets the model ask AgentWiz to run one approved capability per turn.
   AgentWiz decides what may run, validates every request, asks before any call that may change state, and
@@ -41,6 +111,58 @@ Model profiles, roles and MCP servers are shared settings. Credentials stay in p
 Python blocks run in scriptSpell's restricted runner: a language-level restriction, not an OS sandbox. Host
 Python (v3 script) blocks are retired. AgentWiz uses the pinned modelSpell 0.4.0 and scriptSpell 0.3.0 public APIs.
 
+## AgentWiz 0.2.4
+
+Launch `agentwiz` for AgentWiz Chat, `agentwiz --open workshop` for AgentWorkshop, or
+`agentwiz --open both` for both. Both listeners bind to separate loopback ports and share one
+workspace and lock. The terminal prints their public addresses. Browser access is initialized by the
+launcher. For API clients, use `--no-browser --session-file PATH` and send each endpoint’s scoped
+`session` value in the `X-Session-Token` header. The launch owns this private file and replaces its
+contents when the workspace changes.
+
+Chat starts in Cloud with the General chat task. The composer stays below the scrolling transcript. Expand a
+turn's **Activity** bar to see its tool steps. Answers support Markdown, with Copy and Download
+available on completed turns. Pending approvals appear beneath the relevant prompt.
+
+Use the top-bar model picker to choose OpenRouter, LM Studio, or llama-server and filter the models
+by name or ID. Choosing a model applies to this chat. Use **Settings** to assign a named profile as
+the default model for the selected mode. For a Local only run, review and trust the exact destination
+in AgentWorkshop. **Chat task** adds instructions for the current turn, such as Executive summary
+or Adversarial critic. **Reasoning** beside **Send** lists the supported effort levels. llama-server
+uses its server default.
+
+**Use chat context** includes up to the six most recent completed prompt-and-answer pairs, limited
+to 64 KiB. Clear it for an independent request. Select any attachments or drafts for each turn.
+Uploads default to Local only. A Local only turn makes the conversation private until you close it.
+Download anything you want to keep before closing. To pass private material into a reviewed workflow,
+upload it inside AgentWorkshop and mark that input Local only.
+
+**History** opens or collapses the left sidebar. Cloud chats save by default after the first finished
+turn. Clear **Save this Cloud chat** to opt out. Use the **⋯** menu on a saved chat to rename or
+delete it. Saved transcripts retain up to 20 recent turns and activity summaries. Each new response
+shows the primary server, model and reported provider, plus the turn's combined model token counts
+and reported cost. Conversation totals in the sidebar survive reopening and transcript trimming.
+Missing billing figures are shown as unreported or partial. Attachments, draft files, and raw tool payloads belong to the
+live chat. A chat that becomes Local only leaves saved history. If an unclean shutdown interrupts a
+saved turn, AgentWiz marks the saved chat unavailable because it cannot confirm the final privacy state.
+Workspace settings for saved run records are independent of saved Chat history.
+
+Built-ins and eligible bundled starters are offered by default. Chat has a separate Cloud-only
+webSpell switch. The release installer automatically installs, configures and starts pinned webSpell
+v0.2.1, and registers its MCP endpoint as `webspell`. Cloud Chat checks the server name
+and three expected tool schemas when connecting.
+Search queries and URL fetches go to the web service. Chat asks for approval before sending
+free-form queries influenced by an attachment, draft, earlier answer, or tool result. An eligible
+page read uses an exact URL supplied in the prompt or returned by webSpell in the current run.
+The service controls are described in its own documentation. [webSpell v0.2.1](https://github.com/alexchwong/web-retrieval-mcp/releases/tag/v0.2.1)
+
+Use **OpenRouter key** in the top bar to set or clear a session key. AgentWiz checks the session key
+first, then the process environment, then `~/.config/agentwiz/.env`. Set the file owner to your user and permissions to
+`0600`. It accepts a literal `OPENROUTER_API_KEY=` assignment. The file is read at startup and its value
+stays in server memory. Restart to reread it. Ordinary new Cloud presets request no data collection.
+A custom profile may opt into stricter policy.
+
+
 ## Install
 
 AgentWiz requires Python 3.10 or later.
@@ -60,12 +182,12 @@ files report `migration_required`. Recreate or deliberately rewrite them as exec
 and current Text/JSON contracts. Reusable contract references need exact revision pins. For model
 steps, update the reply instructions to match the [named JSON envelope](#named-outputs).
 
-If you have a local copy of the 0.2.3 wheel, install it with:
+If you have a local copy of the 0.2.4 wheel, install it with:
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install ./agentwiz-0.2.3-py3-none-any.whl
+python -m pip install ./agentwiz-0.2.4-py3-none-any.whl
 ```
 
 For a published wheel, you can pass the URL with the `#sha256=…` fragment from the release notes
@@ -80,7 +202,8 @@ damaged or unsupported, reinstall AgentWiz before using schema-dependent actions
 
 ```bash
 agentwiz                            # opens your browser at the printed address
-agentwiz --no-browser               # just print the address
+agentwiz --open both                # open both apps
+agentwiz --no-browser               # print the two loopback addresses
 agentwiz --port 8765                # fixed port (default: any free port)
 agentwiz --workspace work           # use the workspace "work" (default: default)
 agentwiz --workspaces-dir ~/aw      # folder holding workspaces (default: ./workspaces)
@@ -92,10 +215,8 @@ python -m agentwiz                  # same as agentwiz
 
 The three folders default to paths relative to the directory you launch AgentWiz from.
 
-AgentWiz listens on 127.0.0.1 only and prints an address such as
-`http://127.0.0.1:8765/?t=<token>`. The token changes every launch, and every request must carry it,
-so other web pages in your browser cannot use AgentWiz. Anyone who can read the terminal output can
-use it while it runs. Press Ctrl-C to stop.
+Both apps listen on 127.0.0.1. The launcher opens the selected browser surface and initializes its
+session. For headless access, request a private handoff with `--session-file`. Press Ctrl-C to stop.
 
 ### Workspaces
 
@@ -795,41 +916,22 @@ sent to the model until you paste it into a request and press **Send**.
 - At most 8 tool operations run at once, stopped ones included until they finish; further ones are
   refused, not queued. One tool call runs per page at a time; a model request can run alongside it.
 - Results and their sizes are previewed like documents, with a provenance line such as
-  `[tool web.search_web arguments={"query":"lighthouse"}]`. When a result has both text and structured
+  `[tool webspell.web_search_results arguments={"query":"lighthouse"}]`. When a result has both text and structured
   content, **Copy structured content** copies the structured part instead of the text preview. The
   provenance line is copied with the text. Images and other items are listed, not copied.
 - Tool results and documents may contain instructions aimed at the model. AgentWiz shows them
   and never sends them by itself; they reach a model only if you paste them into a request. It does
   not sanitise them.
 
-### Example: web search with web-retrieval-mcp
+### Example: web search with managed webSpell
 
-[web-retrieval-mcp](https://github.com/alexchwong/web-retrieval-mcp) is one MCP server you can try;
-any Streamable HTTP MCP server is added the same way, and AgentWiz needs none of it.
-
-1. Prerequisites: Docker with Docker Compose, and `openssl`.
-2. Clone and start it:
-   ```bash
-   git clone https://github.com/alexchwong/web-retrieval-mcp.git
-   cd web-retrieval-mcp
-   ./setup.sh
-   ```
-   `setup.sh` creates `.env` with a fresh SearxNG secret and starts SearxNG and the MCP server, both
-   listening on this machine only.
-3. Check with `docker compose ps` that both services are up. The MCP endpoint is
-   `http://localhost:8765/mcp`.
-4. In AgentWiz press **MCP servers** in the header, then **Add**: name `web`, URL
-   `http://127.0.0.1:8765/mcp`, no token (the server listens on this machine only and has none).
-   Press **Save**.
-5. On the **MCP tools** tab choose `web` and press **Load tools**: `search_web` and `read_url` appear, with the era. An image
-   built before FastMCP 4 shows 2025-11-25; a fresh build shows 2026-07-28. Both work.
-6. Choose `search_web`, type a query, press **Run**. Read the passages, press **Copy**, paste them
-   into the input of **Chat**, add a question, and press **Send**.
-7. Try `read_url` on one of the cited URLs, and press **Stop** while it runs.
-8. Afterwards: `docker compose down`.
-
-Notes: web-retrieval-mcp fetches the open web from the machine it runs on; its `settings.toml` tunes
-how much it returns; under WSL2, use the address where Docker publishes port 8765.
+1. On the **MCP tools** tab choose `webspell` and press **Load tools**. The installer registers
+   the service at `http://127.0.0.1:8765/mcp` by default; no duplicate entry is needed.
+2. Choose `web_search_results`, enter a query and press **Run**. Optionally filter by category
+   (`general`, `news`, `science` or `it`) and a best-effort recency window such as `7 days`.
+3. Use `web_evidence_passages` for passages, or `web_page_text` to read one known URL. When
+   supplying URLs directly to `web_evidence_passages`, omit category, recency and domains.
+4. To use a result in Chat, review it first, then press **Copy**, paste it into Chat, and add your question.
 
 ## Contracts
 
@@ -1026,16 +1128,12 @@ named `docs` that advertises a `lookup` tool accepting `id` and `label`:
 }
 ```
 
-The tool step's `output` binds its one declared output. A script step has a different shape.
-This step fragment requires your own `scripts/clean.py` and output declarations matching its
-[standard output](#script-steps):
-
-```json
-{"id": "clean", "kind": "script", "file": "scripts/clean.py", "timeout_s": 60}
-```
+The tool step's `output` binds its one declared output. A host script step (`"kind": "script"`)
+is retired: a v3 block that uses one loads as unusable (`host_script_retired`). Use a Python step
+(block format 4) instead; see [Python steps](#python-steps).
 
 - **File references** are relative paths inside the block folder (`prompts/` for prompts, `scripts/`
-  and ending in `.py` for scripts). A symbolic link, a missing file or an oversized one (4 MiB; 1 MiB
+  and ending in `.py` for Python-step sources). A symbolic link, a missing file or an oversized one (4 MiB; 1 MiB
   for `block.json`) is a problem. Only referenced files matter; helper files beside them are ignored.
 - **Revisions.** Each block has a revision that changes when its files change, or when a revision it
   pins changes, disappears or becomes unusable (a newer appended revision does not count). A run, from

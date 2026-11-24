@@ -71,6 +71,8 @@ Paths in this table are relative to the repository root.
 | `agentwiz/python_authoring.py` | yes | **0.2.2.** Workshop **Describe it** for Python: examples, source generation and local checks through `YamlAuthoring`; at most three requests. No HTTP. |
 | `agentwiz/agent_tools.py` | yes | **0.2.2.** Built-in tool definitions; the utility registry (`REGISTRY` of `Utility(name, schema, result, description, limits, function)`, from which `UTILITY_TOOLS`, `SCHEMAS`, `DESCRIPTIONS` and `blocks.BUILTIN_TOOLS` derive) with fourteen pure utilities and `run_utility(name, arguments, *, result_limit, check)`; the eight document tool definitions and their effects. No HTTP. |
 | `agentwiz/agent_documents.py` | yes | **0.2.2.** Agentic Chat conversations: staged documents and drafts (`dir_fd`, `O_NOFOLLOW`/`O_EXCL`), labels, memory. No HTTP. |
+| `agentwiz/chat_history.py` | yes | **0.2.4.** Cloud transcript checkpoints, bounded serialization and credential redaction. No HTTP. |
+| `agentwiz/chat_tasks.py` | yes | **0.2.4.** Whitelisted per-turn Chat answer instructions; `general` adds none. No HTTP. |
 | `agentwiz/agent_capabilities.py` | yes | **0.2.2.** MCP tool classifications and the capability inventory with exclusions. No HTTP. |
 | `agentwiz/agent_loop.py` | yes | **0.2.2.** The agent loop: capture, plan, preflight, model turns through `complete_with_tools`, validation, approval binding, dispatch, labels, records; `Manager`. No HTTP. |
 | `agentwiz/prompts/agent_system.md` | yes | Packaged Agentic Chat system prompt (`agent_system`, version 2). |
@@ -84,9 +86,16 @@ Paths in this table are relative to the repository root.
 | `agentwiz/workshop_editor.py`, `agentwiz/workshop_assist.py` | yes | Draft editing, starters and reviewed assistance. |
 | `agentwiz/workshop_license.txt` | yes | License resource included with generated Workshop starter assets. |
 | `agentwiz/server_config.py`, `config/model-servers.ini.template` | yes | Loads server configuration. The template ships as `agentwiz/model-servers.ini.template`. |
+| `agentwiz/webspell.py` | yes | **0.2.4.** Pinned webSpell identity (version and archive SHA-256), the three tool schemas, URL helpers and compatibility checks. No HTTP. |
+| `agentwiz/webspell_service.py` | yes | **0.2.4.** Installs, verifies and operates the separate webSpell Docker Compose service, registers its loopback MCP entry and exposes the `agentwiz-webspell` CLI. No HTTP server. |
 | `agentwiz/ui/contracts.js` | yes | Shared contract editor and Workshop Contracts interface. |
 | `agentwiz/ui/server.py` | yes | The HTTP server; the only module that knows HTTP. `Handler.write_event` is the one writer of stream events. |
 | `agentwiz/ui/index.html` | yes | Workshop/Workbench/History, shared Settings dialogs; one framework-free file with no build step. |
+| `agentwiz/ui/surfaces.py` | yes | **0.2.4.** The two loopback authorities, single-use bootstrap and scoped session grants, and the per-surface method/path allowlists. |
+| `agentwiz/ui/chat.html`, `agentwiz/ui/chat.css`, `agentwiz/ui/chat.js` | yes | **0.2.4.** The Chat surface, its styles and controller; framework-free with no build step. |
+| `agentwiz/ui/chat-markdown.js` | yes | **0.2.4.** Markdown rendering with DOM nodes; model output is never assigned as HTML. |
+| `agentwiz/ui/session.js` | yes | **0.2.4.** Exchanges the one-time URL bootstrap for an origin-scoped session value. |
+| `agentwiz/ui/workflows.js` | yes | The Workflows browser asset used by the Workshop page. |
 | `pyproject.toml`, `README.md`, `LICENSE` | metadata | Packaging, wheel description, MIT license. |
 | `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`; 0.1.3: `test_checks.py`, `test_contracts.py`, `test_runs.py`, `test_model_step.py`, `test_attempts.py`, `test_history.py`, `test_page.py`, `test_live_judgement.py`; 0.1.4: `test_roles.py`, `test_templates.py`, `test_blocks.py`, `test_block_routes.py`, `test_block_tool.py`, `test_runner.py`, `test_shutdown.py`, `test_signals.py`, `test_tutorial.py`; 0.2.0: `test_workspace_admin.py`, `test_workspace_lifecycle.py`, `test_named_outputs.py`, `test_contract_overhaul.py`, `test_workshop_descriptions.py`; 0.2.2: `test_agent.py` with `agent_helpers.py`), opt-in live checks (`test_live.py`, with the pure judgement function `live_stop.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
 | `docs/attachment_interface.md` | no | The attachment interface (companion document, version 3, draft). |
@@ -568,6 +577,31 @@ rescanned.
   `GET /api/agent/inventory` accepts an integer `revision` and JSON-encoded `task`, `capabilities` and
   `limits` in its query. `GET /api/agent/drafts/<id>` accepts an optional `conversation` query
   parameter and defaults to the live conversation.
+  On the scoped Chat surface, `GET /api/agent/runs/<id>` includes the submitted message and can
+  resolve turns from the currently reopened archive. The conversation view lists restored and recent
+  run IDs. The composer sends `use_context` to select up to six completed pairs within 64 KiB.
+  Document and draft IDs still need explicit selection. The resulting prior-answer context triggers the
+  same webSpell provenance checks as an explicit follow-up. Headless requests keep their existing default.
+  `model_choice` takes a source kind and model ID for the Chat orchestrator, checked at capture and dispatch.
+  Same-source overrides retain the default Chat profile's routing policy. Child block role bindings remain
+  independent. The composer submits a whitelisted `chat_task` ID. Its instruction is appended to the base
+  system prompt for that run. General adds no instruction.
+  `POST /api/chat/models` discovers only the configured source through modelSpell while holding the idle
+  reservation. Cloud lookup refuses a private conversation. Local discovery requires an unproxied literal
+  loopback endpoint. Local execution still requires the exact model destination grant.
+- **Saved Chat (0.2.4).** One live conversation per workspace. `/api/chat/history` lists saved conversations,
+  and its `save`, `open`, `rename`, and `delete` POST routes are scoped to Chat. Cloud saving starts enabled
+  for new chats. A finished eligible turn saves a versioned, owner-only, atomically replaced
+  `chat-history-conv_<id>.json` checkpoint. Save up to 50 conversations.
+  A checkpoint holds at most 20 recent turns and 8 MiB, and redacts registered credentials. It contains
+  rendered answer source text, prompts, public source links, and action outcomes. Format 2 adds reported
+  per-turn model usage and the final response route, and a conversation aggregate independent of transcript
+  retention. Format 1 checkpoints remain readable and their historical usage is unknown. Staged files, draft
+  contents, run approvals and raw tool payloads stay in live state. Reopening starts without staged files
+  and restores the saved model override. A writer reservation fences archive mutation and conversation
+  switching. A saved checkpoint is marked unavailable before a Cloud turn can begin, then replaced with an
+  eligible transcript after completion. If the chat becomes private, the archive is removed. Local only
+  turns remove the saved copy before dispatch. A checkpoint left unavailable after a crash cannot be resumed.
 - **Roles.** `roles.json` through `roles.py`, under the state lock, with its own revision; a save
   refuses a profile that does not exist. Resolution is live, at preparation (`state.resolve_role`).
   Version 2 retains the string assignment map and adds `definitions`, keyed by role, each containing
@@ -575,10 +609,11 @@ rescanned.
   (trimmed nonblank text, at most 64 characters; absent means General in the editor). Version 3 adds
   optional `task_defaults` with only `temperature` and `reasoning`, validated by
   `task_settings.parse_defaults` (zero is kept, a blank reasoning level means none, anything else is refused).
-  Formats 1 and 2 are read unchanged; `roles.build_raw` always writes 3, keeps unknown top-level fields and
-  retains existing definitions, so an assignment-only save never downgrades the file or drops a default; an older
-  AgentWiz refuses the newer file rather than dropping behaviour. Unassigned definitions are
-  allowed; every v2 and v3 assignment needs a definition. Missing files expose unconfigured `fast`,
+  Version 4 adds `mode_bindings` for Cloud and Local only Chat profiles. `roles.build_raw` writes
+  version 4 when those bindings are saved or already present, and version 3 otherwise. The writer
+  preserves unknown top-level fields, existing definitions, and mode bindings on assignment-only
+  saves. Older AgentWiz releases open format 4 read-only. Unassigned definitions are allowed, and
+  assignments in formats 2–4 need definitions. Missing files expose unconfigured `fast`,
   `assistant`, `reasoning` definitions in memory only. Version-1 assignments remain readable with
   no imposed location constraint until explicitly configured in the editor. Legacy API saves retain
   existing v2 policies for retained assignments; they cannot bypass location enforcement.
@@ -819,7 +854,10 @@ Routes are top-level, not Workshop routes, and all mutations are POST with integ
 Error codes are `invalid_workspace_name` (400), `confirmation_required` (400), `no_such_workspace`
 (404), `workspace_exists`/`workspace_in_use`/`workspace_busy`/`workspace_is_current`/
 `tutorial_active`/`workspace_admin_disabled`/`unsafe_entry`/`workspace_too_large`/
-`shared_data_inside_workspace` (409), `workspace_io_error` (500) and `workspace_unavailable` (503).
+`shared_data_inside_workspace`/`private_close_confirmation` (409), `workspace_io_error` (500)
+and `workspace_unavailable` (503). Switching to a different workspace, including create and switch,
+requires closing any private conversation from AgentWiz Chat after downloading any drafts to keep.
+Resetting the current workspace uses the same guard before shutting down the active session.
 The page hides workspace administration when `/api/state.workspace.admin` is false. A switch or
 current reset reloads the page after the Workshop dirty-draft guard; clone/delete/reset-other refresh
 the dialog list only. Session API keys and MCP tokens are not transferred: they are memory-only and
@@ -1729,3 +1767,50 @@ block selection.
 Engine recovery for a managed block uses its saved revision as a draft. Unmanaged recovery binds bounded
 in-memory captures to draft references in the workspace, including drafts derived by protected Assist Apply.
 Expired references are pruned. Recovery identifiers and raw captures stay out of saved metadata.
+
+## 0.2.4 browser surfaces and Chat admission
+
+The CLI creates an AgentWorkshop listener with the existing workspace owner and a second Chat
+listener that shares its ProcessState behind WorkspaceGate. The method/path allowlist is in
+`agentwiz/ui/surfaces.py`. The server validates Host, Origin and the scoped header on both ports.
+The bootstrap is a single-use URL fragment, with a short expiry. It is exchanged for an origin-scoped
+session value in browser session storage. Public assets and guarded data routes are separate.
+Workspace switch/reset rotates both grants and rewrites the optional private session handoff.
+
+Production Chat tool runs supply `mode`, `role`, the selected document/draft IDs in `items`, and an
+optional prior run ID in `follow_up`. `capabilities` remains an optional explicit narrowing list.
+The server captures eligibility, labels and bindings before dispatch. A protected selection refuses
+before route discovery. A Local only run marks the conversation private on admission. A later label
+promotion keeps the conversation private and stops a Cloud capture from forwarding restricted data.
+The private-close endpoint requires the conversation ID and explicit confirmation. History and native
+Gate review remain Workshop operations.
+
+The role store can write format 4 with a `mode_bindings` table. Standalone Workshop and workflows
+continue reading named legacy assignments, with their definition location constraint. Chat resolves
+Cloud and Local slots independently. A 0.2.3 executable treats a written format-4 file as newer/read-only.
+
+### Managed webSpell service (0.2.4)
+
+The service is a separately installed Docker Compose stack. It is never embedded in the AgentWiz
+process and never holds an AgentWiz workspace lock. `agentwiz/webspell.py` pins v0.2.1 and the
+release archive's SHA-256, defines the three tool schemas used for the compatibility check, and
+provides URL helpers. `agentwiz/webspell_service.py` downloads and verifies the archive, rejects
+traversal and symlink entries before extraction, and publishes the install directory only after
+validation. It runs webSpell's own `setup.sh` for `install` and Docker Compose directly for
+`start`/`restart`/`stop`/`status`/`logs`, with the project name `agentwiz-webspell`.
+
+The shared MCP servers file is the single source of truth for the service URL. On launch and on
+lifecycle commands, `ensure_server_entry` adds a `webspell` entry once with
+`http://127.0.0.1:8765/mcp`; an existing URL is validated but never overwritten, a token
+environment setting is refused, and a damaged file is reported rather than replaced. The URL must
+be literal IPv4 loopback `127.0.0.1`, port 1024–65535 and path `/mcp`, with no credentials, query
+or fragment. The generated `.env` pins `MCP_BIND_ADDRESS=127.0.0.1` and `MCP_SERVER_NAME=webspell`,
+replaces the release secret placeholder when the file is created, and is rewritten atomically with
+mode 0600.
+
+After start or restart, the service verifies the MCP endpoint by discovery and the same identity
+and three-schema compatibility check used by Chat; an unexpected identity fails immediately and
+startup delays are retried for a bounded period. Chat offers webSpell tools only in Cloud mode when
+the Chat switch is on and the discovered server is compatible. Local only runs neither discover
+nor dispatch webSpell. Installation and lifecycle errors do not expose secrets, and rerunning the
+installer preserves the `.env` secret and unrelated MCP entries.

@@ -259,7 +259,8 @@ def resolve_request(snapshot: RequestSnapshot, arguments: Mapping[str, Any], *, 
         selection = modelspell.choose_provider(
             snapshot.endpoint, snapshot.model, mode="automatic",
             preset=snapshot.routing_preset, provider=policy or None, settings=args,
-            tools=bool(tools), cancel=cancel, timeout=timeout, max_attempts=4)
+            tools=bool(tools), cancel=cancel, timeout=timeout,
+            max_attempts=1 if (snapshot.profile_name or "").startswith("preset-cloud-") else 4)
         if selection.policy is not None:
             args["provider"] = selection.policy
     if tools:

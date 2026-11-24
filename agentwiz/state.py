@@ -31,7 +31,7 @@ from types import MappingProxyType
 import modelspell
 from modelspell import Endpoint
 
-from . import workshop, blocks, checks, contracts, history, mcp_client, mcp_ops, pdf_reader, roles, runs, writers
+from . import workshop, blocks, checks, contracts, history, mcp_client, mcp_ops, pdf_reader, roles, runs, server_config, writers
 from . import mcp_library as ml
 from . import profiles as pf
 from . import task_settings as ts
@@ -253,6 +253,7 @@ class ProcessState:
             loaded_roles = roles.read(workspace.path)
             self._roles_problem: Problem | None = loaded_roles.problem
             self._roles = dict(loaded_roles.roles)
+            self._mode_bindings = dict(loaded_roles.mode_bindings)
             self._role_definitions = dict(loaded_roles.definitions)
             self._roles_revision = 1
             # Block definitions (8.8) and the Python budget (0.2.2, 10.2): restricted-runner Python steps.
@@ -272,6 +273,11 @@ class ProcessState:
             if self.servers:
                 self._credentials.update(s.api_key for s in self.servers.values() if s.api_key)
             self._env_names: set[str] = {"OPENROUTER_API_KEY"}
+            self._file_key = server_config.openrouter_file_key(
+                forbidden_roots=(workspace.path.parent, profiles_dir,
+                                 mcp_servers_dir or Path("./mcp_servers")))
+            if self._file_key:
+                self._credentials.add(self._file_key)
             self.store = runs.AttemptStore()
             self.history = history.Writer(workspace.path, self.store, self.credentials)
             # The MCP library (Section 9.1), its revision and typed tokens (bound to a URL).
@@ -319,6 +325,14 @@ class ProcessState:
             api_key = self.servers[settings.kind].api_key
         return _endpoint(settings, api_key)
 
+    def _resolved_endpoint(self, settings: ModelSettings) -> Endpoint:
+        endpoint = self._endpoint(settings)
+        session = self._keys.get((endpoint.kind, endpoint.base_url))
+        name = endpoint.api_key_env
+        key = (session or (os.environ.get(name, "").strip() if name else "")
+               or (self._file_key if name == "OPENROUTER_API_KEY" else None) or endpoint.api_key)
+        return dataclasses.replace(endpoint, api_key=key, api_key_env=None)
+
     def _location(self, settings: ModelSettings) -> str:
         return roles.profile_location(self._configured_settings(settings))
 
@@ -344,6 +358,8 @@ class ProcessState:
             key_source = "session"
         elif ep.api_key_env and os.environ.get(ep.api_key_env, "").strip():
             key_source = "env:" + ep.api_key_env
+        elif ep.api_key_env == "OPENROUTER_API_KEY" and self._file_key:
+            key_source = "file"
         elif self.servers and self.servers[s.kind].api_key:
             key_source = "config"
         else:
@@ -352,7 +368,8 @@ class ProcessState:
         active = self._active
         router = self._endpoint(ModelSettings(kind="openrouter"))
         router_source = ("session" if (router.kind, router.base_url) in self._keys else
-                         "env:OPENROUTER_API_KEY" if os.environ.get("OPENROUTER_API_KEY", "").strip() else "none")
+                         "env:OPENROUTER_API_KEY" if os.environ.get("OPENROUTER_API_KEY", "").strip() else
+                         "file" if self._file_key else "none")
         return {"kind": s.kind, "base_url": ep.base_url if self.servers else s.base_url, "model": s.model, "provider": s.provider,
                 **{f: getattr(s, f) for f in ROUTING_FIELDS},
                 "key_source": key_source,
@@ -416,6 +433,7 @@ class ProcessState:
     def _roles_view_locked(self) -> dict:
         return {"map": dict(sorted(self._roles.items())), "revision": self._roles_revision,
                 "definitions": copy.deepcopy(self._role_definitions), "defaults": copy.deepcopy(roles.DEFAULTS),
+                "mode_bindings": copy.deepcopy(self._mode_bindings),
                 "read_only": self._roles_read_only_locked(), "path": str(self.workspace.path / roles.FILE),
                 "problem": dataclasses.asdict(self._roles_problem) if self._roles_problem else None,
                 "unresolved": self._unresolved_roles_locked()}
@@ -690,7 +708,7 @@ class ProcessState:
                 if definitions is None:
                     # Legacy clients may change assignments, but cannot remove existing routing policy.
                     defined = {}
-                    if disk.raw.get("format_version") in (2, 3):
+                    if disk.raw.get("format_version") in (2, 3, 4):
                         defined = copy.deepcopy(dict(self._role_definitions))
                     for n, p in parsed.items():
                         if n not in defined and p in self._profiles:
@@ -720,10 +738,115 @@ class ProcessState:
             self._roles_revision += 1
             return self._view_locked()
 
-    def role_capture(self, role: str) -> RoleCapture:
+    def chat_preferences(self):
+        try:
+            raw, problem = wsmod.read_workspace(self.workspace)
+        except OSError:
+            raw, problem = None, True
+        data = raw.get("chat_tools", {}) if raw and not problem else {}
+        return {name: data.get(name, True) is True for name in ("builtins", "webspell")} if isinstance(data, dict) else {
+            "builtins": True, "webspell": True}
+
+    @_writes("chat tools save")
+    def save_chat_preferences(self, value):
+        if set(value) - {"builtins", "webspell"} or any(type(flag) is not bool for flag in value.values()):
+            raise SettingsError("chat tool preferences require boolean switches")
+        with self._lock:
+            self._refuse_if_held_locked()
+            raw, problem = wsmod.read_workspace(self.workspace)
+            if self.workspace.read_only or problem:
+                raise ReadOnly([problem] if problem else self._problems_locked(), self.workspace.read_only, "workspace")
+            raw = dict(raw or {})
+            raw["chat_tools"] = {**self.chat_preferences(), **value}
+            wsmod.write_atomic(self.workspace.path, "workspace.json", raw)
+            return raw["chat_tools"]
+
+    def _chat_profile_locked(self, role: str, mode: str):
+        if mode not in ("cloud", "local"):
+            raise RoleUnresolved(role, "location")
+        name = self._mode_bindings.get(role, {}).get(mode)
+        if name is None and role in roles.CHAT_MODELS:
+            name = "preset-local-lmstudio" if mode == "local" else f"preset-cloud-{role}"
+        settings = self._profiles.get(name)
+        if settings is None and name == "preset-local-lmstudio":
+            settings = ModelSettings(kind="lmstudio", model="qwen3.8-27b")
+        if settings is None and role in roles.CHAT_MODELS and name == f"preset-cloud-{role}":
+            settings = ModelSettings(kind="openrouter", model=roles.CHAT_MODELS[role][1],
+                                     routing_mode="automatic", routing_preset="balanced",
+                                     routing_data_collection="deny")
+        if settings is None or self._location(settings) != mode:
+            raise RoleUnresolved(role, "location")
+        return name, settings
+
+    def _chat_role_locked(self, role: str, mode: str) -> RoleCapture:
+        name, settings = self._chat_profile_locked(role, mode)
+        snapshot = RequestSnapshot(
+            endpoint=self._resolved_endpoint(settings), kind=settings.kind, model=settings.model,
+            provider=settings.provider if settings.kind == "openrouter" else "", profile_name=name,
+            profile_modified=False, **{key: getattr(settings, key) for key in ROUTING_FIELDS})
+        defaults = copy.deepcopy(self._role_definitions.get(role, {}).get("task_defaults", {}))
+        return RoleCapture(role, name, snapshot, defaults, self._roles_revision)
+
+    def chat_snapshot(self, revision: int, role: str, mode: str, choice=None) -> RequestSnapshot:
+        with self._lock:
+            self._refresh_locked()
+            if revision != self._revision:
+                raise StaleRevision(self._revision)
+            if choice is None:
+                return self._chat_role_locked(role, mode).snapshot
+            kind, model = choice["kind"], choice["model"]
+            settings = ModelSettings(kind=kind, model=model)
+            if self._location(settings) != mode:
+                raise SettingsError("the model source does not match the Chat mode")
+            if role not in self._role_definitions:
+                raise RoleUnresolved(role, "location")
+            try:
+                snapshot = self._chat_role_locked(role, mode).snapshot
+            except RoleUnresolved:
+                snapshot = None
+            if snapshot is not None and snapshot.kind == kind:
+                return dataclasses.replace(snapshot, model=model,
+                                           profile_modified=snapshot.model != model)
+            if kind == "openrouter":
+                return RequestSnapshot(self._resolved_endpoint(settings), model, kind, "",
+                                       routing_mode="automatic", routing_data_collection="deny")
+            return RequestSnapshot(self._resolved_endpoint(settings), model, kind, "")
+
+    @_writes("chat bindings save")
+    def save_mode_bindings(self, value, revision):
+        try:
+            bindings = roles.parse_bindings(value)
+        except roles.RolesError as exc:
+            raise SettingsError(str(exc)) from None
+        with self._lock:
+            self._refuse_if_held_locked()
+            if revision != self._roles_revision:
+                raise StaleRevision(self._roles_revision)
+            disk = roles.read(self.workspace.path)
+            if self._roles_read_only_locked() or disk.problem:
+                raise ReadOnly([disk.problem] if disk.problem else self._problems_locked(),
+                               self.workspace.read_only, "roles")
+            for role, slots in bindings.items():
+                for mode, name in slots.items():
+                    settings = self._profiles.get(name)
+                    if settings is None or self._location(settings) != mode:
+                        raise SettingsError(f"role {role} requires a {mode} profile")
+            raw = roles.build_raw(disk.raw, self._roles, self._role_definitions, bindings)
+            try:
+                roles.write(self.workspace.path, raw)
+            except OSError as exc:
+                raise WriteFailed(str(self.workspace.path / roles.FILE), type(exc).__name__) from None
+            self._mode_bindings = bindings
+            self._roles_revision += 1
+            self._revision += 1
+            return self._view_locked()
+
+    def role_capture(self, role: str, mode: str | None = None) -> RoleCapture:
         """The destination snapshot and the saved defaults of `role`, read together under the state lock
         (7.4). Raises RoleUnresolved."""
         with self._lock:
+            if mode is not None:
+                return self._chat_role_locked(role, mode)
             failure = self._role_failure_locked(role)
             if failure is not None:
                 raise failure
@@ -733,7 +856,7 @@ class ProcessState:
             key = self._keys.get((ep.kind, ep.base_url))
             if ep.api_key_env:
                 self._env_names.add(ep.api_key_env)
-            snapshot = RequestSnapshot(endpoint=self._endpoint(s, key), model=s.model, kind=s.kind,
+            snapshot = RequestSnapshot(endpoint=self._resolved_endpoint(s) if self._file_key else self._endpoint(s, key), model=s.model, kind=s.kind,
                                        provider=s.provider if s.kind == "openrouter" else "",
                                        profile_name=profile, profile_modified=False,
                                        **{f: getattr(s, f) for f in ROUTING_FIELDS})
@@ -1164,7 +1287,7 @@ class ProcessState:
             if ep.api_key_env:
                 self._env_names.add(ep.api_key_env)
             active = self._active
-            return RequestSnapshot(endpoint=self._endpoint(s, key), model=s.model, kind=s.kind,
+            return RequestSnapshot(endpoint=self._resolved_endpoint(s) if self._file_key else self._endpoint(s, key), model=s.model, kind=s.kind,
                                    provider=s.provider if s.kind == "openrouter" else "",
                                    profile_name=active,
                                    profile_modified=active is not None and self._profiles.get(active) != s,
@@ -1178,7 +1301,10 @@ class ProcessState:
             self._check_server_locked(ep)
             if ep.api_key_env:
                 self._env_names.add(ep.api_key_env)
-            return self._keys.get((ep.kind, ep.base_url)) or self.servers[kind].api_key
+            return (self._keys.get((ep.kind, ep.base_url))
+                    or (os.environ.get(ep.api_key_env, "").strip() if ep.api_key_env else None)
+                    or (self._file_key if ep.api_key_env == "OPENROUTER_API_KEY" else None)
+                    or self.servers[kind].api_key)
 
     def check_server(self, kind: str, base_url: str) -> None:
         """Raise SettingsError when a recorded server differs from the configured one: the comparison `key_for`
@@ -1199,7 +1325,7 @@ class ProcessState:
         with self._lock:
             ep = self._endpoint(ModelSettings(kind=kind))
             key = self._keys.get((ep.kind, ep.base_url))
-            return self._endpoint(ModelSettings(kind=kind), key)
+            return self._resolved_endpoint(ModelSettings(kind=kind)) if self._file_key else self._endpoint(ModelSettings(kind=kind), key)
 
 
 __all__ = ["DefaultConflict", "NoSuchProfile", "NoSuchBlock", "NoSuchServer", "ProcessState", "ReadOnly", "RequestBudget",

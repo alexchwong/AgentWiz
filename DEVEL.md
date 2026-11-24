@@ -240,11 +240,56 @@ Keep check reports factual and task-specific; do not copy historical passes into
 validation claims. Nothing in this guide, `docs/`, `.clinerules`, `tests/`, `scripts/` or `.github/`
 ships in the release wheel.
 
+## 0.2.4 live release evidence
+
+Run from the candidate checkout after `scripts/dev_setup.sh`. Activate `.venv`, start LM
+Studio with the intended model loaded, and start managed webSpell. If webSpell has never
+been installed for this checkout, run `agentwiz-webspell install` first.
+
+```bash
+. .venv/bin/activate
+mkdir -p reports
+if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+  read -rs -p 'OpenRouter API key: ' OPENROUTER_API_KEY
+  printf '\n'
+fi
+export OPENROUTER_API_KEY
+export AGENTWIZ_LIVE_OPENROUTER_MODEL=qwen/qwen3.8-27b
+export AGENTWIZ_LIVE_LMSTUDIO_URL=http://127.0.0.1:1234/v1
+export AGENTWIZ_LIVE_LMSTUDIO_MODEL=qwen3.8-27b
+agentwiz-webspell status
+```
+
+Use the exact models intended for the candidate. If the managed MCP URL uses a custom port,
+export `AGENTWIZ_LIVE_MCP_URL` with its full loopback URL. Run the three main checks:
+
+```bash
+python scripts/agent_eval.py --route openrouter --cohorts tests/agent_eval/cohorts.json --full-inventory --report reports/chat-cloud.json
+python scripts/agent_eval.py --route lmstudio --cohorts tests/agent_eval/cohorts.json --full-inventory --report reports/chat-local.json
+python -m pytest -m live -s tests/test_live_webspell.py --junitxml=reports/webspell-live.xml
+```
+
+For the 13 shipped model starters, use the [previously accepted baseline](docs/decisions.md#prior-live-starter-block-evidence)
+where the retained report matches the candidate binding. For gaps, set the model and routing to
+the intended block binding and run the following command with the relevant keys. Repeat
+`--block` for several keys. Omit it only when evaluating all 13.
+
+```bash
+python scripts/library_eval.py --profile openrouter-eval --route openrouter --block summarise_document --trials 3 --set all --report reports/library-cloud.json
+```
+
+Keep both Chat reports, the webSpell test result, and any needed block reports with the
+candidate commit. Where a report has pending rubric marks, use the review steps below. A
+skipped check supplies no release evidence. The Local only `deidentify_text` starter is
+excluded from the catalogue and wheel and is not a release gate. See the
+[release gates](docs/releases.md#agentwiz-024-release-gates) for acceptance.
+
 ## Live checks and evaluation quick starts
 
-The live pytest checks are optional. The [release procedures](docs/releases.md) define owner sign-off
-for the library and Chat evaluations. Hosted offline CI exercises those runners against a scripted
-backend and deselects live pytest checks with `-m "not live"`.
+Use the live pytest checks for optional backend diagnostics. The [0.2.4 release gates](docs/releases.md#agentwiz-024-release-gates)
+define the candidate evaluations and the evidence required before publication. Hosted offline CI
+exercises the evaluation runners against a scripted backend and deselects live pytest checks with
+`-m "not live"`.
 Run the Bash blocks from the repository root after developer setup. The basic checks use subshells;
 the evaluation quickstarts keep settings in the terminal for subsequent commands. Where a command
 uses `${VAR:-default}`, an existing non-empty value takes precedence. Start the local server and load
@@ -270,7 +315,7 @@ task settings (`temperature`, `max_tokens`).
 
 ### LM Studio — Qwen3.8-27B
 
-- `AGENTWIZ_LIVE_LMSTUDIO_URL` — the server's address, e.g. `http://localhost:1234/v1`.
+- `AGENTWIZ_LIVE_LMSTUDIO_URL` — the server's address, e.g. `http://127.0.0.1:1234/v1`.
 - `AGENTWIZ_LIVE_LMSTUDIO_MODEL` — the model selector. Use the exact ID exposed by LM Studio's
   `/v1/models`, changing the example if your loaded Qwen3.8-27B has a different identifier.
 - `AGENTWIZ_LIVE_LMSTUDIO_KEY` — optional, when LM Studio's authentication is on. Uncomment the
@@ -279,7 +324,7 @@ task settings (`temperature`, `max_tokens`).
 ```bash
 (
   . .venv/bin/activate || exit
-  export AGENTWIZ_LIVE_LMSTUDIO_URL="${AGENTWIZ_LIVE_LMSTUDIO_URL:-http://localhost:1234/v1}"
+  export AGENTWIZ_LIVE_LMSTUDIO_URL="${AGENTWIZ_LIVE_LMSTUDIO_URL:-http://127.0.0.1:1234/v1}"
   export AGENTWIZ_LIVE_LMSTUDIO_MODEL="${AGENTWIZ_LIVE_LMSTUDIO_MODEL:-qwen3.8-27b}"
   export AGENTWIZ_LIVE_TIMEOUT="${AGENTWIZ_LIVE_TIMEOUT:-600}"
   # read -r -s -p 'LM Studio token: ' AGENTWIZ_LIVE_LMSTUDIO_KEY || exit; printf '\n'
@@ -297,10 +342,9 @@ python scripts/library_eval.py --route lmstudio --profile lmstudio-eval --trials
 
 ### OpenRouter — complete live-run quickstart
 
-**OpenRouter alone can clear the shipped 0.2.2 library and Chat live evaluations.** No LM Studio,
-local model, running AgentWiz UI or manually saved profile is required. Both scripts create and
-clean up their own disposable workspace. Run from the repository root in Bash on Linux, macOS
-or WSL2 after `scripts/dev_setup.sh`.
+These commands exercise the OpenRouter side of qualification. The 0.2.4 release also requires
+the LM Studio Chat evaluation. In disposable mode, both scripts manage their own workspace. Run
+from the repository root in Bash on Linux, macOS or WSL2 after `scripts/dev_setup.sh`.
 
 **1. Set up the current terminal once.** Run this in the same terminal used for the commands below;
 it deliberately does not use a subshell, so the exports remain available. The hidden prompt keeps
@@ -334,7 +378,7 @@ target variables with `--profiles-dir` or `--config`; those are explicit externa
 
 **2. Run full library qualification.** This runs three trials of all ten cases for every shipped
 model block. With the current catalog that is 390 scheduled executions, plus permitted repairs
-and provider probes. The Local only `deidentify_text` block remains deferred.
+and provider probes. The Local only `deidentify_text` block is not shipped and is not a release gate.
 
 ```bash
 python scripts/library_eval.py --route openrouter --profile openrouter-eval --trials 3 --set all --report reports/library-openrouter.json
@@ -462,7 +506,7 @@ so this guide shows no eval block for it.
 
 `test_live_mcp` requires `AGENTWIZ_LIVE_MCP_URL`, `AGENTWIZ_LIVE_MCP_TOOL` and
 `AGENTWIZ_LIVE_MCP_ARGUMENTS` (JSON text); `AGENTWIZ_LIVE_MCP_TOKEN` is optional. With
-web-retrieval-mcp running, an example is `http://127.0.0.1:8765/mcp`, `search_web`,
+managed webSpell running, an example is `http://127.0.0.1:8765/mcp`, `web_search_results`,
 `{"query":"model context protocol"}`.
 
 ### Stop and block-repair checks
@@ -500,11 +544,10 @@ live target variables. `OPENROUTER_API_KEY` and the read timeout remain usable. 
 routes require an explicit profile because the repository supplies no universal model ID.
 `--timeout` overrides `AGENTWIZ_LIVE_TIMEOUT` for either evaluator.
 
-For intentional attached-server diagnostics, `agent_eval.py --url 'http://127.0.0.1:PORT/?t=TOKEN'`
-retains the existing Chat configuration and requires `fast` to match for cohorts. It installs entries
-and creates evaluation data in that workspace: use a disposable one. Do not combine `--url` with
-profile/configuration options. See the architecture reference for configuration precedence.
+For installed 0.2.4 Chat, use `agent_eval.py --session-file PATH --route ROUTE` with a disposable
+workspace. Configure the intended Chat model and binding in the installed instance first. Attached
+evaluations install entries and create evaluation data there. The legacy `--url` option targets a
+single-surface server. See the architecture reference for configuration precedence.
 
-See [release operations](docs/releases.md#owner-sign-off-before-merging-to-main-starter-blocks-addendum-section-7)
-for acceptance and [modelSpell developer checks](https://github.com/alexchwong/modelSpell/blob/v0.4.0/DEVEL.md#tests)
+See the [0.2.4 release gates](docs/releases.md#agentwiz-024-release-gates) for acceptance and [modelSpell developer checks](https://github.com/alexchwong/modelSpell/blob/v0.4.0/DEVEL.md#tests)
 for provider API and tool round-trip diagnostics.

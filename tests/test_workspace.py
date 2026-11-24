@@ -56,7 +56,10 @@ class Launch:
     """`python -m agentwiz --no-browser …` in a scratch directory; the first stdout line is read."""
 
     def __init__(self, cwd, *args):
-        self.proc = subprocess.Popen([sys.executable, "-m", "agentwiz", "--no-browser", *args], cwd=cwd,
+        import uuid
+        self.session_file = cwd / ("session-" + uuid.uuid4().hex)
+        self.proc = subprocess.Popen([sys.executable, "-m", "agentwiz", "--no-browser", "--session-file",
+                                      str(self.session_file), *args], cwd=cwd,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.reader = None
 
@@ -81,12 +84,14 @@ class Launch:
         return lines[0].split(" ", 1)[1].strip()
 
     def state(self, address):
-        root, token = address.split("/?t=", 1)
+        info = json.loads(self.session_file.read_text())["workshop"]
+        root, token = info["url"], info["session"]
         req = urllib.request.Request(root + "/api/state", headers={"X-Session-Token": token})
         return json.loads(urllib.request.build_opener().open(req, timeout=10).read())
 
     def post(self, address, path, body):
-        root, token = address.split("/?t=", 1)
+        info = json.loads(self.session_file.read_text())["workshop"]
+        root, token = info["url"], info["session"]
         req = urllib.request.Request(root + path, data=json.dumps(body).encode(),
                                      headers={"X-Session-Token": token, "Content-Type": "application/json"},
                                      method="POST")

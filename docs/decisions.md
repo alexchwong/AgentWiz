@@ -454,3 +454,40 @@ had the following sizes. Shipped source lines count newline-terminated lines in 
 | --- | ---: | ---: | ---: | ---: |
 | Published 0.2.2 | 685,707 | 175 | 2,340,355 | 37,388 |
 | Reviewed 0.2.3 | 679,864 | 175 | 2,315,326 | 36,897 |
+
+## AgentWiz 0.2.4 specification v2
+
+The owner retained all 13 model starter blocks and removed mandatory qualification from runtime
+eligibility. AgentWorkshop evaluation remains optional. 0.2.4 uses the existing offline and live
+checks without a shipped pass index or a new publication manifest. The owner approved the
+original webSpell v0.2.0 pin, later superseded by v0.2.1. webSpell CI covers the service and
+AgentWiz verifies its integration boundary.
+
+
+### Prior live starter-block evidence
+
+The 18 November 0.2.2 close-out conversation accepted live qualification for all 13
+shipping model starters. The accepted scope was `summarise_document` (after the prompt fix
+and rubric refresh), `extract_action_items`, `extract_entities`, `classify_text`,
+`answer_from_source`, `rewrite_for_audience`, `proofread`, `translate_text`,
+`draft_reply`, `minutes_from_transcript`, `compare_documents_meaning`,
+`critique_against_checklist`, and `table_from_text`. Early partial and failed reports
+preceded that sign-off. The recorded Chat pass was separately on OpenRouter
+`openai/gpt-4.1-mini`, with eight cohort cases and five acceptance scenarios.
+
+The starter sources and fixtures are unchanged between the 0.2.3 release branch source
+(`46c6b97`) and the 0.2.4 audit candidate (`9aab1f2`). The close-out record does not
+establish the exact binding of every passing block trial or a pass for a different provider,
+model or configuration. Reuse a historical report where its revision, effective binding,
+settings and acceptance scope match. Rerun the remaining blocks only. No completed
+trusted-local `deidentify_text` verdict was found in the prior qualification discussions.
+
+### 24 November 2026 — 0.2.4 `deidentify_text` disposition
+
+The owner confirmed that the trusted-local `deidentify_text` qualification is not a 0.2.4
+release gate. The starter stays out of `agentwiz/library/index.json` and the release wheel.
+Its completed LM Studio reports are reference evidence only: neither a pass nor a failure
+blocks publication, permits inclusion, or requires a rerun. A later release may replace it
+with improved identifier redaction, so its qualification is not a standing requirement.
+This supersedes the 0.2.3 statement that the run belongs to 0.2.4 and the 0.2.2 close-out
+deferral pending qualification.
