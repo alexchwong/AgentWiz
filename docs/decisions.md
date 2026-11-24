@@ -481,3 +481,13 @@ establish the exact binding of every passing block trial or a pass for a differe
 model or configuration. Reuse a historical report where its revision, effective binding,
 settings and acceptance scope match. Rerun the remaining blocks only. No completed
 trusted-local `deidentify_text` verdict was found in the prior qualification discussions.
+
+### 24 November 2026 — 0.2.4 `deidentify_text` disposition
+
+The owner confirmed that the trusted-local `deidentify_text` qualification is not a 0.2.4
+release gate. The starter stays out of `agentwiz/library/index.json` and the release wheel.
+Its completed LM Studio reports are reference evidence only: neither a pass nor a failure
+blocks publication, permits inclusion, or requires a rerun. A later release may replace it
+with improved identifier redaction, so its qualification is not a standing requirement.
+This supersedes the 0.2.3 statement that the run belongs to 0.2.4 and the 0.2.2 close-out
+deferral pending qualification.

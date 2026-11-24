@@ -77,7 +77,7 @@ You choose a model backend (LM Studio, OpenRouter, or any OpenAI-compatible serv
 llama-server), type an optional system prompt and an input, and watch the reasoning and the answer
 stream back, followed by token usage, cost and a clear outcome.
 
-AgentWiz 0.2.3 includes:
+AgentWiz 0.2.4 includes:
 
 - **Agentic Chat:** a switch in Chat that lets the model ask AgentWiz to run one approved capability per turn.
   AgentWiz decides what may run, validates every request, asks before any call that may change state, and
@@ -182,12 +182,12 @@ files report `migration_required`. Recreate or deliberately rewrite them as exec
 and current Text/JSON contracts. Reusable contract references need exact revision pins. For model
 steps, update the reply instructions to match the [named JSON envelope](#named-outputs).
 
-If you have a local copy of the 0.2.3 wheel, install it with:
+If you have a local copy of the 0.2.4 wheel, install it with:
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install ./agentwiz-0.2.3-py3-none-any.whl
+python -m pip install ./agentwiz-0.2.4-py3-none-any.whl
 ```
 
 For a published wheel, you can pass the URL with the `#sha256=…` fragment from the release notes
@@ -1128,16 +1128,12 @@ named `docs` that advertises a `lookup` tool accepting `id` and `label`:
 }
 ```
 
-The tool step's `output` binds its one declared output. A script step has a different shape.
-This step fragment requires your own `scripts/clean.py` and output declarations matching its
-[standard output](#script-steps):
-
-```json
-{"id": "clean", "kind": "script", "file": "scripts/clean.py", "timeout_s": 60}
-```
+The tool step's `output` binds its one declared output. A host script step (`"kind": "script"`)
+is retired: a v3 block that uses one loads as unusable (`host_script_retired`). Use a Python step
+(block format 4) instead; see [Python steps](#python-steps).
 
 - **File references** are relative paths inside the block folder (`prompts/` for prompts, `scripts/`
-  and ending in `.py` for scripts). A symbolic link, a missing file or an oversized one (4 MiB; 1 MiB
+  and ending in `.py` for Python-step sources). A symbolic link, a missing file or an oversized one (4 MiB; 1 MiB
   for `block.json`) is a problem. Only referenced files matter; helper files beside them are ignored.
 - **Revisions.** Each block has a revision that changes when its files change, or when a revision it
   pins changes, disappears or becomes unusable (a newer appended revision does not count). A run, from

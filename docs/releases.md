@@ -38,9 +38,10 @@ python scripts/build_release.py --smoke --no-isolation --modelspell-wheel ../age
 
 `--modelspell-wheel` and `--scriptspell-wheel` each refuse a file whose name is not the pinned URL's file name
 or whose sha256 is not the pin; the smoke then installs the wheels with `pip install --no-index --no-deps` and runs
-`pip check`. Prepare `jsonschema>=4.26,<5` and its transitive wheels in the directory supplied
-with `--dependency-wheels`; they are installed with `--no-index --find-links`. Without that
-option the validator dependencies are installed from the package index. Without a local modelSpell
+`pip check`. Prepare `jsonschema>=4.26,<5`, `PyYAML>=6,<7`, `pydantic-monty==1.5.0` and
+`pypdfium2>=5.13,<6` with their transitive wheels in the directory supplied with
+`--dependency-wheels`; they are installed with `--no-index --find-links`. Without that option
+these runtime dependencies are installed from the package index. Without a local modelSpell
 wheel pip fetches the pinned URL. A warm pip cache
 can hide a missing prerequisite, so it is not preparation.
 
@@ -207,8 +208,13 @@ publication workflow runs offline checks, so record the live verdicts before mer
 | Offline | Hosted Ubuntu/macOS × Python 3.10/3.13 source and installed-wheel checks, PDF wheel matrix, and RC1–RC3 plus S1–S26 on the release candidate. |
 | Live Chat | The same fixed cohorts, five end-to-end scenarios, and full default inventory on OpenRouter and LM Studio. Record the effective Chat binding. |
 | Shipped Cloud catalogue | Reuse matching evidence from the [accepted 13-block baseline](decisions.md#prior-live-starter-block-evidence). Run only blocks without a matching passing report for the intended binding. |
-| Trusted-local `deidentify_text` | A completed LM Studio run of ten cases in three trials. A pass permits inclusion. A completed failure leaves it out. A missing or interrupted run leaves this gate open. |
 | Managed webSpell | Install the pinned v0.2.1 bundle. Check all three operations on public fixtures. Capture a live Cloud Chat tool turn, a refused operation, and zero webSpell availability and dispatch in Local only mode. |
+
+The Local only `deidentify_text` starter is not a 0.2.4 gate. It remains out of
+`agentwiz/library/index.json` and the wheel. Retained LM Studio reports are reference evidence
+only: neither a pass nor a failure blocks publication, permits inclusion, or requires a rerun.
+A later release may replace it with improved identifier redaction. The evaluator's
+`--deidentify-source` option remains available for optional source-checkout runs.
 
 Catalogue evaluation is release evidence. Chat and Workshop use the runtime eligibility rules
 recorded in the [0.2.4 specification decision](decisions.md#agentwiz-024-specification-v2).
@@ -221,7 +227,7 @@ installed wheel, launch it in a disposable workspace with
 `agentwiz --no-browser --session-file PATH` and add `--session-file PATH` to the evaluation
 command. Configure the binding and trust before running it. The evaluator changes that
 workspace, including its live Chat session. The library evaluator launches its own server
-from the candidate source and uses the deferred block's source because the wheel excludes it.
+from the candidate source.
 
 The full catalogue threshold is at least 29/30 contract executions and 24/30 correct outputs per
 block, with every critical case correct in all three trials and all hard invariants satisfied.

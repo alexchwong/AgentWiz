@@ -261,12 +261,11 @@ agentwiz-webspell status
 ```
 
 Use the exact models intended for the candidate. If the managed MCP URL uses a custom port,
-export `AGENTWIZ_LIVE_MCP_URL` with its full loopback URL. Run the four main checks:
+export `AGENTWIZ_LIVE_MCP_URL` with its full loopback URL. Run the three main checks:
 
 ```bash
 python scripts/agent_eval.py --route openrouter --cohorts tests/agent_eval/cohorts.json --full-inventory --report reports/chat-cloud.json
 python scripts/agent_eval.py --route lmstudio --cohorts tests/agent_eval/cohorts.json --full-inventory --report reports/chat-local.json
-python scripts/library_eval.py --profile lmstudio-eval --route lmstudio --block deidentify_text --deidentify-source agentwiz/library/deidentify_text --trials 3 --set all --report reports/deidentify-lmstudio.json
 python -m pytest -m live -s tests/test_live_webspell.py --junitxml=reports/webspell-live.xml
 ```
 
@@ -279,10 +278,10 @@ the intended block binding and run the following command with the relevant keys.
 python scripts/library_eval.py --profile openrouter-eval --route openrouter --block summarise_document --trials 3 --set all --report reports/library-cloud.json
 ```
 
-Keep both Chat reports, the webSpell test result, the completed de-identification verdict,
-and any needed block reports with the candidate commit. Where a report has pending rubric
-marks, use the review steps below. A skipped check supplies no release evidence. A completed
-failed de-identification verdict keeps that block out of the wheel. See the
+Keep both Chat reports, the webSpell test result, and any needed block reports with the
+candidate commit. Where a report has pending rubric marks, use the review steps below. A
+skipped check supplies no release evidence. The Local only `deidentify_text` starter is
+excluded from the catalogue and wheel and is not a release gate. See the
 [release gates](docs/releases.md#agentwiz-024-release-gates) for acceptance.
 
 ## Live checks and evaluation quick starts
@@ -344,9 +343,8 @@ python scripts/library_eval.py --route lmstudio --profile lmstudio-eval --trials
 ### OpenRouter — complete live-run quickstart
 
 These commands exercise the OpenRouter side of qualification. The 0.2.4 release also requires
-the LM Studio Chat evaluation and the trusted-local `deidentify_text` verdict. In disposable
-mode, both scripts manage their own workspace. Run from the repository root in Bash on Linux,
-macOS or WSL2 after `scripts/dev_setup.sh`.
+the LM Studio Chat evaluation. In disposable mode, both scripts manage their own workspace. Run
+from the repository root in Bash on Linux, macOS or WSL2 after `scripts/dev_setup.sh`.
 
 **1. Set up the current terminal once.** Run this in the same terminal used for the commands below;
 it deliberately does not use a subshell, so the exports remain available. The hidden prompt keeps
@@ -380,7 +378,7 @@ target variables with `--profiles-dir` or `--config`; those are explicit externa
 
 **2. Run full library qualification.** This runs three trials of all ten cases for every shipped
 model block. With the current catalog that is 390 scheduled executions, plus permitted repairs
-and provider probes. The Local only `deidentify_text` block remains deferred.
+and provider probes. The Local only `deidentify_text` block is not shipped and is not a release gate.
 
 ```bash
 python scripts/library_eval.py --route openrouter --profile openrouter-eval --trials 3 --set all --report reports/library-openrouter.json

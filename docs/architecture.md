@@ -72,6 +72,7 @@ Paths in this table are relative to the repository root.
 | `agentwiz/agent_tools.py` | yes | **0.2.2.** Built-in tool definitions; the utility registry (`REGISTRY` of `Utility(name, schema, result, description, limits, function)`, from which `UTILITY_TOOLS`, `SCHEMAS`, `DESCRIPTIONS` and `blocks.BUILTIN_TOOLS` derive) with fourteen pure utilities and `run_utility(name, arguments, *, result_limit, check)`; the eight document tool definitions and their effects. No HTTP. |
 | `agentwiz/agent_documents.py` | yes | **0.2.2.** Agentic Chat conversations: staged documents and drafts (`dir_fd`, `O_NOFOLLOW`/`O_EXCL`), labels, memory. No HTTP. |
 | `agentwiz/chat_history.py` | yes | **0.2.4.** Cloud transcript checkpoints, bounded serialization and credential redaction. No HTTP. |
+| `agentwiz/chat_tasks.py` | yes | **0.2.4.** Whitelisted per-turn Chat answer instructions; `general` adds none. No HTTP. |
 | `agentwiz/agent_capabilities.py` | yes | **0.2.2.** MCP tool classifications and the capability inventory with exclusions. No HTTP. |
 | `agentwiz/agent_loop.py` | yes | **0.2.2.** The agent loop: capture, plan, preflight, model turns through `complete_with_tools`, validation, approval binding, dispatch, labels, records; `Manager`. No HTTP. |
 | `agentwiz/prompts/agent_system.md` | yes | Packaged Agentic Chat system prompt (`agent_system`, version 2). |
@@ -85,9 +86,16 @@ Paths in this table are relative to the repository root.
 | `agentwiz/workshop_editor.py`, `agentwiz/workshop_assist.py` | yes | Draft editing, starters and reviewed assistance. |
 | `agentwiz/workshop_license.txt` | yes | License resource included with generated Workshop starter assets. |
 | `agentwiz/server_config.py`, `config/model-servers.ini.template` | yes | Loads server configuration. The template ships as `agentwiz/model-servers.ini.template`. |
+| `agentwiz/webspell.py` | yes | **0.2.4.** Pinned webSpell identity (version and archive SHA-256), the three tool schemas, URL helpers and compatibility checks. No HTTP. |
+| `agentwiz/webspell_service.py` | yes | **0.2.4.** Installs, verifies and operates the separate webSpell Docker Compose service, registers its loopback MCP entry and exposes the `agentwiz-webspell` CLI. No HTTP server. |
 | `agentwiz/ui/contracts.js` | yes | Shared contract editor and Workshop Contracts interface. |
 | `agentwiz/ui/server.py` | yes | The HTTP server; the only module that knows HTTP. `Handler.write_event` is the one writer of stream events. |
 | `agentwiz/ui/index.html` | yes | Workshop/Workbench/History, shared Settings dialogs; one framework-free file with no build step. |
+| `agentwiz/ui/surfaces.py` | yes | **0.2.4.** The two loopback authorities, single-use bootstrap and scoped session grants, and the per-surface method/path allowlists. |
+| `agentwiz/ui/chat.html`, `agentwiz/ui/chat.css`, `agentwiz/ui/chat.js` | yes | **0.2.4.** The Chat surface, its styles and controller; framework-free with no build step. |
+| `agentwiz/ui/chat-markdown.js` | yes | **0.2.4.** Markdown rendering with DOM nodes; model output is never assigned as HTML. |
+| `agentwiz/ui/session.js` | yes | **0.2.4.** Exchanges the one-time URL bootstrap for an origin-scoped session value. |
+| `agentwiz/ui/workflows.js` | yes | The Workflows browser asset used by the Workshop page. |
 | `pyproject.toml`, `README.md`, `LICENSE` | metadata | Packaging, wheel description, MIT license. |
 | `tests/` | no | Offline suite (`test_ui.py`, `test_profiles.py`, `test_workspace.py`, `test_jsonio.py`, `test_model_call.py`, `test_task_settings.py`, `test_attachments.py`, `test_mcp_client.py`, `test_mcp_ops.py`, `test_tool_forms.py`, `test_stub_mcp_server.py`; 0.1.3: `test_checks.py`, `test_contracts.py`, `test_runs.py`, `test_model_step.py`, `test_attempts.py`, `test_history.py`, `test_page.py`, `test_live_judgement.py`; 0.1.4: `test_roles.py`, `test_templates.py`, `test_blocks.py`, `test_block_routes.py`, `test_block_tool.py`, `test_runner.py`, `test_shutdown.py`, `test_signals.py`, `test_tutorial.py`; 0.2.0: `test_workspace_admin.py`, `test_workspace_lifecycle.py`, `test_named_outputs.py`, `test_contract_overhaul.py`, `test_workshop_descriptions.py`; 0.2.2: `test_agent.py` with `agent_helpers.py`), opt-in live checks (`test_live.py`, with the pure judgement function `live_stop.py`), and the test-only TLS certificate (`tests/fixtures/tls/`). |
 | `docs/attachment_interface.md` | no | The attachment interface (companion document, version 3, draft). |
@@ -1780,3 +1788,29 @@ Gate review remain Workshop operations.
 The role store can write format 4 with a `mode_bindings` table. Standalone Workshop and workflows
 continue reading named legacy assignments, with their definition location constraint. Chat resolves
 Cloud and Local slots independently. A 0.2.3 executable treats a written format-4 file as newer/read-only.
+
+### Managed webSpell service (0.2.4)
+
+The service is a separately installed Docker Compose stack. It is never embedded in the AgentWiz
+process and never holds an AgentWiz workspace lock. `agentwiz/webspell.py` pins v0.2.1 and the
+release archive's SHA-256, defines the three tool schemas used for the compatibility check, and
+provides URL helpers. `agentwiz/webspell_service.py` downloads and verifies the archive, rejects
+traversal and symlink entries before extraction, and publishes the install directory only after
+validation. It runs webSpell's own `setup.sh` for `install` and Docker Compose directly for
+`start`/`restart`/`stop`/`status`/`logs`, with the project name `agentwiz-webspell`.
+
+The shared MCP servers file is the single source of truth for the service URL. On launch and on
+lifecycle commands, `ensure_server_entry` adds a `webspell` entry once with
+`http://127.0.0.1:8765/mcp`; an existing URL is validated but never overwritten, a token
+environment setting is refused, and a damaged file is reported rather than replaced. The URL must
+be literal IPv4 loopback `127.0.0.1`, port 1024–65535 and path `/mcp`, with no credentials, query
+or fragment. The generated `.env` pins `MCP_BIND_ADDRESS=127.0.0.1` and `MCP_SERVER_NAME=webspell`,
+replaces the release secret placeholder when the file is created, and is rewritten atomically with
+mode 0600.
+
+After start or restart, the service verifies the MCP endpoint by discovery and the same identity
+and three-schema compatibility check used by Chat; an unexpected identity fails immediately and
+startup delays are retried for a bounded period. Chat offers webSpell tools only in Cloud mode when
+the Chat switch is on and the discovered server is compatible. Local only runs neither discover
+nor dispatch webSpell. Installation and lifecycle errors do not expose secrets, and rerunning the
+installer preserves the `.env` secret and unrelated MCP entries.

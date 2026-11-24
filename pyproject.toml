@@ -35,7 +35,7 @@ path = "agentwiz/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agentwiz"]
-exclude = ["/agentwiz/library/deidentify_text"] # deferred until trusted local live qualification
+exclude = ["/agentwiz/library/deidentify_text"] # excluded from 0.2.4; may be replaced by improved identifier redaction
 
 [tool.hatch.build.targets.wheel.force-include]
 "config/model-servers.ini.template" = "agentwiz/model-servers.ini.template"
