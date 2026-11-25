@@ -1825,3 +1825,20 @@ startup delays are retried for a bounded period. Chat offers webSpell tools only
 the Chat switch is on and the discovered server is compatible. Local only runs neither discover
 nor dispatch webSpell. Installation and lifecycle errors do not expose secrets, and rerunning the
 installer preserves the `.env` secret and unrelated MCP entries.
+
+## 0.2.5 reviewed components and scripted execution
+
+`agentwiz/components.py` compiles the portable v1 format into immutable native workflow and block
+captures. Component revisions cover the normalized declaration. Existing pre-release captures keep
+their stored identities. The install review also binds current destination and private binding
+identities. An unresolved exact dependency can be stored as a setup-required source draft. It has
+no runnable bundle until the owner reviews a complete import. Each capture publishes as one atomic
+workspace record. Shared Pool promotion reviews the full Public closure and uses a separate storage
+and writer lock. Reuse is an ordinary reviewed import by exact Pool pin.
+
+`skill_drafts.py` stores inert private skill text. Its separate proposal path takes explicitly
+supplied eligible text, binds the OpenRouter review to the exact request and destination, and
+compiles a private draft with the same compiler. `scripted_worker.py` holds one Workshop
+reservation and captures exact child workflows. Cloud dispatch requires parent and agent authority.
+The worker refuses Gates and unknown or external tool effects and releases its scoped artifact
+handles when it closes.

@@ -2225,7 +2225,19 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     });
     function refreshRows(){
       replace(rows,...data[scope].filter(row=>kind==="all"||row.kind===kind).map(row=>
-        h("article",{},h("strong",{text:row.title}),h("p",{text:[row.kind,row.category,row.visibility,row.id].join(" · ")}),
+        h("article",{},h("strong",{text:row.title}),h("p",{text:[row.kind,row.category,row.visibility,row.id,...(row.setup_required?["Setup required"]:[])].join(" · ")}),
+          scope==="pool"?button("Review reuse",guarded(async()=>{
+            const {kind,id,revision}=row, request={pool:{kind,id,revision}};
+            const plan=await wsApi("component-plan",request);
+            if(await dialog("Review Shared Pool import",h("pre",{text:JSON.stringify(plan.descriptor,null,2)}),
+              ["Install","Cancel"])!=="Install")return;
+            await wsApi("component-install",{request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations});
+            Object.assign(data,await wsApi("components"));
+            scope="workspace";
+            scopePicker.querySelector("select").value=scope;
+            messages.textContent="Component installed.";
+            refreshRows();
+          }),"component-reuse"):null,
           scope==="workspace"?row.workflow_paths.map(workflow=>button("Open "+workflow.title,async()=>{
             choice={capture:row.capture,path:workflow.path};box.closest("dialog")?.querySelector("div.row:last-child button")?.click();
           },"component-open")):null,
@@ -2242,7 +2254,7 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
             blockCopy={target,revision:saved.durable_id};
             box.closest("dialog")?.querySelector("div.row:last-child button")?.click();
           }),"component-copy"):null,
-          scope==="workspace"?["export",...(row.visibility==="public"?["promote"]:[])].map(action=>
+          scope==="workspace"&&!row.setup_required?["export",...(row.visibility==="public"?["promote"]:[])].map(action=>
             button(action==="export"?"Export":"Add to Shared Pool",guarded(async()=>{
               const request={capture:row.capture,action}, plan=await wsApi("component-share",request);
               if(await dialog(action==="export"?"Review export":"Review Shared Pool entry",
@@ -2273,19 +2285,27 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
       const result=await wsApi("skill-proposal",{request,ticket,expected_plan:plan.expected_plan,
         confirmations:plan.required_confirmations});
       if(!result.package){messages.textContent="Agent proposal ended: "+result.outcome;return;}
-      const install={source:JSON.stringify(result.package)};
-      const resolved=await wsApi("component-plan",install);
-      if(await dialog("Review private agent draft",h("div",{},h("pre",{text:JSON.stringify(result.package,null,2)}),
-        h("pre",{text:JSON.stringify(resolved.descriptor,null,2)})),["Install","Cancel"])!=="Install")return;
+      let source=JSON.stringify(result.package,null,2), resolved;
+      const draft=field("Agent package",source,value=>{source=value;},true);
+      const issues=h("p",{role:"status"});
+      if(await dialog("Edit private agent draft",h("div",{},draft,issues),["Review","Cancel"],async choice=>{
+        if(choice!=="Review")return true;
+        try{resolved=await wsApi("component-plan",{source});return true;}
+        catch(e){issues.textContent=e.message;return false;}
+      })!=="Review")return;
+      const install={source};
+      if(await dialog("Review private agent install",h("pre",{text:JSON.stringify(resolved.descriptor,null,2)}),
+        ["Install","Cancel"])!=="Install")return;
       await wsApi("component-install",{request:install,expected_plan:resolved.expected_plan,
         confirmations:resolved.required_confirmations});
       Object.assign(data,await wsApi("components"));
       messages.textContent="Private agent installed.";
       refreshRows();
     }
+    const scopePicker=select("Library",[["workspace","My Workspace"],["pool","Shared Pool"]],scope,value=>{scope=value;refreshRows();},"component-scope");
     box.append(button("Import",()=>upload.click(),"component-import"),upload,
       button("Draft agent from skill",guarded(proposal),"component-propose"),
-      select("Library",[["workspace","My Workspace"],["pool","Shared Pool"]],scope,value=>{scope=value;refreshRows();}),
+      scopePicker,
       select("Component type",[["all","All"],["team","Teams"],["agent","Agents"],["workflow","Workflows"],["block","Blocks"]],
         kind,value=>{kind=value;refreshRows();}),messages,rows);
     refreshRows();

@@ -5,6 +5,18 @@ or an instruction to resume an old release. `../DEVEL.md` owns agent policy; `ar
 describes behavior contracts and `releases.md` describes current release operations.
 Historical choices may have been superseded; do not restore retired behavior from this record.
 
+## 25 November 2026 — 0.2.5 closure scope
+
+The owner-approved closure spec supersedes Plan v17.7 D1/D12 and its private-summary release
+qualification for 0.2.5. Closure now requires the portable component, private library and
+explicit promotion, synthetic skill proposal, and scripted-worker foundations. The original
+qualification goal remains part of the historical record. Both retained private-summary
+templates remain **Unqualified**, including in the wheel. End-to-end privacy attribution and
+the supported operating range remain unverified.
+
+Under the closure specification and companion Plan v17.8, Need-to-Know is an evidence-gated
+0.2.6 feasibility experiment. The agent-to-Gate adapter remains in 0.3.1.
+
 ## Specification lineage
 
 The 0.2.2 build followed *AgentWiz 0.2.2 — Technical Specification* (v4) and *AgentWiz 0.2.2 — Starter

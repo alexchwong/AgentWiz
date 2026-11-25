@@ -11,12 +11,13 @@ import re
 from . import blocks, jsonio, private_templates, private_transform, workshop_assets as assets
 from .workflow_definition import digest, names, problem, record
 from .workflow_runner import Graph
+from .workshop import WorkshopError
 from .workspace import write_atomic_bytes
 
 KINDS = ('team', 'agent', 'workflow', 'block')
 CATEGORIES = ('research', 'extraction', 'analysis', 'writing', 'verification', 'privacy', 'general')
 ID = re.compile(r'[a-z0-9][a-z0-9_-]{0,63}/[a-z0-9][a-z0-9_-]{0,63}\Z')
-REVISION = re.compile('[0-9a-f]{64}\Z')
+REVISION = re.compile(r'[0-9a-f]{64}\Z')
 LIMIT = 2 << 20
 CAPTURE_LIMIT = 32 << 20
 
@@ -65,7 +66,7 @@ def declaration(value, kind=None):
     return value
 
 
-def revision(value):
+def legacy_revision(value):
     def normalize(part):
         if isinstance(part, list):
             return [normalize(item) for item in part]
@@ -83,6 +84,38 @@ def revision(value):
     return digest({'kind': value['kind'], 'id': value['id'], 'definition': normalize(definition)})
 
 
+def normalized_declaration(value):
+    declaration = dict(value)
+    definition = dict(value['definition'])
+    if value['kind'] == 'workflow':
+        definition.setdefault('layout', {})
+        definition.setdefault('examples', [])
+        aliases = names(definition.get('blocks'), 0, 64, 'blocks')
+        definition['blocks'] = {key: normalized_child(child) for key, child in aliases.items()}
+    elif value['kind'] == 'block':
+        definition.setdefault('files', {})
+    else:
+        key = 'workflows' if value['kind'] == 'agent' else 'agents'
+        children = definition.get(key)
+        require(isinstance(children, list), key, 'expected a list of child expressions')
+        definition[key] = [normalized_child(child) for child in children]
+    declaration['definition'] = definition
+    declaration.setdefault('tags', [])
+    declaration.setdefault('description', '')
+    return declaration
+
+
+def revision(value):
+    return digest(normalized_declaration(value))
+
+
+def normalized_child(child):
+    # Normalize nested declaration defaults without losing the reviewed visibility and display metadata.
+    if isinstance(child, dict) and set(child) == {'inline'}:
+        return {'inline': normalized_declaration(declaration(child['inline']))}
+    return child
+
+
 def identity(value):
     return (value['kind'], value['id'], revision(value))
 
@@ -92,7 +125,7 @@ class Compiler:
         record(package, ('format', 'format_version', 'root'), ('dependencies',), 'package')
         require(package['format'] == 'agentwiz.component' and type(package['format_version']) is int
                 and package['format_version'] == 1, 'format', 'expected agentwiz.component version 1')
-        self.dependencies, self.used = {}, set()
+        self.dependencies, self.dependency_aliases, self.used = {}, {}, set()
         self.pool = pool
         dependencies = package.get('dependencies', [])
         require(isinstance(dependencies, list) and len(dependencies) <= 88, 'dependencies', 'too many definitions')
@@ -102,7 +135,13 @@ class Compiler:
             require(item['visibility'] == 'public' and ident not in self.dependencies,
                     'dependencies', 'expected unique public definitions')
             self.dependencies[ident] = item
+            old = (*ident[:2], legacy_revision(item))
+            if old in self.dependency_aliases:
+                self.dependency_aliases[old] = None
+            else:
+                self.dependency_aliases[old] = item
         self.counts = {k: set() for k in KINDS}
+        self.snapshot_bytes = 0
         self.root = declaration(package['root'])
 
     def resolve(self, expr, kind):
@@ -113,7 +152,7 @@ class Compiler:
         require(ref['kind'] == kind and isinstance(ref['id'], str) and ID.fullmatch(ref['id'])
                 and isinstance(ref['revision'], str) and REVISION.fullmatch(ref['revision']), 'ref', 'invalid exact reference')
         ident = (kind, ref['id'], ref['revision'])
-        item = self.dependencies.get(ident) or self.pool.get(ident)
+        item = self.dependencies.get(ident) or self.dependency_aliases.get(ident) or self.pool.get(ident)
         if item is None and kind == 'block' and ref['id'].startswith('agentwiz/'):
             from . import library_install
             key = ref['id'].split('/')[1]
@@ -123,11 +162,11 @@ class Compiler:
                 if entry.definition.get('format_version') == 4 and step.get('kind') in ('model', 'tool', 'transform'):
                     builtin = {'kind': 'block', 'id': ref['id'], 'title': key, 'visibility': 'public',
                                'category': 'general', 'definition': {'block': entry.definition, 'files': entry.files}}
-                    if revision(builtin) == ref['revision']:
+                    if ref['revision'] in (revision(builtin), legacy_revision(builtin)):
                         item = builtin
         if item is None:
             problem('missing_dependency', ref['id'], 'supply the exact referenced definition or review a replacement')
-        self.used.add(ident)
+        self.used.add(identity(item))
         return item
 
     def compile(self, value):
@@ -170,6 +209,7 @@ class Compiler:
 
     def workflow(self, definition):
         record(definition, ('workflow', 'blocks'), ('examples', 'layout'), 'workflow')
+        require(isinstance(definition['workflow'], dict), 'workflow', 'expected an object')
         workflow = dict(definition['workflow'])
         aliases = names(definition['blocks'], 0, 64, 'blocks')
         nodes, snapshots, children, used = {}, {}, [], set()
@@ -186,7 +226,10 @@ class Compiler:
                 children.append(child)
             used.add(alias)
         require(used == set(aliases), 'blocks', 'unreferenced block alias')
-        examples = [{**row, 'verified': False, 'origin': 'user'} for row in definition.get('examples', [])]
+        raw_examples = definition.get('examples', [])
+        require(isinstance(raw_examples, list) and len(raw_examples) <= 20
+                and all(isinstance(row, dict) for row in raw_examples), 'examples', 'expected up to 20 example objects')
+        examples = [{**row, 'verified': False, 'origin': 'user'} for row in raw_examples]
         bundle = {'format_version': 1, 'definition': {**workflow, 'nodes': nodes},
                   'snapshots': snapshots, 'layout': definition.get('layout', {}), 'examples': examples}
         with ExitStack() as stack:
@@ -210,7 +253,10 @@ class Compiler:
         files = definition.get('files', {})
         require(isinstance(files, dict) and all(isinstance(text, str) for text in files.values()),
                 'files', 'bundled prompt assets must be literal text')
-        return private_templates.snapshot(block, assets.decode_files(files))
+        snapshot = private_templates.snapshot(block, assets.decode_files(files))
+        self.snapshot_bytes += len(jsonio.encode_file_exact(snapshot))
+        require(self.snapshot_bytes <= CAPTURE_LIMIT, 'blocks', 'expanded snapshots exceed 32 MiB')
+        return snapshot
 
     def run(self):
         compiled = self.compile(self.root)
@@ -235,9 +281,13 @@ def tree(capture):
         yield from tree(child)
 
 
-def shareable(capture):
+def shareable(capture, *, public=False):
     for row in tree(capture):
-        definition = row['component']['definition']
+        component = row['component']
+        definition = component['definition']
+        if public:
+            require(component['visibility'] == 'public', component['id'],
+                    'every component in a Shared Pool entry must be Public')
         if definition.get('block', {}).get('context_local_only') or row.get('protected'):
             problem('protected_component', row['component']['id'], 'the definition is protected')
 
@@ -266,25 +316,34 @@ class Components:
         return [jsonio.decode_file_exact(entry.read_bytes()) for entry in sorted(folder.glob('*.json'))[:512]
                 if not entry.is_symlink() and entry.is_file() and entry.stat().st_size <= CAPTURE_LIMIT]
 
+    def pool_records(self):
+        # Older development builds could publish a Public root with Private children.
+        return [row for row in self.records(self.pool)
+                if all(part['component']['visibility'] == 'public' for part in tree(row))]
+
     def pool_index(self):
         result = {}
-        for row in self.records(self.pool):
+        for row in self.pool_records():
             value = row['component']
             if value['visibility'] == 'public':
-                result[identity(value)] = value
+                result[(value['kind'], value['id'], row['revision'])] = value
             for dependency in row.get('dependencies', []):
-                result[identity(dependency)] = dependency
+                pin = identity(dependency)
+                result[pin] = dependency
+                if row['revision'] == legacy_revision(value):
+                    result.setdefault((*pin[:2], legacy_revision(dependency)), dependency)
         return result
 
     def listing(self):
         def view(row):
             value = row['component']
             return {k: value[k] for k in ('kind', 'id', 'title', 'category', 'visibility')} | {
-                'revision': row['revision'], 'capture': row.get('capture'), 'workflow_paths': [
+                'revision': row['revision'], 'capture': row.get('capture'),
+                'setup_required': any(part.get('setup') for part in tree(row)), 'workflow_paths': [
                     {'path': path, 'title': item['component']['title']}
                     for path, item in self.workflows(row) if 'bundle' in item]}
         return {'workspace': [view(row) for kind in KINDS for row in self.records(self.root / kind)],
-                'pool': [view(row) for row in self.records(self.pool)]}
+                'pool': [view(row) for row in self.pool_records()]}
 
     def workflows(self, row, path=()):
         yield list(path), row
@@ -303,18 +362,40 @@ class Components:
         problem('missing', 'capture', 'installation is unavailable', 404)
 
     def plan(self, request):
-        record(request, ('source',), (), 'import')
-        package = decode(request['source'])
+        if 'pool' in request:
+            record(request, ('pool',), (), 'import')
+            pin = record(request['pool'], ('kind', 'id', 'revision'), (), 'pool')
+            ident = (pin['kind'], pin['id'], pin['revision'])
+            for entry in self.pool_records():
+                if (entry['component']['kind'], entry['component']['id'], entry['revision']) == ident:
+                    package = {'format': 'agentwiz.component', 'format_version': 1,
+                               'root': entry['component'], 'dependencies': entry.get('dependencies', [])}
+                    break
+            else:
+                problem('missing_dependency', 'pool', 'the exact Shared Pool entry is unavailable', 404)
+        else:
+            record(request, ('source',), (), 'import')
+            package = decode(request['source'])
         self.workshop.reject_credentials(package)
         compiler = Compiler(package, self.pool_index())
-        row = compiler.run()
+        try:
+            row = compiler.run()
+        except WorkshopError as exc:
+            if exc.code != 'missing_dependency':
+                raise
+            # Store only source when compilation cannot resolve a pinned dependency.
+            # A fresh import review is required after that exact dependency becomes available.
+            row = {'component': compiler.root, 'revision': revision(compiler.root),
+                   'setup': exc.issues, 'pending_package': package}
+        bindings = []
         for _, item in self.workflows(row):
             if 'bundle' not in item:
                 continue
             bundle = item['bundle']
             with ExitStack() as stack:
                 graph = Graph(bundle, bundle['definition']['name'], stack)
-                destinations, issues, _ = graph.destinations(self.workshop.state, self.workshop)
+                destinations, issues, effective = graph.destinations(self.workshop.state, self.workshop)
+                bindings.append(effective)
                 item['setup'] = issues
                 item['destinations'] = destinations
                 self.workshop.workflows.update_examples(graph, bundle['examples'], [])
@@ -324,8 +405,19 @@ class Components:
                 'capture': row['capture'], 'active': False,
                 'components': [{'id': part['component']['id'], 'revision': part['revision'],
                                 'setup': part.get('setup', []), 'destinations': part.get('destinations', {})}
+                               | ({'step': self.step_view(part['component'])} if 'snapshot' in part else {})
                                for part in tree(row)]}
-        return self.workshop.workflows.plan_view('component_install', request, view, 'component_install'), row
+        return self.workshop.workflows.plan_view('component_install', request, view, 'component_install', bindings), row
+
+    @staticmethod
+    def step_view(component):
+        block = component['definition']['block']
+        step = block['steps'][0]
+        return {'kind': step['kind'], 'role': step.get('role'),
+                'operation': step.get('builtin', step.get('operation')),
+                'effects': 'model_request' if step['kind'] == 'model' else 'local_computation',
+                'ports': {side: {name: port.get('local_only', False) for name, port in block[side].items()}
+                          for side in ('inputs', 'outputs')}}
 
     def install(self, body):
         with self.workshop.state.register_writer('component import'):
@@ -341,16 +433,21 @@ class Components:
                 file = folder / name
                 if file.is_symlink():
                     problem('unsafe_entry', 'components', 'a symbolic link blocks publication')
-                if not file.exists():
-                    write_atomic_bytes(folder, name, jsonio.encode_file_exact(row))
-                    assets.sync_directory(folder)
+                data = jsonio.encode_file_exact(row)
+                if file.exists():
+                    if not file.is_file() or file.stat().st_size != len(data) or file.read_bytes() != data:
+                        problem('component_collision', row['component']['id'], 'installation identity is already in use')
+                else:
+                    write_atomic_bytes(folder, name, data)
+                assets.sync_directory(folder)
         return plan['descriptor']
 
     def fork_block(self, body):
         record(body, ('request',), (), 'fork')
         request = record(body['request'], ('capture', 'target'), (), 'request')
         row = self.load(request['capture'])
-        require(row['component']['kind'] == 'block', 'capture', 'choose an installed standalone block')
+        require('snapshot' in row and row['component']['kind'] == 'block',
+                'capture', 'choose an installed standalone block')
         definition = row['component']['definition']
         target = assets.key_name(request['target'])
         require(self.workshop.assets.identity(target) is None, 'target', 'choose an unused block name')
@@ -368,6 +465,8 @@ class Components:
         require(isinstance(path, list) and len(path) <= 3 and all(type(i) is int and i >= 0 for i in path),
                 'path', 'invalid child path')
         row = self.load(ident)
+        if 'pending_package' in row:
+            problem('setup_required', 'capture', 'provide the missing exact dependency and review the package again', 409)
         for i in path:
             children = row.get('children', [])
             if i >= len(children):
@@ -381,11 +480,17 @@ class Components:
         record(body, ('capture', 'action'), ('expected_plan', 'confirmations', 'include_examples'), 'share')
         require(body['action'] in ('promote', 'export'), 'action', 'choose promotion or export')
         row = self.load(body['capture'])
-        shareable(row)
+        if 'pending_package' in row:
+            problem('setup_required', 'capture', 'resolve exact dependencies before sharing', 409)
+        shareable(row, public=body['action'] == 'promote')
         value = row['component']
-        if body['action'] == 'promote':
-            require(value['visibility'] == 'public', 'visibility', 'only public entries can enter the pool')
-        all_parts = {identity(part['component']): part['component'] for part in tree(row)}
+        all_parts, legacy_parts = {}, {}
+        for part in tree(row):
+            component = part['component']
+            key = (component['kind'], component['id'])
+            all_parts[(*key, part['revision'])] = component
+            old = (*key, legacy_revision(component))
+            legacy_parts[old] = component if legacy_parts.get(old, component) == component else None
         dependencies, omissions = {}, []
         selected = body.get('include_examples', [])
         require(isinstance(selected, list) and len(selected) <= 20
@@ -396,8 +501,6 @@ class Components:
         def portable(original):
             item = copy.deepcopy(original)
             definition = item['definition']
-            if item['id'].startswith('agentwiz/'):
-                item['id'] = 'agentwiz-bundled/' + item['id'].split('/')[1]
             if item['kind'] == 'workflow':
                 kept = []
                 for example in definition.get('examples', []):
@@ -419,10 +522,14 @@ class Components:
                         expr['inline'] = portable(expr['inline'])
                         continue
                     ref = expr['ref']
+                    if ref['id'].startswith('agentwiz/'):
+                        # Preserve the exact built-in pin. The receiver verifies it against its own registry.
+                        continue
                     ident = (ref['kind'], ref['id'], ref['revision'])
-                    if ident not in all_parts:
+                    dependency = all_parts.get(ident) or legacy_parts.get(ident)
+                    if dependency is None:
                         problem('missing_dependency', ref['id'], 'a pinned dependency is unavailable')
-                    compatible = portable(all_parts[ident])
+                    compatible = portable(dependency)
                     dependencies[identity(compatible)] = compatible
                     ref.update(id=compatible['id'], revision=revision(compatible))
             return item

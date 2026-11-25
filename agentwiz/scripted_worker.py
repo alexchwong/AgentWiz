@@ -21,14 +21,17 @@ class Worker:
 
     def __init__(self, workshop, capture, agent_index, *, seconds=120, model_attempts=8, cloud=False):
         root = workshop.components.load(capture)
-        if root['component']['kind'] != 'team' or type(agent_index) is not int or not 0 <= agent_index < len(root['children']):
+        if root['component']['kind'] != 'team' or type(agent_index) is not int or not 0 <= agent_index < len(root.get('children', [])):
             problem('invalid_worker', 'agent', 'choose an agent in the exact installed team')
         if type(seconds) is not int or not 1 <= seconds <= 1800 or type(model_attempts) is not int or not 0 <= model_attempts <= 64:
             problem('invalid_worker', 'budget', 'invalid test worker budget')
         self.workshop, self.capture, self.agent_index = workshop, capture, agent_index
         self.team_revision = root['revision']
         self.agent = root['children'][agent_index]
-        self.cloud = cloud or self.agent['component']['definition']['mode'] == 'cloud'
+        if type(cloud) is not bool:
+            problem('invalid_worker', 'cloud', 'choose an explicit parent mode')
+        self.cloud_parent = cloud
+        self.cloud = cloud and self.agent['component']['definition']['mode'] == 'cloud'
         self.seconds, self.limit = seconds, model_attempts
         self.job = Job(workshop.state)
         self.artifacts = {}
@@ -86,7 +89,7 @@ class Worker:
         with ExitStack() as stack:
             graph, current = self.workshop.workflows.prepare_run(self.request(workflow_index, inputs), stack)
             self.workshop.check_plan(current, review)
-            blocking = [row for row in current['descriptor']['issues'] if row['severity'] == 'error']
+            blocking = [row for row in current['descriptor']['issues'] if row.get('severity') != 'warning']
             if blocking:
                 raise WorkshopError('preflight_refused', 409, blocking)
             if graph.gates or current['required_confirmations']:
@@ -94,9 +97,12 @@ class Worker:
             graph.select_example(graph.examples[0])
             graph.runtime = graph.example_runtime[0]
             graph.destination_views = graph.example_destinations[0]
+            if any(item.get('kind') == 'mcp' or item.get('effects') == 'unknown'
+                   for item in graph.destination_views.values()):
+                problem('scope_refused', 'workflow', 'the worker cannot authorise unknown or external tool effects')
             if not self.cloud and any(not item['protected'] for item in graph.destination_views.values()):
-                problem('scope_refused', 'workflow', 'a Local only parent cannot authorise Cloud or tool effects')
-            if self.cloud and any(binding[0] in graph.restricted for binding in graph.final.values()):
+                problem('scope_refused', 'workflow', 'Cloud dispatch requires both parent and agent authority')
+            if self.cloud_parent and any(binding[0] in graph.restricted for binding in graph.final.values()):
                 problem('scope_refused', 'outputs', 'protected child results cannot enter a Cloud parent')
             self.children_started += 1
             self.job.attempt_limit = min(self.limit, self.job.attempts + graph.definition.get('budget', {}).get('max_model_attempts', 32))

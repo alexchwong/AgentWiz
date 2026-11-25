@@ -7,7 +7,7 @@ and documentation placement are governed by `../DEVEL.md`.
 ## Validation and optional review
 
 The offline CI matrix, release tooling checks, and installed-wheel smoke apply to each candidate.
-The [0.2.4 release gates](#agentwiz-024-release-gates) also require live evidence. The historical
+See the [0.2.5 foundation gates](#agentwiz-025-release-gates) for the current release. The [0.2.4 release gates](#agentwiz-024-release-gates) record that release’s live checks. The historical
 [0.2.3 installed-wheel gate](#023-installed-wheel-gate) was credential-free. The 0.2.2 live
 qualifications are recorded in [the decision history](decisions.md#18-november-2026--022-release-close-out-disposition).
 
@@ -131,6 +131,28 @@ including the partial-coverage fixture, through the installed PDF worker. S25 is
 (`agent-draft`) that copies a passage to a draft with `copy_to_draft`, then revises it with `revise_draft`.
 RC2 also requires the PDF reader and worker and every library entry listed by `agentwiz/library/index.json`; RC3
 requires `pypdfium2>=5.13,<6`, which the smoke's dependency preload and the offline wheelhouse must include.
+
+## AgentWiz 0.2.5 release gates
+
+Record pass, fail, blocked or not run against the exact candidate and environment. Require
+all eight foundation checks before owner sign-off.
+
+| Gate | Required evidence |
+| --- | --- |
+| C1 | Valid and malformed packages, standalone roots, nested captures, exact pins and deterministic workflow outputs. |
+| C2 | Private library and explicit all-Public Pool promotion, exact revision reuse, setup refusal, clone and reset. |
+| C3 | Stale review refusal, atomic publish, interruption recovery and idempotent retry. |
+| C4 | Inert skill and protected-source regressions plus the synthetic OpenRouter proposal report from [DEVEL.md](../DEVEL.md#025-foundations-checks). |
+| C5 | Scripted worker tests for pinned child workflows, isolated artifacts, trust, stale roles, budget, busy, Stop and effect refusal. |
+| C6 | Offline regressions for Local only, the Release Gate, split origins, revision protections and webSpell eligibility. |
+| C7 | Source and installed-wheel CI, binary PDF jobs, release builder smoke and the published 0.2.4 workspace upgrade check. |
+| C8 | Review release notes, Workshop guide, README, developer commands and decision record for consistent foundation scope and prototype disclosure. |
+
+The installed wheel retains `privacy_summary_local_v1` and `privacy_summary_cloud_v1` with
+**Unqualified** disclosure. They are unsuitable for production private summarisation or private
+Cloud use. Retain their offline Gate and workflow regressions. The 0.2.5 foundations gate requires
+neither a private-summary OpenRouter round trip nor GPT-OSS-20B 4-bit verification in LM Studio.
+Need-to-Know is a 0.2.6 feasibility experiment contingent on evidence.
 
 ### Historical 0.2.2 qualification (starter blocks addendum, Section 7)
 

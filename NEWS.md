@@ -1,5 +1,12 @@
 # NEWS
 
+## 0.2.5
+- Workshop reviews and installs pinned Block, Workflow, Agent and Team packages. Teams install inactive.
+- Reuse explicitly promoted Public components from the local Shared Pool.
+- Import a standalone skill privately or request an OpenRouter-assisted agent draft from separately reviewed text.
+- A scripted worker can run two pinned workflows with scoped artifacts and shared limits.
+- The retained local and Cloud private-summary prototypes remain Unqualified and unsuitable for production use.
+
 ## 0.2.4
 - AgentWiz Chat and AgentWorkshop open separately and share one workspace.
 - Chat has a pinned composer, Markdown answers, and expandable per-turn activity.

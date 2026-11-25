@@ -240,7 +240,32 @@ Keep check reports factual and task-specific; do not copy historical passes into
 validation claims. Nothing in this guide, `docs/`, `.clinerules`, `tests/`, `scripts/` or `.github/`
 ships in the release wheel.
 
-## 0.2.5 privacy workflow release evidence
+## 0.2.5 foundations checks
+
+Run from the repository root with the checkout `.venv` activated.
+
+```bash
+export OPENROUTER_API_KEY=sk-or-v1-blablabla
+python scripts/check_skill_proposal.py --model openai/gpt-4.1-mini --report reports/skill-proposal-openrouter.json
+```
+
+Use a Cloud-eligible model with structured output support. The check sends one proposal request
+with built-in synthetic text and opens the returned private agent in component review. Automatic
+routing also performs discovery and synthetic probes. Require exit 0 and `verdict: passed`. Record the selected model and keep the JSON with the tested tree.
+
+```bash
+python scripts/check_upgrade_024.py
+```
+
+This uses the published 0.2.4 wheel in an isolated baseline environment to create a disposable
+workspace, then opens and runs the saved workflow with the candidate. Use `--baseline-wheel PATH`
+if you have the published wheel already. Run the [release gates](docs/releases.md#agentwiz-025-release-gates)
+for the offline, installed-wheel, PDF and final release builder checks.
+
+## Private-summary development diagnostics
+
+These optional synthetic diagnostics support future privacy qualification. The 0.2.5 foundations
+gate uses the existing offline regressions. The two retained templates are **Unqualified**.
 
 Run from the checkout root after developer setup and activating `.venv`. Set the OpenRouter key
 once in the same terminal. Replace the placeholder with your key, and keep it out of reports and Git.
@@ -282,7 +307,7 @@ such as `[FAIL] case="dev-context" trial=1 stage="grade" code="severity_below_mi
 The JSON report retains the diagnostic details at every log level. For older v1 reports, use a fresh
 report path rather than `--resume`; rerunning is required to obtain the missing evidence.
 
-### LM Studio qualification run and connected OpenRouter smoke
+### LM Studio held-out diagnostics and connected OpenRouter smoke
 
 ```bash
 python scripts/privacy_workflow_eval.py --backend lmstudio --model gpt-oss-20b --set heldout --qualify --cloud-summary-model qwen/qwen3.8-27b --cloud-summary-provider PROVIDER_SLUG --report reports/privacy-lmstudio.json
@@ -300,9 +325,10 @@ Keep the three JSON reports with the tested build. For LM Studio, also record th
 filename and quantisation, LM Studio version and loaded context length. Share the reports and
 those settings for review.
 
-Exit `0` means the evaluated lane passed, `1` means a conclusive failure and `2` means incomplete
-evidence. Review `blocked`, `pending`, `connected_development` and `remaining_evidence` in the JSON.
-A live release verdict requires full attribution evidence and the measured supported input range.
+Exit `0` means the evaluated offline lane passed, `1` means a conclusive failure and `2` means
+incomplete evidence. For live runs, `detector_verdict` covers the scheduled synthetic detector checks.
+Overall live qualification stays incomplete without complete attribution and a measured supported
+input range. Inspect `blocked`, `pending`, `connected_development` and `remaining_evidence`.
 
 ## 0.2.4 live release evidence
 

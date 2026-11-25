@@ -261,6 +261,7 @@ def run_detector(ui, client, args, schedule, report):
                 'model_attempts': result.get('model_attempts'), **score,
                 'diagnostics': {'stage': stage, 'code': code, 'issue_codes': sorted(set(issue_codes)),
                                 'node_outcome': result['nodes'].get('detect', {}).get('outcome'),
+                                'expected_model': binding['model'], 'expected_provider': binding['provider'] or None,
                                 'serving_provider': None, 'resolved_model': None,
                                 'assessment': {'status': assessment['status'], 'decoded_count': decoded_count,
                                                'accepted_count': len(assessment['findings']),
@@ -406,6 +407,27 @@ def metrics(rows):
             )}
 
 
+def detector_verdict(report, *, heldout):
+    """Summarise only the synthetic detector schedule and its existing grades."""
+    rows = report['results']
+    if any(row['rank'] == 'high' and not row['rank_ok'] for row in rows):
+        return 'failed'
+    expected = {tuple(pair) for pair in report['schedule']}
+    actual = {(row['id'], row['trial']) for row in rows}
+    if report.get('blocked') or not expected or len(rows) != len(expected) or actual != expected:
+        return 'incomplete'
+    if not report['grader_controls']:
+        return 'failed'
+    if heldout:
+        for key, threshold in (('completion', .95), ('medium_recall', .90), ('clean_false_alarms', .10)):
+            score = report['metrics'][key]
+            rate = score['numerator'] / max(1, score['denominator'])
+            if (rate > threshold if key == 'clean_false_alarms' else rate < threshold):
+                return 'failed'
+        return 'passed'
+    return 'passed' if all(row['complete'] and not row['diagnostics']['code'] for row in rows) else 'failed'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--backend', choices=('offline','openrouter','lmstudio'), required=True)
@@ -510,14 +532,12 @@ def main():
         report['metrics_by_class'] = {kind: metrics([row for row in heldout if row['class'] == kind])
                                       for kind in sorted({row['class'] for row in heldout})}
         report['pending'] = len(schedule) - len(report['results'])
-        if heldout_ids and not report['pending']:
-            for key, threshold in (('completion', .95), ('medium_recall', .90), ('clean_false_alarms', .10)):
-                score = report['metrics'][key]
-                rate = score['numerator'] / max(1, score['denominator'])
-                if (rate > threshold if key == 'clean_false_alarms' else rate < threshold):
-                    report['verdict'] = 'failed'
-        if any(row['rank'] == 'high' and not row['rank_ok'] for row in report['results']):
+        report['grader_controls'] = grader_controls()
+        report['detector_verdict'] = detector_verdict(report, heldout=bool(heldout_ids))
+        if report['detector_verdict'] == 'failed':
             report['verdict'] = 'failed'
+        # Native probes lack authoritative returned attribution and a measured operating envelope.
+        # Even a passing detector schedule and successful native probes cannot qualify a live workflow.
         report['remaining_evidence'] = ['complete attribution and operating-range qualification']
         if 'native_heldout' in report:
             heldout = report['native_heldout']
@@ -543,7 +563,7 @@ def main():
             assessed=sum(row['complete'] for row in rows), scheduled=len(schedule),
             grading_failures=sum(row['diagnostics']['stage'] == 'grade' and row['diagnostics']['code'] is not None
                                  for row in rows), pending=report['pending'], verdict=report['verdict'],
-            qualification=report['qualification'], remaining_evidence=report['remaining_evidence'])
+            detector_verdict=report['detector_verdict'], qualification=report['qualification'], remaining_evidence=report['remaining_evidence'])
     print(f"{report['verdict']}: {args.report}")
     return {'passed': 0, 'failed': 1, 'incomplete': 2}[report['verdict']]
 

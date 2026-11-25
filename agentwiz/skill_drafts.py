@@ -89,6 +89,7 @@ def propose(workshop, body):
 
     record(body, ('request',), ('expected_plan', 'confirmations', 'ticket'), 'proposal')
     request = record(body['request'], ('eligible_source',), (), 'request')
+    require(isinstance(request['eligible_source'], str), 'eligible_source', 'provide SKILL.md text')
     if len(request['eligible_source'].encode('utf-8')) > 24 << 10:
         problem('too_large', 'eligible_source', 'the proposal limit is 24 KiB')
     parsed = parse(request['eligible_source'])

@@ -3686,3 +3686,36 @@ def test_compact_attempt_download_is_shared_while_batch_is_active(ui, server, op
     expect(tid(trial, "ws-attempt")).to_have_count(1)
     assert len(pending) == 1
     tid(page, "header-activity-stop").click()
+
+
+def test_component_pool_review_installs_exact_revision(ui, open_page, tmp_path):
+    from test_component_foundations import count_workflow, review
+    from test_workshop import send
+
+    root = count_workflow()
+    root['visibility'] = 'public'
+    root['definition']['blocks']['counter']['inline']['visibility'] = 'public'
+    ui.state.component_pool = tmp_path / 'pool'
+    install, _ = review(ui, root)
+    captured = send(ui, 'component-install', **install)['capture']
+    body = {'capture': captured, 'action': 'promote'}
+    promotion = send(ui, 'component-share', **body)
+    send(ui, 'component-share', **body, expected_plan=promotion['expected_plan'],
+         confirmations=promotion['required_confirmations'])
+    workspace_record, = (ui.workspace.path / 'components' / 'workflow').glob('*.json')
+    workspace_record.unlink()  # Exercise reuse with no installed copy.
+    pool_row, = request(ui, '/api/workshop/components')['pool']
+
+    page = open_page(ui)
+    page.get_by_role('tab', name='Workflows').click()
+    tid(page, 'wf-components').click()
+    scope = tid(page, 'wf-component-scope')
+    scope.select_option('pool')
+    tid(page, 'wf-component-reuse').click()
+    review_dialog = page.get_by_role('dialog', name='Review Shared Pool import')
+    expect(review_dialog.locator('pre')).to_contain_text(pool_row['revision'])
+    assert request(ui, '/api/workshop/components')['workspace'] == []
+    review_dialog.get_by_role('button', name='Install', exact=True).click()
+    expect(scope).to_have_value('workspace')
+    installed, = request(ui, '/api/workshop/components')['workspace']
+    assert installed['revision'] == pool_row['revision']

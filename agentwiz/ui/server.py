@@ -257,8 +257,8 @@ class UIServer(ThreadingHTTPServer):
     def _workspace_view(self) -> dict:
         return {"name": self.workspace.name, "path": str(self.workspace.path)}
 
-    def _protected_paths(self) -> tuple[Path, Path]:
-        return self.profiles_dir, self.mcp_servers_dir
+    def _protected_paths(self) -> tuple[Path, Path, Path]:
+        return self.profiles_dir, self.mcp_servers_dir, self.component_pool
 
     def _active_work(self) -> list[dict]:
         state = self.state

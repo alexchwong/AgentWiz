@@ -39,7 +39,7 @@ def target_options(args):
 
 
 def materialize(workdir, profile, route=None, profiles_dir=None, config=None, *,
-                model=None, provider=None, base_url=None, cloud_summary=None):
+                model=None, provider=None, base_url=None, cloud_summary=None, routing_data_collection=None):
     from agentwiz import profiles, server_config
     from agentwiz.model_call import settings_from_body
 
@@ -67,6 +67,8 @@ def materialize(workdir, profile, route=None, profiles_dir=None, config=None, *,
     raw = loaded.raw
     if profiles_dir is None and config is None:
         fields = {}
+        if routing_data_collection is not None:
+            fields["routing_data_collection"] = routing_data_collection
         if overrides["MODEL"]:
             fields["model"] = overrides["MODEL"]
         if overrides["PROVIDER"]:
@@ -114,14 +116,15 @@ def materialize(workdir, profile, route=None, profiles_dir=None, config=None, *,
 
 @contextmanager
 def session(workdir, profile, route=None, profiles_dir=None, config=None, *, split=False,
-            model=None, provider=None, base_url=None, cloud_summary=None):
+            model=None, provider=None, base_url=None, cloud_summary=None, routing_data_collection=None):
     from agentwiz.ui.server import Handler, UIServer
     from agentwiz.ui.surfaces import ChatListener
     from agentwiz.workspace import open_workspace
 
     folder, config_path, servers = materialize(
         workdir, profile, route, profiles_dir, config, model=model, provider=provider,
-        base_url=base_url, cloud_summary=cloud_summary)
+        base_url=base_url, cloud_summary=cloud_summary,
+        routing_data_collection=routing_data_collection)
     workspace = open_workspace(workdir / "workspaces", "live-eval")
     ui = None
     thread = chat_thread = None

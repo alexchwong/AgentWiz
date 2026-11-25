@@ -80,6 +80,9 @@ def test_skill_import_is_inert_and_protected(ui, server):
                   confirmations=plan['required_confirmations'])
     assert result['context_local_only'] and result['visibility'] == 'private'
     assert './script.py' in result['instructions']
+    from conftest import failure_of
+    blocked = failure_of(lambda: send(ui, 'skill-proposal', request={'eligible_source': source}))
+    assert blocked.body['issues'][0]['code'] == 'protected_skill'
     assert not server.requests
 
 
@@ -161,11 +164,25 @@ def test_scoped_scripted_worker_and_explicit_pool_promotion(ui):
     ui.state.component_pool = ui.workspace.path / 'test-pool'
     installed = install(work)
     body = {'capture': installed, 'action': 'promote'}
+    from conftest import failure_of
+
+    assert failure_of(lambda: send(ui, 'component-share', **body)).status == 400
+    assert service.components.listing()['pool'] == []
+    work['definition']['blocks']['counter']['inline']['visibility'] = 'public'
+    installed = install(work)
+    body['capture'] = installed
+    assert service.components.listing()['pool'] == []
     plan = send(ui, 'component-share', **body)
     result = send(ui, 'component-share', **body, expected_plan=plan['expected_plan'],
                   confirmations=plan['required_confirmations'])
-    assert result['package']['root']['definition']['blocks']['counter']['inline']['visibility'] == 'private'
-    assert [row['id'] for row in service.components.listing()['pool']] == [work['id']]
+    assert result['package']['root']['definition']['blocks']['counter']['inline']['visibility'] == 'public'
+    row, = service.components.listing()['pool']
+    assert row['id'] == work['id']
+    request = {'pool': {key: row[key] for key in ('kind', 'id', 'revision')}}
+    reused = send(ui, 'component-plan', **request)
+    assert reused['descriptor']['revision'] == row['revision']
+    assert send(ui, 'component-install', request=request, expected_plan=reused['expected_plan'],
+                confirmations=reused['required_confirmations'])['revision'] == row['revision']
 
 
 def test_skill_proposal_requires_exact_review_and_compiles_private_draft(ui, server):
