@@ -1,0 +1,26 @@
+name: Release PR checks
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+    with:
+      full-pdf-matrix: true
+
+  pdf-release-gate:
+    name: PDF release gate
+    if: ${{ always() }}
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful release PR tests
+        env:
+          TEST_RESULT: ${{ needs.tests.result }}
+        run: test "$TEST_RESULT" = success

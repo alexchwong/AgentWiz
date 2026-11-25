@@ -111,7 +111,7 @@ Paths in this table are relative to the repository root.
 | `scripts/stub_mcp_server.py` | no | Scripted MCP server (`--era dual|modern|legacy`, `--token`) for trying the MCP tools tab; logs every request, disconnect, notice and `DELETE`. |
 | `scripts/install.sh` | no | Installer behind the README one-liner; refuses to run in a checkout without `--dir`; installs required validation dependencies; re-attached to every release as `install.sh`. |
 | `DEVEL.md`, `docs/`, `NEWS.md`, `.clinerules` | no | Agent directives, technical/release/history references, changelog and agent workflow. |
-| `.github/workflows/` | no | `tests.yml` (push, PR) and `release.yml` (push to `main`, manual dispatch). See [release operations](releases.md#branches-and-releases) for dispatch restrictions. |
+| `.github/workflows/` | no | `tests.yml` (routine CI, reusable tests and manual PDF diagnostics), `release-pr.yml` (full checks for PRs into `main`) and `release.yml` (full checks and publication on `main` pushes or manual dispatch). See [release operations](releases.md#branches-and-releases) for dispatch restrictions. |
 
 ## The modelSpell dependency
 

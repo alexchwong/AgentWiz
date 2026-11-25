@@ -2,15 +2,33 @@ name: Tests
 
 on:
   push:
-    branches: [devel, main]
+    branches: [devel]
   pull_request:
+    branches-ignore: [main]
   workflow_call:
+    inputs:
+      full-pdf-matrix:
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      pdf-os:
+        description: 'PDF wheel runner (all or one platform)'
+        type: choice
+        default: all
+        options: [all, ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+      pdf-python:
+        description: 'PDF wheel Python version (all or one version)'
+        type: choice
+        default: all
+        options: [all, '3.10', '3.11', '3.12', '3.13']
 
 permissions:
   contents: read
 
 jobs:
   tests:
+    if: github.event_name != 'workflow_dispatch' || inputs.full-pdf-matrix
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -94,8 +112,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
-        python: ["3.10", "3.11", "3.12", "3.13"]
+        os: >-
+          ${{ fromJSON((inputs.full-pdf-matrix || inputs.pdf-os == 'all')
+          && '["ubuntu-latest","ubuntu-24.04-arm","macos-latest","macos-15-intel"]'
+          || format('["{0}"]', inputs.pdf-os || 'ubuntu-latest')) }}
+        python: >-
+          ${{ fromJSON((inputs.full-pdf-matrix || inputs.pdf-python == 'all')
+          && '["3.10","3.11","3.12","3.13"]'
+          || format('["{0}"]', inputs.pdf-python || '3.13')) }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

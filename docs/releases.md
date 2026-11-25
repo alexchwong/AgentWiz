@@ -47,11 +47,19 @@ can hide a missing prerequisite, so it is not preparation.
 
 ## Branches and releases
 
-Work happens on `devel`; `main` only receives merges from `devel`. `tests.yml` runs on pushes to
-both and on pull requests (Ubuntu and macOS × Python 3.10 and 3.13).
+Work happens on `devel`; `main` only receives merges from `devel`. On pushes to `devel` and on
+pull requests not targeting `main`, `tests.yml` runs the offline and installed-wheel UI checks
+(Ubuntu and macOS × Python 3.10 and 3.13), plus one installed PDF wheel smoke job
+(Ubuntu x86-64, Python 3.13).
 
-`release.yml` runs on every push to `main`. It reruns the tests, then, from the commit that
-passed them (`github.sha`, never a re-read of `main`):
+For PRs targeting `main`, `release-pr.yml` runs the same checks with the full 16-job PDF matrix
+on the proposed merge, including after each push to the PR branch. Once the check has appeared,
+configure `main` branch protection to require **PDF release gate** from GitHub Actions. Replace any
+old required checks that no longer report on these PRs; this gate requires both the PDF matrix and
+the other tests. Do not apply this requirement to `devel`.
+
+`release.yml` runs on every push to `main`. It reruns the tests with the full PDF matrix, then,
+from the commit that passed them (`github.sha`, never a re-read of `main`):
 
 - **If `vX.Y.Z` is not yet released:** builds the wheel from that commit, runs the release checks
   RC1–RC3 on it, installs it into a fresh venv with `--no-index` (the pinned modelSpell
@@ -68,6 +76,13 @@ The workflow also accepts manual dispatch and uses the selected ref's event SHA.
 workflow can publish from a non-main ref. For release recovery or installer re-attachment,
 dispatch only on `main` while its head is the authorised merge commit. If `main` has advanced,
 prefer re-running the authorised workflow run for the original commit where available.
+
+If a post-merge test fails and needs a code fix, fix it on `devel` and open a new PR into `main`.
+Each push to that open PR runs all 16 PDF jobs again before another merge. To reproduce a PDF
+failure before opening the PR, manually run **Tests** on `devel` and select the failing runner and
+Python version, or leave both at `all` for the full matrix. This diagnostic runs only the PDF checks
+and cannot publish or substitute for the PR gate. GitHub requires the dispatch-enabled workflow
+to be on the default branch before manual dispatch is available.
 
 **Shipped-file rule.** [DEVEL.md](../DEVEL.md#documentation-and-release-preparation) defines
 the policy and shipped inputs, including the force-included `config/model-servers.ini.template`.
@@ -97,7 +112,7 @@ judgement.
    changes, use a version newer than the published version they change and its NEWS section.
    Keep the same version for further edits while it is unreleased. Commit and push when authorized.
 2. Confirm the offline CI matrix passes on Ubuntu and macOS, Python 3.10 and 3.13. A Linux-only
-   local pass covers Linux. Check the installed-wheel gate and the PDF wheel matrix in the same run.
+   local pass covers Linux. Check the installed-wheel gate and all 16 PDF jobs in the PR into `main`.
 3. Run `python scripts/build_release.py --smoke` on the intended committed tree and require
    RC1–RC3, `pip check` and S1–S26 to pass. Finish the version-specific checks below and require
    the pull request checks to pass on the proposed merge. Rerun checks affected by any change
