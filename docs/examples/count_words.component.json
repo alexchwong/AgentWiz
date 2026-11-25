@@ -1,0 +1,101 @@
+{
+  "format": "agentwiz.component",
+  "format_version": 1,
+  "root": {
+    "kind": "workflow",
+    "id": "examples/count-words",
+    "title": "Count words",
+    "visibility": "private",
+    "category": "analysis",
+    "definition": {
+      "workflow": {
+        "name": "count_words",
+        "purpose": "Count whitespace-delimited words",
+        "inputs": {
+          "text": {
+            "contract": {
+              "format": "text"
+            },
+            "local_only": true
+          }
+        },
+        "outputs": {
+          "count": {
+            "contract": {
+              "format": "json",
+              "schema": {
+                "type": "integer"
+              }
+            },
+            "local_only": true,
+            "binding": {
+              "kind": "node",
+              "node": "count",
+              "port": "out"
+            }
+          }
+        },
+        "constants": {},
+        "nodes": {
+          "count": {
+            "block": "counter",
+            "bindings": {
+              "text": {
+                "kind": "input",
+                "port": "text"
+              }
+            }
+          }
+        }
+      },
+      "blocks": {
+        "counter": {
+          "inline": {
+            "kind": "block",
+            "id": "examples/counter",
+            "title": "Whitespace word count",
+            "visibility": "private",
+            "category": "analysis",
+            "definition": {
+              "block": {
+                "format_version": 4,
+                "name": "counter",
+                "inputs": {
+                  "text": {
+                    "contract": {
+                      "format": "text"
+                    },
+                    "local_only": true
+                  }
+                },
+                "outputs": {
+                  "out": {
+                    "contract": {
+                      "format": "json",
+                      "schema": {
+                        "type": "integer"
+                      }
+                    },
+                    "local_only": true
+                  }
+                },
+                "steps": [
+                  {
+                    "id": "run",
+                    "kind": "transform",
+                    "operation": "count_text",
+                    "operation_version": 1,
+                    "parameters": {
+                      "unit": "whitespace_words"
+                    },
+                    "output": "out"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -378,6 +378,7 @@ def run_attempt_with_value(store: runs.AttemptStore, prepared: PreparedAttempt, 
                                                on_text=wrap(callbacks.text), on_reasoning=wrap(callbacks.reasoning),
                                                cancel=run.handle, routing=routing,
                                                before_complete=dispatch.check if dispatch is not None else None,
+                                               verify_request=getattr(dispatch, "verify_request", None),
                                                resolved_policy=routing.get("policy") if p.parent and p.snapshot.kind == "openrouter" else None)
             except modelspell.Cancelled as exc:
                 cancelled_exc = exc

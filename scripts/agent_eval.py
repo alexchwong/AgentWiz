@@ -26,7 +26,7 @@ For the 0.2.4 release, add --full-inventory to a split Chat run to check the com
 inventory separately:
 
     python scripts/agent_eval.py --cohorts tests/agent_eval/cohorts.json --full-inventory \
-        --route openrouter --report reports/agent_eval_report.json
+        --route openrouter --model MODEL --report reports/agent_eval_report.json
 
 Disposable mode prepares the workspace and fast binding automatically. For an installed split
 server, use --session-file with a disposable workspace and configure the binding first.
@@ -474,11 +474,13 @@ def main(argv=None) -> int:
                         help="after the fixed cohorts, exercise the complete default inventory")
     parser.add_argument("--chat-template", default=None, help="the server's chat template, recorded as given")
     parser.add_argument("--timeout", type=float, default=eval_setup.timeout_default(), help="seconds per read of a run's stream")
+    eval_setup.add_target_options(parser)
     args = parser.parse_args(argv)
+    target_options = eval_setup.target_options(args)
     if args.full_inventory and (not args.cohorts or args.url):
         parser.error("--full-inventory requires --cohorts and a split installation")
-    if (args.url or args.session_file) and any((args.profile, args.profiles_dir, args.config)):
-        parser.error("--url cannot be combined with disposable configuration options")
+    if (args.url or args.session_file) and any((args.profile, args.profiles_dir, args.config, target_options)):
+        parser.error("attached evaluations cannot be combined with disposable configuration options")
     if not (args.url or args.session_file or args.profile or args.route):
         parser.error("disposable evaluation requires --route or --profile")
     report = {"chat_template": args.chat_template, "route": {"kind": args.route}}
@@ -499,7 +501,7 @@ def main(argv=None) -> int:
             workdir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="agentwiz-chat-eval-")))
             profile = args.profile or args.route + "-eval"
             ui = stack.enter_context(eval_setup.session(workdir, profile, args.route, args.profiles_dir,
-                                                        args.config, split=True))
+                                                        args.config, split=True, **target_options))
             workshop = Client(ui.url, ui.authority.entry(ui.url)["session"])
             chat = ui.chat_listener
             state = workshop.json("/api/state")

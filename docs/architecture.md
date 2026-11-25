@@ -111,7 +111,7 @@ Paths in this table are relative to the repository root.
 | `scripts/stub_mcp_server.py` | no | Scripted MCP server (`--era dual|modern|legacy`, `--token`) for trying the MCP tools tab; logs every request, disconnect, notice and `DELETE`. |
 | `scripts/install.sh` | no | Installer behind the README one-liner; refuses to run in a checkout without `--dir`; installs required validation dependencies; re-attached to every release as `install.sh`. |
 | `DEVEL.md`, `docs/`, `NEWS.md`, `.clinerules` | no | Agent directives, technical/release/history references, changelog and agent workflow. |
-| `.github/workflows/` | no | `tests.yml` (push, PR) and `release.yml` (push to `main`, manual dispatch). See [release operations](releases.md#branches-and-releases) for dispatch restrictions. |
+| `.github/workflows/` | no | `tests.yml` (routine CI, reusable tests and manual PDF diagnostics), `release-pr.yml` (full checks for PRs into `main`) and `release.yml` (full checks and publication on `main` pushes or manual dispatch). See [release operations](releases.md#branches-and-releases) for dispatch restrictions. |
 
 ## The modelSpell dependency
 
@@ -1625,28 +1625,39 @@ supplied report in place rather than using the default output path.
 
 ### Disposable evaluation configuration
 
-The non-shipped `scripts/eval_setup.py` prepares both live evaluators. Seeds under
+The non-shipped `scripts/eval_setup.py` prepares the library, Chat and privacy evaluators. Seeds under
 `tests/eval_profiles/profiles.json` contain non-secret OpenRouter and LM Studio targets.
 They are resolved relative to the repository, validated with the ordinary profile reader, and
 materialized in temporary storage before workspace seeding; library locks never touch the seeds.
 The ordinary installer, role resolver and run APIs remain the execution path.
 
-Without external overrides, `AGENTWIZ_LIVE_<BACKEND>_MODEL` overrides the seed model;
-`AGENTWIZ_LIVE_LMSTUDIO_URL` and `_KEY` configure its server, and
-`AGENTWIZ_LIVE_OPENROUTER_PROVIDER` switches Automatic routing to a Manual pin.
+With bundled profiles, `--model`, `--provider` (OpenRouter) and `--base-url` (local backend)
+override their corresponding `AGENTWIZ_LIVE_<BACKEND>_MODEL`, `_PROVIDER` and `_URL`
+variables. Unspecified options fall back to those variables and then to the seeds.
+`AGENTWIZ_LIVE_LMSTUDIO_KEY` supplies optional LM Studio authentication in memory.
+The privacy evaluator can add a separate Manual OpenRouter profile for the connected summary
+check using `--cloud-summary-model` and `--cloud-summary-provider` together.
 OpenRouter uses `OPENROUTER_API_KEY`; endpoint overrides require explicit server configuration.
 Privacy settings remain those of the selected profile. With `--profiles-dir` or `--config`,
-backend model/URL/key/provider variables are rejected rather than ambiguously merged; explicit
+backend target options and model/URL/key/provider variables are rejected rather than ambiguously merged; explicit
 profiles/configuration plus remaining checked-in defaults define the target. The external profile
 library is read without mutation and copied into the temporary library; an explicit server file
 must already exist. Credentials and session tokens are not report fields.
 
-Both runners create workspaces, defaults libraries, MCP libraries and default server configuration
+The evaluators create workspaces, defaults libraries, MCP libraries and default server configuration
 inside owned temporary storage and release workspace ownership on exit. Agentic Chat also selects
 the profile and binds `fast` through the normal APIs, then verifies destination equality. Library
-qualification retains its role and destination checks. `--timeout` takes precedence over
-`AGENTWIZ_LIVE_TIMEOUT` (600 seconds by default). Missing/invalid setup blocks the evaluation.
-Neither runner silently reads application profiles/configuration from the caller's directory.
+qualification retains its role and destination checks. For Chat and library evaluations,
+`--timeout` takes precedence over `AGENTWIZ_LIVE_TIMEOUT` (600 seconds by default).
+The privacy evaluator uses the environment setting. Missing or invalid setup blocks the evaluation.
+The evaluators do not silently read application profiles/configuration from the caller's directory.
+
+Privacy report v2 checkpoints finalized trials atomically and records any interrupted trial separately.
+Resume requires a matching report format and evaluation identity; it skips finalized detector trials,
+including grading failures. Native checks are rerun. Detector diagnostics separate workflow execution,
+output decoding, evidence assessment and grading. They record categories, severity, candidate character offsets and stable codes, not model
+quotes or explanations. An unknown serving provider is distinct from a configured provider. Terminal
+verbosity does not affect reported evidence, scoring, or qualification.
 
 Agentic Chat's explicit `--url` mode instead evaluates an already configured server. It does not
 change the selected model or role bindings, but it does install catalog entries and create case
@@ -1814,3 +1825,25 @@ startup delays are retried for a bounded period. Chat offers webSpell tools only
 the Chat switch is on and the discovered server is compatible. Local only runs neither discover
 nor dispatch webSpell. Installation and lifecycle errors do not expose secrets, and rerunning the
 installer preserves the `.env` secret and unrelated MCP entries.
+
+## 0.2.5 reviewed components and scripted execution
+
+`agentwiz/components.py` compiles the portable v1 format into immutable native workflow and block
+captures. New component revisions hash the normalized declaration metadata and definition.
+Existing saved captures retain their stored pins, and the compiler accepts an unambiguous
+legacy pin among the package's supplied dependencies. The install review also binds current
+destination and private binding identities. An unresolved exact dependency can be stored as a
+setup-required source draft. The owner must review a complete import before it can run.
+Each capture publishes as one atomic
+workspace record. Shared Pool promotion reviews the full Public closure and uses a separate storage
+and writer lock. Export and promotion inspect the complete captured tree and refuse protected
+definitions, including workflow constants marked Local only. Reuse is an ordinary reviewed
+import by exact Pool pin. Legacy Pool records with Private children or protected definitions are
+excluded from listing and reuse.
+
+`skill_drafts.py` stores inert private skill text. Its separate proposal path takes explicitly
+supplied eligible text, binds the OpenRouter review to the exact request and destination, and
+compiles a private draft with the same compiler. `scripted_worker.py` holds one Workshop
+reservation and captures exact child workflows. Cloud dispatch requires parent and agent authority.
+The worker refuses Gates and unknown or external tool effects and releases its scoped artifact
+handles when it closes.

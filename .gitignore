@@ -16,5 +16,6 @@ htmlcov/
 /workspaces/
 /model_profiles/
 /mcp_servers/
+/component_pool/
 /config/model-servers.ini
 .env

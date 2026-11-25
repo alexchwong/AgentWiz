@@ -281,6 +281,16 @@ def main(argv=None):
             )
             rows += split
             modules += [node for _, node in split]
+        if version == '0.2.5':
+            shutil.copytree(ROOT / 'docs' / 'examples', destination / 'docs' / 'examples')
+            foundation = (
+                ('Component-primary', 'tests/test_component_foundations.py::test_two_step_import_and_stale_review'),
+                ('Shared-Pool-worker', 'tests/test_private_summary_025.py::test_scoped_scripted_worker_and_explicit_pool_promotion'),
+                ('Private-Gate', 'tests/test_private_summary_025.py::test_contextual_cloud_summary_exact_send'),
+                ('Pool-reuse-UI', 'tests/test_page.py::test_component_pool_review_installs_exact_revision'),
+            )
+            rows += foundation
+            modules += ['tests/test_component_foundations.py', 'tests/test_private_summary_025.py']
         print('Modules:', ' '.join(modules), flush=True)
         print('Required cases:', flush=True)
         for label, node in rows:

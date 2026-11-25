@@ -1,6 +1,6 @@
 # AgentWiz
 
-## Quick start (AgentWiz 0.2.4)
+## Quick start (AgentWiz 0.2.5)
 
 **Prerequisites:** Python 3.10+, Docker with Docker Compose, OpenSSL, and an internet
 connection for first-time setup. On Windows, use WSL2 with Docker available.
@@ -110,6 +110,16 @@ AgentWiz 0.2.4 includes:
 Model profiles, roles and MCP servers are shared settings. Credentials stay in process memory.
 Python blocks run in scriptSpell's restricted runner: a language-level restriction, not an OS sandbox. Host
 Python (v3 script) blocks are retired. AgentWiz uses the pinned modelSpell 0.4.0 and scriptSpell 0.3.0 public APIs.
+
+## AgentWiz 0.2.5
+
+Workshop's Component library reviews portable Blocks, Workflows, Agents and inactive Teams.
+Keep components in My Workspace or explicitly promote an all-Public revision to the local
+Shared Pool. A standalone skill imports as a private draft. A separate reviewed OpenRouter action
+can propose an agent from Cloud-eligible text. [Workshop components guide](docs/workshop-components.md)
+
+The retained `privacy_summary_local_v1` and `privacy_summary_cloud_v1` templates display
+**Unqualified**. Both are unsuitable for production private summarisation or private Cloud use.
 
 ## AgentWiz 0.2.4
 

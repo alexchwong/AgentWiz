@@ -6,6 +6,7 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
   const main = h("div");
   panel.append(h("h2", {text:"Workflows"}), status, main);
   let draft, token, dirty = false, names = [], ports = {}, sources = {}, selections = {}, layout = {};
+  let immutable = false, packageRun = null, qualification = null, rerun = false, correctionReview = false;
   let examples = [], selected = new Set(), inputs = {}, view = "design", plan, planRequest;
   let busy = false, job, pendingStart, timer, generation = 0, rebind = null, contractEditors = [];
   let releaseAcknowledgements={}, releaseSubmitting=false, releasePanelToken=null, releasePanelElement=null;
@@ -81,6 +82,10 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     cancelConnect(false);
     draft = data?.editor || {name:"", purpose:"", inputs:{}, outputs:{}, constants:{}, nodes:{}};
     token = data?.file_token ?? null;
+    immutable = !!data?.immutable;
+    packageRun = data?.package_run || null;
+    qualification = data?.qualification || null;
+    rerun = correctionReview = false;
     sources = data?.sources || {};
     ports = {}; heldPorts = {};
     selections = {};
@@ -108,7 +113,7 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
   async function reloadSaved() {
     load(await wsApi(route(draft.name)), {inputs, selected:[...selected], selection, viewport, view});
   }
-  async function refresh() {names = (await wsApi("workflows")).workflows;}
+  async function refresh() {names = [...(await wsApi("workflows")).workflows,...(await wsApi("privacy-templates")).names];}
   async function leave() {
     if (!dirty) return true;
     const answer = await dialog("Unsaved workflow", h("p", {text:"Save the changes before opening another workflow?"}), ["Save","Discard","Stay"]);
@@ -118,7 +123,10 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
   async function open(name, create = false) {
     await exclusive(async () => {
       if (!await leave()) {render(); return;}
-      if(name||create)load(name ? await wsApi(route(name)) : null);
+      if(name||create){
+        load(name ? await wsApi(route(name)) : null);
+        if(immutable){view="run-view";render();}
+      }
       else clearSelection();
       report("");
     });
@@ -426,7 +434,10 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
       }).catch(()=>{});
     }
     if(!Object.keys(review.destinations||{}).length)destinationList.append(h("li",{text:"No processing after this Gate."}));
-    const check=review.identifier_check, assessment=review.assessment;
+    const check=review.identifier_check, assessment=review.assessment, coverage=review.coverage;
+    if(coverage)side.append(h("h4",{text:"Discovery coverage"}),h("p",{text:coverage.status==="complete"?
+      "No known discovery gaps":"Discovery incomplete"}),h("ul",{},coverage.issues.map(item=>
+      h("li",{text:item.code.replaceAll("_"," ")+(item.location?" · "+item.location.space+" "+item.location.start+"–"+item.location.end:"")}))));
     const locate=(kind,index)=>{const at=locations.findIndex(row=>row.kind===kind&&row.index===index);if(at>=0){cursor=at;show({...locations[at],id:"l"+at});position.textContent=(at+1)+" of "+locations.length;}};
     side.append(h("h4",{text:"Identifier check"}),h("p",{text:check.status==="not_configured"?"Identifier check not configured":
       check.hits.length?check.hits.length+" flagged matches":"No mapped originals found. This is not proof of anonymity."}),
@@ -434,12 +445,13 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
         text:hit.identifier+" · "+JSON.stringify(hit.path)+" · "+hit.part+" · "+hit.start+"–"+hit.end,onclick:()=>locate("hit",index)})))),
       h("h4",{text:"Local AI assessment"}),h("p",{...test("release-assessment"),"data-status":assessment.status,text:
         assessment.status==="not_configured"?"Local AI assessment not configured":assessment.status==="unavailable"?
-        "Assessment unavailable · "+assessment.reason:assessment.findings.length?"Review the concerns below":"No concerns identified by the local model. This is not proof of anonymity."}),
+        "Assessment unavailable · "+assessment.reason:assessment.findings.length?"Review the concerns below":coverage?"No findings reported":"No concerns identified by the local model. This is not proof of anonymity."}),
       h("ul",{},assessment.findings.map((item,index)=>h("li",{},h("button",{type:"button",class:"wf-link",...test("release-concern"),"data-index":String(index),
-        text:item.concern+" · "+item.location+" · "+item.explanation,onclick:()=>locate("finding",index)})))));
-    if(releaseAcknowledgements.token!==review.token)releaseAcknowledgements={token:review.token,identifiers:false,assessment:false};
-    const needIds=check.hits.length>0, needAI=assessment.status==="unavailable"||assessment.findings.length>0;
-    const enabled=()=>!releaseSubmitting&&(!needIds||releaseAcknowledgements.identifiers)&&(!needAI||releaseAcknowledgements.assessment);
+        text:[item.severity,item.concern,item.location,item.explanation].filter(Boolean).join(" · "),onclick:()=>locate("finding",index)})))));
+    if(releaseAcknowledgements.token!==review.token)releaseAcknowledgements={token:review.token,identifiers:false,assessment:false,coverage:false};
+    const needIds=check.hits.length>0, needAI=(!coverage&&assessment.status==="unavailable")||assessment.findings.length>0;
+    const needCoverage=coverage&&(coverage.status==="incomplete"||assessment.status==="unavailable");
+    const enabled=()=>!releaseSubmitting&&(!needIds||releaseAcknowledgements.identifiers)&&(!needAI||releaseAcknowledgements.assessment)&&(!needCoverage||releaseAcknowledgements.coverage);
     const decide=async decision=>{
       releaseSubmitting=true;
       box.querySelectorAll(".wf-release-decision button").forEach(control=>control.disabled=true);
@@ -447,21 +459,25 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
         await wsApi("workflow-jobs/"+encodeURIComponent(job.id)+"/release",{
           token:review.token,payload_digest:review.payload_digest,executable_digest:review.executable_digest,
           scope_digest:review.scope_digest,checks_digest:review.checks_digest,decision,
-          acknowledge_identifiers:releaseAcknowledgements.identifiers,acknowledge_assessment:releaseAcknowledgements.assessment});
+          acknowledge_identifiers:releaseAcknowledgements.identifiers,acknowledge_assessment:releaseAcknowledgements.assessment,
+          ...(coverage?{acknowledge_coverage:releaseAcknowledgements.coverage}:{})});
+        if(decision==="rerun")rerun=true;
       } finally {releaseSubmitting=false;box.querySelectorAll(".wf-release-decision button").forEach(control=>control.disabled=false);release.disabled=!enabled();}
     };
-    const release=button("Review and release",()=>decide("release"),"release-approve",!enabled());
+    const release=button(coverage?"Approve for Cloud":"Review and release",()=>decide("release"),"release-approve",!enabled());
     const decisionBox=h("div",{class:"wf-release-decision"});
     if(needIds)decisionBox.append(toggle("I have reviewed the flagged identifier matches",releaseAcknowledgements.identifiers,v=>{
       releaseAcknowledgements.identifiers=v;release.disabled=!enabled();}));
     if(needAI)decisionBox.append(toggle("I have reviewed the AI concerns or assessment unavailability",releaseAcknowledgements.assessment,v=>{
       releaseAcknowledgements.assessment=v;release.disabled=!enabled();}));
-    const reject=button("Reject",()=>decide("reject"),"release-reject",releaseSubmitting);
+    if(needCoverage)decisionBox.append(toggle("I acknowledge incomplete coverage",releaseAcknowledgements.coverage,v=>{
+      releaseAcknowledgements.coverage=v;release.disabled=!enabled();}));
+    const reject=button(coverage?"Abort workflow":"Reject",()=>decide("reject"),"release-reject",releaseSubmitting);
     // Reject and revise submits the same token-bound rejection and navigates only once the server accepts it.
     const revise=button("Reject and revise",async()=>{await decide("reject");await reviseFrom(review.gate,true);},"release-reject-revise",releaseSubmitting);
     decisionBox.append(h("div",{class:"wf-decision-row"},release,h("span",{class:"ws-hint",...test("release-consequence"),
       text:"Releases this value to the processing listed above, for this run only."})),
-      h("div",{class:"wf-decision-row"},reject,revise,h("span",{class:"ws-hint",...test("reject-consequence"),
+      h("div",{class:"wf-decision-row"},reject,coverage?button("Request local rerun",()=>decide("rerun"),"release-rerun",releaseSubmitting):revise,h("span",{class:"ws-hint",...test("reject-consequence"),
       text:"Ends this run here. Nothing after this Gate runs."+(batch?" Later examples won't run.":"")})));
     side.append(decisionBox);
     releasePanelToken=review.token;releasePanelElement=box;
@@ -1843,7 +1859,7 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
   }
   function runRequest() {
     if(selected.size)return {name:draft.name,examples:examples.filter(row=>selected.has(row.id)).map(({id,version})=>({id,version}))};
-    return {name:draft.name,inputs:Object.fromEntries(Object.keys(draft.inputs).map(key=>[key,inputs[key]??""]))};
+    return {name:draft.name,...(packageRun||{}),inputs:Object.fromEntries(Object.keys(draft.inputs).map(key=>[key,inputs[key]??(key==="corrections"&&qualification?"[]":"")]))};
   }
   function destinations(plan) {
     return [...new Map([plan,...(plan.example_plans||[])].flatMap(p=>entries(p.destinations))
@@ -1951,6 +1967,7 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
       return;
     }
     job={id:result.operation_id,name:body.request.name,running:true,batch:!!body.request.examples,total:body.request.examples?.length||0};
+    correctionReview=false;
     report("");
     render();
     poll(job,generation);
@@ -1964,7 +1981,17 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
       // The header activity indicator (CD9) reopens this run's view; it never starts a run.
       activity?.("workflow",current.running?{label:next.phase==="awaiting_release"?"Awaiting your review":"Workflow run",state:next.phase||"running",source:"workflow",
         open:()=>{if(typeof selectTab==="function")selectTab("workflows");showRun();}}:null);
-      if(current.running)renderTrace();else render();
+      if(current.running)renderTrace();else {
+        if(rerun){
+          rerun=false;
+          const original=planRequest?.inputs;
+          if(original)inputs=structuredClone(original);
+          invalidatePlan();
+          correctionReview=true;
+          report("Review the private source and any corrections before checking readiness for the rerun.");
+        }
+        render();
+      }
       if(current.running)timer=setTimeout(()=>poll(current,epoch),400);
     }catch(e){if(epoch===generation&&current===job){error(e);timer=setTimeout(()=>poll(current,epoch),1800);}}
   }
@@ -2033,7 +2060,7 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
         trace.release_decision?h("p",{...test("release-decision"),"data-decision":trace.release_decision.decision,text:"Decision: "+trace.release_decision.decision+" · "+trace.release_decision.timestamp}):null,
         h("p",{text:"Identifier check: "+review.identifier_check.status+" · "+review.identifier_check.hits.length+" matches"}),
         h("p",{text:"Local AI assessment: "+review.assessment.status}),
-        review.assessment.findings.map(item=>h("p",{text:item.concern+" · "+item.location+" · "+item.explanation}))));
+        review.assessment.findings.map(item=>h("p",{text:[item.severity,item.concern,item.location,item.explanation].filter(Boolean).join(" · ")}))));
       if(trace.assessment_trace)extra.push(h("details",{},h("summary",{text:"Local assessment trace"}),showTrace(trace.assessment_trace)));
     }
     for(const [key,value] of entries(trace.inputs)) {
@@ -2123,10 +2150,42 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     job.result=await wsApi("workflow-jobs/"+encodeURIComponent(job.id));renderTrace();
     report("Human review recorded for this result.");
   }
+  async function correctOccurrence(){
+    const source=inputs.source||"";
+    const exact=h("pre",{tabindex:"0",style:"white-space:pre-wrap;max-height:18rem;overflow:auto"},document.createTextNode(source));
+    let offsets=null, kind="person";
+    exact.addEventListener("pointerup",remember);
+    exact.addEventListener("keyup",remember);
+    function remember(){
+      const selection=getSelection();
+      if(!selection.rangeCount||selection.isCollapsed)return;
+      const range=selection.getRangeAt(0);
+      if(range.startContainer===exact.firstChild&&range.endContainer===exact.firstChild)
+        offsets=[range.startOffset,range.endOffset];
+    }
+    const kinds=["person","organisation","address","postcode","place","date","email","phone","record_id","other"];
+    const box=h("div",{},h("p",{text:"Select the exact text to redact."}),exact,
+      select("Identifier class",kinds.map(key=>[key,key.replaceAll("_"," ")]),kind,value=>kind=value));
+    if(await dialog("Correct private source",box,["Add correction","Cancel"])!=="Add correction"||!offsets)return;
+    const row=await wsApi("privacy-correction",{source,start:offsets[0],end:offsets[1],kind});
+    const rows=JSON.parse(inputs.corrections||"[]");
+    inputs.corrections=JSON.stringify([...rows,row]);
+    invalidatePlan();
+    render();
+  }
   function runView() {
     const area=h("div",{},dirty?h("p",{text:"Save changes before running this workflow."}):null);
     const options=h("fieldset",{},h("legend",{text:"Run inputs"}));
-    for(const [name,port] of entries(draft.inputs))options.append(field(name+(port.format==="json"?" (exact JSON)":""),inputs[name],v=>{putKey(inputs,name,v);invalidatePlan();},true));
+    for(const [name,port] of entries(draft.inputs)){
+      if(qualification&&name==="corrections")continue;
+      options.append(field(name+(port.format==="json"?" (exact JSON)":""),inputs[name],v=>{
+        putKey(inputs,name,v);
+        if(qualification&&name==="source"){delete inputs.corrections;correctionReview=false;}
+        invalidatePlan();
+      },true));
+    }
+    if(qualification&&correctionReview)options.append(button("Correct a missed occurrence",correctOccurrence,"correct-occurrence"));
+    if(qualification&&inputs.corrections)options.append(h("p",{text:JSON.parse(inputs.corrections).length+" reviewed occurrence corrections"}));
     if(examples.length)options.append(h("p",{text:"Select saved examples to run a batch. With no selections, Run uses the inputs above."}),
       ...examples.map(row=>h("div",{},toggle((row.label||row.id)+(row.held_out?" · Held out":""),selected.has(row.id),checked=>{
         if(checked)selected.add(row.id);else selected.delete(row.id);invalidatePlan();
@@ -2143,17 +2202,142 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     area.append(h("div",{class:"wf-run-layout",...test("run-layout")},setup,results));
     return area;
   }
+  async function library(){
+    const data=await wsApi("components"), box=h("div"), rows=h("div"), messages=h("p",{role:"status"});
+    let scope="workspace", kind="all", choice=null, blockCopy=null;
+    const upload=h("input",{type:"file",accept:".json,.md,.txt",hidden:true});
+    const guarded=fn=>async()=>{try{await fn();}catch(e){messages.textContent=e.message;}};
+    upload.onchange=guarded(async()=>{
+      const file=upload.files[0];
+      upload.value="";
+      if(!file)return;
+      if(file.size>2*1024*1024){messages.textContent="The file exceeds 2 MiB.";return;}
+      const source=new TextDecoder("utf-8",{fatal:true}).decode(await file.arrayBuffer());
+      const skill=/\.md$/i.test(file.name);
+      const route=skill?"skill":"component", request={source};
+      const plan=await wsApi(route+"-plan",skill?{request}:request);
+      const preview=h("pre",{text:JSON.stringify(plan.descriptor,null,2)});
+      if(await dialog(skill?"Review private skill import":"Review component import",preview,["Install","Cancel"])!=="Install")return;
+      await wsApi(route+"-install",{request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations});
+      Object.assign(data,await wsApi("components"));
+      messages.textContent=skill?"Saved as a Local only skill draft.":"Component installed.";
+      refreshRows();
+    });
+    function refreshRows(){
+      replace(rows,...data[scope].filter(row=>kind==="all"||row.kind===kind).map(row=>
+        h("article",{},h("strong",{text:row.title}),h("p",{text:[row.kind,row.category,row.visibility,row.id,...(row.setup_required?["Setup required"]:[])].join(" · ")}),
+          scope==="pool"?button("Review reuse",guarded(async()=>{
+            const {kind,id,revision}=row, request={pool:{kind,id,revision}};
+            const plan=await wsApi("component-plan",request);
+            if(await dialog("Review Shared Pool import",h("pre",{text:JSON.stringify(plan.descriptor,null,2)}),
+              ["Install","Cancel"])!=="Install")return;
+            await wsApi("component-install",{request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations});
+            Object.assign(data,await wsApi("components"));
+            scope="workspace";
+            scopePicker.querySelector("select").value=scope;
+            messages.textContent="Component installed.";
+            refreshRows();
+          }),"component-reuse"):null,
+          scope==="workspace"?row.workflow_paths.map(workflow=>button("Open "+workflow.title,async()=>{
+            choice={capture:row.capture,path:workflow.path};box.closest("dialog")?.querySelector("div.row:last-child button")?.click();
+          },"component-open")):null,
+          scope==="workspace"&&row.kind==="block"?button("Edit a private copy",guarded(async()=>{
+            let target="";
+            if(await dialog("Copy block",field("New block key","",value=>target=value),["Review","Cancel"])!=="Review")return;
+            const prepared=await wsApi("component-block-fork",{request:{capture:row.capture,target}});
+            const plan=prepared.save_plan;
+            if(await dialog("Review block copy",h("pre",{text:JSON.stringify({source:prepared.source,
+              revision:prepared.revision,target,labels:plan.descriptor.port_labels},null,2)}),
+              ["Save copy","Cancel"])!=="Save copy")return;
+            const saved=await wsApi("save",{...prepared.save_request,expected_plan:plan.expected_plan,
+              confirmations:plan.required_confirmations});
+            blockCopy={target,revision:saved.durable_id};
+            box.closest("dialog")?.querySelector("div.row:last-child button")?.click();
+          }),"component-copy"):null,
+          scope==="workspace"&&!row.setup_required?["export",...(row.visibility==="public"?["promote"]:[])].map(action=>
+            button(action==="export"?"Export":"Add to Shared Pool",guarded(async()=>{
+              const request={capture:row.capture,action}, plan=await wsApi("component-share",request);
+              if(await dialog(action==="export"?"Review export":"Review Shared Pool entry",
+                h("pre",{text:JSON.stringify(plan.descriptor.package,null,2)}),["Confirm","Cancel"])!=="Confirm")return;
+              const result=await wsApi("component-share",{...request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations});
+              if(action==="export"){
+                const url=URL.createObjectURL(new Blob([JSON.stringify(result.package,null,2)],{type:"application/json"}));
+                const link=h("a",{href:url,download:row.id.replace("/","-")+".json"});link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+              }else{
+                Object.assign(data,await wsApi("components"));messages.textContent="Added to Shared Pool.";
+              }
+            }),"component-"+action)):null)));
+    }
+    async function proposal(){
+      let eligibleSource="";
+      const statement=h("p",{text:"Supply a separate skill whose complete text is eligible for OpenRouter."});
+      if(await dialog("Draft an agent from a skill",h("div",{},statement,
+        field("Cloud-eligible SKILL.md","",value=>eligibleSource=value,true)),["Review","Cancel"])!=="Review")return;
+      const request={eligible_source:eligibleSource};
+      const plan=await wsApi("skill-proposal",{request});
+      const preview=h("pre",{text:JSON.stringify(plan.descriptor,null,2)});
+      if(plan.descriptor.issues.length){
+        await dialog("Skill proposal setup",preview,["Close"]);
+        return;
+      }
+      if(await dialog("Review exact skill for OpenRouter",preview,["Send","Cancel"])!=="Send")return;
+      const ticket=(await wsApi("tickets",{})).ticket;
+      const result=await wsApi("skill-proposal",{request,ticket,expected_plan:plan.expected_plan,
+        confirmations:plan.required_confirmations});
+      if(!result.package){messages.textContent="Agent proposal ended: "+result.outcome;return;}
+      let source=JSON.stringify(result.package,null,2), resolved;
+      const draft=field("Agent package",source,value=>{source=value;},true);
+      const issues=h("p",{role:"status"});
+      if(await dialog("Edit private agent draft",h("div",{},draft,issues),["Review","Cancel"],async choice=>{
+        if(choice!=="Review")return true;
+        try{resolved=await wsApi("component-plan",{source});return true;}
+        catch(e){issues.textContent=e.message;return false;}
+      })!=="Review")return;
+      const install={source};
+      if(await dialog("Review private agent install",h("pre",{text:JSON.stringify(resolved.descriptor,null,2)}),
+        ["Install","Cancel"])!=="Install")return;
+      await wsApi("component-install",{request:install,expected_plan:resolved.expected_plan,
+        confirmations:resolved.required_confirmations});
+      Object.assign(data,await wsApi("components"));
+      messages.textContent="Private agent installed.";
+      refreshRows();
+    }
+    const scopePicker=select("Library",[["workspace","My Workspace"],["pool","Shared Pool"]],scope,value=>{scope=value;refreshRows();},"component-scope");
+    box.append(button("Import",()=>upload.click(),"component-import"),upload,
+      button("Draft agent from skill",guarded(proposal),"component-propose"),
+      scopePicker,
+      select("Component type",[["all","All"],["team","Teams"],["agent","Agents"],["workflow","Workflows"],["block","Blocks"]],
+        kind,value=>{kind=value;refreshRows();}),messages,rows);
+    refreshRows();
+    await dialog("Component library",box,["Close"]);
+    if(blockCopy&&await leave())await openBlock(blockCopy.target,blockCopy.revision);
+    else if(choice&&await leave()){
+      load(await wsApi("component-workflow",choice));
+      view="run-view";
+      render();
+    }
+  }
+  async function fork(){
+    let target="";
+    if(await dialog("Edit a private copy",field("New workflow name","",value=>target=value),["Review","Cancel"])!=="Review")return;
+    const request={target,...(packageRun||{template:draft.name})}, plan=await wsApi("workflow-fork",{request});
+    if(await dialog("Review private workflow copy",h("p",{text:"Copy the pinned definition and snapshots to "+target+"."}),
+      ["Create copy","Cancel"])!=="Create copy")return;
+    load(await wsApi("workflow-fork",{request,expected_plan:plan.expected_plan,confirmations:plan.required_confirmations}));
+    await refresh();
+    render();
+  }
   function render() {
     contractEditors=[];
     if(main.clientWidth)band=bandFor(main.clientWidth);
     const active=!!(job?.running||pendingStart);
     const toolbar=h("div",{class:"row"},select("Saved workflow",[["","Choose a workflow"],...names.map(name=>[name,name])],token?draft?.name:"",open,"picker"),
-      button("New",()=>open("",true),"new",active),button("Save",()=>exclusive(save),"save",!draft||!dirty||active));
+      button("New",()=>open("",true),"new",active),button("Component library",library,"components",active),immutable?button("Edit a copy",fork,"fork",active):null,button("Save",()=>exclusive(save),"save",!draft||!dirty||active));
     toolbar.querySelector("select").disabled=active;
     main.replaceChildren(toolbar);
     if(!draft)return;
-    main.append(h("h3",{...test("identity"),text:(draft.name||"New workflow")+(dirty?" · Unsaved":"")}),
-      h("div",{class:"row"},[["design","Design"],["run-view","Run"],["examples","Examples"]].map(([id,label])=>{
+    main.append(h("h3",{...test("identity"),text:(draft.name||"New workflow")+(dirty?" · Unsaved":"")+(qualification?" · Unqualified":"")}),
+      h("div",{class:"row"},[["design","Design"],["run-view","Run"],["examples","Examples"]].filter(([id])=>!immutable||id==="run-view").map(([id,label])=>{
         const b=button(label,()=>{view=id;render();},id,active&&id!=="run-view");
         b.setAttribute("aria-pressed",String(view===id));return b;
       })),view==="design"?design():view==="examples"?exampleView():runView());

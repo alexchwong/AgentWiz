@@ -15,6 +15,11 @@ CHUNK = 256
 
 
 def validate(operation, parameters, inputs):
+    from .private_transform import OPERATIONS as private_operations
+    if operation in private_operations:
+        if parameters != {} or set(inputs) != private_operations[operation]:
+            raise ValueError('private transform requires its exact declared inputs')
+        return
     if operation not in OPERATIONS or not isinstance(parameters, dict):
         raise ValueError('expected a supported transform operation and parameter object')
     if operation == 'count_text':
@@ -55,7 +60,10 @@ def validate(operation, parameters, inputs):
 
 
 def execute(operation, parameters, inputs):
-    if operation == 'count_text':
+    from . import private_transform
+    if operation in private_transform.OPERATIONS:
+        result, details = private_transform.execute(operation, inputs), []
+    elif operation == 'count_text':
         text = inputs['text']
         if not isinstance(text, str):
             raise templates.FillError('inputs.text', 'expected text')

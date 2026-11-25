@@ -141,12 +141,17 @@ def drive_agentic_chat(page):
 
 def drive_python_block(page):
     workshop_run(page)
-    assert tid(page, "ws-output").text_content() == "9"
+    # The preceding tutorial result can still satisfy the generic complete-state wait.
+    output = tid(page, "ws-output")
+    expect(output).to_have_text("9")
+    assert output.text_content() == "9"
 
 
 def drive_script_block(page):
     workshop_run(page)
-    assert tid(page, "ws-output").text_content() == "9"
+    output = tid(page, "ws-output")
+    expect(output).to_have_text("9")
+    assert output.text_content() == "9"
     page.locator('[data-action="wait-script"]').click()
     expect(tid(page, "ws-list")).to_have_value("tutorial_wait")
     expect(tid(page, "ws-no-inputs")).to_be_visible()

@@ -1,0 +1,439 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentWiz portable component package v1",
+  "$defs": {
+    "reference": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "team",
+            "agent",
+            "workflow",
+            "block"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}/[a-z0-9][a-z0-9_-]{0,63}$"
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id",
+        "revision"
+      ]
+    },
+    "child": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "inline": {
+              "$ref": "#/$defs/component"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "inline"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ref": {
+              "$ref": "#/$defs/reference"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ref"
+          ]
+        }
+      ]
+    },
+    "team": {
+      "type": "object",
+      "properties": {
+        "purpose": {
+          "type": "string"
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/child"
+          },
+          "maxItems": 8,
+          "minItems": 1
+        },
+        "lead_agent_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}/[a-z0-9][a-z0-9_-]{0,63}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "purpose",
+        "agents"
+      ]
+    },
+    "agent": {
+      "type": "object",
+      "properties": {
+        "instructions": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 131072
+        },
+        "mode": {
+          "enum": [
+            "local_only",
+            "cloud"
+          ]
+        },
+        "inputs": {
+          "type": "object"
+        },
+        "outputs": {
+          "type": "object"
+        },
+        "capability_requests": {
+          "type": "array",
+          "items": {},
+          "maxItems": 64
+        },
+        "artifact_requests": {
+          "type": "array",
+          "items": {},
+          "maxItems": 64
+        },
+        "workflows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/child"
+          },
+          "maxItems": 16,
+          "minItems": 1
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "instructions",
+        "mode",
+        "inputs",
+        "outputs",
+        "capability_requests",
+        "artifact_requests",
+        "workflows"
+      ]
+    },
+    "workflow": {
+      "type": "object",
+      "properties": {
+        "workflow": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "purpose": {
+              "type": "string"
+            },
+            "inputs": {
+              "type": "object"
+            },
+            "outputs": {
+              "type": "object"
+            },
+            "constants": {
+              "type": "object"
+            },
+            "nodes": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "block": {
+                    "type": "string"
+                  },
+                  "bindings": {
+                    "type": "object"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "block",
+                  "bindings"
+                ]
+              }
+            },
+            "budget": {
+              "type": "object"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "purpose",
+            "inputs",
+            "outputs",
+            "constants",
+            "nodes"
+          ]
+        },
+        "blocks": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/child"
+          }
+        },
+        "layout": {
+          "type": "object"
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "maxItems": 20
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "workflow",
+        "blocks"
+      ]
+    },
+    "block": {
+      "type": "object",
+      "properties": {
+        "block": {
+          "type": "object",
+          "required": [
+            "format_version",
+            "name",
+            "inputs",
+            "outputs",
+            "steps"
+          ],
+          "properties": {
+            "format_version": {
+              "const": 4
+            },
+            "name": {
+              "type": "string"
+            },
+            "inputs": {
+              "type": "object"
+            },
+            "outputs": {
+              "type": "object"
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "transform",
+                      "tool",
+                      "model"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "files": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "block"
+      ]
+    },
+    "component": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "team",
+            "agent",
+            "workflow",
+            "block"
+          ]
+        },
+        "id": {
+          "allOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9_-]{0,63}/[a-z0-9][a-z0-9_-]{0,63}$"
+            },
+            {
+              "not": {
+                "pattern": "^agentwiz/"
+              }
+            }
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "visibility": {
+          "enum": [
+            "public",
+            "private"
+          ]
+        },
+        "category": {
+          "enum": [
+            "research",
+            "extraction",
+            "analysis",
+            "writing",
+            "verification",
+            "privacy",
+            "general"
+          ]
+        },
+        "definition": {
+          "type": "object"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "maxItems": 12
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id",
+        "title",
+        "visibility",
+        "category",
+        "definition"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "team"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "definition": {
+                "$ref": "#/$defs/team"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "agent"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "definition": {
+                "$ref": "#/$defs/agent"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "workflow"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "definition": {
+                "$ref": "#/$defs/workflow"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "block"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "definition": {
+                "$ref": "#/$defs/block"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "type": "object",
+  "properties": {
+    "format": {
+      "const": "agentwiz.component"
+    },
+    "format_version": {
+      "const": 1
+    },
+    "root": {
+      "$ref": "#/$defs/component"
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/component"
+      },
+      "maxItems": 88
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "format_version",
+    "root"
+  ]
+}

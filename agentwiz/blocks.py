@@ -947,6 +947,13 @@ def parse_block(folder: Path, name: str, contract_store: ContractStore, *, inter
         if isinstance(obj["outputs"], Mapping):
             p.declared_outputs = [k for k in obj["outputs"] if IDENT.match(k)]
     step = _parse_step(p, obj["steps"], outputs) if "steps" in obj else None
+    if step and step.kind == "transform":
+        from . import private_transform
+        if step.raw["operation"] in private_transform.OPERATIONS:
+            for side, ports in (("inputs", inputs), ("outputs", outputs)):
+                for port in ports:
+                    if not port.local_only:
+                        p.issues.add(f"{side}.{port.name}.local_only", "requires Local only for a native privacy operation")
     if "steps" not in obj:
         p.issues.add("steps", "is required: a list of exactly one step")
     kind = step.kind if step else None

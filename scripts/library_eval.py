@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """Owner-run qualification of the library's model blocks (starter blocks addendum, 7.1).
 
-    python scripts/library_eval.py --profile NAME [--block KEY] [--trials N] [--set dev|heldout|all] \
-        [--route openrouter|lmstudio|openai_compat] [--profiles-dir PATH] [--config PATH] \
+    python scripts/library_eval.py --route openrouter --model MODEL [--block KEY] [--trials N] [--set dev|heldout|all] \
+        [--profile NAME] [--profiles-dir PATH] [--config PATH] \
         [--report reports/library_eval_report.json]
     python scripts/library_eval.py --review reports/library_eval_report.json
 
 What it does, in order:
 
 1. Creates a disposable workspace in a new temporary folder and starts an in-process AgentWiz on it (loopback
-   only). The workspace's profiles are seeded from the checked-in evaluation defaults (or explicit --profiles-dir), so the profile named by
-   --profile must be one of them. Nothing is written to any other workspace.
+   only). The workspace's profiles are seeded from the checked-in evaluation defaults (or explicit --profiles-dir), using the backend's default profile or the one named by --profile. Nothing is written to any other workspace.
 2. Binds every role the selected blocks use to that profile, and, when the profile's destination is on this
    machine, records it as a trusted destination in the disposable workspace (local only ports need one).
 3. Installs the selected catalog entries through the ordinary installer: the plan call, then the add call with
@@ -453,8 +452,8 @@ def evaluate(client: Client, *, profile: str, route: str | None, blocks: list[st
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--profile", help="an evaluation profile (or an explicitly supplied default)")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--profile", help="evaluation profile; defaults to <route>-eval")
     mode.add_argument("--review", type=Path, help="refresh an existing report after marking its rubrics")
     mode.add_argument("--export-review", type=Path, help="export grouped rubric outputs from this report to --report")
     mode.add_argument("--apply-review", type=Path, help="import explicit case marks into --source-report")
@@ -471,7 +470,11 @@ def main(argv=None) -> int:
     parser.add_argument("--profiles-dir", type=Path, default=None)
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--report", type=Path, default=Path("reports/library_eval_report.json"))
+    eval_setup.add_target_options(parser)
     args = parser.parse_args(argv)
+    target_options = eval_setup.target_options(args)
+    if target_options and (args.review or args.export_review or args.apply_review):
+        parser.error("live target options are for evaluation runs")
     if not 0 <= args.case_delay <= 30:
         parser.error("--case-delay must be between 0 and 30 seconds")
     if args.source_report and not args.apply_review:
@@ -501,6 +504,11 @@ def main(argv=None) -> int:
         update_verdict(report)
         return write_report(args.review, report)
 
+    if not (args.profile or args.route):
+        parser.error("evaluation requires --route or --profile")
+    if args.route == "openai_compat" and not args.profile:
+        parser.error("--route openai_compat requires --profile")
+    profile = args.profile or args.route + "-eval"
     known = model_keys()
     if args.deidentify_source is not None:
         if args.route != "lmstudio" or args.block != ["deidentify_text"]:
@@ -510,7 +518,7 @@ def main(argv=None) -> int:
     unknown = [b for b in blocks if b not in known]
     if unknown or args.trials < 1:
         parser.error(f"unknown model block(s): {', '.join(unknown)}" if unknown else "--trials must be at least 1")
-    report = {"format_version": 2, "target": {"profile": args.profile, "route": args.route},
+    report = {"format_version": 2, "target": {"profile": profile, "route": args.route},
               "execution": "running", "verdict": "incomplete", "blocks": {}}
     eval_reports.checkpoint(args.report, report)
     try:
@@ -529,8 +537,9 @@ def main(argv=None) -> int:
                         index["keys"].append("deidentify_text")
                         index_file.write_text(json.dumps(index), encoding="utf-8")
                     library_install.LIBRARY = overlay
-                with eval_setup.session(Path(tmp), args.profile, args.route, args.profiles_dir, args.config) as ui:
-                        report = evaluate(Client(ui, args.timeout), profile=args.profile, route=args.route, blocks=blocks, trials=args.trials,
+                with eval_setup.session(Path(tmp), profile, args.route, args.profiles_dir,
+                                        args.config, **target_options) as ui:
+                        report = evaluate(Client(ui, args.timeout), profile=profile, route=args.route, blocks=blocks, trials=args.trials,
                                           which=args.which, report=report, report_path=args.report, case_delay=args.case_delay, progress=lambda k, r: print(
                                               f"{k} {r['case']} trial {r['trial']}: {r['outcome']}", flush=True))
             finally:

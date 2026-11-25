@@ -7,7 +7,7 @@ and documentation placement are governed by `../DEVEL.md`.
 ## Validation and optional review
 
 The offline CI matrix, release tooling checks, and installed-wheel smoke apply to each candidate.
-The [0.2.4 release gates](#agentwiz-024-release-gates) also require live evidence. The historical
+See the [0.2.5 foundation gates](#agentwiz-025-release-gates) for the current release. The [0.2.4 release gates](#agentwiz-024-release-gates) record that release’s live checks. The historical
 [0.2.3 installed-wheel gate](#023-installed-wheel-gate) was credential-free. The 0.2.2 live
 qualifications are recorded in [the decision history](decisions.md#18-november-2026--022-release-close-out-disposition).
 
@@ -47,11 +47,19 @@ can hide a missing prerequisite, so it is not preparation.
 
 ## Branches and releases
 
-Work happens on `devel`; `main` only receives merges from `devel`. `tests.yml` runs on pushes to
-both and on pull requests (Ubuntu and macOS × Python 3.10 and 3.13).
+Work happens on `devel`; `main` only receives merges from `devel`. On pushes to `devel` and on
+pull requests not targeting `main`, `tests.yml` runs the offline and installed-wheel UI checks
+(Ubuntu and macOS × Python 3.10 and 3.13), plus one installed PDF wheel smoke job
+(Ubuntu x86-64, Python 3.13).
 
-`release.yml` runs on every push to `main`. It reruns the tests, then, from the commit that
-passed them (`github.sha`, never a re-read of `main`):
+For PRs targeting `main`, `release-pr.yml` runs the same checks with the full 16-job PDF matrix
+on the proposed merge, including after each push to the PR branch. Once the check has appeared,
+configure `main` branch protection to require **PDF release gate** from GitHub Actions. Replace any
+old required checks that no longer report on these PRs; this gate requires both the PDF matrix and
+the other tests. Do not apply this requirement to `devel`.
+
+`release.yml` runs on every push to `main`. It reruns the tests with the full PDF matrix, then,
+from the commit that passed them (`github.sha`, never a re-read of `main`):
 
 - **If `vX.Y.Z` is not yet released:** builds the wheel from that commit, runs the release checks
   RC1–RC3 on it, installs it into a fresh venv with `--no-index` (the pinned modelSpell
@@ -68,6 +76,13 @@ The workflow also accepts manual dispatch and uses the selected ref's event SHA.
 workflow can publish from a non-main ref. For release recovery or installer re-attachment,
 dispatch only on `main` while its head is the authorised merge commit. If `main` has advanced,
 prefer re-running the authorised workflow run for the original commit where available.
+
+If a post-merge test fails and needs a code fix, fix it on `devel` and open a new PR into `main`.
+Each push to that open PR runs all 16 PDF jobs again before another merge. To reproduce a PDF
+failure before opening the PR, manually run **Tests** on `devel` and select the failing runner and
+Python version, or leave both at `all` for the full matrix. This diagnostic runs only the PDF checks
+and cannot publish or substitute for the PR gate. GitHub requires the dispatch-enabled workflow
+to be on the default branch before manual dispatch is available.
 
 **Shipped-file rule.** [DEVEL.md](../DEVEL.md#documentation-and-release-preparation) defines
 the policy and shipped inputs, including the force-included `config/model-servers.ini.template`.
@@ -97,10 +112,11 @@ judgement.
    changes, use a version newer than the published version they change and its NEWS section.
    Keep the same version for further edits while it is unreleased. Commit and push when authorized.
 2. Confirm the offline CI matrix passes on Ubuntu and macOS, Python 3.10 and 3.13. A Linux-only
-   local pass covers Linux. Check the installed-wheel gate and the PDF wheel matrix in the same run.
+   local pass covers Linux. Check the installed-wheel gate and all 16 PDF jobs in the PR into `main`.
 3. Run `python scripts/build_release.py --smoke` on the intended committed tree and require
-   RC1–RC3, `pip check` and S1–S26 to pass. Finish the version-specific checks below and run the pull
-   request checks against the proposed merge. Merging into `main` can publish the release automatically.
+   RC1–RC3, `pip check` and S1–S26 to pass. Finish the version-specific checks below and require
+   the pull request checks to pass on the proposed merge. Rerun checks affected by any change
+   to the candidate. Merging into `main` can publish the release automatically.
 4. Merge `devel` into `main` when authorized. The release workflow reruns tests and checks
    before publishing. Verify that the tag points to the tested merge commit and that the release has
    the wheel and installer. Compare the wheel's SHA-256 with the install line in the release notes.
@@ -131,6 +147,31 @@ including the partial-coverage fixture, through the installed PDF worker. S25 is
 (`agent-draft`) that copies a passage to a draft with `copy_to_draft`, then revises it with `revise_draft`.
 RC2 also requires the PDF reader and worker and every library entry listed by `agentwiz/library/index.json`; RC3
 requires `pypdfium2>=5.13,<6`, which the smoke's dependency preload and the offline wheelhouse must include.
+
+## AgentWiz 0.2.5 release gates
+
+Record pass, fail, blocked or not run against the exact candidate and environment. Require
+all eight foundation checks before owner sign-off.
+
+| Gate | Required evidence |
+| --- | --- |
+| C1 | Valid and malformed packages, standalone roots, nested captures, exact pins and deterministic workflow outputs. |
+| C2 | Private library and explicit all-Public Pool promotion, exact revision reuse, setup refusal, clone and reset. Verify that export and Pool promotion refuse workflow definitions carrying Local only constant values. |
+| C3 | Stale review refusal, atomic publish, interruption recovery and idempotent retry. |
+| C4 | Inert skill and protected-source regressions plus a passing synthetic OpenRouter proposal from [DEVEL.md](../DEVEL.md#025-foundations-checks). Retain the JSON with its tested commit. The owner confirmed the live pass recorded in the [0.2.5 decision history](decisions.md#025-implementation-evidence). |
+| C5 | Scripted worker tests for pinned child workflows, isolated artifacts, trust, stale roles, budget, busy, Stop and effect refusal. |
+| C6 | Offline regressions for Local only, the Release Gate, split origins, revision protections and webSpell eligibility. The native Gate check exercises zero sends before approval, one scoped send after approval and refusal to replay it. |
+| C7 | Source and installed-wheel CI, all 16 binary PDF jobs, release builder smoke on the committed candidate and the published 0.2.4 workspace upgrade check using the candidate wheel. Record WSL2 PDF verification separately. |
+| C8 | Review release notes, Workshop guide, README, developer commands and decision record for consistent foundation scope and prototype disclosure. Check the [tutorial requirements](../DEVEL.md#ui-and-tutorial-rules) for new functions. |
+
+The installed wheel retains `privacy_summary_local_v1` and `privacy_summary_cloud_v1` with
+**Unqualified** disclosure. They are unsuitable for production private summarisation or private
+Cloud use. Retain their offline Gate and workflow regressions. The 0.2.5 foundations gate requires
+neither a private-summary OpenRouter round trip nor GPT-OSS-20B 4-bit verification in LM Studio.
+Need-to-Know is a 0.2.6 feasibility experiment contingent on evidence.
+
+See [DEVEL.md](../DEVEL.md#025-foundations-checks) for the skill, upgrade and installed PDF
+commands. Check the installed version of both templates for the **Unqualified** disclosure.
 
 ### Historical 0.2.2 qualification (starter blocks addendum, Section 7)
 

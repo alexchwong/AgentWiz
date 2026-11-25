@@ -244,9 +244,17 @@ def bundle_graph(bundle, name, stack):
             from . import release_gate
             record(row, ('gate', 'bindings'), (), f'nodes.{node}')
             release_gate.parse(row['gate'], f'nodes.{node}.gate')
-            names(row['bindings'], 0, 2, f'nodes.{node}.bindings')
-            if row['bindings'].keys() - {'value', 'scan'}:
+            v2 = release_gate.version2(row['gate'])
+            names(row['bindings'], 0, 3 if v2 else 2, f'nodes.{node}.bindings')
+            ports = {'value', 'scan', 'coverage'} if v2 else {'value', 'scan'}
+            if row['bindings'].keys() - ports:
                 problem('invalid', f'nodes.{node}', 'unknown gate input', 400)
+            if v2:
+                ident = row['gate']['assessment']['snapshot_id']
+                if ident not in snapshots:
+                    problem('snapshot_unusable', f'nodes.{node}.assessment', 'missing detector snapshot')
+                if ident not in opened:
+                    opened[ident] = open_snapshot(ident, snapshots[ident], stack, f'nodes.{node}.assessment')
             continue
         record(row, ('snapshot_id', 'bindings'), (), f'nodes.{node}')
         snapshot_id = row['snapshot_id']

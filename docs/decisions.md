@@ -5,6 +5,70 @@ or an instruction to resume an old release. `../DEVEL.md` owns agent policy; `ar
 describes behavior contracts and `releases.md` describes current release operations.
 Historical choices may have been superseded; do not restore retired behavior from this record.
 
+## 25 November 2026 — 0.2.5 closure scope
+
+The owner-approved closure spec supersedes Plan v17.7 D1/D12 and its private-summary release
+qualification for 0.2.5. Closure now requires the portable component, private library and
+explicit promotion, synthetic skill proposal, and scripted-worker foundations. The original
+qualification goal remains part of the historical record. Both retained private-summary
+templates remain **Unqualified**, including in the wheel. End-to-end privacy attribution and
+the supported operating range remain unverified.
+
+Under the closure specification and companion Plan v17.8, Need-to-Know is an evidence-gated
+0.2.6 feasibility experiment. The agent-to-Gate adapter remains in 0.3.1.
+
+### 0.2.5 implementation evidence
+
+The [archived implementation handover](https://github.com/alexchwong/AgentWiz/blob/3923238222329d4c38f0303cce69921bd3c4a870/AgentWiz_0.2.5_release_handover.md)
+records the closure candidate built on `ecde101`, with the source manifest and wheel hashes,
+environment and C1–C8 evidence. It reports 1,502 offline and 251 installed-wheel tests passing,
+release builder smoke, local PDF fixture extraction and a passing 0.2.4 workspace upgrade.
+The owner confirmed a WSL2 PDF install pass. The initial implementation ZIP recorded a blocked
+live check because no credential was available. The owner confirmed the later handover's
+passing synthetic OpenRouter proposal through `qwen/qwen3.8-27b`, with one workflow in a
+private draft at `draft_review`.
+
+The closure commit preserved the existing native private-summary templates, transforms, Gate and
+runner byte for byte relative to `ecde101`. Detector-specific and offline results remain diagnostic.
+Both templates retain the installed **Unqualified** label. The archived results apply to the
+implementation candidate described there. The [release gates](releases.md#agentwiz-025-release-gates)
+apply to the final candidate and proposed merge.
+
+### 0.2.5 release audit on `3923238`
+
+The audit used Linux x86-64, Python 3.12.14 and Playwright Chromium 153.0.8010.12. It reproduced
+the handover's wheel SHA-256. The documentation cleanup also built a byte-identical wheel.
+
+| Gate | Audit result |
+| --- | --- |
+| C1 | **Pass locally.** Source and installed component tests passed. An additional installed-wheel check ran a reviewed two-step summarise-and-count workflow with one stub model call and returned `3`. |
+| C2 | **Fail.** Existing Pool and private-dependency tests passed. A new synthetic check confirmed that export and Shared Pool promotion include a workflow constant value marked Local only. |
+| C3 | **Pass locally.** Stale-plan and atomic publication interruption/retry tests passed. |
+| C4 | **Pass.** Offline skill tests passed. The owner confirmed the live OpenRouter pass recorded in the committed handover. |
+| C5 | **Pass locally.** Installed worker tests covered pinned workflows, artifact scope, dispatch checks and Stop. |
+| C6 | **Fail on component sharing.** Native Release Gate exact-send and no-replay regressions and the offline privacy evaluator passed. The base candidate failed to enforce Local only on shared workflow constant values. |
+| C7 | **Pass locally.** 1,502 offline tests, 251 installed-wheel tests, RC1–RC3, `pip check`, S1–S26, installed PDF fixtures and the published 0.2.4 workspace migration passed. The final committed candidate and proposed merge still require their release checks. |
+| C8 | **Pass for release descriptions.** Both installed templates display Unqualified, and the release-facing documents state the same scope. The standing tutorial requirement remains open. |
+
+The tutorial registry and packaged stand-ins have no guided path for the new Component library
+or skill proposal. The existing tutorial suite exercises the registered topics. The
+[tutorial rule](../DEVEL.md#ui-and-tutorial-rules) still applies to the new functions.
+
+The follow-up rejects export and Pool promotion when any captured workflow contains a constant
+marked Local only. Previously written Pool records with protected definitions are excluded from
+listing and reuse. This preserves private workspace use and prevents a share from changing the
+exact reviewed definition. The regression fails on the original wheel and passes on the fixed
+wheel. The native private-summary implementation is frozen.
+
+The fixed candidate passed 1,503 offline tests and 252 installed-wheel tests on Linux x86-64
+with Python 3.12.14. RC1–RC3, `pip check`, S1–S26, installed PDF extraction, the offline
+privacy evaluator and the 0.2.4 workspace upgrade also passed. The wheel SHA-256 is
+`26a0d2919eeb59bc42649b152ae4c809b7ee50399c68022c8a8f7688b796654f`.
+The fix leaves the owner-confirmed synthetic OpenRouter check's behavior unchanged. Its
+disposable Pool starts empty. All four source and installed-wheel jobs and all 16 PDF jobs
+passed on the [hosted run for `3923238`](https://github.com/alexchwong/AgentWiz/actions/runs/45542571284).
+The fixed candidate needs its own hosted run.
+
 ## Specification lineage
 
 The 0.2.2 build followed *AgentWiz 0.2.2 — Technical Specification* (v4) and *AgentWiz 0.2.2 — Starter
