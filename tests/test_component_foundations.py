@@ -203,6 +203,37 @@ def test_clone_and_reset_keep_pool_separate(make_ui, tmp_path):
     assert failure_of(lambda: admin('reset', name='cloned', confirm='cloned')).status == 409
 
 
+def test_local_only_constant_blocks_component_sharing_and_legacy_pool_reuse(ui, tmp_path):
+    workflow = count_workflow()
+    workflow['visibility'] = 'public'
+    definition = workflow['definition']
+    definition['blocks']['counter']['inline']['visibility'] = 'public'
+    definition['workflow']['constants']['note'] = {'local_only': True, 'value': 'synthetic fixture'}
+    definition['workflow']['nodes']['count']['bindings']['text'] = {'kind': 'constant', 'name': 'note'}
+    agent = {'kind': 'agent', 'id': 'examples/counting-agent', 'title': 'Count words',
+             'visibility': 'public', 'category': 'analysis',
+             'definition': {'instructions': 'Count words', 'mode': 'local_only', 'inputs': {}, 'outputs': {},
+                            'capability_requests': [], 'artifact_requests': [], 'workflows': [{'inline': workflow}]}}
+    body, _ = review(ui, agent)
+    capture = send(ui, 'component-install', **body)['capture']
+    pool = ui.state.component_pool = tmp_path / 'pool'
+    for action in ('export', 'promote'):
+        rejected = failure_of(lambda: send(ui, 'component-share', capture=capture, action=action)).body
+        assert rejected['issues'][0]['code'] == 'protected_component'
+        assert 'synthetic fixture' not in json.dumps(rejected)
+    assert not pool.exists()
+    assert send(ui, 'component-workflow', capture=capture, path=[0])['editor']['name'] == 'count_words'
+
+    # Simulate the complete record an earlier build could have published.
+    package = json.loads(body['request']['source'])
+    legacy = components.Compiler(package, {}).run()
+    pool.mkdir()
+    (pool / 'legacy.json').write_text(json.dumps(legacy))
+    assert request(ui, '/api/workshop/components')['pool'] == []
+    pin = {'kind': 'agent', 'id': agent['id'], 'revision': legacy['revision']}
+    assert failure_of(lambda: send(ui, 'component-plan', pool=pin)).body['code'] == 'missing_dependency'
+
+
 def test_synthetic_skill_release_check_uses_reviewed_draft(ui, server, monkeypatch, tmp_path):
     from conftest import Reply, answer
 

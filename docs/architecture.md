@@ -1829,12 +1829,17 @@ installer preserves the `.env` secret and unrelated MCP entries.
 ## 0.2.5 reviewed components and scripted execution
 
 `agentwiz/components.py` compiles the portable v1 format into immutable native workflow and block
-captures. Component revisions cover the normalized declaration. Existing pre-release captures keep
-their stored identities. The install review also binds current destination and private binding
-identities. An unresolved exact dependency can be stored as a setup-required source draft. It has
-no runnable bundle until the owner reviews a complete import. Each capture publishes as one atomic
+captures. New component revisions hash the normalized declaration metadata and definition.
+Existing saved captures retain their stored pins, and the compiler accepts an unambiguous
+legacy pin among the package's supplied dependencies. The install review also binds current
+destination and private binding identities. An unresolved exact dependency can be stored as a
+setup-required source draft. The owner must review a complete import before it can run.
+Each capture publishes as one atomic
 workspace record. Shared Pool promotion reviews the full Public closure and uses a separate storage
-and writer lock. Reuse is an ordinary reviewed import by exact Pool pin.
+and writer lock. Export and promotion inspect the complete captured tree and refuse protected
+definitions, including workflow constants marked Local only. Reuse is an ordinary reviewed
+import by exact Pool pin. Legacy Pool records with Private children or protected definitions are
+excluded from listing and reuse.
 
 `skill_drafts.py` stores inert private skill text. Its separate proposal path takes explicitly
 supplied eligible text, binds the OpenRouter review to the exact request and destination, and

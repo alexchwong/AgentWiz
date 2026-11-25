@@ -281,15 +281,21 @@ def tree(capture):
         yield from tree(child)
 
 
+def protected_definition(row):
+    definition = row['component']['definition']
+    constants = definition.get('workflow', {}).get('constants', {})
+    return (row.get('protected') or definition.get('block', {}).get('context_local_only')
+            or any(constant['local_only'] for constant in constants.values()))
+
+
 def shareable(capture, *, public=False):
     for row in tree(capture):
         component = row['component']
-        definition = component['definition']
         if public:
             require(component['visibility'] == 'public', component['id'],
                     'every component in a Shared Pool entry must be Public')
-        if definition.get('block', {}).get('context_local_only') or row.get('protected'):
-            problem('protected_component', row['component']['id'], 'the definition is protected')
+        if protected_definition(row):
+            problem('protected_component', component['id'], 'the definition contains protected material')
 
 
 class Components:
@@ -317,9 +323,10 @@ class Components:
                 if not entry.is_symlink() and entry.is_file() and entry.stat().st_size <= CAPTURE_LIMIT]
 
     def pool_records(self):
-        # Older development builds could publish a Public root with Private children.
+        # Older development builds could publish records with private or protected children.
         return [row for row in self.records(self.pool)
-                if all(part['component']['visibility'] == 'public' for part in tree(row))]
+                if all(part['component']['visibility'] == 'public' and not protected_definition(part)
+                       for part in tree(row))]
 
     def pool_index(self):
         result = {}

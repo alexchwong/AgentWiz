@@ -3,6 +3,7 @@
 ## 0.2.5
 - Workshop reviews and installs pinned Block, Workflow, Agent and Team packages. Teams install inactive.
 - Reuse explicitly promoted Public components from the local Shared Pool.
+- Component export and Shared Pool promotion refuse workflows containing Local only constant values.
 - Import a standalone skill privately or request an OpenRouter-assisted agent draft from separately reviewed text.
 - A scripted worker can run two pinned workflows with scoped artifacts and shared limits.
 - The retained local and Cloud private-summary prototypes remain Unqualified and unsuitable for production use.

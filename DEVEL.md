@@ -246,21 +246,32 @@ Run from the repository root with the checkout `.venv` activated.
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-v1-blablabla
-python scripts/check_skill_proposal.py --model openai/gpt-4.1-mini --report reports/skill-proposal-openrouter.json
+python scripts/check_skill_proposal.py --model qwen/qwen3.8-27b --report reports/skill-proposal-openrouter.json
 ```
 
 Use a Cloud-eligible model with structured output support. The check sends one proposal request
 with built-in synthetic text and opens the returned private agent in component review. Automatic
-routing also performs discovery and synthetic probes. Require exit 0 and `verdict: passed`. Record the selected model and keep the JSON with the tested tree.
+routing also performs discovery and synthetic probes. Require exit 0, `stage: draft_review`,
+`verdict: passed` and at least one workflow in the private draft. Retain the JSON with the tested
+commit. It records the model, destination, source digest and draft. Use `--model` to select
+another eligible model.
 
 ```bash
 python scripts/check_upgrade_024.py
 ```
 
 This uses the published 0.2.4 wheel in an isolated baseline environment to create a disposable
-workspace, then opens and runs the saved workflow with the candidate. Use `--baseline-wheel PATH`
-if you have the published wheel already. Run the [release gates](docs/releases.md#agentwiz-025-release-gates)
-for the offline, installed-wheel, PDF and final release builder checks.
+workspace, then opens and runs the saved workflow with the candidate loaded by the active
+interpreter. For installed-wheel evidence, run it with the candidate wheel's venv activated.
+The check verifies output `3` and retention of its Local only label. Use `--baseline-wheel PATH`
+if you already have the published wheel.
+
+```bash
+python -I scripts/check_pdf_install.py --require-installed
+```
+
+Run the PDF check in the candidate wheel's venv on the platform being verified. See the
+[release gates](docs/releases.md#agentwiz-025-release-gates) for the full release procedure.
 
 ## Private-summary development diagnostics
 

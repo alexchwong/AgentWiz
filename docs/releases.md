@@ -99,8 +99,9 @@ judgement.
 2. Confirm the offline CI matrix passes on Ubuntu and macOS, Python 3.10 and 3.13. A Linux-only
    local pass covers Linux. Check the installed-wheel gate and the PDF wheel matrix in the same run.
 3. Run `python scripts/build_release.py --smoke` on the intended committed tree and require
-   RC1–RC3, `pip check` and S1–S26 to pass. Finish the version-specific checks below and run the pull
-   request checks against the proposed merge. Merging into `main` can publish the release automatically.
+   RC1–RC3, `pip check` and S1–S26 to pass. Finish the version-specific checks below and require
+   the pull request checks to pass on the proposed merge. Rerun checks affected by any change
+   to the candidate. Merging into `main` can publish the release automatically.
 4. Merge `devel` into `main` when authorized. The release workflow reruns tests and checks
    before publishing. Verify that the tag points to the tested merge commit and that the release has
    the wheel and installer. Compare the wheel's SHA-256 with the install line in the release notes.
@@ -140,19 +141,22 @@ all eight foundation checks before owner sign-off.
 | Gate | Required evidence |
 | --- | --- |
 | C1 | Valid and malformed packages, standalone roots, nested captures, exact pins and deterministic workflow outputs. |
-| C2 | Private library and explicit all-Public Pool promotion, exact revision reuse, setup refusal, clone and reset. |
+| C2 | Private library and explicit all-Public Pool promotion, exact revision reuse, setup refusal, clone and reset. Verify that export and Pool promotion refuse workflow definitions carrying Local only constant values. |
 | C3 | Stale review refusal, atomic publish, interruption recovery and idempotent retry. |
-| C4 | Inert skill and protected-source regressions plus the synthetic OpenRouter proposal report from [DEVEL.md](../DEVEL.md#025-foundations-checks). |
+| C4 | Inert skill and protected-source regressions plus a passing synthetic OpenRouter proposal from [DEVEL.md](../DEVEL.md#025-foundations-checks). Retain the JSON with its tested commit. The owner confirmed the live pass recorded in the [0.2.5 decision history](decisions.md#025-implementation-evidence). |
 | C5 | Scripted worker tests for pinned child workflows, isolated artifacts, trust, stale roles, budget, busy, Stop and effect refusal. |
-| C6 | Offline regressions for Local only, the Release Gate, split origins, revision protections and webSpell eligibility. |
-| C7 | Source and installed-wheel CI, binary PDF jobs, release builder smoke and the published 0.2.4 workspace upgrade check. |
-| C8 | Review release notes, Workshop guide, README, developer commands and decision record for consistent foundation scope and prototype disclosure. |
+| C6 | Offline regressions for Local only, the Release Gate, split origins, revision protections and webSpell eligibility. The native Gate check exercises zero sends before approval, one scoped send after approval and refusal to replay it. |
+| C7 | Source and installed-wheel CI, all 16 binary PDF jobs, release builder smoke on the committed candidate and the published 0.2.4 workspace upgrade check using the candidate wheel. Record WSL2 PDF verification separately. |
+| C8 | Review release notes, Workshop guide, README, developer commands and decision record for consistent foundation scope and prototype disclosure. Check the [tutorial requirements](../DEVEL.md#ui-and-tutorial-rules) for new functions. |
 
 The installed wheel retains `privacy_summary_local_v1` and `privacy_summary_cloud_v1` with
 **Unqualified** disclosure. They are unsuitable for production private summarisation or private
 Cloud use. Retain their offline Gate and workflow regressions. The 0.2.5 foundations gate requires
 neither a private-summary OpenRouter round trip nor GPT-OSS-20B 4-bit verification in LM Studio.
 Need-to-Know is a 0.2.6 feasibility experiment contingent on evidence.
+
+See [DEVEL.md](../DEVEL.md#025-foundations-checks) for the skill, upgrade and installed PDF
+commands. Check the installed version of both templates for the **Unqualified** disclosure.
 
 ### Historical 0.2.2 qualification (starter blocks addendum, Section 7)
 
