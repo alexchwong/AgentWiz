@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "simple_answer",
+        "brief_proposal",
+        "clarification"
+      ]
+    },
+    "reply": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "brief": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768
+    }
+  },
+  "required": [
+    "kind",
+    "reply"
+  ],
+  "additionalProperties": false
+}

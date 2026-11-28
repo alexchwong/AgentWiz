@@ -1,0 +1,50 @@
+{
+  "type": "object",
+  "properties": {
+    "strategy": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "conditions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      },
+      "maxItems": 8
+    },
+    "binding_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "structure": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "preset_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "strategy",
+    "purpose",
+    "conditions"
+  ],
+  "additionalProperties": false
+}

@@ -121,7 +121,8 @@ def identity(value):
 
 
 class Compiler:
-    def __init__(self, package, pool):
+    def __init__(self, package, pool, *, shipped=False):
+        self.shipped = shipped
         record(package, ('format', 'format_version', 'root'), ('dependencies',), 'package')
         require(package['format'] == 'agentwiz.component' and type(package['format_version']) is int
                 and package['format_version'] == 1, 'format', 'expected agentwiz.component version 1')
@@ -199,7 +200,7 @@ class Compiler:
                 require(isinstance(definition[key], list) and len(definition[key]) <= 64,
                         key, 'expected a bounded request list')
             children = definition['workflows']
-            require(isinstance(children, list) and 1 <= len(children) <= 16, 'workflows', 'expected one to sixteen workflows')
+            require(isinstance(children, list) and (0 if self.shipped else 1) <= len(children) <= 16, 'workflows', 'expected one to sixteen workflows')
             result['children'] = [self.compile(self.resolve(row, 'workflow')) for row in children]
         elif kind == 'workflow':
             result['bundle'], result['children'] = self.workflow(definition)

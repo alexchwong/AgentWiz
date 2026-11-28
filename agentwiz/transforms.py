@@ -4,11 +4,11 @@ from __future__ import annotations
 import json
 import re
 
-from . import identifier_pairs, jsonio, templates
+from . import identifier_pairs, jsonio, record_transforms, templates
 
 VALUE_LIMIT = 4 << 20
 KEY = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
-OPERATIONS = ('count_text', 'select_fields', 'format_report', 'restore_placeholders')
+OPERATIONS = ('count_text', 'select_fields', 'format_report', 'restore_placeholders', *record_transforms.SIGNATURES)
 RESTORE_PARAMETERS = {'unknown': ('fail', 'keep'), 'placeholder_syntax': tuple(identifier_pairs.SYNTAXES)}
 TRACE_LIMIT = 200
 CHUNK = 256
@@ -16,6 +16,8 @@ CHUNK = 256
 
 def validate(operation, parameters, inputs):
     from .private_transform import OPERATIONS as private_operations
+    if operation in record_transforms.SIGNATURES:
+        return record_transforms.validate(operation, parameters, inputs)
     if operation in private_operations:
         if parameters != {} or set(inputs) != private_operations[operation]:
             raise ValueError('private transform requires its exact declared inputs')
@@ -61,7 +63,9 @@ def validate(operation, parameters, inputs):
 
 def execute(operation, parameters, inputs):
     from . import private_transform
-    if operation in private_transform.OPERATIONS:
+    if operation in record_transforms.SIGNATURES:
+        result, details = record_transforms.execute(operation, parameters, inputs), []
+    elif operation in private_transform.OPERATIONS:
         result, details = private_transform.execute(operation, inputs), []
     elif operation == 'count_text':
         text = inputs['text']

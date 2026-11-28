@@ -113,7 +113,8 @@ class Tutorial:
                             ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
 
     def start(self):
-        from .ui.server import UIServer
+        from .ui.server import Handler as UIHandler, UIServer
+        from .ui.surfaces import ChatListener
         from .tutorial_support.backend import Handler
         from .tutorial_support.mcp import Stub, StubServer
 
@@ -141,6 +142,7 @@ class Tutorial:
                                       mcp_servers_dir=root / "mcp", servers=model_servers)
                 self._serve(self.child)
                 self.child.tutorial_session = self
+                self.child.chat_listener = self._serve(ChatListener(0, self.child, UIHandler))
                 state = self.child.state
                 state.save_mcp_servers(servers, state.view()["mcp"]["revision"])
                 ensure_contract(state)
@@ -166,8 +168,12 @@ class Tutorial:
     def info(self):
         with self.lock:
             self.last_seen = time.monotonic()
-            return {"active": True, "return_url": self.parent.url, "topic": self.topic,
-                    "topics": [tutorial_topics.public(t) for t in TOPICS], "contract": CONTRACT}
+            result = {"active": True, "return_url": self.parent.url, "topic": self.topic,
+                      "topics": [tutorial_topics.public(t) for t in TOPICS], "contract": CONTRACT}
+            if self.topic == "company-ceo":
+                listener = self.child.chat_listener
+                result["company_url"] = listener.authority.launch_url(listener.url)
+            return result
 
     def active(self) -> bool:
         """True while a child session or its cleanup still exists. Used before changing workspaces."""
@@ -179,8 +185,18 @@ class Tutorial:
         with self.lock:
             topic = tutorial_topics.by_id(body.get("topic"))
             state = self.child.state
-            if state.store.running_count() or state.store.active_block_runs() or state.mcp_ops.active_count():
+            if (state.store.running_count() or state.store.active_block_runs() or state.mcp_ops.active_count()
+                    or state.company.active is not None):
                 return {"busy": True}
+            if topic.id == "company-ceo":
+                profile = "tutorial-company"
+                state.save_profile({"name": profile, "kind": "openrouter", "model": "tutorial/company",
+                                    "routing_mode": "manual", "provider": "fixture"},
+                                   state.view()["revision"])
+                state.set_openrouter_key("sk-or-v1-tutorial-fixture", state.view()["revision"])
+                previous = state.view()["roles"]
+                bindings = {**previous["mode_bindings"], "fast": {"cloud": profile}}
+                state.save_mode_bindings(bindings, previous["revision"])
             if topic.id == "script-block":
                 from .tutorial_support.workshop import ensure_stop_fixtures
                 ensure_stop_fixtures(state)
@@ -218,7 +234,7 @@ class Tutorial:
             self.topic = topic.id
             self.last_seen = time.monotonic()
             state.apply_config({"kind": "openai_compat",
-                                "model": topic.model}, state.view()["revision"])
+                                "model": topic.model, "provider": "", "routing_mode": "managed"}, state.view()["revision"])
             if topic.seed_contract:
                 ensure_contract(state)
             return self.info()

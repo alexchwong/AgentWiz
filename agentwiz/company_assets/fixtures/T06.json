@@ -1,0 +1,39 @@
+{
+  "brief": "Diagnose this synthetic application fault. Do not claim you have run the code.\n\n09:00:01 request POST /run 200\n09:00:01 created job j17 with budget=6000 tokens\n09:00:02 model returned JSON: {\"status\":\"ok\",\"items\":3}\n09:00:02 validator raised KeyError: 'evidence'\n09:00:03 retry attempted, remaining budget=0\n09:00:03 job ended: partial, no output artifact\n\nThe declared output schema requires: status (string), items (integer), evidence (array).\n\nExplain the most direct cause, distinguish it from the budget exhaustion, recommend a minimal fix, and describe an offline regression test. Name anything the logs cannot establish.",
+  "nodes": [
+    {
+      "out": {
+        "records": [
+          {
+            "time": "09:00:02",
+            "event": "Output schema field missing",
+            "quote": "09:00:02 validator raised KeyError: 'evidence'"
+          },
+          {
+            "time": "09:00:03",
+            "event": "Retry reached budget ceiling",
+            "quote": "09:00:03 retry attempted, remaining budget=0"
+          }
+        ]
+      }
+    },
+    {
+      "out": {
+        "primary_cause": "Missing required evidence field",
+        "follow_on": [
+          "Budget exhausted for retry"
+        ],
+        "unknowns": [
+          "Why the field was omitted"
+        ],
+        "regression_check": "Submit a response missing evidence and assert a schema error.",
+        "quotes": [
+          "09:00:02 validator raised KeyError: 'evidence'",
+          "09:00:03 retry attempted, remaining budget=0"
+        ]
+      }
+    }
+  ],
+  "parameters": {},
+  "preset_id": "log_triage"
+}

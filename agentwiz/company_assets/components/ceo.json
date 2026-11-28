@@ -1,0 +1,91 @@
+{
+  "format": "agentwiz.component",
+  "format_version": 1,
+  "root": {
+    "kind": "agent",
+    "id": "company/ceo",
+    "title": "Ceo",
+    "visibility": "private",
+    "category": "general",
+    "definition": {
+      "instructions": "Plan and report within the authorised Company pathway.",
+      "mode": "cloud",
+      "inputs": {},
+      "outputs": {},
+      "capability_requests": [],
+      "artifact_requests": [],
+      "workflows": [
+        {
+          "ref": {
+            "kind": "workflow",
+            "id": "company/source_answer",
+            "revision": "c6dd9fed2bf18459283e278bd9d8d2f17c3bd526b08564c715dd437cc6b42a8c"
+          }
+        },
+        {
+          "ref": {
+            "kind": "workflow",
+            "id": "company/amendment_comparison",
+            "revision": "8bd38900a71dae35c94990b530656f1e2280e159577bb8631d5a1eaa4db9ec93"
+          }
+        },
+        {
+          "ref": {
+            "kind": "workflow",
+            "id": "company/meeting_actions",
+            "revision": "d6f367013970ce8303bdd4ff2bd53113ca1213d31282171e3987ee4d78dc2685"
+          }
+        },
+        {
+          "ref": {
+            "kind": "workflow",
+            "id": "company/log_triage",
+            "revision": "db118ecc308f4a81b4f2b8bbbb48c40c225c822044ca78bce4dde97bfd8ac927"
+          }
+        },
+        {
+          "ref": {
+            "kind": "workflow",
+            "id": "company/stakeholder_synthesis",
+            "revision": "b385fac4f0356cd07d07042607dbc2a01d9baeb994ef3daece6b595b25b2a120"
+          }
+        },
+        {
+          "ref": {
+            "kind": "workflow",
+            "id": "company/corpus_evidence_map",
+            "revision": "4bf150598571f42257214560c16c054ed62f0c52b1f44ade35272cb8c5897d0f"
+          }
+        },
+        {
+          "ref": {
+            "kind": "workflow",
+            "id": "company/criteria_evidence",
+            "revision": "f58e006c38ebf5b52c66618055ef4e73ee03a05255ef0042f8d595b08aab5888"
+          }
+        },
+        {
+          "ref": {
+            "kind": "workflow",
+            "id": "company/issue_register",
+            "revision": "079c2cf6331a69d82fe954dbba29b45248dd12d0cdcc94bb80403b8dcae5509d"
+          }
+        },
+        {
+          "ref": {
+            "kind": "workflow",
+            "id": "company/constraint_screen",
+            "revision": "403f29c223dc607da50abe9f927337c36bb6c071d5bc9497a1e75fafcbcbc1e8"
+          }
+        },
+        {
+          "ref": {
+            "kind": "workflow",
+            "id": "company/csv_profile",
+            "revision": "b20fe26f0529a771552cb51ae17db979ce8dfc6b3a92aba6596c6953485d1a40"
+          }
+        }
+      ]
+    }
+  }
+}

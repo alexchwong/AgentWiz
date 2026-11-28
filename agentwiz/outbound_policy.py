@@ -435,7 +435,7 @@ def credential(endpoint):
             (os.environ.get(endpoint.api_key_env, '').strip() if endpoint.api_key_env else '') or None)
 
 
-def block_dispatch(state, block, snapshot, *, protected=True, defaults=None, mode=None):
+def block_dispatch(state, block, snapshot, *, protected=True, defaults=None, mode=None, model_resolver=None):
     if block.step.kind == 'model':
         key = credential(snapshot.endpoint)
 
@@ -443,7 +443,8 @@ def block_dispatch(state, block, snapshot, *, protected=True, defaults=None, mod
             from dataclasses import replace
             from .state import RoleUnresolved
             try:
-                captured = (state.role_capture(block.step.role) if mode is None else
+                captured = (model_resolver(block.step.role) if model_resolver else
+                            state.role_capture(block.step.role) if mode is None else
                             state.role_capture(block.step.role, mode))
                 live = captured.snapshot
             except RoleUnresolved:

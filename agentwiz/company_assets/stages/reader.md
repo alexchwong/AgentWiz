@@ -1,0 +1,1 @@
+Read the original brief and propose a candidate answer. State any material uncertainty. Return JSON with answer and quotes (exact brief excerpts, array).

@@ -1,0 +1,33 @@
+{
+  "brief": "Decide whether a synthetic software release can be labelled 'fully verified'. Available evidence:\n- Offline tests: passed 120/120.\n- Installed browser UI smoke: passed.\n- Package checksum: matches the reviewed build.\n- Required external provider contract confirmation: no report supplied.\nThe project's release policy explicitly requires evidence of all four checks.\n\nWrite a Markdown release verdict, explain what is verified, identify missing evidence, and state the next step. Do not invent a provider check result.",
+  "nodes": [
+    {
+      "out": {
+        "records": [
+          {
+            "criterion": "Offline tests",
+            "status": "met",
+            "quote": "- Offline tests: passed 120/120."
+          },
+          {
+            "criterion": "Installed browser UI smoke",
+            "status": "met",
+            "quote": "- Installed browser UI smoke: passed."
+          },
+          {
+            "criterion": "Package checksum",
+            "status": "met",
+            "quote": "- Package checksum: matches the reviewed build."
+          },
+          {
+            "criterion": "Required external provider contract confirmation",
+            "status": "unknown",
+            "quote": null
+          }
+        ]
+      }
+    }
+  ],
+  "parameters": {},
+  "preset_id": "criteria_evidence"
+}

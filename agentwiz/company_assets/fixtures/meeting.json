@@ -1,0 +1,58 @@
+{
+  "brief": "Create an action register.\nDecision: deploy to staging first.\nMaya will prepare the staging checklist by Friday.\nAction: verify the dashboard.",
+  "nodes": [
+    {
+      "out": {
+        "records": [
+          {
+            "kind": "decision",
+            "task": "Deploy to staging first",
+            "owner": null,
+            "due": null,
+            "quote": "Decision: deploy to staging first."
+          },
+          {
+            "kind": "action",
+            "task": "Prepare the staging checklist",
+            "owner": "Maya",
+            "due": "Friday",
+            "quote": "Maya will prepare the staging checklist by Friday."
+          },
+          {
+            "kind": "action",
+            "task": "Verify the dashboard",
+            "owner": null,
+            "due": null,
+            "quote": "Action: verify the dashboard."
+          }
+        ]
+      }
+    },
+    {
+      "out": {
+        "decisions": [
+          "Deploy to staging first"
+        ],
+        "actions": [
+          {
+            "task": "Prepare the staging checklist",
+            "owner": "Maya",
+            "due": "Friday"
+          },
+          {
+            "task": "Verify the dashboard",
+            "owner": null,
+            "due": null
+          }
+        ],
+        "quotes": [
+          "Decision: deploy to staging first.",
+          "Maya will prepare the staging checklist by Friday.",
+          "Action: verify the dashboard."
+        ]
+      }
+    }
+  ],
+  "parameters": {},
+  "preset_id": "meeting_actions"
+}

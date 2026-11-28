@@ -274,14 +274,15 @@ def main(argv=None):
         else:
             rows = required_rows(args.workflow_outcome) + PRIVATE_CHAT
             modules = [*MODULES, *(node for _, node in PRIVATE_CHAT)]
-        if version.split(".")[:2] == ["0", "2"] and int(version.split(".")[2]) >= 4:
+        release = tuple(int(part) for part in version.split("."))
+        if release >= (0, 2, 4):
             split = (
                 ("Split-origins", "tests/test_024_surfaces.py::test_two_origins_and_tool_inventory"),
                 ("Private-reconnect-stop", "tests/test_024_surfaces.py::test_private_reconnect_then_stop"),
             )
             rows += split
             modules += [node for _, node in split]
-        if version == '0.2.5':
+        if release >= (0, 2, 5):
             shutil.copytree(ROOT / 'docs' / 'examples', destination / 'docs' / 'examples')
             foundation = (
                 ('Component-primary', 'tests/test_component_foundations.py::test_two_step_import_and_stale_review'),
@@ -291,6 +292,15 @@ def main(argv=None):
             )
             rows += foundation
             modules += ['tests/test_component_foundations.py', 'tests/test_private_summary_025.py']
+        if release >= (0, 3, 0):
+            company = (
+                ("Company-report", "tests/test_company.py::test_typed_intake_exact_report_and_authority"),
+                ("Company-workflow", "tests/test_company.py::test_pathway_dispatch_with_pinned_modelspell[C-workflow-4]"),
+                ("Company-presets", "tests/test_company.py::test_all_preset_graphs_via_company"),
+                ("Company-approval", "tests/test_company.py::test_scoped_read_only_tool_approval[approve]"),
+            )
+            rows += company
+            modules.append("tests/test_company.py")
         print('Modules:', ' '.join(modules), flush=True)
         print('Required cases:', flush=True)
         for label, node in rows:

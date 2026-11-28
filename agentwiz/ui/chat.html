@@ -8,6 +8,7 @@
 <script src="/assets/session.js" defer></script>
 <script src="/assets/chat-markdown.js" defer></script>
 <script src="/assets/chat.js" defer></script>
+<script src="/assets/company.js" defer></script>
 </head>
 <body>
 <header class="top-bar">
@@ -16,6 +17,7 @@
     <strong class="brand">AgentWiz</strong>
   </div>
   <div class="bar">
+    <button id="company-open" type="button" disabled>Run with CEO</button>
     <button id="model-picker-open" type="button" aria-haspopup="dialog" data-test="model-picker">Choose model</button>
     <button id="key-open" type="button" aria-haspopup="dialog" data-test="openrouter-key">OpenRouter key</button>
     <button id="settings-open" type="button" aria-haspopup="dialog" data-test="chat-settings">Settings</button>
@@ -66,6 +68,49 @@
     </form>
   </main>
 </div>
+
+<dialog id="company" aria-labelledby="company-heading">
+  <div class="dialog-head"><h2 id="company-heading">Run with CEO</h2><button type="button" id="company-close">Close</button></div>
+  <div class="settings-fields">
+    <p><strong>Cloud via OpenRouter</strong> · Use public or synthetic text only. Sending to the representative or submitting a brief may send text to OpenRouter and incur charges.</p>
+    <div class="bar"><label>Cloud model <select id="company-model"></select></label>
+      <button id="company-example" type="button" disabled>Load example</button>
+      <button id="company-new" type="button">New draft</button></div>
+    <details id="company-trials"><summary>Owner trials</summary>
+      <div class="bar">
+        <label>Pathway <select id="company-policy">
+          <option value="E">E · Unrestricted CEO</option><option value="A">A · Solo</option>
+          <option value="B">B · Tools/Blocks</option><option value="C">C · Reviewed workflow</option>
+          <option value="D">D · Specialist structure</option>
+        </select></label>
+        <label>Intelligence class <select id="company-class"></select></label>
+        <button id="company-save-class" type="button">Save class</button>
+      </div>
+      <div class="bar">
+        <label>Additional eligible models <select id="company-eligible" multiple size="3"></select></label>
+        <label id="company-preset-row" hidden>Workflow preset <select id="company-preset"></select></label>
+        <label>Model attempts <input id="company-attempts" type="number" min="1" max="20" value="12"></label>
+        <label>Active seconds <input id="company-time" type="number" min="1" max="1800" value="300"></label>
+      </div>
+    </details>
+    <div id="company-turns" aria-label="Representative conversation"></div>
+    <label>Message to representative <textarea id="company-message" rows="2"></textarea></label>
+    <button type="button" id="company-send">Send to representative</button>
+    <label>Brief preview <textarea id="company-brief" rows="5"></textarea></label>
+    <div class="bar"><button id="company-submit" class="primary" type="button">Run with CEO</button>
+      <button id="company-stop" type="button" disabled>Stop</button>
+      <button id="company-download" type="button" hidden>Download CEO report</button></div>
+    <p id="company-status" role="status"></p>
+    <section id="company-approval" hidden aria-label="Tool approval">
+      <h3>Allow this read-only tool call?</h3>
+      <pre id="company-approval-scope"></pre>
+      <div class="bar"><button id="company-approve" type="button">Approve exact call</button>
+        <button id="company-deny" type="button">Deny</button></div>
+    </section>
+    <details id="company-trace" hidden><summary>Run trace and usage</summary><pre id="company-trace-text"></pre></details>
+    <article id="company-report" class="markdown" aria-label="Original CEO report"></article>
+  </div>
+</dialog>
 
 <dialog id="settings" aria-labelledby="settings-heading">
   <div class="dialog-head"><h2 id="settings-heading">Settings</h2><button type="button" data-close="settings">Close</button></div>

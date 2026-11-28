@@ -87,7 +87,9 @@ PDF_REQUIREMENT = "pypdfium2>=5.13,<6"
 PRELOAD = (*TRANSITIVE, PDF_REQUIREMENT)
 REQUIRED_MEMBERS = ("agentwiz/ui/index.html", "agentwiz/model-servers.ini.template", "agentwiz/pdf_reader.py",
                     "agentwiz/pdf_worker.py", "agentwiz/tutorial_support/pdf_fixtures.py",
-                    "agentwiz/library/index.json")
+                    "agentwiz/library/index.json", "agentwiz/ui/company.js",
+                    "agentwiz/company_assets/manifest.json", "agentwiz/company_assets/example.txt",
+                    "agentwiz/tutorial_support/company_trial.json")
 
 
 def normalise(name: str) -> str:
@@ -128,6 +130,18 @@ def check_members(wheel: Path, version: str) -> list[str]:
             problems.append(f"wheel member {member} is missing")
     if "agentwiz/library/index.json" in names:
         problems += check_library_members(wheel, set(names))
+    if "agentwiz/company_assets/manifest.json" in names:
+        import hashlib
+        import json
+        with zipfile.ZipFile(wheel) as zf:
+            prefix = "agentwiz/company_assets/"
+            manifest = json.loads(zf.read(prefix + "manifest.json"))
+            if len({row["id"] for row in manifest["presets"]}) != 10:
+                problems.append("company catalogue must contain ten distinct presets")
+            for relative, digest in manifest["files"].items():
+                name = prefix + relative
+                if name not in names or hashlib.sha256(zf.read(name)).hexdigest() != digest:
+                    problems.append(f"invalid packaged company asset {name}")
     info = {n[len(dist_info):] for n in names if n.startswith(dist_info)}
     problems += [f"wheel member {dist_info}{n} is missing" for n in sorted(DIST_INFO_FILES - info)]
     problems += [f"unexpected wheel member {dist_info}{n}" for n in sorted(info - DIST_INFO_FILES)]

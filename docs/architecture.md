@@ -1847,3 +1847,34 @@ compiles a private draft with the same compiler. `scripted_worker.py` holds one 
 reservation and captures exact child workflows. Cloud dispatch requires parent and agent authority.
 The worker refuses Gates and unknown or external tool effects and releases its scoped artifact
 handles when it closes.
+
+
+## Cloud company intake and CEO runs
+
+The AgentWiz origin owns `/api/company/` settings, intakes, runs and report download routes.
+Intakes capture a Cloud OpenRouter binding, workspace revision and allowance. Company text is
+separate from ordinary Chat history and attachments. The exact preview becomes the run brief.
+A request ID deduplicates admissions within the intake. Polling observes the admitted work.
+The initial binding and any additional candidates are server-resolved from configured OpenRouter
+profiles and Chat assignments. The shared attempt and active-time limits include representative
+calls and native graph nodes. The bundled workflow resolves both nodes against the company capture.
+A staged deadline leaves room for a separate report call. Hard caps are refused when the route
+cannot prove a conservative bound before sending.
+Reviewed read-only MCP tools require a single-use approval tied to the exact current arguments,
+tool schema and destination. Native tool workers retain their slots through cleanup.
+The company worker holds a workspace writer until cancellation or completion settles. Native
+workflow execution also holds the Workshop execution slot until its child work settles.
+
+The run trace records the requested policy, selected pathway, accepted evidence and reported
+usage. Missing usage values stay marked as unknown. Only an accepted report can be downloaded.
+The download sends the validated UTF-8 body verbatim. The representative delivery is separate.
+
+
+### Packaged Company workflow catalogue
+
+The pinned catalogue under `agentwiz/company_assets` carries definitions, stage prompts, contracts,
+and evidence rules. `company_catalogue.py` validates content digests and compiles portable
+`agentwiz.component` v1 packages to native workflow captures. The Company adapter executes the
+captured graph with its parent budget and records evidence exports after node acceptance.
+Pinned C restricts the eligible list to the requested revision. Automatic C and E receive
+only eligible presets. The CSV graph uses deterministic native steps and zero child model calls.

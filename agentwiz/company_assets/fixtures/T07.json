@@ -1,0 +1,89 @@
+{
+  "brief": "Recommend one of these synthetic backup options for a small research team. Requirements: usable capacity at least 20 TB, cost no more than $4,000, maintenance should be simple, and expansion in two years is desirable.\n\nA: $2,500; 18 TB usable; easy administration; no expansion.\nB: $3,600; 24 TB usable; moderate administration; easy expansion.\nC: $3,900; 40 TB usable; difficult administration; expansion possible.\nD: $4,200; 36 TB usable; easy administration; easy expansion.\n\nDeliver a Markdown decision memo with a clear recommendation, explicit elimination of ineligible choices, trade-offs and what new information could change the recommendation.",
+  "nodes": [
+    {
+      "out": {
+        "records": [
+          {
+            "id": "A",
+            "values": [
+              {
+                "field": "capacity",
+                "value": "18"
+              },
+              {
+                "field": "cost",
+                "value": "2500"
+              }
+            ],
+            "preferences": "easy, no expansion",
+            "quote": "A: $2,500; 18 TB usable; easy administration; no expansion."
+          },
+          {
+            "id": "B",
+            "values": [
+              {
+                "field": "capacity",
+                "value": "24"
+              },
+              {
+                "field": "cost",
+                "value": "3600"
+              }
+            ],
+            "preferences": "moderate, easy expansion",
+            "quote": "B: $3,600; 24 TB usable; moderate administration; easy expansion."
+          },
+          {
+            "id": "C",
+            "values": [
+              {
+                "field": "capacity",
+                "value": "40"
+              },
+              {
+                "field": "cost",
+                "value": "3900"
+              }
+            ],
+            "preferences": "difficult, expansion possible",
+            "quote": "C: $3,900; 40 TB usable; difficult administration; expansion possible."
+          },
+          {
+            "id": "D",
+            "values": [
+              {
+                "field": "capacity",
+                "value": "36"
+              },
+              {
+                "field": "cost",
+                "value": "4200"
+              }
+            ],
+            "preferences": "easy, easy expansion",
+            "quote": "D: $4,200; 36 TB usable; easy administration; easy expansion."
+          }
+        ],
+        "criteria": [
+          {
+            "id": "capacity",
+            "field": "capacity",
+            "operator": "gte",
+            "threshold": "20",
+            "quote": "Recommend one of these synthetic backup options for a small research team. Requirements: usable capacity at least 20 TB, cost no more than $4,000, maintenance should be simple, and expansion in two years is desirable."
+          },
+          {
+            "id": "cost",
+            "field": "cost",
+            "operator": "lte",
+            "threshold": "4000",
+            "quote": "Recommend one of these synthetic backup options for a small research team. Requirements: usable capacity at least 20 TB, cost no more than $4,000, maintenance should be simple, and expansion in two years is desirable."
+          }
+        ]
+      }
+    }
+  ],
+  "parameters": {},
+  "preset_id": "constraint_screen"
+}

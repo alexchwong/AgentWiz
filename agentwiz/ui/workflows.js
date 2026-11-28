@@ -2327,12 +2327,26 @@ window.createWorkflowPage = function ({ h, api, wsApi, dialog, copyControl, cont
     await refresh();
     render();
   }
+  async function inspectPresets() {
+    const {presets} = await wsApi("company-presets");
+    const details = h("section");
+    const choose = select("Preset", [["", "Choose a preset"], ...presets.map(row => [row.id, row.title])],
+      "", async id => {
+        details.replaceChildren();
+        if (!id) return;
+        const row = presets.find(preset => preset.id === id);
+        const graph = await wsApi("company-presets/" + encodeURIComponent(id));
+        details.replaceChildren(h("p", {text: row.fit}), h("p", {text: "Revision " + row.revision}),
+          h("pre", {text: graph.definition_text}));
+      }, "company-preset-picker");
+    await dialog("Company workflow presets", h("div", {}, choose, details), ["Close"]);
+  }
   function render() {
     contractEditors=[];
     if(main.clientWidth)band=bandFor(main.clientWidth);
     const active=!!(job?.running||pendingStart);
     const toolbar=h("div",{class:"row"},select("Saved workflow",[["","Choose a workflow"],...names.map(name=>[name,name])],token?draft?.name:"",open,"picker"),
-      button("New",()=>open("",true),"new",active),button("Component library",library,"components",active),immutable?button("Edit a copy",fork,"fork",active):null,button("Save",()=>exclusive(save),"save",!draft||!dirty||active));
+      button("New",()=>open("",true),"new",active),button("Component library",library,"components",active),button("Company presets",inspectPresets,"company-presets",active),immutable?button("Edit a copy",fork,"fork",active):null,button("Save",()=>exclusive(save),"save",!draft||!dirty||active));
     toolbar.querySelector("select").disabled=active;
     main.replaceChildren(toolbar);
     if(!draft)return;

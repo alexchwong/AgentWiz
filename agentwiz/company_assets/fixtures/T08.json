@@ -1,0 +1,64 @@
+{
+  "brief": "Produce a concise Markdown risk assessment using these synthetic stakeholder notes. Separate established facts from disputed assertions.\n\nEngineering: 'The migration can be completed in two weeks, provided API parity holds. API parity has not been verified.'\nOperations: 'The cutover has only a four-hour maintenance window. Rollback automation is not tested.'\nSecurity: 'External data export is prohibited until destination scoping passes the offline tests.'\nFinance: 'The budget covers two weeks of staff time but not a third week.'\nProduct: 'We should announce a firm launch date now because customer demand is high.'\n\nRecommend whether to announce a firm launch date, what evidence must be obtained first, and which risks remain unresolved. Do not invent feasibility evidence.",
+  "nodes": [
+    {
+      "out": {
+        "records": [
+          {
+            "stakeholder": "Engineering",
+            "claim": "Engineering: 'The migration can be completed in two weeks, provided API parity holds. API parity has not been verified.'",
+            "qualification": null,
+            "quote": "Engineering: 'The migration can be completed in two weeks, provided API parity holds. API parity has not been verified.'"
+          },
+          {
+            "stakeholder": "Operations",
+            "claim": "Operations: 'The cutover has only a four-hour maintenance window. Rollback automation is not tested.'",
+            "qualification": null,
+            "quote": "Operations: 'The cutover has only a four-hour maintenance window. Rollback automation is not tested.'"
+          },
+          {
+            "stakeholder": "Security",
+            "claim": "Security: 'External data export is prohibited until destination scoping passes the offline tests.'",
+            "qualification": null,
+            "quote": "Security: 'External data export is prohibited until destination scoping passes the offline tests.'"
+          },
+          {
+            "stakeholder": "Finance",
+            "claim": "Finance: 'The budget covers two weeks of staff time but not a third week.'",
+            "qualification": null,
+            "quote": "Finance: 'The budget covers two weeks of staff time but not a third week.'"
+          },
+          {
+            "stakeholder": "Product",
+            "claim": "Product: 'We should announce a firm launch date now because customer demand is high.'",
+            "qualification": null,
+            "quote": "Product: 'We should announce a firm launch date now because customer demand is high.'"
+          }
+        ]
+      }
+    },
+    {
+      "out": {
+        "recommendation": "Defer the firm date.",
+        "agreements": [],
+        "conflicts": [
+          "Demand versus unresolved readiness"
+        ],
+        "prerequisites": [
+          "Verify API parity",
+          "Test rollback",
+          "Pass export tests",
+          "Confirm budget and window"
+        ],
+        "quotes": [
+          "Engineering: 'The migration can be completed in two weeks, provided API parity holds. API parity has not been verified.'",
+          "Operations: 'The cutover has only a four-hour maintenance window. Rollback automation is not tested.'",
+          "Security: 'External data export is prohibited until destination scoping passes the offline tests.'",
+          "Finance: 'The budget covers two weeks of staff time but not a third week.'"
+        ]
+      }
+    }
+  ],
+  "parameters": {},
+  "preset_id": "stakeholder_synthesis"
+}

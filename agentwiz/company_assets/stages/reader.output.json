@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "properties": {
+    "answer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "quotes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      },
+      "maxItems": 8
+    }
+  },
+  "required": [
+    "answer",
+    "quotes"
+  ],
+  "additionalProperties": false
+}

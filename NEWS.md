@@ -1,5 +1,11 @@
 # NEWS
 
+## 0.3.0
+- Ships ten reviewed Company workflow presets with exact revision selection and execution traces.
+- Run a public or synthetic brief through the Cloud CEO and download the original Markdown report.
+- Compare execution pathways with the owner guide and the isolated Run with CEO tutorial.
+- Update the model backend to modelSpell 0.4.1.
+
 ## 0.2.5
 - Workshop reviews and installs pinned Block, Workflow, Agent and Team packages. Teams install inactive.
 - Reuse explicitly promoted Public components from the local Shared Pool.

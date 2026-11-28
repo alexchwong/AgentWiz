@@ -1,5 +1,20 @@
 # AgentWiz
 
+
+## Run with CEO
+
+Open **Run with CEO** from AgentWiz. Set an OpenRouter key with the top-bar control or
+`OPENROUTER_API_KEY`, then choose a Cloud model. Load the synthetic example or paste a public
+brief. Review **Brief preview** and select **Run with CEO**. Check the progress and download the
+CEO’s original Markdown under **Download CEO report**. Representative messages and CEO work can
+send text to OpenRouter and incur charges. Ordinary **Local only** Chat remains available.
+
+In Pathway C, select a preset or let the CEO choose from the ten workflows.
+In Pathway E, inspect the chosen workflow in the run trace.
+
+See the [owner pathway trial guide](docs/owner-ceo-pathway-trial-guide.md) for pathway controls,
+sample briefs and a comparison worksheet.
+
 ## Quick start (AgentWiz 0.2.5)
 
 **Prerequisites:** Python 3.10+, Docker with Docker Compose, OpenSSL, and an internet
@@ -109,7 +124,7 @@ AgentWiz 0.2.4 includes:
 
 Model profiles, roles and MCP servers are shared settings. Credentials stay in process memory.
 Python blocks run in scriptSpell's restricted runner: a language-level restriction, not an OS sandbox. Host
-Python (v3 script) blocks are retired. AgentWiz uses the pinned modelSpell 0.4.0 and scriptSpell 0.3.0 public APIs.
+Python (v3 script) blocks are retired. AgentWiz uses the pinned modelSpell 0.4.1 and scriptSpell 0.3.0 public APIs.
 
 ## AgentWiz 0.2.5
 
@@ -201,7 +216,7 @@ python -m pip install ./agentwiz-0.2.4-py3-none-any.whl
 ```
 
 For a published wheel, you can pass the URL with the `#sha256=…` fragment from the release notes
-to pip instead of the local filename. Both methods install the pinned modelSpell 0.4.0 and scriptSpell 0.3.0 wheels.
+to pip instead of the local filename. Both methods install the pinned modelSpell 0.4.1 and scriptSpell 0.3.0 wheels.
 
 **JSON Schema validation is required and installed automatically** (`jsonschema>=4.26,<5`).
 It brings `rpds-py`, a compiled package; a platform without a published wheel needs a Rust

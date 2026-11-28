@@ -33,7 +33,7 @@ Prepare hatchling and a wheelhouse containing the hash-checked pinned modelSpell
 wheels and all runtime dependencies for an offline smoke.
 
 ```bash
-python scripts/build_release.py --smoke --no-isolation --modelspell-wheel ../agentwiz-prep/wheels/modelspell-0.4.0-py3-none-any.whl --scriptspell-wheel ../agentwiz-prep/wheels/scriptspell-0.3.0-py3-none-any.whl --dependency-wheels ../agentwiz-prep/wheels
+python scripts/build_release.py --smoke --no-isolation --modelspell-wheel ../agentwiz-prep/wheels/modelspell-0.4.1-py3-none-any.whl --scriptspell-wheel ../agentwiz-prep/wheels/scriptspell-0.3.0-py3-none-any.whl --dependency-wheels ../agentwiz-prep/wheels
 ```
 
 `--modelspell-wheel` and `--scriptspell-wheel` each refuse a file whose name is not the pinned URL's file name
@@ -98,7 +98,7 @@ They are release tooling under the owner's exception to T2, not tests:
 | Check | Passes when |
 | --- | --- |
 | RC1 | `NEWS.md` has exactly one line `## <version>`; its section has at least one `- ` bullet, each opening bullet line of at most 20 words. Review the entire bullet, including continuation lines, against the policy. |
-| RC2 | The wheel is `agentwiz-<version>-py3-none-any.whl`; every member is under `agentwiz/` or `agentwiz-<version>.dist-info/`; `agentwiz/ui/index.html`, `agentwiz/model-servers.ini.template`, `agentwiz/pdf_reader.py`, `agentwiz/pdf_worker.py`, `agentwiz/tutorial_support/pdf_fixtures.py`, `agentwiz/library/index.json` and every file of each library entry it lists are present; the `.dist-info` members are exactly `METADATA`, `WHEEL`, `RECORD`, `entry_points.txt`, `licenses/LICENSE`. |
+| RC2 | The wheel is `agentwiz-<version>-py3-none-any.whl`; every member is under `agentwiz/` or `agentwiz-<version>.dist-info/`; `agentwiz/ui/index.html`, `agentwiz/model-servers.ini.template`, `agentwiz/pdf_reader.py`, `agentwiz/pdf_worker.py`, `agentwiz/tutorial_support/pdf_fixtures.py`, `agentwiz/library/index.json` and every file of each library entry it lists are present; the company UI and pinned company runtime assets are included; the `.dist-info` members are exactly `METADATA`, `WHEEL`, `RECORD`, `entry_points.txt`, `licenses/LICENSE`. |
 | RC3 | `METADATA` has `Name: AgentWiz`, `Version: <version>`, `License-Expression: MIT`, the required `jsonschema>=4.26,<5` and `pypdfium2>=5.13,<6`, and exactly two other runtime dependencies: the modelSpell and scriptSpell direct URLs, identical to the pinned release-wheel URLs and sha256 in `pyproject.toml`. |
 
 Each prints `RCn ok` or `RCn FAILED: <reason>`; all three run; on any failure nothing is copied to
@@ -114,7 +114,7 @@ judgement.
 2. Confirm the offline CI matrix passes on Ubuntu and macOS, Python 3.10 and 3.13. A Linux-only
    local pass covers Linux. Check the installed-wheel gate and all 16 PDF jobs in the PR into `main`.
 3. Run `python scripts/build_release.py --smoke` on the intended committed tree and require
-   RC1–RC3, `pip check` and S1–S26 to pass. Finish the version-specific checks below and require
+   RC1–RC3, `pip check` and S1–S27 to pass. Finish the version-specific checks below and require
    the pull request checks to pass on the proposed merge. Rerun checks affected by any change
    to the candidate. Merging into `main` can publish the release automatically.
 4. Merge `devel` into `main` when authorized. The release workflow reruns tests and checks
@@ -246,7 +246,7 @@ publication workflow runs offline checks, so record the live verdicts before mer
 
 | Gate | Evidence to retain |
 | --- | --- |
-| Offline | Hosted Ubuntu/macOS × Python 3.10/3.13 source and installed-wheel checks, PDF wheel matrix, and RC1–RC3 plus S1–S26 on the release candidate. |
+| Offline | Hosted Ubuntu/macOS × Python 3.10/3.13 source and installed-wheel checks, PDF wheel matrix, and RC1–RC3 plus S1–S27 on the release candidate. |
 | Live Chat | The same fixed cohorts, five end-to-end scenarios, and full default inventory on OpenRouter and LM Studio. Record the effective Chat binding. |
 | Shipped Cloud catalogue | Reuse matching evidence from the [accepted 13-block baseline](decisions.md#prior-live-starter-block-evidence). Run only blocks without a matching passing report for the intended binding. |
 | Managed webSpell | Install the pinned v0.2.1 bundle. Check all three operations on public fixtures. Capture a live Cloud Chat tool turn, a refused operation, and zero webSpell availability and dispatch in Local only mode. |

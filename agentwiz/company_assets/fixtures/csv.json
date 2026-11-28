@@ -1,0 +1,8 @@
+{
+  "brief": "Profile the Units column.\n```csv\nItem,Units\nA,2\nB,3\nB,3\nC,\nD,unknown\n```",
+  "nodes": [],
+  "parameters": {
+    "column": "Units"
+  },
+  "preset_id": "csv_profile"
+}

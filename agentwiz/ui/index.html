@@ -2537,6 +2537,13 @@ function tutorialAction(text, id, action) {
 }
 // The actions a topic may offer, by the IDs the registry uses.
 const TUTORIAL_ACTIONS = {
+  "company-ceo": () => {
+    const link = document.createElement("a");
+    link.href = tutorialInfo.company_url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.click();
+  },
   "example-document": () => TABS.documents.tutorialExample(),
   "show-role": async () => {
     $("open-roles").click();

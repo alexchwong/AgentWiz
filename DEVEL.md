@@ -18,6 +18,7 @@ architecture encyclopedia or chronological build log.
 | `docs/attachment_interface.md` | The versioned reader/consumer interface contract and its coordinated change rules. | General maintenance instructions or unrelated product documentation. |
 | `docs/releases.md` | Owner/authorized-maintainer release workflow, branch/publication mechanics, RC1–RC3 reference and installed-wheel smoke procedures. | Authority for an agent to publish, test-result history or feature usage. |
 | `docs/decisions.md` | Specification lineage, dated owner dispositions, approved departures and historical implementation/build decisions. | New standing directives, current checklists or claims that old results validate current code. |
+| `docs/owner-ceo-pathway-trial-guide.md` | Owner walkthrough, synthetic pathway trials and comparison worksheet. | Release procedures and internal behavior contracts. |
 | `NEWS.md` | Concise user-visible changes, grouped by release. | Internal maintenance narratives, test logs and owner procedures. |
 
 Before adding documentation, classify its audience and purpose and update the owning document.
@@ -432,3 +433,15 @@ Use fresh filenames for reruns and retain the full reports alongside targeted re
 and Chat checkpoint before and after cases. Exit codes are `0` passed, `1` failed, `2` blocked and
 `3` incomplete or awaiting rubric review. Use `--case-delay 2` on the library evaluator to space
 case starts without retrying requests.
+
+
+## Company workflow preset checks
+
+Run the Company and tutorial checks in the checkout's development environment.
+
+```bash
+python -m pytest -q tests/test_company.py tests/test_tutorial.py
+```
+
+The Company preset test runs all ten native graphs through the real Company API with a loopback
+provider double. The installed UI gate repeats this check from the wheel.

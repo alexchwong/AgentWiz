@@ -1,0 +1,29 @@
+{
+  "brief": "From these synthetic release notes, answer which version introduced the Export Preview feature, citing the exact relevant line. Do not infer anything not in the notes.\n\n- v1.2.0: Added project labels and profile switching.\n- v1.3.0: Improved PDF import and preserved document identifiers.\n- v1.4.0: Introduced Export Preview, disabled by default.\n- v1.4.1: Fixed a crash in Export Preview.",
+  "nodes": [
+    {
+      "found": true,
+      "answer": "Export Preview appeared in v1.4.0.",
+      "quotes": [
+        "- v1.4.0: Introduced Export Preview, disabled by default."
+      ]
+    },
+    {
+      "results": [
+        {
+          "item": "Name the version.",
+          "met": "yes",
+          "evidence": "v1.4.0"
+        }
+      ],
+      "overall": "Checks passed."
+    }
+  ],
+  "parameters": {
+    "question": "Which release introduced Export Preview?",
+    "checklist": [
+      "Name the version."
+    ]
+  },
+  "preset_id": "source_answer"
+}

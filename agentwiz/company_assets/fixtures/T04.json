@@ -1,0 +1,62 @@
+{
+  "brief": "Write a short, evidence-backed recommendation based only on the following synthetic supplier policy extracts.\n\nPolicy P1, issued 1 March: Supplier A must respond within 48 hours; Supplier B within 24 hours. Both require quarterly audits.\nAddendum A1, issued 8 March: This addendum supersedes P1 only for Supplier A's response window. Supplier A must respond within 12 hours.\nNote N1, issued 11 March: A draft memo says Supplier A is slower because it has a 48-hour response window. The note does not claim to amend P1 or A1.\n\nWhich supplier has the shorter required response window? Explain which document controls, cite the controlling words, and identify any stale conclusion.",
+  "nodes": [
+    {
+      "out": {
+        "records": [
+          {
+            "document": "Policy P1",
+            "authority": "base",
+            "date": "1 March",
+            "scope": "Both suppliers",
+            "quote": "Policy P1, issued 1 March: Supplier A must respond within 48 hours; Supplier B within 24 hours. Both require quarterly audits."
+          },
+          {
+            "document": "Addendum A1",
+            "authority": "binding",
+            "date": "8 March",
+            "scope": "A window",
+            "quote": "Addendum A1, issued 8 March: This addendum supersedes P1 only for Supplier A's response window. Supplier A must respond within 12 hours."
+          },
+          {
+            "document": "Note N1",
+            "authority": "memo",
+            "date": "11 March",
+            "scope": "None",
+            "quote": "Note N1, issued 11 March: A draft memo says Supplier A is slower because it has a 48-hour response window. The note does not claim to amend P1 or A1."
+          }
+        ]
+      }
+    },
+    {
+      "out": {
+        "conclusions": [
+          {
+            "clause": "Supplier A",
+            "requirement": "12 hours",
+            "authority": "A1"
+          },
+          {
+            "clause": "Supplier B",
+            "requirement": "24 hours",
+            "authority": "P1"
+          },
+          {
+            "clause": "Quarterly audits",
+            "requirement": "Both suppliers",
+            "authority": "P1"
+          }
+        ],
+        "stale_claims": [
+          "A has 48 hours."
+        ],
+        "quotes": [
+          "Addendum A1, issued 8 March: This addendum supersedes P1 only for Supplier A's response window. Supplier A must respond within 12 hours.",
+          "Policy P1, issued 1 March: Supplier A must respond within 48 hours; Supplier B within 24 hours. Both require quarterly audits."
+        ]
+      }
+    }
+  ],
+  "parameters": {},
+  "preset_id": "amendment_comparison"
+}

@@ -1,0 +1,525 @@
+{
+  "format": "agentwiz.component",
+  "format_version": 1,
+  "root": {
+    "kind": "workflow",
+    "id": "company/csv_profile",
+    "title": "Profile a pasted CSV",
+    "visibility": "private",
+    "category": "analysis",
+    "definition": {
+      "workflow": {
+        "name": "csv_profile",
+        "purpose": "Analyse a supplied CSV table and a named data column.",
+        "inputs": {
+          "source": {
+            "contract": {
+              "format": "text",
+              "max_length": 1048576
+            },
+            "local_only": false
+          },
+          "column": {
+            "contract": {
+              "format": "text",
+              "max_length": 200
+            },
+            "local_only": false
+          }
+        },
+        "outputs": {
+          "table": {
+            "contract": {
+              "format": "json",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "columns": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 200,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 200,
+                      "minLength": 1
+                    }
+                  },
+                  "rows": {
+                    "type": "array",
+                    "maxItems": 10000,
+                    "items": {
+                      "type": "array",
+                      "maxItems": 200,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 10000
+                      }
+                    }
+                  },
+                  "row_count": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "columns",
+                  "rows",
+                  "row_count"
+                ]
+              }
+            },
+            "local_only": false,
+            "binding": {
+              "kind": "node",
+              "node": "parse",
+              "port": "out"
+            }
+          },
+          "statistics": {
+            "contract": {
+              "format": "json",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "numeric_count": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "empty_count": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "other_count": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "sum": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 1100
+                  },
+                  "min": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 1100
+                  },
+                  "max": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 1100
+                  },
+                  "mean": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 1100
+                  },
+                  "rounded": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "count",
+                  "numeric_count",
+                  "empty_count",
+                  "other_count",
+                  "sum",
+                  "min",
+                  "max",
+                  "mean",
+                  "rounded"
+                ]
+              }
+            },
+            "local_only": false,
+            "binding": {
+              "kind": "node",
+              "node": "statistics",
+              "port": "out"
+            }
+          },
+          "duplicate_count": {
+            "contract": {
+              "format": "json",
+              "schema": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "local_only": false,
+            "binding": {
+              "kind": "node",
+              "node": "duplicates",
+              "port": "out"
+            }
+          }
+        },
+        "constants": {},
+        "nodes": {
+          "parse": {
+            "block": "parse",
+            "bindings": {
+              "csv": {
+                "kind": "input",
+                "port": "source"
+              }
+            }
+          },
+          "statistics": {
+            "block": "statistics",
+            "bindings": {
+              "columns": {
+                "kind": "node",
+                "node": "parse",
+                "port": "out",
+                "path": [
+                  "columns"
+                ]
+              },
+              "rows": {
+                "kind": "node",
+                "node": "parse",
+                "port": "out",
+                "path": [
+                  "rows"
+                ]
+              },
+              "column": {
+                "kind": "input",
+                "port": "column"
+              }
+            }
+          },
+          "duplicates": {
+            "block": "duplicates",
+            "bindings": {
+              "rows": {
+                "kind": "node",
+                "node": "parse",
+                "port": "out",
+                "path": [
+                  "rows"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "blocks": {
+        "parse": {
+          "inline": {
+            "kind": "block",
+            "id": "company/csv_to_rows",
+            "title": "Csv to rows",
+            "visibility": "private",
+            "category": "analysis",
+            "definition": {
+              "block": {
+                "format_version": 4,
+                "name": "csv_to_rows",
+                "description": "Parse comma-separated text with a header into columns and rows.",
+                "inputs": {
+                  "csv": {
+                    "contract": {
+                      "format": "text",
+                      "max_length": 1048576
+                    },
+                    "local_only": false
+                  }
+                },
+                "outputs": {
+                  "out": {
+                    "contract": {
+                      "format": "json",
+                      "schema": {
+                        "type": "object",
+                        "properties": {
+                          "columns": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 200,
+                            "items": {
+                              "type": "string",
+                              "maxLength": 200,
+                              "minLength": 1
+                            }
+                          },
+                          "rows": {
+                            "type": "array",
+                            "maxItems": 10000,
+                            "items": {
+                              "type": "array",
+                              "maxItems": 200,
+                              "items": {
+                                "type": "string",
+                                "maxLength": 10000
+                              }
+                            }
+                          },
+                          "row_count": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "additionalProperties": false,
+                        "required": [
+                          "columns",
+                          "rows",
+                          "row_count"
+                        ]
+                      }
+                    },
+                    "local_only": false
+                  }
+                },
+                "steps": [
+                  {
+                    "id": "run",
+                    "kind": "tool",
+                    "builtin": "parse_csv",
+                    "output": "out",
+                    "arguments": {
+                      "csv": "{{inputs.csv}}",
+                      "delimiter": ",",
+                      "has_header": true
+                    }
+                  }
+                ]
+              },
+              "files": {}
+            }
+          }
+        },
+        "statistics": {
+          "inline": {
+            "kind": "block",
+            "id": "company/column_stats",
+            "title": "Column stats",
+            "visibility": "private",
+            "category": "analysis",
+            "definition": {
+              "block": {
+                "format_version": 4,
+                "name": "column_stats",
+                "description": "Count, sum, minimum, maximum and mean of one column's numbers.",
+                "inputs": {
+                  "columns": {
+                    "contract": {
+                      "format": "json",
+                      "schema": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 200,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      }
+                    },
+                    "local_only": false
+                  },
+                  "rows": {
+                    "contract": {
+                      "format": "json",
+                      "schema": {
+                        "type": "array",
+                        "maxItems": 10000,
+                        "items": {
+                          "type": "array",
+                          "maxItems": 200,
+                          "items": {
+                            "type": "string",
+                            "maxLength": 10000
+                          }
+                        }
+                      }
+                    },
+                    "local_only": false
+                  },
+                  "column": {
+                    "contract": {
+                      "format": "text",
+                      "max_length": 200
+                    },
+                    "local_only": false
+                  }
+                },
+                "outputs": {
+                  "out": {
+                    "contract": {
+                      "format": "json",
+                      "schema": {
+                        "type": "object",
+                        "properties": {
+                          "count": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "numeric_count": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "empty_count": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "other_count": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "sum": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "maxLength": 1100
+                          },
+                          "min": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "maxLength": 1100
+                          },
+                          "max": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "maxLength": 1100
+                          },
+                          "mean": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "maxLength": 1100
+                          },
+                          "rounded": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "required": [
+                          "count",
+                          "numeric_count",
+                          "empty_count",
+                          "other_count",
+                          "sum",
+                          "min",
+                          "max",
+                          "mean",
+                          "rounded"
+                        ]
+                      }
+                    },
+                    "local_only": false
+                  }
+                },
+                "steps": [
+                  {
+                    "id": "run",
+                    "kind": "tool",
+                    "builtin": "column_stats",
+                    "output": "out",
+                    "arguments": {
+                      "columns": "{{inputs.columns}}",
+                      "rows": "{{inputs.rows}}",
+                      "column": "{{inputs.column}}"
+                    }
+                  }
+                ]
+              },
+              "files": {}
+            }
+          }
+        },
+        "duplicates": {
+          "inline": {
+            "kind": "block",
+            "id": "company/count_duplicate_rows",
+            "title": "Count duplicate rows",
+            "visibility": "private",
+            "category": "analysis",
+            "definition": {
+              "block": {
+                "format_version": 4,
+                "name": "count_duplicate_rows",
+                "inputs": {
+                  "rows": {
+                    "contract": {
+                      "format": "json",
+                      "schema": {
+                        "type": "array",
+                        "maxItems": 10000,
+                        "items": {
+                          "type": "array",
+                          "maxItems": 200,
+                          "items": {
+                            "type": "string",
+                            "maxLength": 10000
+                          }
+                        }
+                      }
+                    },
+                    "local_only": false
+                  }
+                },
+                "outputs": {
+                  "out": {
+                    "contract": {
+                      "format": "json",
+                      "schema": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "local_only": false
+                  }
+                },
+                "steps": [
+                  {
+                    "id": "run",
+                    "kind": "transform",
+                    "operation": "count_duplicates",
+                    "operation_version": 1,
+                    "parameters": {},
+                    "output": "out"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "layout": {
+        "parse": {
+          "x": 0,
+          "y": 0
+        },
+        "statistics": {
+          "x": 240,
+          "y": 0
+        },
+        "duplicates": {
+          "x": 480,
+          "y": 0
+        }
+      }
+    }
+  }
+}

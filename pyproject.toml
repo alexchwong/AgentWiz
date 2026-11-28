@@ -13,7 +13,7 @@ requires-python = ">=3.10"
 dependencies = [
   "jsonschema>=4.26,<5",
   "pypdfium2>=5.13,<6",           # PDF reading in the worker process (0.2.2 starter blocks addendum, 4.2-4.3)
-  "modelSpell @ https://github.com/alexchwong/modelSpell/releases/download/v0.4.0/modelspell-0.4.0-py3-none-any.whl#sha256=9ae1c5af17666298c519d78ab5b4dd49371cbb40a5c7f028185de8f46dbada88",
+  "modelSpell @ https://github.com/alexchwong/modelSpell/releases/download/v0.4.1/modelspell-0.4.1-py3-none-any.whl#sha256=53c6ae74d758c0ae25fa52ace5c334424a6e52a85725f0f85bb7b4c4f4bec68c",
   "scriptSpell @ https://github.com/alexchwong/scriptSpell/releases/download/v0.3.0/scriptspell-0.3.0-py3-none-any.whl#sha256=014e311bf84ea711534cc2a1c755b0b679ff31632dc86ece1975afb9f7feaa06",
 ]
 

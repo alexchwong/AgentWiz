@@ -296,6 +296,8 @@ class ProcessState:
             self.workshop = Service(self)
             from .library_install import Installer
             self.block_library = Installer(self)        # the starter block library (addendum 5)
+        from .company import Company
+        self.company = Company(self)
         from .agent_loop import Manager
         self.agent = Manager(self)                             # agentic Chat (0.2.2, 4, 7); outside the lock
 
@@ -1244,6 +1246,7 @@ class ProcessState:
             self.pdf.close()                          #    PDF admission: waiters refused, records cancelled
             self.python.close()
             self._interrupt_deliveries()              # 2. delivery never delays anything
+            self.company.shutdown()
             self.agent.cancel_all()                   #    an agent run ends as interrupted
             self.store.stop_all()                     # 3. cancel admitted work through the token path
             self.mcp_ops.cancel_all()                 #    and abandon every registered MCP operation

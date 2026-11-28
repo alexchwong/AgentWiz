@@ -1,0 +1,470 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "format_version",
+    "root"
+  ],
+  "properties": {
+    "format": {
+      "const": "agentwiz.component"
+    },
+    "format_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "root": {
+      "$ref": "#/$defs/declaration"
+    },
+    "dependencies": {
+      "type": "array",
+      "maxItems": 88,
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/declaration"
+          },
+          {
+            "properties": {
+              "visibility": {
+                "const": "public"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}/[a-z0-9][a-z0-9_-]{0,63}$"
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id",
+        "revision"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "team",
+            "agent",
+            "workflow",
+            "block"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "child": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "inline": {
+          "$ref": "#/$defs/declaration"
+        },
+        "ref": {
+          "$ref": "#/$defs/reference"
+        }
+      }
+    },
+    "agent_child": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/child"
+        },
+        {
+          "properties": {
+            "inline": {
+              "properties": {
+                "kind": {
+                  "const": "agent"
+                }
+              }
+            },
+            "ref": {
+              "properties": {
+                "kind": {
+                  "const": "agent"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "workflow_child": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/child"
+        },
+        {
+          "properties": {
+            "inline": {
+              "properties": {
+                "kind": {
+                  "const": "workflow"
+                }
+              }
+            },
+            "ref": {
+              "properties": {
+                "kind": {
+                  "const": "workflow"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "block_child": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/child"
+        },
+        {
+          "properties": {
+            "inline": {
+              "properties": {
+                "kind": {
+                  "const": "block"
+                }
+              }
+            },
+            "ref": {
+              "properties": {
+                "kind": {
+                  "const": "block"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "declaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id",
+        "title",
+        "visibility",
+        "category",
+        "definition"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "team",
+            "agent",
+            "workflow",
+            "block"
+          ]
+        },
+        "id": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "not": {
+                "pattern": "^agentwiz/"
+              }
+            }
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "visibility": {
+          "enum": [
+            "private",
+            "public"
+          ]
+        },
+        "category": {
+          "enum": [
+            "research",
+            "extraction",
+            "analysis",
+            "writing",
+            "verification",
+            "privacy",
+            "general"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "definition": {
+          "type": "object"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "team"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "definition": {
+                "$ref": "#/$defs/team"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "agent"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "definition": {
+                "$ref": "#/$defs/agent"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "workflow"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "definition": {
+                "$ref": "#/$defs/workflow"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "block"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "definition": {
+                "$ref": "#/$defs/block"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "team": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "purpose",
+        "agents"
+      ],
+      "properties": {
+        "purpose": {
+          "type": "string"
+        },
+        "lead_agent_id": {
+          "$ref": "#/$defs/id"
+        },
+        "agents": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/agent_child"
+          }
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instructions",
+        "mode",
+        "inputs",
+        "outputs",
+        "capability_requests",
+        "artifact_requests",
+        "workflows"
+      ],
+      "properties": {
+        "instructions": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 131072
+        },
+        "mode": {
+          "enum": [
+            "cloud",
+            "local_only"
+          ]
+        },
+        "role": {
+          "type": "string"
+        },
+        "inputs": {
+          "$ref": "#/$defs/ports"
+        },
+        "outputs": {
+          "$ref": "#/$defs/ports"
+        },
+        "capability_requests": {
+          "type": "array",
+          "maxItems": 64
+        },
+        "artifact_requests": {
+          "type": "array",
+          "maxItems": 64
+        },
+        "workflows": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/workflow_child"
+          }
+        }
+      }
+    },
+    "ports": {
+      "type": "object",
+      "maxProperties": 50,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "contract",
+          "local_only"
+        ],
+        "properties": {
+          "contract": {
+            "type": "object"
+          },
+          "local_only": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workflow",
+        "blocks"
+      ],
+      "properties": {
+        "workflow": {
+          "type": "object",
+          "required": [
+            "name",
+            "purpose",
+            "inputs",
+            "outputs",
+            "constants",
+            "nodes"
+          ]
+        },
+        "blocks": {
+          "type": "object",
+          "maxProperties": 64,
+          "additionalProperties": {
+            "$ref": "#/$defs/block_child"
+          }
+        },
+        "layout": {
+          "type": "object"
+        },
+        "examples": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "block"
+      ],
+      "properties": {
+        "block": {
+          "type": "object",
+          "required": [
+            "format_version",
+            "name",
+            "inputs",
+            "outputs",
+            "steps"
+          ],
+          "properties": {
+            "format_version": {
+              "type": "integer",
+              "const": 4
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          }
+        },
+        "files": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

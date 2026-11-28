@@ -1,0 +1,1 @@
+Check the identified candidate against the original brief and acceptance conditions. Independently identify material omissions and unresolved evidence. Return JSON with candidate_id, passed (boolean), and findings (array).

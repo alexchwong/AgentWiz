@@ -1,0 +1,977 @@
+{
+  "format": "agentwiz.company_catalogue",
+  "format_version": 1,
+  "files": {
+    "fixtures/T01.json": "a879d21825e27932f3ea4a033271bf9c7244cf720edef7b55cd440151148e360",
+    "fixtures/T02.json": "eed3b54ff473a541dbbc8eff323bf59c2beb0dfd29b45a21ae72ed14c28c565a",
+    "fixtures/T03.json": "c0571432370e2f4e252aa556ccb4881de09d97ccb2d4bd33d2f8eced1df8c4b5",
+    "fixtures/T04.json": "a8e81b1aa3016e6ecee19b59ffebcd9ab0ffa20b6855db7c44fcf317a94de1c8",
+    "fixtures/T05.json": "ed78c6db36876da1430f2cae763e88266b20e8e36d421aaeb5e69b11c699d8de",
+    "fixtures/T06.json": "22d7c83de353b39d4ffdaa8fdab3b3eba0c9c238ba367540f6e0140c2e2a0877",
+    "fixtures/T07.json": "fbb96b28ff273bae69227a14d7a1593863082b88c30ac22d06b3ac5b055570d0",
+    "fixtures/T08.json": "cc7c87ddf6d8bb206f9d63f93cff5a7f88979cdc8657a766c07a6f226b0bc46f",
+    "fixtures/T09.json": "98d73b17c4b35bc2c9341f33bfaa7426bb12a333f2526b23affcdadfe6721ce9",
+    "fixtures/csv.json": "73fe783fdf5587c6b4c76830acfd71a98a0e3277a366e2f76a8b95ce042e0c04",
+    "fixtures/meeting.json": "2724b85459ac3cf93e49362d8005d192fca4afd864da630fd6c2c575e88a8863",
+    "example.txt": "164b46c4c2817c915c56cae2ac020fb761de459d361031194c21571b61b4a692",
+    "components/source_answer.json": "44506d716278087130e1f17e4d93bfb84da2f876fc9dfdfb6ad052fd6ba1c1f9",
+    "components/amendment_comparison.json": "7dd680bbb217822911199cd9387c3a7717b458edcaadf3505148cef39899b245",
+    "components/meeting_actions.json": "7929611cd0de8e74a6f6de3d2a67671ed11e3b4cd5b0d8664b5515f6fa7e165f",
+    "components/log_triage.json": "660f26b275348a09c928a4b8164ce19e06f862228ce77e5a5066a6779d173cbe",
+    "components/stakeholder_synthesis.json": "805cca0c1e619568b498c7c52fcd0ef5ecb640ce9f3b9da2f774ce6bc30e0cf4",
+    "components/corpus_evidence_map.json": "bb35789e009091d01fc2b346a6e4afad7ad866df022ea619a728791fbf2a85d2",
+    "components/criteria_evidence.json": "0382327c934e40875d17342f9b6e99a1388cb625857b42dd55e6b31362aa86af",
+    "components/issue_register.json": "e4dce9ab6cca9a8510279dc138869b0d71f14a49f1c59df6ce339b9481fb0c40",
+    "components/constraint_screen.json": "9dc79ad5f2396c5ab5143506ff394c44ba374bbbcf9b737561d2697fb181d80c",
+    "components/csv_profile.json": "b8d142d4a1e8054515af2d700314e97d3567fa6156df572fcf50f65702b6b300",
+    "components/ceo.json": "52ed89566e34b625ff13df2bccf212f22124ab547cda861ecd3b620538157ccc",
+    "components/representative.json": "056c52a0387343b979a4219b9e646a13711ff64a885e476d4d09a3c0988d28ca",
+    "components/reader.json": "09776715a9477470fb9bdef7316d29683975006c8017765ba6320b340122f338",
+    "components/checker.json": "d5069f5dcceb3c19d83252b5adedaac3556552890adefdfe0d1f54902f046c3f",
+    "stages/representative.md": "031e2a40dca3a5a524686a4268de13f4862a59faed4054cb954b2e1cb8b71cfe",
+    "stages/representative.input.json": "51d54638eeb914ed51a54e0a3c4779c4015420263ca99a25ab4fe1c2b58bf0ea",
+    "stages/representative.output.json": "ac5ad99efb70b3a7e09eecc6bbca7cfc9d6f3280b0c1b072a6044806dd3863c8",
+    "stages/planner.md": "9c86f31793bc875081528bc9d8e719432c148bc5c2db18b1160e9fedcd677b1c",
+    "stages/planner.input.json": "51d54638eeb914ed51a54e0a3c4779c4015420263ca99a25ab4fe1c2b58bf0ea",
+    "stages/planner.output.json": "a64627ad8bd9debc8f8281b44e89961d1b2a1938d88960e0b529f481f3b8268d",
+    "stages/reporter.md": "a1655a0598db6d53c27718c48ac01888a4bd6a6b1c3d4d26c340f5892f56484b",
+    "stages/reporter.input.json": "51d54638eeb914ed51a54e0a3c4779c4015420263ca99a25ab4fe1c2b58bf0ea",
+    "stages/reporter.output.json": "528ae01d84d63987dc26196cbc259a62da51b77baad33a78f077c50d66e38630",
+    "stages/reader.md": "aa0d686036cc704b4680a4870b1e15a63220bbc36da45ac71ad03fd5d82db487",
+    "stages/reader.input.json": "51d54638eeb914ed51a54e0a3c4779c4015420263ca99a25ab4fe1c2b58bf0ea",
+    "stages/reader.output.json": "cfe6d6197c7466241d7972c5f339e9ea341b91a20790b2c248e2afeef299aae3",
+    "stages/checker.md": "8664401466b5794d913def2f3a2f8706606f2b283458a1aaad774993517c6946",
+    "stages/checker.input.json": "51d54638eeb914ed51a54e0a3c4779c4015420263ca99a25ab4fe1c2b58bf0ea",
+    "stages/checker.output.json": "c8d87f70ae7b53c2fcc764e209768be617eab88b7357867e2ab81c62fe28fd6b",
+    "components/calculate.json": "7ffa5bb1f2136bf9b3e36d95bcfc48175b671cabc651724644bb76cce8574d62",
+    "schemas/component.json": "8138ec41755af3abba483b16507e8bda2e90a992000554b5a8146d4c74eff4da",
+    "components/team.json": "bb29d3c7d3722ef3aeec212541b44669a2330aa95dd1a7200373883c648b00d7"
+  },
+  "packages": [
+    "components/source_answer.json",
+    "components/amendment_comparison.json",
+    "components/meeting_actions.json",
+    "components/log_triage.json",
+    "components/stakeholder_synthesis.json",
+    "components/corpus_evidence_map.json",
+    "components/criteria_evidence.json",
+    "components/issue_register.json",
+    "components/constraint_screen.json",
+    "components/csv_profile.json",
+    "components/ceo.json",
+    "components/representative.json",
+    "components/reader.json",
+    "components/checker.json",
+    "components/calculate.json",
+    "components/team.json"
+  ],
+  "presets": [
+    {
+      "id": "source_answer",
+      "title": "Answer from supplied text",
+      "purpose": "Answer a specific question from supplied text and check the answer against a checklist.",
+      "fit": "Answer a specific question from supplied text and check the answer against a checklist.",
+      "workflow": {
+        "ref": {
+          "kind": "workflow",
+          "id": "company/source_answer",
+          "revision": "c6dd9fed2bf18459283e278bd9d8d2f17c3bd526b08564c715dd437cc6b42a8c"
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "checklist": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            },
+            "minItems": 1,
+            "maxItems": 20
+          }
+        },
+        "required": [
+          "question",
+          "checklist"
+        ],
+        "additionalProperties": false
+      },
+      "input_bindings": {
+        "question": {
+          "from": "parameter",
+          "key": "question"
+        },
+        "source": {
+          "from": "brief"
+        },
+        "checklist": {
+          "from": "parameter",
+          "key": "checklist"
+        }
+      },
+      "node_checks": [
+        {
+          "op": "quotes",
+          "node": "source_answer",
+          "port": "quotes"
+        },
+        {
+          "op": "required_truth",
+          "node": "source_answer",
+          "port": "found",
+          "condition": "source_evidence_missing"
+        },
+        {
+          "op": "checklist",
+          "node": "checklist",
+          "port": "results",
+          "criteria": {
+            "kind": "input",
+            "port": "checklist"
+          },
+          "candidate": {
+            "kind": "node",
+            "node": "source_answer",
+            "port": "answer"
+          }
+        }
+      ],
+      "evidence_exports": [
+        {
+          "id": "answer",
+          "node": "source_answer",
+          "port": "answer",
+          "type": "derived"
+        },
+        {
+          "id": "checklist_findings",
+          "node": "checklist",
+          "port": "results",
+          "type": "derived"
+        }
+      ],
+      "examples": [
+        "T01"
+      ]
+    },
+    {
+      "id": "amendment_comparison",
+      "title": "Compare versions and amendments",
+      "purpose": "Resolve which supplied version or amendment controls disputed clauses.",
+      "fit": "Resolve which supplied version or amendment controls disputed clauses.",
+      "workflow": {
+        "ref": {
+          "kind": "workflow",
+          "id": "company/amendment_comparison",
+          "revision": "8bd38900a71dae35c94990b530656f1e2280e159577bb8631d5a1eaa4db9ec93"
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "input_bindings": {
+        "source": {
+          "from": "brief"
+        }
+      },
+      "node_checks": [
+        {
+          "op": "row_quotes",
+          "node": "extract",
+          "port": "out",
+          "path": [
+            "records"
+          ],
+          "field": "quote"
+        },
+        {
+          "op": "quotes",
+          "node": "review",
+          "port": "out",
+          "path": [
+            "quotes"
+          ]
+        }
+      ],
+      "evidence_exports": [
+        {
+          "id": "ledger",
+          "node": "extract",
+          "port": "out",
+          "type": "derived"
+        },
+        {
+          "id": "assessment",
+          "node": "review",
+          "port": "out",
+          "type": "derived"
+        }
+      ],
+      "examples": [
+        "T04"
+      ]
+    },
+    {
+      "id": "meeting_actions",
+      "title": "Turn meeting notes into an action register",
+      "purpose": "Extract decisions and assignments from supplied meeting notes.",
+      "fit": "Extract decisions and assignments from supplied meeting notes.",
+      "workflow": {
+        "ref": {
+          "kind": "workflow",
+          "id": "company/meeting_actions",
+          "revision": "d6f367013970ce8303bdd4ff2bd53113ca1213d31282171e3987ee4d78dc2685"
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "input_bindings": {
+        "source": {
+          "from": "brief"
+        }
+      },
+      "node_checks": [
+        {
+          "op": "row_quotes",
+          "node": "extract",
+          "port": "out",
+          "path": [
+            "records"
+          ],
+          "field": "quote"
+        },
+        {
+          "op": "quotes",
+          "node": "review",
+          "port": "out",
+          "path": [
+            "quotes"
+          ]
+        }
+      ],
+      "evidence_exports": [
+        {
+          "id": "ledger",
+          "node": "extract",
+          "port": "out",
+          "type": "derived"
+        },
+        {
+          "id": "assessment",
+          "node": "review",
+          "port": "out",
+          "type": "derived"
+        }
+      ],
+      "examples": [
+        "meeting"
+      ]
+    },
+    {
+      "id": "log_triage",
+      "title": "Triage an application fault from logs",
+      "purpose": "Diagnose a failure from supplied logs and schemas, preserving causal uncertainty.",
+      "fit": "Diagnose a failure from supplied logs and schemas, preserving causal uncertainty.",
+      "workflow": {
+        "ref": {
+          "kind": "workflow",
+          "id": "company/log_triage",
+          "revision": "db118ecc308f4a81b4f2b8bbbb48c40c225c822044ca78bce4dde97bfd8ac927"
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "input_bindings": {
+        "source": {
+          "from": "brief"
+        }
+      },
+      "node_checks": [
+        {
+          "op": "row_quotes",
+          "node": "extract",
+          "port": "out",
+          "path": [
+            "records"
+          ],
+          "field": "quote"
+        },
+        {
+          "op": "quotes",
+          "node": "review",
+          "port": "out",
+          "path": [
+            "quotes"
+          ]
+        }
+      ],
+      "evidence_exports": [
+        {
+          "id": "ledger",
+          "node": "extract",
+          "port": "out",
+          "type": "derived"
+        },
+        {
+          "id": "assessment",
+          "node": "review",
+          "port": "out",
+          "type": "derived"
+        }
+      ],
+      "examples": [
+        "T06"
+      ]
+    },
+    {
+      "id": "stakeholder_synthesis",
+      "title": "Synthesize conflicting stakeholder accounts",
+      "purpose": "Reconcile attributed claims, prerequisites and unresolved conflicts.",
+      "fit": "Reconcile attributed claims, prerequisites and unresolved conflicts.",
+      "workflow": {
+        "ref": {
+          "kind": "workflow",
+          "id": "company/stakeholder_synthesis",
+          "revision": "b385fac4f0356cd07d07042607dbc2a01d9baeb994ef3daece6b595b25b2a120"
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "input_bindings": {
+        "source": {
+          "from": "brief"
+        }
+      },
+      "node_checks": [
+        {
+          "op": "row_quotes",
+          "node": "extract",
+          "port": "out",
+          "path": [
+            "records"
+          ],
+          "field": "quote"
+        },
+        {
+          "op": "quotes",
+          "node": "review",
+          "port": "out",
+          "path": [
+            "quotes"
+          ]
+        }
+      ],
+      "evidence_exports": [
+        {
+          "id": "ledger",
+          "node": "extract",
+          "port": "out",
+          "type": "derived"
+        },
+        {
+          "id": "assessment",
+          "node": "review",
+          "port": "out",
+          "type": "derived"
+        }
+      ],
+      "examples": [
+        "T08"
+      ]
+    },
+    {
+      "id": "corpus_evidence_map",
+      "title": "Map evidence and gaps in supplied abstracts",
+      "purpose": "Compare study coverage and find gaps within the supplied abstracts.",
+      "fit": "Compare study coverage and find gaps within the supplied abstracts.",
+      "workflow": {
+        "ref": {
+          "kind": "workflow",
+          "id": "company/corpus_evidence_map",
+          "revision": "4bf150598571f42257214560c16c054ed62f0c52b1f44ade35272cb8c5897d0f"
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "input_bindings": {
+        "source": {
+          "from": "brief"
+        }
+      },
+      "node_checks": [
+        {
+          "op": "row_quotes",
+          "node": "extract",
+          "port": "out",
+          "path": [
+            "records"
+          ],
+          "field": "quote"
+        },
+        {
+          "op": "quotes",
+          "node": "review",
+          "port": "out",
+          "path": [
+            "quotes"
+          ]
+        }
+      ],
+      "evidence_exports": [
+        {
+          "id": "ledger",
+          "node": "extract",
+          "port": "out",
+          "type": "derived"
+        },
+        {
+          "id": "assessment",
+          "node": "review",
+          "port": "out",
+          "type": "derived"
+        }
+      ],
+      "examples": [
+        "T09"
+      ]
+    },
+    {
+      "id": "criteria_evidence",
+      "title": "Check whether evidence is complete",
+      "purpose": "Check supplied evidence against every stated requirement.",
+      "fit": "Check supplied evidence against every stated requirement.",
+      "workflow": {
+        "ref": {
+          "kind": "workflow",
+          "id": "company/criteria_evidence",
+          "revision": "f58e006c38ebf5b52c66618055ef4e73ee03a05255ef0042f8d595b08aab5888"
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "input_bindings": {
+        "source": {
+          "from": "brief"
+        }
+      },
+      "node_checks": [
+        {
+          "op": "row_quotes",
+          "node": "extract",
+          "port": "out",
+          "path": [
+            "records"
+          ],
+          "field": "quote",
+          "nullable": true
+        },
+        {
+          "op": "required_truth",
+          "node": "reduce",
+          "port": "out",
+          "path": [
+            "complete"
+          ],
+          "condition": "criteria_unresolved"
+        }
+      ],
+      "evidence_exports": [
+        {
+          "id": "criteria",
+          "node": "reduce",
+          "port": "out",
+          "type": "derived"
+        }
+      ],
+      "examples": [
+        "T05"
+      ]
+    },
+    {
+      "id": "issue_register",
+      "title": "Build an issue register",
+      "purpose": "Build a current issue register with chronology and owner conflicts.",
+      "fit": "Build a current issue register with chronology and owner conflicts.",
+      "workflow": {
+        "ref": {
+          "kind": "workflow",
+          "id": "company/issue_register",
+          "revision": "079c2cf6331a69d82fe954dbba29b45248dd12d0cdcc94bb80403b8dcae5509d"
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "input_bindings": {
+        "source": {
+          "from": "brief"
+        }
+      },
+      "node_checks": [
+        {
+          "op": "row_quotes",
+          "node": "extract",
+          "port": "out",
+          "path": [
+            "records"
+          ],
+          "field": "quote"
+        },
+        {
+          "op": "ambiguous_group",
+          "node": "group",
+          "port": "out",
+          "field": "latest",
+          "condition": "latest_record_conflict"
+        }
+      ],
+      "evidence_exports": [
+        {
+          "id": "register",
+          "node": "group",
+          "port": "out",
+          "type": "derived"
+        }
+      ],
+      "examples": [
+        "T03"
+      ]
+    },
+    {
+      "id": "constraint_screen",
+      "title": "Screen options against hard constraints",
+      "purpose": "Compare numeric hard constraints and preserve soft preferences.",
+      "fit": "Compare numeric hard constraints and preserve soft preferences.",
+      "workflow": {
+        "ref": {
+          "kind": "workflow",
+          "id": "company/constraint_screen",
+          "revision": "403f29c223dc607da50abe9f927337c36bb6c071d5bc9497a1e75fafcbcbc1e8"
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "input_bindings": {
+        "source": {
+          "from": "brief"
+        }
+      },
+      "node_checks": [
+        {
+          "op": "row_quotes",
+          "node": "extract",
+          "port": "out",
+          "path": [
+            "records"
+          ],
+          "field": "quote"
+        },
+        {
+          "op": "row_quotes",
+          "node": "extract",
+          "port": "out",
+          "path": [
+            "criteria"
+          ],
+          "field": "quote"
+        },
+        {
+          "op": "contains_value",
+          "node": "screen",
+          "port": "out",
+          "field": "status",
+          "value": "unknown",
+          "condition": "constraint_unresolved"
+        }
+      ],
+      "evidence_exports": [
+        {
+          "id": "screened",
+          "node": "screen",
+          "port": "out",
+          "type": "derived"
+        }
+      ],
+      "examples": [
+        "T07"
+      ]
+    },
+    {
+      "id": "csv_profile",
+      "title": "Profile a pasted CSV",
+      "purpose": "Analyse a supplied CSV table and a named data column.",
+      "fit": "Analyse a supplied CSV table and a named data column.",
+      "workflow": {
+        "ref": {
+          "kind": "workflow",
+          "id": "company/csv_profile",
+          "revision": "b20fe26f0529a771552cb51ae17db979ce8dfc6b3a92aba6596c6953485d1a40"
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "column": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "column"
+        ],
+        "additionalProperties": false
+      },
+      "input_bindings": {
+        "source": {
+          "from": "first_valid",
+          "sources": [
+            {
+              "from": "brief_slice",
+              "selector": "table"
+            },
+            {
+              "from": "brief"
+            }
+          ]
+        },
+        "column": {
+          "from": "parameter",
+          "key": "column"
+        }
+      },
+      "node_checks": [],
+      "evidence_exports": [
+        {
+          "id": "table",
+          "node": "parse",
+          "port": "out",
+          "type": "derived"
+        },
+        {
+          "id": "statistics",
+          "node": "statistics",
+          "port": "out",
+          "type": "derived"
+        },
+        {
+          "id": "duplicate_count",
+          "node": "duplicates",
+          "port": "out",
+          "type": "derived"
+        }
+      ],
+      "examples": [
+        "csv"
+      ],
+      "preflight": {
+        "selectors": {
+          "table": {
+            "kind": "fenced_text",
+            "language": "csv"
+          }
+        },
+        "format": "csv"
+      }
+    }
+  ],
+  "entrypoints": {
+    "representative": {
+      "agent": {
+        "ref": {
+          "kind": "agent",
+          "id": "company/representative",
+          "revision": "7372f9604f1d6ee001733cc5cf53eaa943d852eca2c1f9b82dc723a009837021"
+        }
+      },
+      "instructions": "stages/representative.md",
+      "input_contract": "stages/representative.input.json",
+      "output_contract": "stages/representative.output.json"
+    },
+    "planner": {
+      "agent": {
+        "ref": {
+          "kind": "agent",
+          "id": "company/ceo",
+          "revision": "828b4fd1d9bab84f5b6a90fb1090cef3915eddd7cbf8077a72582611cda903e4"
+        }
+      },
+      "instructions": "stages/planner.md",
+      "input_contract": "stages/planner.input.json",
+      "output_contract": "stages/planner.output.json"
+    },
+    "reporter": {
+      "agent": {
+        "ref": {
+          "kind": "agent",
+          "id": "company/ceo",
+          "revision": "828b4fd1d9bab84f5b6a90fb1090cef3915eddd7cbf8077a72582611cda903e4"
+        }
+      },
+      "instructions": "stages/reporter.md",
+      "input_contract": "stages/reporter.input.json",
+      "output_contract": "stages/reporter.output.json"
+    },
+    "reader": {
+      "agent": {
+        "ref": {
+          "kind": "agent",
+          "id": "company/reader",
+          "revision": "5940a09eceac4d615b753170c25849739ee57f4fa9d2540a0f325430d94f2c16"
+        }
+      },
+      "instructions": "stages/reader.md",
+      "input_contract": "stages/reader.input.json",
+      "output_contract": "stages/reader.output.json"
+    },
+    "checker": {
+      "agent": {
+        "ref": {
+          "kind": "agent",
+          "id": "company/checker",
+          "revision": "5f4f6c9a2afb1995f13a565662bf47ea7ce24af891f0de6efc16480d8df3f130"
+        }
+      },
+      "instructions": "stages/checker.md",
+      "input_contract": "stages/checker.input.json",
+      "output_contract": "stages/checker.output.json"
+    }
+  },
+  "structures": {
+    "reader_checker": {
+      "title": "Reader and checker",
+      "allowed_policies": [
+        "D",
+        "E"
+      ],
+      "stages": [
+        {
+          "id": "reader",
+          "entrypoint": "reader",
+          "bindings": {
+            "brief": {
+              "from": "brief"
+            },
+            "conditions": {
+              "from": "parameter",
+              "key": "conditions"
+            }
+          },
+          "method_scope": [],
+          "checks": [
+            {
+              "op": "quotes",
+              "field": "quotes"
+            },
+            {
+              "op": "candidate",
+              "field": "answer"
+            }
+          ]
+        },
+        {
+          "id": "checker",
+          "entrypoint": "checker",
+          "bindings": {
+            "brief": {
+              "from": "brief"
+            },
+            "conditions": {
+              "from": "parameter",
+              "key": "conditions"
+            },
+            "candidate": {
+              "from": "stage",
+              "id": "reader",
+              "field": "answer"
+            },
+            "candidate_id": {
+              "from": "stage",
+              "id": "reader",
+              "field": "candidate_id"
+            }
+          },
+          "method_scope": [],
+          "checks": [
+            {
+              "op": "same_candidate",
+              "field": "candidate_id"
+            },
+            {
+              "op": "required_truth",
+              "field": "passed",
+              "condition": "checker_unsatisfied"
+            }
+          ]
+        }
+      ]
+    },
+    "reader_only": {
+      "title": "Reader",
+      "allowed_policies": [
+        "E"
+      ],
+      "stages": [
+        {
+          "id": "reader",
+          "entrypoint": "reader",
+          "bindings": {
+            "brief": {
+              "from": "brief"
+            },
+            "conditions": {
+              "from": "parameter",
+              "key": "conditions"
+            }
+          },
+          "method_scope": [],
+          "checks": [
+            {
+              "op": "quotes",
+              "field": "quotes"
+            },
+            {
+              "op": "candidate",
+              "field": "answer"
+            }
+          ]
+        }
+      ]
+    },
+    "tool_reader_checker": {
+      "title": "Tool-enabled reader and checker",
+      "allowed_policies": [
+        "E"
+      ],
+      "stages": [
+        {
+          "id": "reader",
+          "entrypoint": "reader",
+          "bindings": {
+            "brief": {
+              "from": "brief"
+            },
+            "conditions": {
+              "from": "parameter",
+              "key": "conditions"
+            }
+          },
+          "method_scope": [
+            "reviewed_tools"
+          ],
+          "checks": [
+            {
+              "op": "quotes",
+              "field": "quotes"
+            },
+            {
+              "op": "candidate",
+              "field": "answer"
+            }
+          ]
+        },
+        {
+          "id": "checker",
+          "entrypoint": "checker",
+          "bindings": {
+            "brief": {
+              "from": "brief"
+            },
+            "conditions": {
+              "from": "parameter",
+              "key": "conditions"
+            },
+            "candidate": {
+              "from": "stage",
+              "id": "reader",
+              "field": "answer"
+            },
+            "candidate_id": {
+              "from": "stage",
+              "id": "reader",
+              "field": "candidate_id"
+            }
+          },
+          "method_scope": [],
+          "checks": [
+            {
+              "op": "same_candidate",
+              "field": "candidate_id"
+            },
+            {
+              "op": "required_truth",
+              "field": "passed",
+              "condition": "checker_unsatisfied"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "capabilities": {
+    "company_calculate_block": {
+      "title": "Run the bundled Calculate Block for exact decimal arithmetic.",
+      "block": {
+        "ref": {
+          "kind": "block",
+          "id": "company/calculate",
+          "revision": "b050cffd2d8283af63af55d40581e122a18a4fc7f70bb3e8e9df3855ba1d9069"
+        }
+      },
+      "visibility_policies": [
+        "B",
+        "E"
+      ]
+    }
+  },
+  "fixtures": {
+    "T01": "fixtures/T01.json",
+    "T02": "fixtures/T02.json",
+    "T03": "fixtures/T03.json",
+    "T04": "fixtures/T04.json",
+    "T05": "fixtures/T05.json",
+    "T06": "fixtures/T06.json",
+    "T07": "fixtures/T07.json",
+    "T08": "fixtures/T08.json",
+    "T09": "fixtures/T09.json",
+    "csv": "fixtures/csv.json",
+    "meeting": "fixtures/meeting.json"
+  }
+}

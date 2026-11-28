@@ -305,7 +305,7 @@ class Graph:
                 frontier.extend(binding[0] for binding in self.bindings[node].values())
         return issues
 
-    def destinations(self, state, workshop, model_roles=None, mcp_servers=None):
+    def destinations(self, state, workshop, model_roles=None, mcp_servers=None, *, model_resolver=None):
         destinations, issues, private = {}, [], {}
         if model_roles is None:
             model_roles = {}
@@ -336,7 +336,7 @@ class Graph:
                 if step.kind == 'model':
                     required += 1
                     if step.role not in model_roles:
-                        role = state.role_capture(step.role)
+                        role = (model_resolver or state.role_capture)(step.role)
                         snapshot = role.snapshot
                         key = outbound_policy.credential(snapshot.endpoint)
                         snapshot = dataclasses.replace(snapshot, endpoint=dataclasses.replace(
@@ -377,7 +377,8 @@ class Graph:
                         issues.append({**warning, 'severity': 'warning'})
                 destinations[node] = {**view, 'protected': node in self.protected_nodes}
                 guard = outbound_policy.block_dispatch(state, block, snapshot, protected=node in self.protected_nodes,
-                                                       defaults=role.defaults if role else None)
+                                                       defaults=role.defaults if role else None,
+                                                       model_resolver=model_resolver)
                 destinations[node] = {**view, 'trust_revision': guard.revision, 'protected': guard.destination is not None}
                 self.runtime[node] = snapshot, role, guard
             except (outbound_policy.Refused, NoSuchServer, RoleUnresolved, task_settings.TaskSettingError) as exc:
@@ -788,7 +789,7 @@ class Job(runner.Observer):
             snapshot, role, guard = graph.runtime[node]
             frozen = runner.FrozenSource(snapshot, False, {'workflow_node': node, 'release_assessment': True},
                                          owner=opened, capture=role, protected=True, dispatch=guard,
-                                         attempt_gate=self.allow_attempt)
+                                         attempt_gate=self.allow_attempt, parent_guard=self.parent_guard)
             detector_inputs = {'candidate': text}
             if not v2:
                 detector_inputs['mapping'] = jsonio.encode_exact(mapping)
@@ -888,6 +889,12 @@ class Job(runner.Observer):
                 self.private_release = None
         return SimpleNamespace(check=guard.check, verify_request=verify_request)
 
+    def parent_guard(self):
+        return None
+
+    def accept_node(self, graph, node, result):
+        return result
+
     def execute_node(self, graph, node, values):
         if node in graph.gates:
             return self.execute_gate(graph, node, values)
@@ -907,7 +914,7 @@ class Job(runner.Observer):
                 guard = self.private_dispatch(guard, snapshot, role, block, gate, texts['candidate'])
         frozen = runner.FrozenSource(snapshot, False, {'workflow_node': node}, owner=opened, capture=role,
                                      protected=node in graph.protected_nodes, dispatch=guard,
-                                     attempt_gate=self.allow_attempt)
+                                     attempt_gate=self.allow_attempt, parent_guard=self.parent_guard)
         result = runner.run_block(self.state, load_capture(opened, block.name), texts, self, frozen=frozen).result
         if block.name == 'privacy_classify' and result['outcome'] == 'failed' and not self.reason:
             steps = result.get('steps', [])
@@ -938,7 +945,7 @@ class Job(runner.Observer):
                 if self.reason is not None:
                     break
                 started = time.monotonic()
-                result = self.execute_node(graph, node, values)
+                result = self.accept_node(graph, node, self.execute_node(graph, node, values))
                 elapsed_ms = round((time.monotonic() - started) * 1000)
                 outcome = result['outcome']
                 size = len(jsonio.encode_exact(result).encode('utf-8'))

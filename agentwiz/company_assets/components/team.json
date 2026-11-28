@@ -1,0 +1,45 @@
+{
+  "format": "agentwiz.component",
+  "format_version": 1,
+  "root": {
+    "kind": "team",
+    "id": "company/brief-team",
+    "title": "Company brief team",
+    "visibility": "private",
+    "category": "general",
+    "definition": {
+      "purpose": "Run the authorised Company pathways for a supplied public brief.",
+      "agents": [
+        {
+          "ref": {
+            "kind": "agent",
+            "id": "company/representative",
+            "revision": "7372f9604f1d6ee001733cc5cf53eaa943d852eca2c1f9b82dc723a009837021"
+          }
+        },
+        {
+          "ref": {
+            "kind": "agent",
+            "id": "company/ceo",
+            "revision": "828b4fd1d9bab84f5b6a90fb1090cef3915eddd7cbf8077a72582611cda903e4"
+          }
+        },
+        {
+          "ref": {
+            "kind": "agent",
+            "id": "company/reader",
+            "revision": "5940a09eceac4d615b753170c25849739ee57f4fa9d2540a0f325430d94f2c16"
+          }
+        },
+        {
+          "ref": {
+            "kind": "agent",
+            "id": "company/checker",
+            "revision": "5f4f6c9a2afb1995f13a565662bf47ea7ce24af891f0de6efc16480d8df3f130"
+          }
+        }
+      ],
+      "lead_agent_id": "company/ceo"
+    }
+  }
+}

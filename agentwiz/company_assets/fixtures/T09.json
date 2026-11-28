@@ -1,0 +1,66 @@
+{
+  "brief": "Identify justified research gaps using only these synthetic abstracts:\n\nPaper A (2024): Tested software agent delegation with large hosted models on three programming tasks, but did not measure token cost.\nPaper B (2025): Compared direct versus fixed workflows on six extraction tasks using small local models, including token cost.\nPaper C (2025): Tested adaptive delegation using hosted models on the same extraction tasks and reported latency and accuracy.\nPaper D (2026): Studied smaller quantised local models, direct and adaptive approaches, reporting accuracy but not latency or cost.\nPaper E (2026): Benchmarked local models and fixed workflows on programming tasks, reporting accuracy and cost but no adaptive delegation.\n\nState what has been studied, identify at most three specific untested combinations or measures supported by these descriptions, and explain why an absence from the supplied abstracts does not prove that no such work exists elsewhere.",
+  "nodes": [
+    {
+      "out": {
+        "records": [
+          {
+            "study": "Paper A",
+            "design": "Paper A (2024): Tested software agent delegation with large hosted models on three programming tasks, but did not measure token cost.",
+            "outcomes": [],
+            "quote": "Paper A (2024): Tested software agent delegation with large hosted models on three programming tasks, but did not measure token cost."
+          },
+          {
+            "study": "Paper B",
+            "design": "Paper B (2025): Compared direct versus fixed workflows on six extraction tasks using small local models, including token cost.",
+            "outcomes": [],
+            "quote": "Paper B (2025): Compared direct versus fixed workflows on six extraction tasks using small local models, including token cost."
+          },
+          {
+            "study": "Paper C",
+            "design": "Paper C (2025): Tested adaptive delegation using hosted models on the same extraction tasks and reported latency and accuracy.",
+            "outcomes": [],
+            "quote": "Paper C (2025): Tested adaptive delegation using hosted models on the same extraction tasks and reported latency and accuracy."
+          },
+          {
+            "study": "Paper D",
+            "design": "Paper D (2026): Studied smaller quantised local models, direct and adaptive approaches, reporting accuracy but not latency or cost.",
+            "outcomes": [],
+            "quote": "Paper D (2026): Studied smaller quantised local models, direct and adaptive approaches, reporting accuracy but not latency or cost."
+          },
+          {
+            "study": "Paper E",
+            "design": "Paper E (2026): Benchmarked local models and fixed workflows on programming tasks, reporting accuracy and cost but no adaptive delegation.",
+            "outcomes": [],
+            "quote": "Paper E (2026): Benchmarked local models and fixed workflows on programming tasks, reporting accuracy and cost but no adaptive delegation."
+          }
+        ]
+      }
+    },
+    {
+      "out": {
+        "studies": [
+          "Paper A",
+          "Paper B",
+          "Paper C",
+          "Paper D",
+          "Paper E"
+        ],
+        "gaps": [
+          {
+            "gap": "Latency and cost for adaptive local workflows together",
+            "support": [
+              "Paper D"
+            ]
+          }
+        ],
+        "scope": "Supplied corpus only",
+        "quotes": [
+          "Paper D (2026): Studied smaller quantised local models, direct and adaptive approaches, reporting accuracy but not latency or cost."
+        ]
+      }
+    }
+  ],
+  "parameters": {},
+  "preset_id": "corpus_evidence_map"
+}

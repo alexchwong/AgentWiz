@@ -1,0 +1,55 @@
+{
+  "brief": "Make a deduplicated issue register from these synthetic notes. Keep the latest status by timestamp per ID, but report any conflicting owners separately rather than choosing an owner silently.\n\n2026-01-02 09:00 | I-101 | owner Ada | Open | PDF conversion fails on file X\n2026-01-02 09:10 | I-102 | owner Ben | Open | Model route missing\n2026-01-02 11:30 | I-101 | owner Ada | Closed | Fix tested\n2026-01-02 12:00 | I-103 | owner Chen | Open | Export path invalid\n2026-01-02 13:00 | I-102 | owner Dana | In progress | Investigation ongoing\n2026-01-02 13:05 | I-102 | owner Ben | In progress | Investigation ongoing\n\nReport the final status for each ID, list evidence lines, and flag any unresolved owner conflict.",
+  "nodes": [
+    {
+      "out": {
+        "records": [
+          {
+            "identifier": "I-101",
+            "timestamp": "2026-01-02T09:00:00",
+            "status": "Open",
+            "owner": "Ada",
+            "quote": "2026-01-02 09:00 | I-101 | owner Ada | Open | PDF conversion fails on file X"
+          },
+          {
+            "identifier": "I-102",
+            "timestamp": "2026-01-02T09:10:00",
+            "status": "Open",
+            "owner": "Ben",
+            "quote": "2026-01-02 09:10 | I-102 | owner Ben | Open | Model route missing"
+          },
+          {
+            "identifier": "I-101",
+            "timestamp": "2026-01-02T11:30:00",
+            "status": "Closed",
+            "owner": "Ada",
+            "quote": "2026-01-02 11:30 | I-101 | owner Ada | Closed | Fix tested"
+          },
+          {
+            "identifier": "I-103",
+            "timestamp": "2026-01-02T12:00:00",
+            "status": "Open",
+            "owner": "Chen",
+            "quote": "2026-01-02 12:00 | I-103 | owner Chen | Open | Export path invalid"
+          },
+          {
+            "identifier": "I-102",
+            "timestamp": "2026-01-02T13:00:00",
+            "status": "In progress",
+            "owner": "Dana",
+            "quote": "2026-01-02 13:00 | I-102 | owner Dana | In progress | Investigation ongoing"
+          },
+          {
+            "identifier": "I-102",
+            "timestamp": "2026-01-02T13:05:00",
+            "status": "In progress",
+            "owner": "Ben",
+            "quote": "2026-01-02 13:05 | I-102 | owner Ben | In progress | Investigation ongoing"
+          }
+        ]
+      }
+    }
+  ],
+  "parameters": {},
+  "preset_id": "issue_register"
+}

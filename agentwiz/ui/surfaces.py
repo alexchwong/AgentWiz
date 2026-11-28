@@ -4,6 +4,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import secrets
 import stat
 import tempfile
@@ -36,9 +37,17 @@ WORKSHOP = {
 WORKSHOP_COLLECTIONS = ("/api/contracts", "/api/blocks", "/api/runs", "/api/workspaces")
 
 
+COMPANY_ROUTES = {
+    "GET": re.compile(r"/api/company/(settings|runs/[a-f0-9]{32}(/report)?)"),
+    "POST": re.compile(r"/api/company/(model-class|intakes(/[a-f0-9]{32}/(message|stop))?"
+                       r"|runs(/[a-f0-9]{32}/(stop|approval))?)"),
+}
+
+
 def permitted(surface, method, path):
     if surface == "chat":
-        return ((method == "GET" and (path in CHAT_GET or
+        company = COMPANY_ROUTES.get(method)
+        return (bool(company and company.fullmatch(path)) or (method == "GET" and (path in CHAT_GET or
                  path.startswith(("/api/agent/runs/", "/api/agent/drafts/"))))
                 or (method == "POST" and path in CHAT_POST))
     return any(path == route or (route.endswith("/") and path.startswith(route)) or
@@ -96,6 +105,7 @@ class ChatListener(ThreadingHTTPServer):
         self.assets = {f"/assets/{name}": ((HERE / name).read_bytes(), ctype)
                        for name, ctype in (
                            ("chat.js", "text/javascript; charset=utf-8"),
+                           ("company.js", "text/javascript; charset=utf-8"),
                            ("chat-markdown.js", "text/javascript; charset=utf-8"),
                            ("chat.css", "text/css; charset=utf-8"),
                        )}

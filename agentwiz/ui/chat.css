@@ -144,3 +144,10 @@ dialog::backdrop { background: #14232388; }
 }
 .chat-menu-actions button { text-align: left; }
 .usage { margin: .45rem 0 0; font-size: .8rem; color: var(--muted); }
+
+#company { width: min(52rem, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); overflow: auto; }
+#company textarea { display: block; width: 100%; margin-top: .35rem; }
+#company-trials .bar { flex-wrap: wrap; margin-top: .5rem; }
+#company-attempts, #company-time { width: 6rem; }
+#company-trace-text { max-height: 18rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+#company-report:empty, #company-turns:empty { display: none; }

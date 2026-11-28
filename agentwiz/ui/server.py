@@ -31,6 +31,8 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
 import modelspell
+
+from .. import company
 from modelspell import ModelSpellError
 
 from .. import (__version__, attachments, checks, contract_schema, contract_service, contracts, history, insertion, jsonio, mcp_ops, model_call, model_step,
@@ -269,7 +271,8 @@ class UIServer(ThreadingHTTPServer):
                 ("block_run", len(state.store.active_block_runs())),
                 ("mcp_operation", state.mcp_ops.active_count()),
                 ("python", state.python.in_flight),
-                ("agent_run", 1 if state.agent.active is not None else 0)):
+                ("agent_run", 1 if state.agent.active is not None else 0),
+                ("company", 1 if state.company.active is not None else 0)):
             if count:
                 active.append({"kind": kind, "count": count})
         outstanding = state.writers.outstanding()
@@ -680,6 +683,8 @@ class Handler(BaseHTTPRequestHandler):
         """Run a route, mapping every failure to a reply that cannot contain a credential."""
         try:
             fn()
+        except company.Refusal as exc:
+            self._reply_safely(exc.status, {"code": exc.code})
         except agent_loop.AgentError as exc:     # fixed codes and AgentWiz's own fields, never a value
             self._reply_safely(exc.status, {"error": "agentic Chat request refused", "code": exc.code, **exc.extra})
         except workshop.WorkshopError as exc:
@@ -821,6 +826,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, self.server.index, "text/html; charset=utf-8")
         if path in self.server.assets:
             return self._send(200, *self.server.assets[path])
+        if path.startswith("/api/company/"):
+            return self._company(path)
         if path == "/api/chat/settings":
             return self._send(200, self._chat_settings())
         if path == "/api/chat/history":
@@ -885,6 +892,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200 if result else 403, {"session": result} if result else {"code": "bootstrap_expired"})
         if not self._authorised():
             return self._send(403, {"error": "missing or invalid session token"})
+        if path.startswith("/api/company/"):
+            return self._company(path)
         if path == "/api/chat/bindings":
             body = self._body()
             self.server.state.save_mode_bindings(body.get("bindings"), _revision(body))
@@ -942,6 +951,60 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "not found"})
         handler(body)
 
+    def _company(self, path):
+        route = surfaces.COMPANY_ROUTES.get(self.command)
+        if (self.server.authority is None or self.server.authority.surface != "chat"
+                or route is None or not route.fullmatch(path)):
+            raise company.Refusal("surface_refused", 403)
+        service = self.server.state.company
+        parts = path.removeprefix("/api/company/").split("/")
+        if self.command == "GET":
+            if parts == ["settings"]:
+                return self._send(200, service.settings())
+            with service.lock:
+                job = service.get_job(parts[1])
+                body = service.view(job) if len(parts) == 2 else job.report
+            if len(parts) == 2:
+                return self._send(200, body)
+            if body is None:
+                raise company.Refusal("report_unavailable", 404)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="agentwiz-ceo-{job.ident}.md.txt"')
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return self.wfile.write(body)
+        if self.headers.get_content_type() != "application/json":
+            raise company.Refusal("invalid_content_type", 400)
+        size = self._length(200 << 10)
+        if size is None:
+            raise company.Refusal("invalid_body", 400)
+        try:
+            raw = self.rfile.read(size)
+            body = jsonio.decode_file(raw)
+        except (ValueError, OSError, RecursionError):
+            raise company.Refusal("invalid_body", 400) from None
+        version = body.pop("format_version", None)
+        if type(version) is not int or version != 1:
+            raise company.Refusal("invalid_version", 400)
+        if parts == ["model-class"]:
+            value = service.set_class(body)
+        elif parts == ["intakes"]:
+            value = service.create(body)
+        elif parts == ["runs"]:
+            value = service.start(body)
+        elif parts[-1] == "message":
+            value = service.message(parts[1], body)
+        elif parts[-1] == "approval":
+            with service.lock:
+                job = service.get_job(parts[1])
+            value = company.company_tools.decide(service, job, body)
+        else:
+            company.fields(body, ())
+            value = service.stop(parts[1], intake=parts[0] == "intakes")
+        return self._send(200, value)
+
     def _chat_settings(self) -> dict:
         from .. import chat_tasks, roles, webspell
         state = self.server.state
@@ -977,7 +1040,7 @@ class Handler(BaseHTTPRequestHandler):
                                              if self._reasoning_supported(kind, level)]
                                      for kind in model_call.KINDS},
                 "key_source": view["openrouter_key_source"], "webspell": web_status,
-                "starter_install_failures": state.starter_install_failures,
+                "starter_install_failures": getattr(state, "starter_install_failures", []),
                 "workshop_url": self.server.owner.url}
 
     def _chat_models(self, body):
@@ -1125,6 +1188,14 @@ class Handler(BaseHTTPRequestHandler):
             result = {'names': NAMES}
         elif path == 'components':
             result = service.components.listing()
+        elif path == 'company-presets':
+            result = {'presets': self.server.state.company.catalogue.views()}
+        elif len(parts) == 2 and parts[0] == 'company-presets':
+            preset = self.server.state.company.catalogue.presets.get(parts[1])
+            if preset is None:
+                return self._send(404, {'code': 'missing'})
+            bundle = preset['bundle']
+            result = service.workflows.describe_bundle(bundle, bundle['definition']['name'], preset['revision'])
         elif path == 'workflow-active':
             result = service.workflows.active_view()
         elif path == 'workflows':

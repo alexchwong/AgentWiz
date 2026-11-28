@@ -1,0 +1,6 @@
+From these synthetic release notes, answer which version introduced the Export Preview feature, citing the exact relevant line. Do not infer anything not in the notes.
+
+- v1.2.0: Added project labels and profile switching.
+- v1.3.0: Improved PDF import and preserved document identifiers.
+- v1.4.0: Introduced Export Preview, disabled by default.
+- v1.4.1: Fixed a crash in Export Preview.

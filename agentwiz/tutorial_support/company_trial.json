@@ -1,0 +1,17 @@
+{
+  "example": "T01",
+  "node_prompts": [
+    "Answer the question using only the source",
+    "Check the text against each checklist item"
+  ],
+  "representative": {
+    "kind": "clarification",
+    "reply": "Should I cite the exact release-note line?"
+  },
+  "report": {
+    "status": "complete",
+    "evidence_ids": [],
+    "open_conditions": [],
+    "markdown": "Status: complete\n\n## Result\nExport Preview appeared in v1.4.0.\n\n## Evidence\nThe supplied release notes identify v1.4.0.\n\n## Open conditions\nNone.\n"
+  }
+}

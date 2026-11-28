@@ -555,3 +555,10 @@ blocks publication, permits inclusion, or requires a rerun. A later release may 
 with improved identifier redaction, so its qualification is not a standing requirement.
 This supersedes the 0.2.3 statement that the run belongs to 0.2.4 and the 0.2.2 close-out
 deferral pending qualification.
+
+
+## 0.3.0 Cloud company foundation
+
+Technical specification v2 uses the released 0.2.5 tree and the authorised modelSpell 0.4.1 pin.
+Pathways A–D are execution locks. E selects a feasible implemented pathway. Local company
+execution and company-to-native Gate work are scheduled separately in plan v19.1.

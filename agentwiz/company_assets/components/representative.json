@@ -1,0 +1,20 @@
+{
+  "format": "agentwiz.component",
+  "format_version": 1,
+  "root": {
+    "kind": "agent",
+    "id": "company/representative",
+    "title": "Representative",
+    "visibility": "private",
+    "category": "general",
+    "definition": {
+      "instructions": "Clarify the public brief.",
+      "mode": "cloud",
+      "inputs": {},
+      "outputs": {},
+      "capability_requests": [],
+      "artifact_requests": [],
+      "workflows": []
+    }
+  }
+}

@@ -1,7 +1,7 @@
 # Adapted from modelSpell scripts/smoke_installed.py at commit 1759c6e3c28a637731434a73c46088048583e358
 # (MIT, Copyright (c) 2026 Alex Wong), per AgentWiz techspec 11.2 (0.1.0), 11.1 (0.1.1), 13.1 (0.1.2), 16.1 (0.1.3)
 # and 18.1 (0.1.4).
-"""Smoke check against the installed AgentWiz wheel (steps S1-S26). Run with the environment's
+"""Smoke check against the installed AgentWiz wheel (steps S1-S27). Run with the environment's
 `python -I`; it creates its own scratch working directory. Every step checks behaviour; none reads a file's contents.
 The launch's default workspace (./workspaces/default) is validated by AgentWiz itself and checked
 through /api/state."""
@@ -50,8 +50,8 @@ prefix = Path(sys.prefix).resolve()
 for mod in (agentwiz, modelspell, scriptspell):
     check(prefix in Path(mod.__file__).resolve().parents, f"{mod.__name__} imported from {mod.__file__}")
 
-# S2: --version from the console script and from python -m; modelSpell 0.4.0 and scriptSpell 0.3.0 are pinned
-check(modelspell.__version__ == "0.4.0", f"modelSpell {modelspell.__version__} installed, expected 0.4.0")
+# S2: --version from the console script and from python -m; modelSpell 0.4.1 and scriptSpell 0.3.0 are pinned
+check(modelspell.__version__ == "0.4.1", f"modelSpell {modelspell.__version__} installed, expected 0.4.1")
 check(scriptspell.__version__ == "0.3.0", f"scriptSpell {scriptspell.__version__} installed, expected 0.3.0")
 expected = f"AgentWiz {agentwiz.__version__} (modelSpell {modelspell.__version__})"
 bindir = Path(sys.executable).parent
@@ -456,6 +456,39 @@ try:
             "inputs": {"text": "The quick brown fox jumps over the lazy dog"}}).read().splitlines() if line]
         check(events[-1]["type"] == "final" and events[-1]["outcome"] == "complete"
               and events[-1]["result"]["outputs"]["words"]["text"] == "9", f"word_count: {events}")
+        # S27: the packaged company walkthrough runs through the actual Chat origin.
+        from urllib.parse import urlsplit
+        prepared = json.loads(child_api("/api/tutorial/step", {"topic": "company-ceo"}).read())
+        launch = urlsplit(prepared["company_url"])
+        company_root = f"{launch.scheme}://{launch.netloc}"
+        ticket = launch.fragment.removeprefix("bootstrap=")
+        bootstrap = urllib.request.Request(company_root + "/api/session/bootstrap",
+                                           data=json.dumps({"bootstrap": ticket}).encode(),
+                                           headers={"Origin": company_root, "Content-Type": "application/json"})
+        company_token = json.loads(urllib.request.urlopen(bootstrap, timeout=10).read())["session"]
+
+        def company_api(path, body=None):
+            payload = None if body is None else {"format_version": 1, **body}
+            return scoped(company_root, company_token, "/api/company/" + path, payload)
+
+        settings = json.loads(company_api("settings").read())
+        catalogue = settings["workflow_presets"]
+        check(len(catalogue) == 10, "complete installed company catalogue")
+        preset = next(row for row in catalogue if row["id"] == "source_answer")
+        intake = json.loads(company_api("intakes", {"revision": settings["revision"], "binding": "fast",
+                                                    "policy": "C", "workflow_preset": {
+                                                        "id": preset["id"], "revision": preset["revision"]}}).read())
+        job = json.loads(company_api("runs", {"intake_id": intake["id"], "revision": settings["revision"],
+                                              "client_request_id": "installed-smoke",
+                                              "brief": settings["example"]}).read())
+        end = time.monotonic() + 15
+        while not job["outcome"] and time.monotonic() < end:
+            time.sleep(.05)
+            job = json.loads(company_api("runs/" + job["id"]).read())
+        check(job["outcome"] == "complete" and job["pathway"] == "workflow", f"company outcome: {job}")
+        downloaded = company_api("runs/" + job["id"] + "/report").read()
+        check(b"v1.4.0" in downloaded and downloaded.startswith(b"Status: complete"),
+              "packaged CEO report")
     finally:
         json.loads(child_api("/api/tutorial/exit", {}).read())
 

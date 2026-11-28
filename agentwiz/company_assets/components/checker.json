@@ -1,0 +1,20 @@
+{
+  "format": "agentwiz.component",
+  "format_version": 1,
+  "root": {
+    "kind": "agent",
+    "id": "company/checker",
+    "title": "Checker",
+    "visibility": "private",
+    "category": "general",
+    "definition": {
+      "instructions": "Independently validate a candidate.",
+      "mode": "cloud",
+      "inputs": {},
+      "outputs": {},
+      "capability_requests": [],
+      "artifact_requests": [],
+      "workflows": []
+    }
+  }
+}

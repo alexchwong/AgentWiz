@@ -1,0 +1,3 @@
+{
+  "brief": "Prepare an invoice summary from this synthetic order, in AUD. Items: 3 licences at $120 each, 2 support units at $85 each. Apply a 10% discount to the combined pre-tax subtotal. Then apply 10% GST to the discounted amount. Show subtotal, discount, taxable amount, GST and final total. Do not round intermediate calculations."
+}

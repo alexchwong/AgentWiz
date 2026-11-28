@@ -15,6 +15,7 @@ import json
 import select
 import socket
 import time
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MODELS = {
@@ -109,6 +110,29 @@ for action in ('create', 'improve', 'describe', 'suggest_examples', 'explain_fai
     SCRIPTS[name] = lambda action=action: words('{"proposal":' + workshop_proposal(action) + '}') + [chunk(finish='stop', usage_json=USAGE), DONE]
 
 
+def company_reply(messages):
+    from ..company import packaged_catalogue
+
+    directory = Path(__file__).parent
+    config = json.loads((directory / "company_trial.json").read_text(encoding="utf-8"))
+    catalogue = packaged_catalogue()
+    trial = catalogue.json(catalogue.manifest["fixtures"][config["example"]])
+    system = messages[0]["content"]
+    if "intake representative" in system:
+        return config["representative"]
+    if "planning object" in system:
+        data = json.loads(messages[1]["content"])
+        plan = {"strategy": "solo", "purpose": "Read the supplied notes.", "conditions": []}
+        if data["strategy_inventory"] == ["workflow"] and any(
+                row["id"] == trial["preset_id"] for row in data["workflow_presets"]):
+            plan.update(strategy="workflow", preset_id=trial["preset_id"], parameters=trial["parameters"])
+        return plan
+    for index, prefix in enumerate(config["node_prompts"]):
+        if system.startswith(prefix):
+            return trial["nodes"][index]
+    return config["report"]
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
 
@@ -139,6 +163,29 @@ class Handler(BaseHTTPRequestHandler):
         messages = body.get("messages") if isinstance(body.get("messages"), list) else []
         roles = [m.get("role") for m in messages if isinstance(m, dict)]
         log(f"request model={model!r} roles={roles}" + (f" settings={json.dumps(sampling)}" if sampling else ""))
+        if model == "tutorial/company":
+            if not self.headers.get("Authorization") == "Bearer sk-or-v1-tutorial-fixture":
+                return self._json(403, {"error": {"message": "fixture credential required"}})
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            try:
+                reply = company_reply(messages)
+                if "tool_call" in reply:
+                    name, arguments = reply["tool_call"]
+                    call = {"index": 0, "id": "company-call", "type": "function",
+                            "function": {"name": name, "arguments": json.dumps(arguments)}}
+                    event = {"id": "company", "model": model, "choices": [
+                        {"index": 0, "delta": {"tool_calls": [call]}, "finish_reason": None}]}
+                    parts = [b"data: " + json.dumps(event).encode() + b"\n\n",
+                             chunk(finish="tool_calls", usage_json=USAGE), DONE]
+                else:
+                    parts = words(json.dumps(reply)) + [chunk(finish="stop", usage_json=USAGE), DONE]
+                for part in parts:
+                    self._send(part)
+            except OSError:
+                pass
+            return
         if model == "error-500":
             return self._json(500, {"error": {"message": "stub failure"}})
         if model not in MODELS:

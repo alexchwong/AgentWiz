@@ -123,6 +123,8 @@ def drive_model_block(page):
 def workshop_run(page):
     tid(page, "ws-run-test").click()
     tid(tid(page,"ws-dialog"),"ws-confirm").click()
+    # The preceding topic may retain comparison cards until the new trial is rendered.
+    expect(tid(page, "ws-trial")).to_have_count(1)
     expect(tid(page, "ws-trial")).to_have_attribute("data-outcome", "complete")
 
 
@@ -275,6 +277,33 @@ ASSIST_IDS = ["assist-"+a for a in ("create","improve","describe","suggest_examp
 DRIVERS.update({i:drive_assist for i in ASSIST_IDS})
 
 
+def drive_company_ceo(page):
+    with page.expect_popup() as popup:
+        page.locator('[data-test="tutorial-action"][data-action="company-ceo"]').click()
+    company = popup.value
+    try:
+        company.locator("#company-open").click()
+        company.locator("#company-example").click()
+        company.locator("#company-trials summary").click()
+        company.locator("#company-policy").select_option("C")
+        expect(company.locator("#company-preset option")).to_have_count(11)
+        company.locator("#company-preset").select_option("source_answer")
+        assert "Export Preview" in company.locator("#company-brief").input_value()
+        company.locator("#company-submit").click()
+        expect(company.locator("#company-report")).to_contain_text("v1.4.0", timeout=15000)
+        expect(company.locator("#company-turns")).to_contain_text("The CEO report is ready")
+        with company.expect_download() as downloaded:
+            company.locator("#company-download").click()
+        data = Path(downloaded.value.path()).read_bytes()
+        assert data.startswith(b"Status: complete") and b"v1.4.0" in data
+    finally:
+        company.close()
+
+
+DRIVERS = {**dict(list(DRIVERS.items())[:2]), "company-ceo": drive_company_ceo,
+           **dict(list(DRIVERS.items())[2:])}
+
+
 def test_tutorial_topics(ui, open_page):
     assert [t.id for t in tutorial_topics.TOPICS] == list(DRIVERS)       # every topic has a driver, in order
     page = open_page(ui)
@@ -299,10 +328,10 @@ def test_tutorial_topics(ui, open_page):
 
 def test_tutorial_topic_registry():
     topics = tutorial_topics.TOPICS
-    assert [t.id for t in topics] == ["chat", "agentic-chat", "document", "tool", "contract", "model-block",
+    assert [t.id for t in topics] == ["chat", "agentic-chat", "company-ceo", "document", "tool", "contract", "model-block",
                                        "tool-block", "python-block", "script-block", "workshop-design", "block-library",
                                        "workflow", "release-gate", "private-summary-local", "private-summary-release"] + ASSIST_IDS
-    assert [t.updated_in for t in topics] == (["0.1.3", "0.2.2", "0.1.3", "0.1.3"] + ["0.2.0"] + ["0.2.1"]
+    assert [t.updated_in for t in topics] == (["0.1.3", "0.2.2", "0.3.0", "0.1.3", "0.1.3"] + ["0.2.0"] + ["0.2.1"]
                                               + ["0.2.0", "0.2.2"] + ["0.2.1"] * 2 + ["0.2.2"]
                                               + ["0.2.1"] * 4 + ["0.2.0"] * 5)
     assert all(tutorial_topics.by_id(t.id) is t for t in topics)

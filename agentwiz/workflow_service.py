@@ -114,6 +114,9 @@ class Workflows:
             token = digest(bundle)
         if bundle is None:
             problem('missing', name, 'workflow does not exist', 404)
+        return self.describe_bundle(bundle, name, token, immutable, native, capture_id, path)
+
+    def describe_bundle(self, bundle, name, token, immutable=True, native=False, capture_id=None, path=None):
         with ExitStack() as stack:
             graph = Graph(bundle, name, stack)
             definition = graph.definition

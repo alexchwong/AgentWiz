@@ -1,0 +1,20 @@
+{
+  "format": "agentwiz.component",
+  "format_version": 1,
+  "root": {
+    "kind": "agent",
+    "id": "company/reader",
+    "title": "Reader",
+    "visibility": "private",
+    "category": "general",
+    "definition": {
+      "instructions": "Propose evidence-bound findings.",
+      "mode": "cloud",
+      "inputs": {},
+      "outputs": {},
+      "capability_requests": [],
+      "artifact_requests": [],
+      "workflows": []
+    }
+  }
+}

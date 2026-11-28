@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "candidate_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "passed": {
+      "type": "boolean"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      },
+      "maxItems": 8
+    }
+  },
+  "required": [
+    "candidate_id",
+    "passed",
+    "findings"
+  ],
+  "additionalProperties": false
+}
