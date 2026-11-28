@@ -18,6 +18,7 @@ Messages name rules and locations, never values.
 """
 from __future__ import annotations
 
+import copy
 import dataclasses
 from contextlib import contextmanager
 import json
@@ -1386,6 +1387,17 @@ def _wait_committed(op: Any) -> dict:
             raise RuntimeError("an MCP operation did not commit after its deadline")
 
 
+def company_summary(entry):
+    """A conversation-view copy of a company entry; brief and report bodies are fetched on demand."""
+    entry = copy.deepcopy(entry)
+    if entry["type"] == "handoff":
+        entry["brief_size"] = len(entry.pop("brief").encode("utf-8"))
+    if entry["type"] == "run" and entry.get("report"):
+        report = entry["report"]
+        entry["report"] = {key: report[key] for key in ("sha256", "size", "status")}
+    return entry
+
+
 # --- the manager ---------------------------------------------------------------------------------------------------------
 @dataclasses.dataclass
 class Reservation:
@@ -1405,6 +1417,8 @@ class Manager:
         self.conversation: docs.Conversation | None = None
         self.active: AgentRun | None = None
         self.reserved: Reservation | None = None
+        self.company_hold: tuple[str, str] | None = None     # (conversation id, company work ident)
+        self.save_lock = threading.Lock()
         self.runs: "OrderedDict[str, AgentRun]" = OrderedDict()
         self.closed = False
         if not state.workspace.read_only:
@@ -1422,7 +1436,107 @@ class Manager:
         return conversation
 
     def _busy_locked(self) -> bool:
-        return self.active is not None or self.reserved is not None
+        return self.active is not None or self.reserved is not None or self.company_hold is not None
+
+    # --- company (CEO mode) entries ----------------------------------------------------------------------------
+    # Lock order: Company.lock may be held while taking Manager.lock; Manager never takes Company.lock.
+    def _company_live_locked(self, conversation_id):
+        if self.closed:
+            raise AgentError("shutting_down", 503)
+        conversation = self.conversation
+        if conversation is None or conversation.id != conversation_id:
+            raise AgentError("no_such_conversation", 404)
+        if conversation.private:
+            raise AgentError("private_conversation", 409, remedies=["new_conversation"])
+        return conversation
+
+    def company_conversation(self, conversation_id):
+        with self.lock:
+            return self._company_live_locked(conversation_id)
+
+    def live_conversation_id(self):
+        with self.lock:
+            return self.conversation.id if self.conversation is not None else None
+
+    def hold_company(self, conversation_id, ident):
+        """Company work (a representative call or a CEO run) makes the manager busy, and needs it idle."""
+        with self.lock:
+            self._company_live_locked(conversation_id)
+            if self._busy_locked():
+                raise AgentError("run_active", 409)
+            self.company_hold = (conversation_id, ident)
+
+    def release_company(self, ident):
+        with self.lock:
+            if self.company_hold is not None and self.company_hold[1] == ident:
+                self.company_hold = None
+
+    def company_entries(self, conversation_id):
+        with self.lock:
+            conversation = self.conversation
+            if conversation is None or conversation.id != conversation_id:
+                return OrderedDict()
+            return copy.deepcopy(conversation.company_entries)
+
+    def record_company(self, conversation_id, entry, *, save=True, usage=None):
+        """Insert or replace one company entry in the live conversation, then save the chat when enabled."""
+        with self.lock:
+            conversation = self.conversation
+            if conversation is None or conversation.id != conversation_id:
+                return
+            if entry["id"] not in conversation.company_entries:
+                conversation.timeline.append(("company", entry["id"]))
+            conversation.company_entries[entry["id"]] = copy.deepcopy(entry)
+            if usage is not None:
+                conversation.chat_totals = chat_history.merge_usage(conversation.chat_totals, usage)
+            self._trim_company_locked(conversation)
+        if save:
+            self.save_company(conversation_id)
+
+    def remove_company(self, conversation_id, entry_id):
+        with self.lock:
+            conversation = self.conversation
+            if conversation is not None and conversation.id == conversation_id:
+                conversation.company_entries.pop(entry_id, None)
+                conversation.timeline = [item for item in conversation.timeline if item != ("company", entry_id)]
+
+    def add_company_usage(self, conversation_id, usage):
+        with self.lock:
+            conversation = self.conversation
+            if conversation is not None and conversation.id == conversation_id:
+                conversation.chat_totals = chat_history.merge_usage(conversation.chat_totals, usage)
+
+    @staticmethod
+    def _trim_company_locked(conversation):
+        entries = conversation.company_entries
+        while (len(entries) > chat_history.MAX_COMPANY
+               or sum(row["type"] == "run" for row in entries.values()) > chat_history.MAX_COMPANY_RUNS):
+            order = [ident for kind, ident in conversation.timeline if kind == "company" and ident in entries]
+            segment = order[:1]
+            for ident in order[1:]:
+                if entries[ident]["type"] == "user":
+                    break
+                segment.append(ident)
+            if not segment or any(entries[ident]["type"] == "run" and entries[ident]["state"] == "running"
+                                  for ident in segment):
+                return
+            for ident in segment:
+                del entries[ident]
+            dropped = {("company", ident) for ident in segment}
+            conversation.timeline = [item for item in conversation.timeline if item not in dropped]
+
+    def save_company(self, conversation_id):
+        with self.lock:
+            conversation = self.conversation
+            if conversation is None or conversation.id != conversation_id or not conversation.chat_save:
+                return
+        error = None
+        try:
+            self._save_chat(conversation)
+        except chat_history.HistoryError as exc:
+            error = str(exc)
+        with self.lock:
+            conversation.chat_save_error = error
 
     def _idle(self) -> None:
         """An early, cheap refusal: the decisive check is `while_idle`."""
@@ -1495,6 +1609,9 @@ class Manager:
                 conversation.chat_totals = (saved["totals"] if "totals" in saved else chat_history.usage_summary(None))
                 conversation.chat_turns = saved["turns"]
                 conversation.chat_model = saved["model"]
+                conversation.company_entries = OrderedDict(
+                    (entry["id"], chat_history.interrupt(entry)) for entry in saved.get("company", []))
+                conversation.timeline = [tuple(item) for item in saved.get("timeline", [])]
             with self.lock:
                 self.conversation = conversation
                 self.runs.clear()
@@ -1527,11 +1644,17 @@ class Manager:
         return list(reversed(memory))
 
     def _save_chat(self, conversation):
-        turns = self._chat_views(conversation)
-        if conversation.private or any(turn.get("restricted") for turn in turns):
-            raise chat_history.HistoryError("private_conversation")
-        self.chat_history.save(conversation.id, [chat_history.turn_snapshot(turn) for turn in turns],
-                               conversation.chat_model, conversation.chat_totals, self.state.credentials())
+        with self.save_lock:
+            turns = self._chat_views(conversation)
+            if conversation.private or any(turn.get("restricted") for turn in turns):
+                raise chat_history.HistoryError("private_conversation")
+            with self.lock:
+                company = copy.deepcopy(list(conversation.company_entries.values()))
+                timeline = [list(item) for item in conversation.timeline]
+                totals = conversation.chat_totals
+            self.chat_history.save(conversation.id, [chat_history.turn_snapshot(turn) for turn in turns],
+                                   conversation.chat_model, totals, self.state.credentials(),
+                                   company=company, timeline=timeline)
 
     def change_chat_save(self, conversation_id, enabled):
         if not isinstance(conversation_id, str) or type(enabled) is not bool:
@@ -1633,7 +1756,20 @@ class Manager:
                      "restored_runs": [turn["run_id"] for turn in conversation.chat_turns],
                      "model_choice": conversation.chat_model, "totals": conversation.chat_totals}
                     if conversation is not None else {})
-        out: dict = {"format_version": 1, "conversation": None, "active_run": None, "pending_approval": None}
+            if conversation is not None:
+                chats = {turn["run_id"] for turn in conversation.chat_turns} | {
+                    run.run_id for run in recent if run.conversation is conversation}
+                chat["timeline"] = [list(item) for item in conversation.timeline
+                                    if (item[0] == "chat" and item[1] in chats)
+                                    or (item[0] == "company" and item[1] in conversation.company_entries)]
+                chat["company"] = [company_summary(entry) for entry in conversation.company_entries.values()]
+            hold = self.company_hold
+            company_active = None
+            if hold is not None and conversation is not None and hold[0] == conversation.id:
+                entry = conversation.company_entries.get(hold[1])
+                company_active = {"kind": "run" if entry is not None else "intake", "id": hold[1]}
+        out: dict = {"format_version": 1, "conversation": None, "active_run": None, "pending_approval": None,
+                     "company_active": company_active}
         if conversation is not None:
             out["conversation"] = {"id": conversation.id, "documents": conversation.items_view(),
                                    "memory": conversation.memory_view(), "private": conversation.private,
@@ -1817,7 +1953,10 @@ class Manager:
                 self.runs.popitem(last=False)
             excess = len(run.conversation.chat_turns) + len(self.runs) - RUNS_KEPT
             if excess > 0:
+                dropped = {("chat", turn["run_id"]) for turn in run.conversation.chat_turns[:excess]}
                 del run.conversation.chat_turns[:excess]
+                run.conversation.timeline = [item for item in run.conversation.timeline if item not in dropped]
+            run.conversation.timeline.append(("chat", run.run_id))
 
     def detach(self, run: AgentRun) -> None:
         with self.lock:

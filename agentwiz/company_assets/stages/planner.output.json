@@ -39,6 +39,11 @@
       "type": "object",
       "properties": {},
       "additionalProperties": true
+    },
+    "status_update": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 360
     }
   },
   "required": [

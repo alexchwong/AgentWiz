@@ -5,24 +5,26 @@
 ## First run
 
 1. Launch `agentwiz`. Set your key with **OpenRouter key** or the `OPENROUTER_API_KEY` environment variable.
-2. Open **Run with CEO** and select a **Cloud model**. Expand **Owner trials**, choose its
-   **Intelligence class**, then select **Save class**.
-3. Select **Load example** to place T01 in **Brief preview**. If you want help clarifying it,
-   enter a message and select **Send to representative**. Either Send or CEO submission can
-   send text to OpenRouter and incur charges. Loading the example is local.
-4. Review the exact editable **Brief preview** and select **Run with CEO**. Use
-   **Run trace and usage** to see the selected pathway and accepted evidence. **Stop** cancels work
-   in progress. A stopped or otherwise unfinished run can show accepted findings with the report
-   unavailable.
-5. Read the representative’s delivery message and select **Download CEO report** for the
-   original `.md.txt`. Use **New draft** before submitting a revised public brief.
+2. Select **CEO** beside the composer and choose an OpenRouter model with the model picker. Open
+   **CEO options**, choose its **Intelligence class**, then select **Save class**.
+3. Under **CEO options → Owner trials**, choose the pathway, select **Load example** to place T01 in
+   **Direct brief**, then select **Create handoff**. The handoff card appears in the conversation with
+   its exact text. To have the representative help instead, type the task in the composer; sending
+   to the representative or to the CEO can send text to OpenRouter and incur charges. Loading the
+   example is local.
+4. Review **Exact text sent to the CEO (Cloud)** and select **Send to CEO**. Progress updates appear
+   in the thread; expand **Activity** to see each operation, its caller path and served model, and
+   **Diagnostics** for the selected pathway and accepted evidence. **Stop** in the composer cancels
+   work in progress. A stopped or otherwise unfinished run keeps its record with the report unavailable.
+5. Read the representative's delivery line and select **Download .md.txt** for the original report.
+   Each further direct brief creates a new handoff and a new run.
 
-The installed tutorial is available in AgentWorkshop under **Tutorial → Run with CEO** and uses an
-isolated scripted model. Ordinary AgentWiz **Local only** Chat remains available for local work.
+The installed tutorial is available in AgentWorkshop under **Tutorial → CEO mode in Chat** and uses an
+isolated scripted model. Ordinary AgentWiz **Local only** Chat remains available in **Chat** mode.
 
 ## How to use this guide
 
-Use synthetic/public information only in AgentWiz 0.3.0. Run each task under these **development-only** policy locks, with the same model inventory and comparable whole-job limits. For cleaner comparisons, start a fresh draft and submit the same brief directly each time.
+Use synthetic/public information only in AgentWiz 0.3.0. Run each task under these **development-only** policy locks, with the same model inventory and comparable whole-job limits. For cleaner comparisons, create a direct-brief handoff with the same text each time.
 
 | Variant | Architecture policy | How it is enforced |
 |---|---|---|

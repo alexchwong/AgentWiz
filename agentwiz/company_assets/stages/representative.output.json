@@ -18,6 +18,36 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 32768
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objective",
+        "constraints",
+        "deliverable"
+      ],
+      "properties": {
+        "objective": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "constraints": {
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "deliverable": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        }
+      }
     }
   },
   "required": [

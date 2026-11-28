@@ -38,6 +38,8 @@ class CompanyWorkflow(workflow_runner.Job):
         self.deadline = work.deadline
         self.reserve_calls = 0
         self.preset = None
+        self.node_ops = {}
+        self.node_labels = {}
 
     def parent_guard(self):
         from .company import Refusal
@@ -68,17 +70,59 @@ class CompanyWorkflow(workflow_runner.Job):
             routing = record.get("routing") or {}
             if routing.get("probe_usage") == "unreported":
                 self.work.usage = chat_history.merge_usage(self.work.usage, chat_history.usage_summary(None))
+            served = {"model": (result or {}).get("model") or None, "provider": (result or {}).get("provider") or None,
+                      "selected_provider": routing.get("selected_slug")}
             self.work.trace.append({"stage": "workflow_model", "outcome": record.get("outcome"),
-                                    "served_provider": (result or {}).get("provider"),
-                                    "selected_provider": routing.get("selected_slug")})
+                                    "served_provider": served["provider"], "served_model": served["model"],
+                                    "selected_provider": served["selected_provider"]})
+            record_ = self.work.record
+            parent = self.work.current_op
+            if parent is not None and record_.operations.get(parent, {}).get("kind") == "workflow_node":
+                outcome = record.get("outcome")
+                op = record_.start_op("model_attempt", record_.path_of(parent), "Model attempt", parent=parent,
+                                      requested_model=self.company.requested(self.work))
+                record_.model_call(op, chat_history.usage_summary(result), served)
+                record_.finish_op(op, "complete" if outcome in ("complete", None) else
+                                  "cancelled" if self.work.cancel.cancelled else "failed",
+                                  code=None if outcome in ("complete", None) else outcome)
+            else:
+                record_.model_call(parent, chat_history.usage_summary(result), served)
 
     def execute_node(self, graph, node, values):
         self.values = values
         self.reserve_calls = 1 + sum(graph.blocks[key].step.kind == "model"
                                      for key in graph.order[graph.order.index(node) + 1:])
-        return super().execute_node(graph, node, values)
+        op = self.node_ops.get(node)
+        if op is not None:
+            with self.company.lock:
+                self.work.record.run_op(op, "Running step")
+                self.previous_op, self.work.current_op = self.work.current_op, op
+        try:
+            return super().execute_node(graph, node, values)
+        except BaseException:
+            self.finish_node(node, {"outcome": "failed"}, "internal_error")
+            raise
+
+    def finish_node(self, node, result, code=None):
+        op = self.node_ops.get(node)
+        if op is None:
+            return
+        with self.company.lock:
+            outcome = result["outcome"]
+            state = ("complete" if outcome == "complete" else "cancelled" if outcome == "stopped"
+                     or self.work.cancel.cancelled else "failed")
+            self.work.record.finish_op(op, state, code=code if state != "complete" else None)
+            if self.work.current_op == op:
+                self.work.current_op = getattr(self, "previous_op", None)
 
     def accept_node(self, graph, node, result):
+        before = len(self.work.conditions)
+        result = self.check_node(graph, node, result)
+        added = self.work.conditions[before:]
+        self.finish_node(node, result, added[-1] if added else result.get("outcome"))
+        return result
+
+    def check_node(self, graph, node, result):
         from .company import Refusal, quotations
         if result["outcome"] != "complete":
             return result
@@ -167,10 +211,28 @@ def graph_for(company, work, stack, preset):
 
 
 def execute_workflow(company, work, decision):
+    preset = work.presets[decision["preset_id"]]
+    path = company.ceo_path() + [{"tier": "workflow", "id": preset["id"], "label": preset["title"]}]
+    with company.operation(work, "workflow", path, f"Running workflow {preset['title']}", model=False) as op:
+        result, total, labels = run_workflow(company, work, decision, preset, path, op)
+        if result["outcome"] != "complete":
+            with company.lock:
+                work.record.finish_op(op, "failed", code=work.conditions[-1] if work.conditions else result["outcome"])
+    outcome = result["outcome"]
+    nodes = result["nodes"]
+    complete = sum(1 for row in nodes.values() if row.get("outcome") == "complete")
+    failed = next((node for node, row in nodes.items() if row.get("outcome") not in ("complete", "not_run")), None)
+    data = {"title": preset["title"], "outcome": outcome, "total": total, "complete": complete,
+            "conditions": len(work.conditions)}
+    if outcome != "complete":
+        data.update(node=labels.get(failed, failed), reason=work.conditions[-1] if work.conditions else outcome)
+    company.report_event(work, "workflow_result", **data)
+
+
+def run_workflow(company, work, decision, preset, path, parent):
     from .company import Refusal
     work.phase = "workflow"
     job = CompanyWorkflow(company, work)
-    preset = work.presets[decision["preset_id"]]
     job.preset = preset
     job.attempt_limit = preset["bundle"]["definition"].get("budget", {}).get("max_model_attempts", 32)
     work.deadline = min(work.deadline, time.monotonic() + preset["bundle"]["definition"].get(
@@ -178,6 +240,13 @@ def execute_workflow(company, work, decision):
     job.deadline = work.deadline
     with ExitStack() as stack:
         graph = graph_for(company, work, stack, preset)
+        with company.lock:
+            for node in graph.order:
+                label = graph.blocks[node].name or node
+                job.node_labels[node] = label
+                job.node_ops[node] = work.record.queue_op(
+                    "workflow_node", path + [{"tier": "block", "id": node, "label": label}], "Waiting to run",
+                    parent=parent)
         try:
             inputs = company_catalogue.bind(preset, work.brief, decision["parameters"])
         except (ValueError, agent_tools.ToolError):
@@ -210,3 +279,6 @@ def execute_workflow(company, work, decision):
                 elif result["outcome"] == "unknown":
                     code = "external_outcome_uncertain"
                 work.conditions.append(code)
+                if result["outcome"] == "stopped" or work.cancel.cancelled:
+                    raise Refusal("stopped")
+        return result, len(graph.order), dict(job.node_labels)

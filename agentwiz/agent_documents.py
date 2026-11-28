@@ -109,6 +109,8 @@ class Conversation:
         self.chat_turns = []
         self.chat_model = None
         self.chat_totals = None
+        self.company_entries = OrderedDict()    # company entry id -> entry (CEO mode in this conversation)
+        self.timeline = []                       # [("chat", run_id) | ("company", entry_id)] in display order
         self.lock = threading.Lock()
         self.drained = threading.Condition(self.lock)
         self.pending_writes = 0

@@ -38,8 +38,8 @@ WORKSHOP_COLLECTIONS = ("/api/contracts", "/api/blocks", "/api/runs", "/api/work
 
 
 COMPANY_ROUTES = {
-    "GET": re.compile(r"/api/company/(settings|runs/[a-f0-9]{32}(/report)?)"),
-    "POST": re.compile(r"/api/company/(model-class|intakes(/[a-f0-9]{32}/(message|stop))?"
+    "GET": re.compile(r"/api/company/(settings|runs/[a-f0-9]{32}(/report)?|handoffs/ce_[a-f0-9]{16})"),
+    "POST": re.compile(r"/api/company/(model|model-class|intakes(/[a-f0-9]{32}/(message|handoffs|stop))?"
                        r"|runs(/[a-f0-9]{32}/(stop|approval))?)"),
 }
 
@@ -105,7 +105,7 @@ class ChatListener(ThreadingHTTPServer):
         self.assets = {f"/assets/{name}": ((HERE / name).read_bytes(), ctype)
                        for name, ctype in (
                            ("chat.js", "text/javascript; charset=utf-8"),
-                           ("company.js", "text/javascript; charset=utf-8"),
+                           ("ceo.js", "text/javascript; charset=utf-8"),
                            ("chat-markdown.js", "text/javascript; charset=utf-8"),
                            ("chat.css", "text/css; charset=utf-8"),
                        )}

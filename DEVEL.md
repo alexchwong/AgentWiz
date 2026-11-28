@@ -440,8 +440,11 @@ case starts without retrying requests.
 Run the Company and tutorial checks in the checkout's development environment.
 
 ```bash
-python -m pytest -q tests/test_company.py tests/test_tutorial.py
+python -m pytest -q tests/test_company.py tests/test_company_activity.py tests/test_company_chat.py \
+  tests/test_ceo_chat_ui.py tests/test_tutorial.py
 ```
 
 The Company preset test runs all ten native graphs through the real Company API with a loopback
-provider double. The installed UI gate repeats this check from the wheel.
+provider double. `test_company_activity.py` checks the Recorder, update templates and accounting;
+`test_company_chat.py` checks conversation binding, privacy, handoff digests, history v3 and recovery;
+`test_ceo_chat_ui.py` drives CEO mode in the Chat page. The installed UI gate repeats these from the wheel.

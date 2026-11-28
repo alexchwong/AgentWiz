@@ -1851,10 +1851,19 @@ handles when it closes.
 
 ## Cloud company intake and CEO runs
 
-The AgentWiz origin owns `/api/company/` settings, intakes, runs and report download routes.
-Intakes capture a Cloud OpenRouter binding, workspace revision and allowance. Company text is
-separate from ordinary Chat history and attachments. The exact preview becomes the run brief.
-A request ID deduplicates admissions within the intake. Polling observes the admitted work.
+The AgentWiz origin owns `/api/company/` settings, model, intakes, handoffs, runs and report
+download routes. An intake is bound to the live Chat conversation and captures the Chat picker's
+OpenRouter choice (binding `chat`), workspace revision and allowance. Company entries (user and
+representative turns, handoffs, runs) are stored on the conversation beside Chat turns, ordered by
+one timeline, and saved in Cloud chat history format 3. Attachments, ordinary Chat turns and
+Local only chats never reach the company. A run is admitted from a draft handoff by ID and the
+SHA-256 of its exact brief. A request ID deduplicates admissions within the intake. Company work
+holds the Chat manager busy, so Chat and CEO work never overlap.
+
+`company_activity.Recorder` is the single execution record per run: operations with caller paths,
+requested and served models and usage; an event log; and published progress updates. Every
+reportable arrival is accounted for by exactly one update of at most 50 words. The run view, the
+conversation entry and the UI are all derived from it.
 The initial binding and any additional candidates are server-resolved from configured OpenRouter
 profiles and Chat assignments. The shared attempt and active-time limits include representative
 calls and native graph nodes. The bundled workflow resolves both nodes against the company capture.

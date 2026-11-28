@@ -562,3 +562,22 @@ deferral pending qualification.
 Technical specification v2 uses the released 0.2.5 tree and the authorised modelSpell 0.4.1 pin.
 Pathways A–D are execution locks. E selects a feasible implemented pathway. Local company
 execution and company-to-native Gate work are scheduled separately in plan v19.1.
+
+### Integrated CEO Chat and live execution visibility
+
+Implements *Integrated CEO Chat tech spec v1* on `7edae15`. The owner instructed implementation, which
+accepted recommendations OD-1 to OD-5:
+
+- **OD-1** The exact brief is shown collapsed on the handoff card, and the run is bound to it by SHA-256.
+  Stage prompts, envelopes and inventories are never exposed.
+- **OD-2** Progress updates are the planner's optional `status_update` or fixed templates over recorded
+  facts, published under the representative label with their source shown. No extra model call is made.
+- **OD-3** The representative receives the latest run's brief, outcome, question and report (≤16 KiB).
+- **OD-4** Ordinary Chat context and company context stay isolated in both directions in 0.3.0.
+- **OD-5** Company entries, including report text, are saved in Cloud chat history format 3 under the
+  existing save switch. Chats without company entries remain format 2.
+
+Design decisions D-1 to D-10: one conversation with two addressees; Chat and CEO work are mutually
+exclusive per process; no resume after restart (interrupted instead); no Team tier in 0.3.0; queued
+means planned and known; owner trials live in CEO options. Stage-file edits change the catalogue
+revision, so owner-trial records from `7edae15` show a different `catalogue_revision`.

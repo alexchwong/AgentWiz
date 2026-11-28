@@ -66,9 +66,10 @@ TOPICS: tuple[Topic, ...] = (
           "one calculation, AgentWiz checks and runs it, and the model answers from the result. The Actions list shows "
           "what ran. AgentWiz decides what may run; tools that change state ask for your approval.",
           "chat", "0.2.2", "agent-demo", False, _page("agent.tutorialPrepare", ["What is 12 times 3?"]), "agent-send"),
-    Topic("company-ceo", "Run with CEO",
-          "Open the isolated company page, select Run with CEO, load the example, review the brief and submit it. "
-          "Read the representative delivery and download the original CEO report.", "chat", "0.3.0",
+    Topic("company-ceo", "CEO mode in Chat",
+          "Open the isolated company page and select CEO beside the composer. In CEO options, open Owner trials, load "
+          "the example and create a handoff. Review the exact text, select Send to CEO, follow the progress updates and "
+          "download the original CEO report.", "chat", "0.3.0",
           "complete", False, _page(actions=[{"id": "company-ceo", "label": "Open company example"}]), None),
     Topic("document", "Use a document", "Use example document to open a preview. Copy includes provenance; paste it "
           "into Chat to discuss the document.", "documents", "0.1.3", "complete", False,

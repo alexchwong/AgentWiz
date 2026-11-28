@@ -7,6 +7,7 @@ The launch's default workspace (./workspaces/default) is validated by AgentWiz i
 through /api/state."""
 import atexit
 import tempfile
+import hashlib
 import json
 import os
 import select
@@ -475,12 +476,16 @@ try:
         catalogue = settings["workflow_presets"]
         check(len(catalogue) == 10, "complete installed company catalogue")
         preset = next(row for row in catalogue if row["id"] == "source_answer")
-        intake = json.loads(company_api("intakes", {"revision": settings["revision"], "binding": "fast",
-                                                    "policy": "C", "workflow_preset": {
+        conversation = json.loads(scoped(company_root, company_token, "/api/agent/conversation",
+                                         {"format_version": 1}).read())["conversation"]["id"]
+        intake = json.loads(company_api("intakes", {"revision": settings["revision"], "conversation": conversation,
+                                                    "model_choice": None, "policy": "C", "workflow_preset": {
                                                         "id": preset["id"], "revision": preset["revision"]}}).read())
+        handoff = json.loads(company_api(f"intakes/{intake['id']}/handoffs", {"brief": settings["example"]}).read())
         job = json.loads(company_api("runs", {"intake_id": intake["id"], "revision": settings["revision"],
-                                              "client_request_id": "installed-smoke",
-                                              "brief": settings["example"]}).read())
+                                              "client_request_id": "installed-smoke", "handoff_id": handoff["entry"],
+                                              "brief_sha256": hashlib.sha256(settings["example"].encode()).hexdigest()
+                                              }).read())
         end = time.monotonic() + 15
         while not job["outcome"] and time.monotonic() < end:
             time.sleep(.05)
@@ -489,6 +494,10 @@ try:
         downloaded = company_api("runs/" + job["id"] + "/report").read()
         check(b"v1.4.0" in downloaded and downloaded.startswith(b"Status: complete"),
               "packaged CEO report")
+        updates = job["activity"]["updates"]
+        accounted = [seq for row in updates for seq in row["accounts_for"]]
+        check(updates and updates[-1]["kind"] == "final" and len(accounted) == len(set(accounted))
+              and hashlib.sha256(downloaded).hexdigest() == job["report_digest"], f"company progress record: {updates}")
     finally:
         json.loads(child_api("/api/tutorial/exit", {}).read())
 

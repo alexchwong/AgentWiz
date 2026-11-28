@@ -9,7 +9,7 @@ import urllib.request
 import pytest
 
 from agentwiz.tutorial_support import backend
-from conftest import failure_of, request
+from conftest import HTTPFailure, failure_of, request
 
 
 @pytest.fixture
@@ -20,10 +20,35 @@ def company_client(ui):
     chat = child.chat_listener
     chat.token = chat.authority.session
 
-    def company(path, body=None, **kwargs):
+    handoffs = {}
+
+    def raw(path, body=None, **kwargs):
         payload = None if body is None else {"format_version": 1, **body}
         return request(chat, "/api/company/" + path, payload, **kwargs)
 
+    def company(path, body=None, **kwargs):
+        """Company API. A `runs` body carrying `brief` is sent as an exact-text handoff first (the UI's
+        direct-brief path), so the run is admitted by handoff ID and digest like every CEO run."""
+        if path == "runs" and body is not None and "brief" in body:
+            body = dict(body)
+            brief = body.pop("brief")
+            key = (body["intake_id"], brief)
+            if key not in handoffs:
+                try:
+                    handoffs[key] = raw(f"intakes/{body['intake_id']}/handoffs", {"brief": brief})["entry"]
+                except HTTPFailure:     # a consumed intake: submit an unknown handoff so admission decides
+                    handoffs[key] = "ce_" + "0" * 16
+            body.update(handoff_id=handoffs[key], brief_sha256=hashlib.sha256(brief.encode()).hexdigest())
+        return raw(path, body, **kwargs)
+
+    def conversation():
+        view = request(chat, "/api/agent/conversation")
+        if view["conversation"] is None:
+            view = request(chat, "/api/agent/conversation", {"format_version": 1})
+        return view["conversation"]["id"]
+
+    company.conversation = conversation
+    company.agent = lambda path, body=None: request(chat, "/api/agent/" + path, body)
     yield child, company
     ui.tutorial.close()
 
@@ -31,7 +56,8 @@ def company_client(ui):
 def create(company, policy="A", **limits):
     settings = company("settings")
     revision = settings["revision"]
-    intake = company("intakes", {"revision": revision, "binding": "fast", "policy": policy, **limits})
+    intake = company("intakes", {"revision": revision, "conversation": company.conversation(),
+                                 "model_choice": None, "policy": policy, **limits})
     return {"intake_id": intake["id"], "revision": revision, "brief": settings["example"],
             "client_request_id": "one"}
 

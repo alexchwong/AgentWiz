@@ -109,6 +109,68 @@ def _turn_valid(turn):
             and isinstance(turn["sources"], list) and all(isinstance(url, str) for url in turn["sources"]))
 
 
+ENTRY_ID = re.compile(r"ce_[a-f0-9]{16}")
+JOB_ID = re.compile(r"[a-f0-9]{32}")
+MAX_COMPANY = 120
+MAX_COMPANY_RUNS = 20
+ENTRY_KEYS = {
+    "user": {"id", "type", "at", "text", "intake_id", "error"},
+    "representative": {"id", "type", "at", "kind", "text", "usage", "model", "commentary_on"},
+    "handoff": {"id", "type", "at", "intake_id", "origin", "summary", "brief", "brief_sha256", "state", "run_id"},
+    "run": {"id", "type", "at", "handoff_id", "policy", "model", "class", "state", "outcome", "reason", "pathway",
+            "preset_id", "updates", "operations", "summary", "usage", "open_conditions", "question", "report"},
+}
+
+
+def _optional_str(value):
+    return value is None or isinstance(value, str)
+
+
+def entry_valid(entry):
+    """Strict shape check for one saved company entry. Values are displayed, never executed."""
+    if not isinstance(entry, dict) or entry.get("type") not in ENTRY_KEYS:
+        return False
+    kind = entry["type"]
+    keys = ENTRY_KEYS[kind] | ({"report_withheld"} if kind == "run" else set())
+    if not ENTRY_KEYS[kind] <= set(entry) <= keys or not isinstance(entry["at"], str):
+        return False
+    if kind == "run":
+        report = entry["report"]
+        return (bool(JOB_ID.fullmatch(entry["id"])) and entry["state"] in ("running", "finished", "interrupted")
+                and all(_optional_str(entry[key]) for key in ("outcome", "reason", "pathway", "preset_id", "question",
+                                                              "model", "class", "handoff_id"))
+                and isinstance(entry["updates"], list) and isinstance(entry["operations"], list)
+                and all(isinstance(row, dict) and isinstance(row.get("text"), str) for row in entry["updates"])
+                and all(isinstance(row, dict) and isinstance(row.get("id"), str) for row in entry["operations"])
+                and isinstance(entry["summary"], dict) and isinstance(entry["open_conditions"], list)
+                and (entry["usage"] is None or _usage_valid(entry["usage"]))
+                and (report is None or (isinstance(report, dict) and set(report) == {"markdown", "sha256", "size", "status"}
+                                        and isinstance(report["markdown"], str) and isinstance(report["sha256"], str)
+                                        and type(report["size"]) is int)))
+    if not ENTRY_ID.fullmatch(entry["id"]):
+        return False
+    if kind == "user":
+        return isinstance(entry["text"], str) and _optional_str(entry["error"]) and isinstance(entry["intake_id"], str)
+    if kind == "representative":
+        return (entry["kind"] in ("simple_answer", "clarification", "brief_proposal") and isinstance(entry["text"], str)
+                and (entry["usage"] is None or _usage_valid(entry["usage"])) and _optional_str(entry["model"])
+                and _optional_str(entry["commentary_on"]))
+    summary = entry["summary"]
+    return (entry["origin"] in ("representative", "direct", "edited") and entry["state"] in ("draft", "sent", "superseded")
+            and isinstance(entry["brief"], str) and isinstance(entry["brief_sha256"], str)
+            and _optional_str(entry["run_id"])
+            and (summary is None or (isinstance(summary, dict) and set(summary) == {"objective", "constraints", "deliverable"}
+                                     and isinstance(summary["constraints"], list))))
+
+
+def interrupt(entry):
+    """A run saved while running cannot have continued: it is shown as interrupted, never as complete."""
+    if entry["type"] != "run" or entry["state"] != "running":
+        return entry
+    summary = {**entry["summary"], "state": "interrupted", "current": None}
+    return {**entry, "state": "interrupted", "outcome": None, "reason": "process_ended", "summary": summary}
+
+
 class History:
     """The manager serializes writes with conversation changes and executions."""
 
@@ -136,20 +198,41 @@ class History:
         if result.data is not None:
             try:
                 row = jsonio.decode_file(result.data)
-                if (type(row.get("format_version")) is int and row["format_version"] in (1, 2)
-                        and set(row) == ({"format_version", "id", "private", "ready", "updated", "title", "model", "turns"}
-                                         | ({"totals"} if row["format_version"] == 2 else set()))
+                version = row.get("format_version")
+                keys = {"format_version", "id", "private", "ready", "updated", "title", "model", "turns"}
+                if type(version) is int and version >= 2:
+                    keys |= {"totals"}
+                if type(version) is int and version == 3:
+                    keys |= {"company", "timeline"}
+                if (type(version) is int and version in (1, 2, 3) and set(row) == keys
                         and (row.get("totals") is None or _usage_valid(row["totals"]))
                         and row["id"] == ident and row["private"] is False and type(row["ready"]) is bool
                         and isinstance(row["updated"], str) and isinstance(row["title"], str)
-                        and isinstance(row["turns"], list) and 0 < len(row["turns"]) <= MAX_TURNS
+                        and isinstance(row["turns"], list) and len(row["turns"]) <= MAX_TURNS
                         and all(_turn_valid(turn) for turn in row["turns"])
-                        and len({turn["run_id"] for turn in row["turns"]}) == len(row["turns"])):
+                        and len({turn["run_id"] for turn in row["turns"]}) == len(row["turns"])
+                        and self._company_valid(row)):
                     model_choice(row["model"])
+                    row.setdefault("company", [])
+                    row.setdefault("timeline", [["chat", turn["run_id"]] for turn in row["turns"]])
                     return row
             except (ValueError, AttributeError, RecursionError):
                 pass
         raise HistoryError("chat_history_unavailable")
+
+    @staticmethod
+    def _company_valid(row):
+        if row["format_version"] != 3:
+            return len(row["turns"]) > 0
+        company, timeline = row["company"], row["timeline"]
+        if (not isinstance(company, list) or not isinstance(timeline, list) or len(company) > MAX_COMPANY
+                or not row["turns"] and not company or not all(entry_valid(entry) for entry in company)):
+            return False
+        ids = {"chat": {turn["run_id"] for turn in row["turns"]}, "company": {entry["id"] for entry in company}}
+        if len(ids["company"]) != len(company):
+            return False
+        return all(isinstance(item, list) and len(item) == 2 and item[0] in ids and item[1] in ids[item[0]]
+                   for item in timeline)
 
     def listing(self):
         rows = []
@@ -173,8 +256,15 @@ class History:
 
     def _write(self, row):
         data = jsonio.encode(row) + b"\n"
-        while len(data) > LIMIT and len(row["turns"]) > 1:
-            del row["turns"][0]
+        while len(data) > LIMIT and len(row.get("timeline") or row["turns"]) > 1:
+            if "timeline" in row:
+                kind, ident = row["timeline"].pop(0)
+                if kind == "chat":
+                    row["turns"] = [turn for turn in row["turns"] if turn["run_id"] != ident]
+                else:
+                    row["company"] = [entry for entry in row["company"] if entry["id"] != ident]
+            else:
+                del row["turns"][0]
             data = jsonio.encode(row) + b"\n"
         if len(data) > LIMIT:
             raise HistoryError("chat_history_size")
@@ -186,16 +276,34 @@ class History:
     def suspend(self, ident):
         row = self._read(ident)
         if row and row["ready"]:
+            if row["format_version"] != 3:
+                row = {key: value for key, value in row.items() if key not in ("company", "timeline")}
             self._write({**row, "ready": False})
 
-    def save(self, ident, turns, model, totals, credentials):
-        if not turns:
+    def save(self, ident, turns, model, totals, credentials, company=None, timeline=None):
+        company = list(company or [])
+        if not turns and not company:
             return
         before = self._read(ident)
         if before is None and len(self._ids()) >= MAX_CHATS:
             raise HistoryError("chat_history_full")
-        title = " ".join(turns[0]["message"].split())[:72] or "Chat"
         turns = turns[-MAX_TURNS:]
+        kept = {"chat": {turn["run_id"] for turn in turns}, "company": {entry["id"] for entry in company}}
+        timeline = [[kind, item] for kind, item in (timeline or [["chat", t["run_id"]] for t in turns])
+                    if item in kept.get(kind, ())]
+        first = timeline[0] if timeline else None
+        by_id = {**{turn["run_id"]: turn["message"] for turn in turns},
+                 **{entry["id"]: entry.get("text", "") for entry in company if entry["type"] == "user"}}
+        source = by_id.get(first[1], "") if first else (turns[0]["message"] if turns else "")
+        title = " ".join(source.split())[:72] or "Chat"
+        safe_company = []
+        for entry in company:
+            redacted, changed = history.redact(entry, credentials)
+            if entry["type"] == "run" and entry.get("report") and redacted.get("report") != entry["report"]:
+                redacted = {**redacted, "report": None, "report_withheld": "credential"}
+            if changed:
+                redacted["id"] = entry["id"]
+            safe_company.append(redacted)
         content, _ = history.redact({"title": before["title"] if before else title, "model": model,
                                      "turns": turns}, credentials)
         try:
@@ -209,8 +317,11 @@ class History:
                 safe["accounting"] = turn["accounting"]
             if "served_route" in turn:
                 safe["served_route"]["kind"] = turn["served_route"]["kind"]
-        self._write({**content, "format_version": 2, "id": ident, "private": False, "ready": True, "totals": totals,
-                     "updated": runs.utc_now()})
+        row = {**content, "format_version": 2, "id": ident, "private": False, "ready": True, "totals": totals,
+               "updated": runs.utc_now()}
+        if safe_company:
+            row.update(format_version=3, company=safe_company, timeline=timeline)
+        self._write(row)
 
     def rename(self, ident, title, credentials):
         if not isinstance(title, str) or not 0 < len(title) <= 120 or not title.isprintable() or not title.strip():
@@ -219,6 +330,8 @@ class History:
         if row is None:
             raise HistoryError("no_such_chat")
         safe, _ = history.redact({"title": title.strip()}, credentials)
+        if row["format_version"] != 3:
+            row = {key: value for key, value in row.items() if key not in ("company", "timeline")}
         self._write({**row, "title": safe["title"]})
 
     def delete(self, ident):

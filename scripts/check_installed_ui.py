@@ -298,9 +298,13 @@ def main(argv=None):
                 ("Company-workflow", "tests/test_company.py::test_pathway_dispatch_with_pinned_modelspell[C-workflow-4]"),
                 ("Company-presets", "tests/test_company.py::test_all_preset_graphs_via_company"),
                 ("Company-approval", "tests/test_company.py::test_scoped_read_only_tool_approval[approve]"),
+                ("CEO-chat-history", "tests/test_company_chat.py::test_history_v3_round_trip_report_integrity_and_interruption"),
+                ("CEO-chat-privacy", "tests/test_company_chat.py::test_representative_sees_only_company_entries"),
+                ("CEO-chat-page", "tests/test_ceo_chat_ui.py::test_representative_handoff_live_run_and_exact_report"),
             )
             rows += company
-            modules.append("tests/test_company.py")
+            modules += ["tests/test_company.py", "tests/test_company_activity.py", "tests/test_company_chat.py",
+                        "tests/test_ceo_chat_ui.py"]
         print('Modules:', ' '.join(modules), flush=True)
         print('Required cases:', flush=True)
         for label, node in rows:

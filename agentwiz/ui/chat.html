@@ -8,7 +8,7 @@
 <script src="/assets/session.js" defer></script>
 <script src="/assets/chat-markdown.js" defer></script>
 <script src="/assets/chat.js" defer></script>
-<script src="/assets/company.js" defer></script>
+<script src="/assets/ceo.js" defer></script>
 </head>
 <body>
 <header class="top-bar">
@@ -17,7 +17,6 @@
     <strong class="brand">AgentWiz</strong>
   </div>
   <div class="bar">
-    <button id="company-open" type="button" disabled>Run with CEO</button>
     <button id="model-picker-open" type="button" aria-haspopup="dialog" data-test="model-picker">Choose model</button>
     <button id="key-open" type="button" aria-haspopup="dialog" data-test="openrouter-key">OpenRouter key</button>
     <button id="settings-open" type="button" aria-haspopup="dialog" data-test="chat-settings">Settings</button>
@@ -49,10 +48,16 @@
     <form id="composer" class="composer">
       <div class="composer-inner">
         <p id="binding-notice" role="status" hidden></p>
+        <p id="ceo-notice" role="note" hidden data-test="ceo-notice"><strong>CEO</strong> · Cloud via OpenRouter · Use public or synthetic text only. Messages and runs may incur charges.</p>
         <div id="documents"></div>
         <textarea id="task" rows="2" aria-label="Message" placeholder="Message AgentWiz" data-test="chat-message"></textarea>
         <div class="composer-controls">
           <div class="bar">
+            <div id="addressee" class="segmented" role="radiogroup" aria-label="Send to" data-test="composer-mode">
+              <label><input type="radio" name="addressee" value="chat" checked> Chat</label>
+              <label><input type="radio" name="addressee" value="ceo" data-test="composer-mode-ceo"> CEO</label>
+            </div>
+            <button id="ceo-options-open" type="button" hidden aria-haspopup="dialog" data-test="ceo-options">CEO options</button>
             <button id="attach" type="button">Attach</button>
             <label><select id="mode" aria-label="Privacy mode"><option value="cloud">Cloud</option><option value="local">Local only</option></select></label>
             <label class="check"><input id="use-context" type="checkbox" checked data-test="use-chat-context"> Use chat context</label>
@@ -69,46 +74,37 @@
   </main>
 </div>
 
-<dialog id="company" aria-labelledby="company-heading">
-  <div class="dialog-head"><h2 id="company-heading">Run with CEO</h2><button type="button" id="company-close">Close</button></div>
+<dialog id="ceo-options" aria-labelledby="ceo-options-heading">
+  <div class="dialog-head"><h2 id="ceo-options-heading">CEO options</h2><button type="button" data-close="ceo-options">Close</button></div>
   <div class="settings-fields">
-    <p><strong>Cloud via OpenRouter</strong> · Use public or synthetic text only. Sending to the representative or submitting a brief may send text to OpenRouter and incur charges.</p>
-    <div class="bar"><label>Cloud model <select id="company-model"></select></label>
-      <button id="company-example" type="button" disabled>Load example</button>
-      <button id="company-new" type="button">New draft</button></div>
-    <details id="company-trials"><summary>Owner trials</summary>
-      <div class="bar">
-        <label>Pathway <select id="company-policy">
+    <p><strong>Cloud via OpenRouter</strong> · CEO runs use the Chat model picker's OpenRouter model. Use public or synthetic text only.</p>
+    <p id="ceo-model-line" data-test="ceo-model-line"></p>
+    <div class="bar">
+      <label>Intelligence class <select id="ceo-class" data-test="ceo-class"></select></label>
+      <button id="ceo-save-class" type="button">Save class</button>
+    </div>
+    <div class="bar">
+      <label>Model attempts <input id="ceo-attempts" type="number" min="1" max="20" value="12"></label>
+      <label>Active seconds <input id="ceo-seconds" type="number" min="1" max="1800" value="300"></label>
+    </div>
+    <label>Additional eligible models <select id="ceo-eligible" multiple size="3"></select></label>
+    <p class="usage">Token and cost caps are not available for Cloud CEO runs in this version; limit attempts and time instead.</p>
+    <details id="ceo-trials" data-test="ceo-trials"><summary>Owner trials</summary>
+      <div class="settings-fields">
+        <label>Pathway <select id="ceo-policy" data-test="ceo-policy">
           <option value="E">E · Unrestricted CEO</option><option value="A">A · Solo</option>
           <option value="B">B · Tools/Blocks</option><option value="C">C · Reviewed workflow</option>
           <option value="D">D · Specialist structure</option>
         </select></label>
-        <label>Intelligence class <select id="company-class"></select></label>
-        <button id="company-save-class" type="button">Save class</button>
-      </div>
-      <div class="bar">
-        <label>Additional eligible models <select id="company-eligible" multiple size="3"></select></label>
-        <label id="company-preset-row" hidden>Workflow preset <select id="company-preset"></select></label>
-        <label>Model attempts <input id="company-attempts" type="number" min="1" max="20" value="12"></label>
-        <label>Active seconds <input id="company-time" type="number" min="1" max="1800" value="300"></label>
+        <label id="ceo-preset-row" hidden>Workflow preset <select id="ceo-preset" data-test="ceo-preset"></select></label>
+        <label>Direct brief (sent exactly as typed) <textarea id="ceo-direct" rows="5" data-test="ceo-direct"></textarea></label>
+        <div class="bar">
+          <button id="ceo-example" type="button" data-test="ceo-example">Load example</button>
+          <button id="ceo-direct-handoff" type="button" class="primary" data-test="ceo-direct-handoff">Create handoff</button>
+        </div>
       </div>
     </details>
-    <div id="company-turns" aria-label="Representative conversation"></div>
-    <label>Message to representative <textarea id="company-message" rows="2"></textarea></label>
-    <button type="button" id="company-send">Send to representative</button>
-    <label>Brief preview <textarea id="company-brief" rows="5"></textarea></label>
-    <div class="bar"><button id="company-submit" class="primary" type="button">Run with CEO</button>
-      <button id="company-stop" type="button" disabled>Stop</button>
-      <button id="company-download" type="button" hidden>Download CEO report</button></div>
-    <p id="company-status" role="status"></p>
-    <section id="company-approval" hidden aria-label="Tool approval">
-      <h3>Allow this read-only tool call?</h3>
-      <pre id="company-approval-scope"></pre>
-      <div class="bar"><button id="company-approve" type="button">Approve exact call</button>
-        <button id="company-deny" type="button">Deny</button></div>
-    </section>
-    <details id="company-trace" hidden><summary>Run trace and usage</summary><pre id="company-trace-text"></pre></details>
-    <article id="company-report" class="markdown" aria-label="Original CEO report"></article>
+    <p id="ceo-options-status" role="status" hidden></p>
   </div>
 </dialog>
 

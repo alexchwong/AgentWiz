@@ -2,8 +2,12 @@
 
 ## 0.3.0
 - Ships ten reviewed Company workflow presets with exact revision selection and execution traces.
-- Run a public or synthetic brief through the Cloud CEO and download the original Markdown report.
-- Compare execution pathways with the owner guide and the isolated Run with CEO tutorial.
+- CEO mode in Chat: the representative clarifies the task in the same conversation and proposes a handoff
+  with a summary and the exact Cloud text; nothing is sent to the CEO until you select Send to CEO.
+- Progress updates of 50 words or fewer and an Activity panel show each real operation, its caller path and the
+  model the provider served. The original CEO Markdown report appears unchanged and downloads as `.md.txt`.
+- CEO runs are saved with the Cloud chat; after a restart an unfinished run is shown as interrupted.
+- Compare execution pathways with the owner guide and the isolated CEO mode tutorial.
 - Update the model backend to modelSpell 0.4.1.
 
 ## 0.2.5

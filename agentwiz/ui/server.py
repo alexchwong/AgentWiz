@@ -961,16 +961,17 @@ class Handler(BaseHTTPRequestHandler):
         if self.command == "GET":
             if parts == ["settings"]:
                 return self._send(200, service.settings())
-            with service.lock:
-                job = service.get_job(parts[1])
-                body = service.view(job) if len(parts) == 2 else job.report
+            if parts[0] == "handoffs":
+                return self._send(200, service.handoff_text(parts[1]))
             if len(parts) == 2:
-                return self._send(200, body)
-            if body is None:
-                raise company.Refusal("report_unavailable", 404)
+                with service.lock:
+                    job = service.jobs.get(parts[1])
+                    body = service.view(job) if job is not None else None
+                return self._send(200, body if body is not None else service.stored_view(parts[1]))
+            body = service.report_bytes(parts[1])
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Disposition", f'attachment; filename="agentwiz-ceo-{job.ident}.md.txt"')
+            self.send_header("Content-Disposition", f'attachment; filename="agentwiz-ceo-{parts[1]}.md.txt"')
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
@@ -990,12 +991,16 @@ class Handler(BaseHTTPRequestHandler):
             raise company.Refusal("invalid_version", 400)
         if parts == ["model-class"]:
             value = service.set_class(body)
+        elif parts == ["model"]:
+            value = service.model(body)
         elif parts == ["intakes"]:
             value = service.create(body)
         elif parts == ["runs"]:
             value = service.start(body)
         elif parts[-1] == "message":
             value = service.message(parts[1], body)
+        elif parts[-1] == "handoffs":
+            value = service.handoff(parts[1], body)
         elif parts[-1] == "approval":
             with service.lock:
                 job = service.get_job(parts[1])

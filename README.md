@@ -1,16 +1,23 @@
 # AgentWiz
 
 
-## Run with CEO
+## CEO mode in Chat
 
-Open **Run with CEO** from AgentWiz. Set an OpenRouter key with the top-bar control or
-`OPENROUTER_API_KEY`, then choose a Cloud model. Load the synthetic example or paste a public
-brief. Review **Brief preview** and select **Run with CEO**. Check the progress and download the
-CEO’s original Markdown under **Download CEO report**. Representative messages and CEO work can
-send text to OpenRouter and incur charges. Ordinary **Local only** Chat remains available.
+Select **CEO** beside the AgentWiz composer. Set an OpenRouter key with the top-bar control or
+`OPENROUTER_API_KEY`, and choose an OpenRouter model with the usual model picker. Describe the
+task; the representative clarifies it and proposes a handoff. Review the summary and, if you wish,
+**Exact text sent to the CEO (Cloud)**, then select **Send to CEO**. Progress updates of 50 words
+or fewer appear in the conversation, and **Activity** shows the operation running now, its caller
+path and the model the provider actually served. The CEO's original Markdown report appears in the
+thread unchanged, with **Copy** and **Download .md.txt**. **Stop** in the composer stops the run.
 
-In Pathway C, select a preset or let the CEO choose from the ten workflows.
-In Pathway E, inspect the chosen workflow in the run trace.
+CEO mode is Cloud-only and uses only typed public or synthetic text: attachments, earlier Chat
+turns and Local only chats are never sent. Representative messages and CEO work can incur charges.
+Ordinary **Local only** Chat remains available in **Chat** mode.
+
+**CEO options** holds the intelligence class, attempt and time limits, additional eligible models
+and **Owner trials** (Pathways A–D, workflow preset, example and direct brief). In Pathway C, select
+a preset or let the CEO choose from the ten workflows.
 
 See the [owner pathway trial guide](docs/owner-ceo-pathway-trial-guide.md) for pathway controls,
 sample briefs and a comparison worksheet.

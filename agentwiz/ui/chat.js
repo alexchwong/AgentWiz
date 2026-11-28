@@ -7,6 +7,7 @@
   const element = (tag, text, className = "") => Object.assign(document.createElement(tag), {textContent: text, className});
   const button = (text, fn) => Object.assign(element("button", text), {type: "button", onclick: fn});
   let settings, conversation, active, sending = false, switching = false, discovering = false;
+  let companyActive = null, timeline = [], ceo = null, chatMode = "cloud";
   let choice, savedChats = [], lastHistoryRun, lookupSequence = 0, scrollFrame = 0;
   let models = [], visibleModels = [], selectedModel = -1, currentRefresh;
   const selected = new Set();
@@ -43,7 +44,16 @@
   const agent = (path, body) => api("/api/agent/" + path, body === undefined ? undefined : {format_version: 1, ...body});
   const defaultBinding = () => settings.roles.fast?.[$("mode").value];
   const effectiveChoice = () => choice && modeFor(choice.kind) === $("mode").value ? choice : null;
-  const isBusy = () => Boolean(active || sending || switching || discovering);
+  const isBusy = () => Boolean(active || companyActive || sending || switching || discovering);
+  const addressee = () => document.querySelector('input[name="addressee"]:checked')?.value || "chat";
+  const ceoMode = () => addressee() === "ceo";
+  const addresseeKey = () => "agentwiz-addressee:" + (conversation?.id || "new");
+  function ceoModelChoice() {
+    const override = effectiveChoice();
+    if (override) return override.kind === "openrouter" ? override : "local";
+    const binding = settings.roles.fast?.cloud;
+    return binding && binding.kind !== "openrouter" ? "local" : null;
+  }
   const restrictedSelection = () => Boolean(conversation?.documents.some(i => selected.has(i.id) && i.local_only));
 
   async function loadSettings() {
@@ -67,6 +77,15 @@
   }
 
   function renderControls() {
+    const ceoOn = ceoMode();
+    if (ceoOn && conversation?.private) {
+      document.querySelector('input[name="addressee"][value="chat"]').checked = true;
+      return renderControls();
+    }
+    if (ceoOn && $("mode").value !== "cloud") {
+      chatMode = $("mode").value;
+      $("mode").value = "cloud";
+    }
     const mode = $("mode").value;
     const binding = defaultBinding();
     const override = effectiveChoice();
@@ -75,19 +94,39 @@
     const listed = catalogs.get(kind)?.find(entry => entry.id === model);
     const busy = isBusy();
     let reason = "";
-    if (mode === "cloud" && conversation?.private) reason = "This chat is Local only. Start a new chat to use Cloud.";
+    if (ceoOn && conversation?.private) reason = "This chat is Local only. Start a new chat to use CEO.";
+    else if (ceoOn && ceoModelChoice() === "local") reason = "CEO runs use Cloud models. Choose an OpenRouter model.";
+    else if (ceoOn && settings.key_source === "none") reason = "Set your key using OpenRouter key.";
+    else if (ceoOn && ceo?.modelReason()) reason = ceo.modelReason();
+    else if (ceoOn) reason = "";
+    else if (mode === "cloud" && conversation?.private) reason = "This chat is Local only. Start a new chat to use Cloud.";
     else if (mode === "cloud" && restrictedSelection()) reason = "A selected attachment is Local only. Change mode to continue.";
     else if (!model) reason = "Choose a model or set a default model.";
     else if (mode === "local" && (override ? listed?.trusted === false : !binding?.trusted)) {
       reason = "Review and trust this model destination in AgentWorkshop.";
     } else if (kind === "openrouter" && settings.key_source === "none") reason = "Set your key using OpenRouter key.";
+    const hint = !reason && !ceoOn && Boolean(ceo?.lastIsFinishedRun());
+    if (hint) reason = "Chat mode does not see CEO reports. Switch to CEO to ask about this report.";
     status("binding-notice", reason);
+    $("ceo-notice").hidden = !ceoOn;
+    $("ceo-options-open").hidden = !ceoOn;
+    $("ceo-options-open").disabled = busy;
+    for (const radio of document.querySelectorAll('input[name="addressee"]')) {
+      radio.disabled = busy || (radio.value === "ceo" && Boolean(conversation?.private));
+    }
+    document.querySelector('input[name="addressee"][value="ceo"]').parentElement.title =
+      conversation?.private ? "This chat is Local only. Start a new chat to use CEO." : "";
+    for (const id of ["use-context", "chat-task", "reasoning"]) $(id).closest("label").hidden = ceoOn;
+    $("task").placeholder = ceoOn ? "Describe the task for the CEO" : "Message AgentWiz";
+    $("mode").title = ceoOn ? "CEO runs are Cloud-only in this version." : "";
+    ceo?.update();
 
     const modelButton = $("model-picker-open");
     const policy = (!override || override.kind === binding?.kind) ? binding : null;
     modelButton.textContent = model || "Choose model";
     modelButton.title = [backend[kind], model, policy?.routing_mode, policy?.provider,
       policy?.data_collection, policy?.zdr ? "ZDR requested" : ""].filter(Boolean).join(" · ");
+    if (ceoOn && ceo?.modelClass()) modelButton.title += " · Class: " + ceo.modelClass();
     modelButton.setAttribute("aria-label", model ? "Choose model · " + model : "Choose model");
     modelButton.disabled = busy;
 
@@ -104,12 +143,12 @@
     reasoning.disabled = busy || !levels.length;
     $("chat-task").disabled = busy;
 
-    $("run").disabled = Boolean(reason || busy || !$("task").value.trim());
-    $("run").hidden = Boolean(active);
-    $("stop").hidden = !active;
+    $("run").disabled = Boolean((reason && !hint) || busy || !$("task").value.trim());
+    $("run").hidden = Boolean(active || companyActive);
+    $("stop").hidden = !(active || companyActive);
     $("new-chat").disabled = busy;
-    $("mode").disabled = busy;
-    $("attach").disabled = busy;
+    $("mode").disabled = busy || ceoOn;
+    $("attach").disabled = busy || ceoOn;
     $("bind").disabled = busy;
     $("save-chat").disabled = busy || mode !== "cloud";
     $("verify-webspell").disabled = mode !== "cloud" || Boolean(conversation?.private || busy) || !$("webspell").checked;
@@ -128,7 +167,8 @@
   function renderFiles() {
     const rows = (conversation?.documents || []).map(item => {
       const label = element("label", "");
-      const check = Object.assign(document.createElement("input"), {type: "checkbox", checked: selected.has(item.id)});
+      const check = Object.assign(document.createElement("input"), {type: "checkbox", checked: selected.has(item.id),
+        disabled: ceoMode(), title: ceoMode() ? "Attachments are not used in CEO mode." : ""});
       check.setAttribute("aria-label", item.name);
       check.onchange = () => {
         if (check.checked) selected.add(item.id);
@@ -390,6 +430,9 @@
     $("use-context").checked = true;
     $("chat-task").value = "general";
     $("reasoning").value = "";
+    const remembered = sessionStorage.getItem("agentwiz-addressee:" + (next?.id || "new"));
+    const value = remembered === "ceo" && !next?.private ? "ceo" : "chat";
+    document.querySelector(`input[name="addressee"][value="${value}"]`).checked = true;
   }
 
   async function readConversation() {
@@ -399,6 +442,8 @@
     if (changed) adoptConversation(next, Boolean(conversation) || Boolean(next?.private));
     else conversation = next;
     active = view.active_run;
+    companyActive = view.company_active;
+    timeline = conversation?.timeline || [];
     const visible = [...(conversation?.restored_runs || []), ...(conversation?.recent_runs || [])];
     for (const id of visible) {
       const shown = turns.get(id);
@@ -418,7 +463,14 @@
         turns.delete(id);
       }
     }
-    $("empty-chat").hidden = Boolean(turns.size);
+    if (ceo) keepScroll(() => {
+      ceo.sync(conversation);
+      const listed = timeline.map(([kind, id]) => kind === "chat" ? turns.get(id)?.root : ceo.node(id)).filter(Boolean);
+      const transcript = $("transcript");
+      const others = [...transcript.children].filter(child => !listed.includes(child));
+      for (const child of [...listed, ...others]) transcript.append(child);
+    });
+    $("empty-chat").hidden = Boolean(turns.size || ceo?.hasEntries());
     if (changed || !active) renderFiles();
     renderControls();
     renderHistory();
@@ -607,6 +659,7 @@
     const kind = $("source").value;
     choice = {kind, model: model.id};
     $("mode").value = modeFor(kind);
+    ceo?.refreshModel().catch(report);
     $("reasoning").value = "";
     $("model-picker").close();
     renderControls();
@@ -650,6 +703,11 @@
 
   $("model-picker-open").onclick = () => {
     $("source").querySelector('[value="openrouter"]').disabled = Boolean($("mode").value !== "cloud" || conversation?.private || restrictedSelection());
+    for (const value of ["lmstudio", "openai_compat"]) {
+      const option = $("source").querySelector(`[value="${value}"]`);
+      option.disabled = ceoMode();
+      option.title = ceoMode() ? "CEO runs use Cloud models in this version." : "";
+    }
     $("source").value = effectiveChoice()?.kind || defaultBinding()?.kind
       || ($("mode").value === "local" ? "lmstudio" : "openrouter");
     if ($("source").selectedOptions[0]?.disabled) $("source").value = "lmstudio";
@@ -729,10 +787,41 @@
     }
   };
 
-  $("stop").onclick = () => active && agent("stop", {run_id: active}).catch(report);
+  $("stop").onclick = () => {
+    if (active) agent("stop", {run_id: active}).catch(report);
+    else if (companyActive) ceo.stop(companyActive).then(refresh).catch(report);
+  };
+  for (const radio of document.querySelectorAll('input[name="addressee"]')) {
+    radio.onchange = () => {
+      if (ceoMode()) chatMode = $("mode").value;
+      sessionStorage.setItem(addresseeKey(), addressee());
+      if (!ceoMode()) $("mode").value = conversation?.private ? "local" : chatMode;
+      if (ceoMode()) ceo.refreshModel(true).catch(report);
+      renderFiles();
+      renderControls();
+    };
+  }
+  async function sendToCEO(message) {
+    sending = true;
+    renderControls();
+    status("notice", "");
+    try {
+      $("task").value = "";
+      resizeComposer();
+      await ceo.send(message);
+    } catch (error) {
+      if (!$("task").value) $("task").value = message;
+      report(error);
+    } finally {
+      sending = false;
+      renderControls();
+      await refreshHistory().catch(report);
+    }
+  }
   $("composer").onsubmit = async event => {
     event.preventDefault();
     if ($("run").disabled || isBusy()) return;
+    if (ceoMode()) return sendToCEO($("task").value);
     const message = $("task").value;
     sending = true;
     renderControls();
@@ -796,18 +885,31 @@
   };
 
   async function poll() {
-    if (active && !switching) {
+    if ((active || companyActive || sending) && !switching) {
       try {
         const previouslyActive = active;
         await refresh();
-        if (!active && previouslyActive !== lastHistoryRun) await refreshHistory();
+        if (!active && previouslyActive && previouslyActive !== lastHistoryRun) await refreshHistory();
       } catch (error) { report(error); }
     }
     setTimeout(poll, 650);
   }
   await loadSettings();
+  ceo = window.agentWizCEO({
+    element, button, markdown, usageText, download, keepScroll, report,
+    request: (path, body) => request(path, body),
+    refresh: () => refresh(), renderControls: () => renderControls(), reloadSettings: () => loadSettings(),
+    revision: () => settings.revision, modelChoice: ceoModelChoice, companyActive: () => companyActive,
+    busy: () => isBusy(), privateChat: () => Boolean(conversation?.private),
+    lastTimelineItem: () => timeline.at(-1),
+    ensureConversation: async () => {
+      if (!conversation) conversation = (await agent("conversation", {})).conversation;
+      return conversation.id;
+    },
+  });
   await refresh();
   await refreshHistory();
+  if (ceoMode()) ceo.refreshModel(true).catch(report);
   resizeComposer();
   setTimeout(poll, 650);
 })().catch(error => {

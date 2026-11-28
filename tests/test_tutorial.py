@@ -281,21 +281,40 @@ def drive_company_ceo(page):
     with page.expect_popup() as popup:
         page.locator('[data-test="tutorial-action"][data-action="company-ceo"]').click()
     company = popup.value
+    errors = []
+    company.on("pageerror", lambda e: errors.append(str(e)))
     try:
-        company.locator("#company-open").click()
-        company.locator("#company-example").click()
-        company.locator("#company-trials summary").click()
-        company.locator("#company-policy").select_option("C")
-        expect(company.locator("#company-preset option")).to_have_count(11)
-        company.locator("#company-preset").select_option("source_answer")
-        assert "Export Preview" in company.locator("#company-brief").input_value()
-        company.locator("#company-submit").click()
-        expect(company.locator("#company-report")).to_contain_text("v1.4.0", timeout=15000)
-        expect(company.locator("#company-turns")).to_contain_text("The CEO report is ready")
+        expect(company.locator("#company-open")).to_have_count(0)
+        company.locator('[data-test="composer-mode-ceo"]').check()
+        expect(company.locator('[data-test="ceo-notice"]')).to_be_visible()
+        expect(company.locator("#mode")).to_be_disabled()
+        company.locator('[data-test="ceo-options"]').click()
+        company.locator('[data-test="ceo-trials"] summary').click()
+        company.locator('[data-test="ceo-policy"]').select_option("C")
+        expect(company.locator('[data-test="ceo-preset"] option')).to_have_count(11)
+        company.locator('[data-test="ceo-preset"]').select_option("source_answer")
+        company.locator('[data-test="ceo-example"]').click()
+        assert "Export Preview" in company.locator('[data-test="ceo-direct"]').input_value()
+        company.locator('[data-test="ceo-direct-handoff"]').click()
+        handoff = company.locator('[data-test="ceo-handoff"]')
+        expect(handoff).to_contain_text("Owner trial · Policy C")
+        expect(handoff.locator('[data-test="ceo-exact-text"] pre')).to_contain_text("Export Preview")
+        handoff.locator('[data-test="ceo-send"]').click()
+        run = company.locator('[data-test="ceo-run"]')
+        expect(run.locator('[data-test="ceo-report"]')).to_contain_text("v1.4.0", timeout=15000)
+        expect(run.locator('[data-test="ceo-delivery"]')).to_contain_text("The CEO report is ready")
+        expect(run.locator('[data-test="ceo-update"]').first).to_contain_text("The CEO has received your brief")
+        run.locator('[data-test="ceo-activity"] summary').click()
+        expect(run.locator('[data-test="ceo-op"][data-kind="workflow"]')).to_contain_text("CEO / Answer from supplied text")
+        nodes = run.locator('[data-test="ceo-op"][data-kind="workflow_node"]')
+        expect(nodes).to_have_count(2)
+        expect(nodes.first).to_contain_text("CEO / Answer from supplied text / ")
+        expect(run.locator('[data-test="ceo-op"][data-kind="model_attempt"]').first).to_contain_text("served")
         with company.expect_download() as downloaded:
-            company.locator("#company-download").click()
+            run.locator('[data-test="ceo-download"]').click()
         data = Path(downloaded.value.path()).read_bytes()
         assert data.startswith(b"Status: complete") and b"v1.4.0" in data
+        assert errors == []
     finally:
         company.close()
 

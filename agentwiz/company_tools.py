@@ -4,6 +4,7 @@ from __future__ import annotations
 import secrets
 import time
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from . import agent_capabilities, history, jsonio, outbound_policy, runner, runs, webspell
 from .state import NoSuchServer
@@ -79,6 +80,11 @@ def review(service, work, tool, arguments):
     with service.lock:
         service.reserve(work)
         work.approval = pending
+        record = work.record
+        approval_op = record.start_op("approval", record.path_of(work.tool_op), "Waiting for your approval",
+                                      parent=work.tool_op, state="awaiting_approval")
+    host = urlsplit(str((cap.identity or {}).get("url") or tool.snapshot.url or "")).hostname or "the tool server"
+    service.report_event(work, "approval_requested", title=cap.tool or cap.name, host=host)
     try:
         with pending.condition:
             while pending.decision is None and not work.cancel.cancelled:
@@ -93,6 +99,13 @@ def review(service, work, tool, arguments):
         return pending
     finally:
         with service.lock:
+            decision = pending.decision
+            record.finish_op(approval_op, "complete" if decision == "approve" else
+                             "cancelled" if work.cancel.cancelled else "failed",
+                             code=None if decision == "approve" else
+                             "stopped" if work.cancel.cancelled else
+                             "tool_denied" if decision == "deny" else "approval_expired")
+            record.event("approval_decided", op=approval_op, decision=decision)
             work.approval = None
             work.trace.append({"stage": "approval", "capability": cap.name, "decision": pending.decision,
                                "arguments_sha256": pending.arguments_sha256})
